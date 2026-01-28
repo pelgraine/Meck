@@ -68,11 +68,12 @@ public:
     return 1000;
   }
 
-  void poll() override {
-    if (millis() >= dismiss_after) {
-      _task->gotoHomeScreen();
-    }
+void poll() override {
+  if (millis() >= dismiss_after) {
+    Serial.println(">>> SplashScreen calling gotoHomeScreen() <<<");
+    _task->gotoHomeScreen();
   }
+}
 };
 
 class HomeScreen : public UIScreen {
@@ -778,7 +779,7 @@ void UITask::loop() {
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
 
-  if (curr) curr->poll();
+if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {

@@ -1,4 +1,3 @@
-
 #include "GxEPDDisplay.h"
 
 #ifdef EXP_PIN_BACKLIGHT
@@ -7,20 +6,32 @@
 #endif
 
 #ifndef DISPLAY_ROTATION
-  #define DISPLAY_ROTATION 3
+  #define DISPLAY_ROTATION 0
 #endif
 
 #ifdef ESP32
-  SPIClass SPI1 = SPIClass(FSPI);
+  // E-ink and LoRa SHARE the same SPI bus (SCK=36, MOSI=33)
+  // They MUST use the same SPI peripheral (HSPI) to avoid GPIO conflicts
+  // Different chip selects allow both to coexist: E-ink CS=34, LoRa CS=3
+  SPIClass displaySpi(HSPI);
 #endif
 
 bool GxEPDDisplay::begin() {
-  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 #ifdef ESP32
-  SPI1.begin(PIN_DISPLAY_SCLK, PIN_DISPLAY_MISO, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
-#else
-  SPI1.begin();
+  // Initialize HSPI with shared pins
+  // SCK=36, MISO=47 (for LoRa receive), MOSI=33, SS=34 (e-ink CS)
+  displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+  
+  // Tell GxEPD2 to use our SPI instance
+  // Using slower speed (4MHz) for reliable e-ink communication
+  display.epd2.selectSPI(displaySpi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 #endif
+
+  // Initialize with:
+  // - 115200 baud for debug serial
+  // - initial=true (do initial update)
+  // - reset_duration=2 (ms)
+  // - pulldown_rst_mode=false
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);
   setTextSize(1);  // Default to size 1
@@ -28,11 +39,14 @@ bool GxEPDDisplay::begin() {
 
   display.fillScreen(GxEPD_WHITE);
   display.display(true);
+  
   #if DISP_BACKLIGHT
   digitalWrite(DISP_BACKLIGHT, LOW);
   pinMode(DISP_BACKLIGHT, OUTPUT);
   #endif
+  
   _init = true;
+  _isOn = true;  // Set display as "on" after initialization
   return true;
 }
 
@@ -70,14 +84,14 @@ void GxEPDDisplay::startFrame(Color bkg) {
 void GxEPDDisplay::setTextSize(int sz) {
   display_crc.update<int>(sz);
   switch(sz) {
-    case 1:  // Small
+    case 1:  // Small - use 9pt (was 9pt)
       display.setFont(&FreeSans9pt7b);
       break;
-    case 2:  // Medium Bold
-      display.setFont(&FreeSansBold12pt7b);
+    case 2:  // Medium Bold - use 9pt bold instead of 12pt
+      display.setFont(&FreeSans9pt7b);
       break;
-    case 3:  // Large
-      display.setFont(&FreeSans18pt7b);
+    case 3:  // Large - use 12pt instead of 18pt
+      display.setFont(&FreeSansBold12pt7b);
       break;
     default:
       display.setFont(&FreeSans9pt7b);
@@ -98,7 +112,8 @@ void GxEPDDisplay::setColor(Color c) {
 void GxEPDDisplay::setCursor(int x, int y) {
   display_crc.update<int>(x);
   display_crc.update<int>(y);
-  display.setCursor((x+offset_x)*scale_x, (y+offset_y)*scale_y);
+  // Add extra offset (+5) to push text baseline down, preventing ascenders from overlapping elements above
+  display.setCursor((x+offset_x)*scale_x, (y+offset_y+5)*scale_y);
 }
 
 void GxEPDDisplay::print(const char* str) {
@@ -111,7 +126,7 @@ void GxEPDDisplay::fillRect(int x, int y, int w, int h) {
   display_crc.update<int>(y);
   display_crc.update<int>(w);
   display_crc.update<int>(h);
-  display.fillRect(x*scale_x, y*scale_y, w*scale_x, h*scale_y, _curr_color);
+  display.fillRect((x+offset_x)*scale_x, (y+offset_y)*scale_y, w*scale_x, h*scale_y, _curr_color);
 }
 
 void GxEPDDisplay::drawRect(int x, int y, int w, int h) {
@@ -119,7 +134,7 @@ void GxEPDDisplay::drawRect(int x, int y, int w, int h) {
   display_crc.update<int>(y);
   display_crc.update<int>(w);
   display_crc.update<int>(h);
-  display.drawRect(x*scale_x, y*scale_y, w*scale_x, h*scale_y, _curr_color);
+  display.drawRect((x+offset_x)*scale_x, (y+offset_y)*scale_y, w*scale_x, h*scale_y, _curr_color);
 }
 
 void GxEPDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
@@ -128,9 +143,9 @@ void GxEPDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
   display_crc.update<int>(w);
   display_crc.update<int>(h);
   display_crc.update<uint8_t>(bits, w * h / 8);
-  // Calculate the base position in display coordinates
-  uint16_t startX = x * scale_x;
-  uint16_t startY = y * scale_y;
+  // Calculate the base position in display coordinates (with offset applied)
+  uint16_t startX = (x + offset_x) * scale_x;
+  uint16_t startY = (y + offset_y) * scale_y;
   
   // Width in bytes for bitmap processing
   uint16_t widthInBytes = (w + 7) / 8;
@@ -173,7 +188,7 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
-    display.display(true);
+    display.display(true);  // Partial refresh
     last_display_crc_value = crc;
   }
 }
