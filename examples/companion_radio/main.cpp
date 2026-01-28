@@ -1,6 +1,8 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
 #include "MyMesh.h"
+#include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
+#include "target.h"    // For sensors, board, etc.
 
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
@@ -287,11 +289,28 @@ void setup() {
   sensors.begin();
   Serial.println("setup() - sensors.begin() done");
 
+  // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1
+  // We need to reinitialize Serial2 to reclaim them
+  #if HAS_GPS
+    Serial2.end();  // Close any existing Serial2
+    Serial2.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    Serial.println("setup() - Reinitialized Serial2 for GPS after sensors.begin()");
+  #endif
+
 #ifdef DISPLAY_CLASS
   Serial.println("setup() - about to call ui_task.begin()");
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   Serial.println("setup() - ui_task.begin() done");
 #endif
+
+  // Enable GPS by default on T-Deck Pro
+  #if HAS_GPS
+    // Set GPS enabled in both sensor manager and node prefs
+    sensors.setSettingValue("gps", "1");
+    the_mesh.getNodePrefs()->gps_enabled = 1;
+    the_mesh.savePrefs();
+    Serial.println("setup() - GPS enabled by default");
+  #endif
 
   Serial.println("=== setup() - COMPLETE ===");
 }
@@ -303,4 +322,24 @@ void loop() {
   ui_task.loop();
 #endif
   rtc_clock.tick();
+
+  // Debug: Check for GPS data on Serial2
+  #if HAS_GPS
+  static unsigned long lastGpsDebug = 0;
+  if (millis() - lastGpsDebug > 5000) {  // Every 5 seconds
+    lastGpsDebug = millis();
+    Serial.print("GPS Debug - Serial2 available: ");
+    Serial.print(Serial2.available());
+    Serial.print(" bytes");
+    LocationProvider* loc = sensors.getLocationProvider();
+    if (loc) {
+      Serial.print(", valid: ");
+      Serial.print(loc->isValid() ? "YES" : "NO");
+      Serial.print(", sats: ");
+      Serial.println(loc->satellitesCount());
+    } else {
+      Serial.println(", LocationProvider: NULL");
+    }
+  }
+  #endif
 }

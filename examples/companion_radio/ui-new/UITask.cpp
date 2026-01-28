@@ -111,8 +111,8 @@ class HomeScreen : public UIScreen {
     if (batteryPercentage > 100) batteryPercentage = 100; // Clamp to 100%
 
     // battery icon
-    int iconWidth = 24;
-    int iconHeight = 10;
+    int iconWidth = 22;
+    int iconHeight = 8;
     int iconX = display.width() - iconWidth - 5; // Position the icon near the top-right corner
     int iconY = 0;
     display.setColor(DisplayDriver::GREEN);

@@ -1,5 +1,8 @@
 #pragma once
 
+// Include variant.h first to ensure all board-specific defines are available
+#include "variant.h"
+
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
 #include <helpers/radiolib/RadioLibWrappers.h>

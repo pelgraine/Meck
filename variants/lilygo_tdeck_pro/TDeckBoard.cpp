@@ -31,6 +31,22 @@ void TDeckBoard::begin() {
     Serial.println("TDeckBoard::begin() - LoRa power enabled");
   #endif
 
+  // Enable GPS module power and initialize Serial2
+  #if HAS_GPS
+    #ifdef PIN_GPS_EN
+      pinMode(PIN_GPS_EN, OUTPUT);
+      digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);  // GPS_EN_ACTIVE is 1 (HIGH)
+      delay(100);  // Allow GPS to power up
+      Serial.println("TDeckBoard::begin() - GPS power enabled");
+    #endif
+    
+    // Initialize Serial2 for GPS with correct pins
+    Serial2.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+    Serial.print("TDeckBoard::begin() - GPS Serial2 initialized at ");
+    Serial.print(GPS_BAUDRATE);
+    Serial.println(" baud");
+  #endif
+
   // Configure user button
   pinMode(PIN_USER_BTN, INPUT);
 

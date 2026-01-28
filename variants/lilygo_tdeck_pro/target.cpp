@@ -19,8 +19,10 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #if HAS_GPS
   MicroNMEALocationProvider gps(Serial2, &rtc_clock);
   EnvironmentSensorManager sensors(gps);
+  #pragma message "GPS enabled - using EnvironmentSensorManager with MicroNMEALocationProvider"
 #else
   SensorManager sensors;
+  #pragma message "GPS disabled - using basic SensorManager"
 #endif
 
 #ifdef DISPLAY_CLASS
@@ -40,6 +42,15 @@ bool radio_init() {
   // Wire already initialized in board.begin() - just use it for RTC
   rtc_clock.begin(Wire);
   Serial.println("radio_init() - rtc_clock started");
+
+  // Debug GPS status
+  #if HAS_GPS
+    Serial.println("radio_init() - HAS_GPS is defined");
+    Serial.print("radio_init() - gps object address: ");
+    Serial.println((uint32_t)&gps, HEX);
+  #else
+    Serial.println("radio_init() - HAS_GPS is NOT defined");
+  #endif
 
 #if defined(P_LORA_SCLK)
   Serial.println("radio_init() - initializing LoRa SPI...");

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "variant.h"  // Board-specific pin definitions
 #include <Wire.h>
 #include <Arduino.h>
 #include "helpers/ESP32Board.h"
