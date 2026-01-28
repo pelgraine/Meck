@@ -1,3 +1,8 @@
+## Meshcore + Fork = Meck
+This fork was created specifically to focus on enabling BLE companion firmware for the LilyGo T-Deck Pro v1.1. Created with the assistance of Claude AI using Meshcore v1.11 code. 
+
+***Please note as of 28 Jan 2026, the T-Deck Pro v1.1 repeater & usb firmware has not been finalised nor confirmed as functioning. This firmware also will likely not work on v1.0 of the T-Deck Pro, as the two versions have different pins.***
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
@@ -39,11 +44,6 @@ For developers;
 - Clone and open the MeshCore repository in Visual Studio Code.
 - See the example applications you can modify and run:
   - [Companion Radio](./examples/companion_radio) - For use with an external chat app, over BLE, USB or WiFi.
-  - [Simple Repeater](./examples/simple_repeater) - Extends network coverage by relaying messages.
-  - [Simple Room Server](./examples/simple_room_server) - A simple BBS server for shared Posts.
-  - [Simple Secure Chat](./examples/simple_secure_chat) - Secure terminal based text communication between devices.
-
-The Simple Secure Chat example can be interacted with through the Serial Monitor in Visual Studio Code, or with a Serial USB Terminal on Android.
 
 ## ⚡️ MeshCore Flasher
 
@@ -110,15 +110,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 ## 📞 Get Support
 
-- Report bugs and request features on the [GitHub Issues](https://github.com/ripplebiz/MeshCore/issues) page.
-- Find additional guides and components on [my site](https://buymeacoffee.com/ripplebiz).
 - Join [MeshCore Discord](https://discord.gg/BMwCtwHj5V) to chat with the developers and get help from the community.
 
-## RAK Wireless Board Support in PlatformIO
-
-Before building/flashing the RAK4631 targets in this project, there is, unfortunately, some patching you have to do to your platformIO packages to make it work. There is a guide here on the process:
-   [RAK Wireless: How to Perform Installation of Board Support Package in PlatformIO](https://learn.rakwireless.com/hc/en-us/articles/26687276346775-How-To-Perform-Installation-of-Board-Support-Package-in-PlatformIO)
-
-After building, you will need to convert the output firmware.hex file into a .uf2 file you can copy over to your RAK4631 device (after doing a full erase) by using the command `uf2conv.py -f 0xADA52840 -c firmware.hex` with the python script available from:
-   [GitHub: Microsoft - uf2](https://github.com/Microsoft/uf2/blob/master/utils/uf2conv.py)
 
