@@ -49,6 +49,10 @@
 #define I2C_SDA 13
 #define I2C_SCL 14
 
+// Aliases for ESP32Board base class compatibility
+#define PIN_BOARD_SDA I2C_SDA
+#define PIN_BOARD_SCL I2C_SCL
+
 // I2C Device Addresses
 #define I2C_ADDR_TOUCH      0x1A  // CST328/CST3530
 #define I2C_ADDR_GYROSCOPE  0x28  // BHI260AP

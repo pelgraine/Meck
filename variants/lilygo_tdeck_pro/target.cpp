@@ -32,15 +32,12 @@ bool radio_init() {
   Serial.println("radio_init() - starting");
   
   // NOTE: board.begin() is called by main.cpp setup() before radio_init()
-  // So we don't call it here to avoid duplicate initialization
+  // I2C is already initialized there with correct pins
   
   fallback_clock.begin();
   Serial.println("radio_init() - fallback_clock started");
   
-  // Initialize I2C with correct pins for T-Deck Pro
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Serial.println("radio_init() - I2C initialized");
-  
+  // Wire already initialized in board.begin() - just use it for RTC
   rtc_clock.begin(Wire);
   Serial.println("radio_init() - rtc_clock started");
 

@@ -39,50 +39,10 @@ public:
   }
 
   // Read battery voltage from BQ27220 fuel gauge via I2C
-  // Returns 0 silently if fuel gauge not present/responding
-  uint16_t getBattMilliVolts() {
-    #if HAS_BQ27220
-      Wire.beginTransmission(BQ27220_I2C_ADDR);
-      Wire.write(BQ27220_REG_VOLTAGE);
-      if (Wire.endTransmission(false) != 0) {
-        return 0;  // I2C error - fuel gauge not responding
-      }
-      
-      uint8_t count = Wire.requestFrom((uint8_t)BQ27220_I2C_ADDR, (uint8_t)2);
-      if (count != 2) {
-        return 0;  // Read error
-      }
-      
-      uint16_t voltage = Wire.read();
-      voltage |= (Wire.read() << 8);
-      return voltage;  // Already in mV
-    #else
-      return 0;
-    #endif
-  }
+  uint16_t getBattMilliVolts() override;
 
   // Read state of charge percentage from BQ27220
-  // Returns 0 silently if fuel gauge not present/responding
-  uint8_t getBatteryPercent() {
-    #if HAS_BQ27220
-      Wire.beginTransmission(BQ27220_I2C_ADDR);
-      Wire.write(BQ27220_REG_SOC);
-      if (Wire.endTransmission(false) != 0) {
-        return 0;
-      }
-      
-      uint8_t count = Wire.requestFrom((uint8_t)BQ27220_I2C_ADDR, (uint8_t)2);
-      if (count != 2) {
-        return 0;
-      }
-      
-      uint16_t soc = Wire.read();
-      soc |= (Wire.read() << 8);
-      return (uint8_t)min(soc, (uint16_t)100);
-    #else
-      return 0;
-    #endif
-  }
+  uint8_t getBatteryPercent();
 
   const char* getManufacturerName() const {
     return "LilyGo T-Deck Pro";
