@@ -1,7 +1,7 @@
-##⭐ Meshcore + Fork = Meck⭐
+## Meshcore + Fork = Meck 
 This fork was created specifically to focus on enabling BLE companion firmware for the LilyGo T-Deck Pro v1.1. Created with the assistance of Claude AI using Meshcore v1.11 code. 
 
-***Please note as of 28 Jan 2026, the T-Deck Pro v1.1 repeater & usb firmware has not been finalised nor confirmed as functioning. This firmware also will likely not work on v1.0 of the T-Deck Pro, as the two versions have different pins.***
+⭐ ***Please note as of 28 Jan 2026, the T-Deck Pro v1.1 repeater & usb firmware has not been finalised nor confirmed as functioning. This firmware also will likely not work on v1.0 of the T-Deck Pro, as the two versions have different pins.*** ⭐
 
 ## About MeshCore
 
