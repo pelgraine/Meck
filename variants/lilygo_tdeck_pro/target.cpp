@@ -19,10 +19,8 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #if HAS_GPS
   MicroNMEALocationProvider gps(Serial2, &rtc_clock);
   EnvironmentSensorManager sensors(gps);
-  #pragma message "GPS enabled - using EnvironmentSensorManager with MicroNMEALocationProvider"
 #else
   SensorManager sensors;
-  #pragma message "GPS disabled - using basic SensorManager"
 #endif
 
 #ifdef DISPLAY_CLASS
@@ -31,37 +29,27 @@ AutoDiscoverRTCClock rtc_clock(fallback_clock);
 #endif
 
 bool radio_init() {
-  Serial.println("radio_init() - starting");
+  MESH_DEBUG_PRINTLN("radio_init() - starting");
   
   // NOTE: board.begin() is called by main.cpp setup() before radio_init()
   // I2C is already initialized there with correct pins
   
   fallback_clock.begin();
-  Serial.println("radio_init() - fallback_clock started");
+  MESH_DEBUG_PRINTLN("radio_init() - fallback_clock started");
   
   // Wire already initialized in board.begin() - just use it for RTC
   rtc_clock.begin(Wire);
-  Serial.println("radio_init() - rtc_clock started");
-
-  // Debug GPS status
-  #if HAS_GPS
-    Serial.println("radio_init() - HAS_GPS is defined");
-    Serial.print("radio_init() - gps object address: ");
-    Serial.println((uint32_t)&gps, HEX);
-  #else
-    Serial.println("radio_init() - HAS_GPS is NOT defined");
-  #endif
+  MESH_DEBUG_PRINTLN("radio_init() - rtc_clock started");
 
 #if defined(P_LORA_SCLK)
-  Serial.println("radio_init() - initializing LoRa SPI...");
+  MESH_DEBUG_PRINTLN("radio_init() - initializing LoRa SPI...");
   loraSpi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, P_LORA_NSS);
-  Serial.println("radio_init() - SPI initialized, calling radio.std_init()...");
+  MESH_DEBUG_PRINTLN("radio_init() - SPI initialized, calling radio.std_init()...");
   bool result = radio.std_init(&loraSpi);
-  Serial.print("radio_init() - radio.std_init() returned: ");
-  Serial.println(result ? "SUCCESS" : "FAILED");
+  MESH_DEBUG_PRINTLN("radio_init() - radio.std_init() returned: %s", result ? "SUCCESS" : "FAILED");
   return result;
 #else
-  Serial.println("radio_init() - calling radio.std_init() without custom SPI...");
+  MESH_DEBUG_PRINTLN("radio_init() - calling radio.std_init() without custom SPI...");
   return radio.std_init();
 #endif
 }

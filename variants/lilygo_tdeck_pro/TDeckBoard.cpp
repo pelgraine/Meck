@@ -1,24 +1,25 @@
 #include <Arduino.h>
 #include "variant.h"
 #include "TDeckBoard.h"
+#include <Mesh.h>  // For MESH_DEBUG_PRINTLN
 
 uint32_t deviceOnline = 0x00;
 
 void TDeckBoard::begin() {
   
-  Serial.println("TDeckBoard::begin() - starting");
+  MESH_DEBUG_PRINTLN("TDeckBoard::begin() - starting");
   
   // Enable peripheral power (keyboard, sensors, etc.) FIRST
   // This powers the BQ27220 fuel gauge and other I2C devices
   pinMode(PIN_PERF_POWERON, OUTPUT);
   digitalWrite(PIN_PERF_POWERON, HIGH);
   delay(50);  // Allow peripherals to power up before I2C init
-  Serial.println("TDeckBoard::begin() - peripheral power enabled");
+  MESH_DEBUG_PRINTLN("TDeckBoard::begin() - peripheral power enabled");
 
   // Initialize I2C with correct pins for T-Deck Pro
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);  // 100kHz for reliable fuel gauge communication
-  Serial.println("TDeckBoard::begin() - I2C initialized");
+  MESH_DEBUG_PRINTLN("TDeckBoard::begin() - I2C initialized");
   
   // Now call parent class begin (after power and I2C are ready)
   ESP32Board::begin();
@@ -28,7 +29,7 @@ void TDeckBoard::begin() {
     pinMode(P_LORA_EN, OUTPUT);
     digitalWrite(P_LORA_EN, HIGH);
     delay(10);  // Allow module to power up
-    Serial.println("TDeckBoard::begin() - LoRa power enabled");
+    MESH_DEBUG_PRINTLN("TDeckBoard::begin() - LoRa power enabled");
   #endif
 
   // Enable GPS module power and initialize Serial2
@@ -37,14 +38,12 @@ void TDeckBoard::begin() {
       pinMode(PIN_GPS_EN, OUTPUT);
       digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);  // GPS_EN_ACTIVE is 1 (HIGH)
       delay(100);  // Allow GPS to power up
-      Serial.println("TDeckBoard::begin() - GPS power enabled");
+      MESH_DEBUG_PRINTLN("TDeckBoard::begin() - GPS power enabled");
     #endif
     
     // Initialize Serial2 for GPS with correct pins
     Serial2.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-    Serial.print("TDeckBoard::begin() - GPS Serial2 initialized at ");
-    Serial.print(GPS_BAUDRATE);
-    Serial.println(" baud");
+    MESH_DEBUG_PRINTLN("TDeckBoard::begin() - GPS Serial2 initialized at %d baud", GPS_BAUDRATE);
   #endif
 
   // Configure user button
@@ -68,12 +67,10 @@ void TDeckBoard::begin() {
   // Test BQ27220 communication
   #if HAS_BQ27220
     uint16_t voltage = getBattMilliVolts();
-    Serial.print("TDeckBoard::begin() - Battery voltage: ");
-    Serial.print(voltage);
-    Serial.println(" mV");
+    MESH_DEBUG_PRINTLN("TDeckBoard::begin() - Battery voltage: %d mV", voltage);
   #endif
   
-  Serial.println("TDeckBoard::begin() - complete");
+  MESH_DEBUG_PRINTLN("TDeckBoard::begin() - complete");
 }
 
 uint16_t TDeckBoard::getBattMilliVolts() {
@@ -81,13 +78,13 @@ uint16_t TDeckBoard::getBattMilliVolts() {
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(BQ27220_REG_VOLTAGE);
     if (Wire.endTransmission(false) != 0) {
-      Serial.println("BQ27220: I2C error reading voltage");
+      MESH_DEBUG_PRINTLN("BQ27220: I2C error reading voltage");
       return 0;
     }
     
     uint8_t count = Wire.requestFrom((uint8_t)BQ27220_I2C_ADDR, (uint8_t)2);
     if (count != 2) {
-      Serial.println("BQ27220: Read error - wrong byte count");
+      MESH_DEBUG_PRINTLN("BQ27220: Read error - wrong byte count");
       return 0;
     }
     

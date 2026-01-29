@@ -110,14 +110,14 @@ void halt() {
 void setup() {
   Serial.begin(115200);
   delay(100);  // Give serial time to initialize
-  Serial.println("=== setup() - STARTING ===");
+  MESH_DEBUG_PRINTLN("=== setup() - STARTING ===");
 
   board.begin();
-  Serial.println("setup() - board.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - board.begin() done");
 
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
-  Serial.println("setup() - about to call display.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call display.begin()");
   
   // =========================================================================
   // T-Deck Pro V1.1: Initialize E-Ink reset pin BEFORE display.begin()
@@ -127,7 +127,7 @@ void setup() {
     // Initialize E-Ink reset pin (GPIO 16)
     pinMode(PIN_DISPLAY_RST, OUTPUT);
     digitalWrite(PIN_DISPLAY_RST, HIGH);
-    Serial.println("setup() - E-Ink reset pin initialized");
+    MESH_DEBUG_PRINTLN("setup() - E-Ink reset pin initialized");
     
     // Initialize Touch reset pin (GPIO 38) 
     #ifdef CST328_PIN_RST
@@ -138,13 +138,13 @@ void setup() {
       delay(80);
       digitalWrite(CST328_PIN_RST, HIGH);
       delay(20);
-      Serial.println("setup() - Touch reset pin initialized");
+      MESH_DEBUG_PRINTLN("setup() - Touch reset pin initialized");
     #endif
   #endif
   // =========================================================================
   
   if (display.begin()) {
-    Serial.println("setup() - display.begin() returned true");
+    MESH_DEBUG_PRINTLN("setup() - display.begin() returned true");
     disp = &display;
     disp->startFrame();
   #ifdef ST7789
@@ -152,25 +152,25 @@ void setup() {
   #endif
     disp->drawTextCentered(disp->width() / 2, 28, "Loading...");
     disp->endFrame();
-    Serial.println("setup() - Loading screen drawn");
+    MESH_DEBUG_PRINTLN("setup() - Loading screen drawn");
   } else {
-    Serial.println("setup() - display.begin() returned false!");
+    MESH_DEBUG_PRINTLN("setup() - display.begin() returned false!");
   }
 #endif
 
-  Serial.println("setup() - about to call radio_init()");
+  MESH_DEBUG_PRINTLN("setup() - about to call radio_init()");
   if (!radio_init()) { 
-    Serial.println("setup() - radio_init() FAILED! Halting.");
+    MESH_DEBUG_PRINTLN("setup() - radio_init() FAILED! Halting.");
     halt(); 
   }
-  Serial.println("setup() - radio_init() done");
+  MESH_DEBUG_PRINTLN("setup() - radio_init() done");
 
-  Serial.println("setup() - about to call fast_rng.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call fast_rng.begin()");
   fast_rng.begin(radio_get_rng_seed());
-  Serial.println("setup() - fast_rng.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - fast_rng.begin() done");
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
-  Serial.println("setup() - NRF52/STM32 filesystem init");
+  MESH_DEBUG_PRINTLN("setup() - NRF52/STM32 filesystem init");
   InternalFS.begin();
   #if defined(QSPIFLASH)
     if (!QSPIFlash.begin()) {
@@ -183,11 +183,11 @@ void setup() {
       ExtraFS.begin();
   #endif
   #endif
-  Serial.println("setup() - about to call store.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
   store.begin();
-  Serial.println("setup() - store.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - store.begin() done");
   
-  Serial.println("setup() - about to call the_mesh.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.begin()");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -195,27 +195,27 @@ void setup() {
         false
     #endif
   );
-  Serial.println("setup() - the_mesh.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
 
 #ifdef BLE_PIN_CODE
-  Serial.println("setup() - about to call serial_interface.begin() with BLE");
+  MESH_DEBUG_PRINTLN("setup() - about to call serial_interface.begin() with BLE");
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
-  Serial.println("setup() - serial_interface.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - serial_interface.begin() done");
 #else
   serial_interface.begin(Serial);
 #endif
-  Serial.println("setup() - about to call the_mesh.startInterface()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.startInterface()");
   the_mesh.startInterface(serial_interface);
-  Serial.println("setup() - the_mesh.startInterface() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.startInterface() done");
 
 #elif defined(RP2040_PLATFORM)
-  Serial.println("setup() - RP2040 filesystem init");
+  MESH_DEBUG_PRINTLN("setup() - RP2040 filesystem init");
   LittleFS.begin();
-  Serial.println("setup() - about to call store.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
   store.begin();
-  Serial.println("setup() - store.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - store.begin() done");
   
-  Serial.println("setup() - about to call the_mesh.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.begin()");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -223,7 +223,7 @@ void setup() {
         false
     #endif
   );
-  Serial.println("setup() - the_mesh.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
 
   //#ifdef WIFI_SSID
   //  WiFi.begin(WIFI_SSID, WIFI_PWD);
@@ -239,20 +239,20 @@ void setup() {
   #else
     serial_interface.begin(Serial);
   #endif
-  Serial.println("setup() - about to call the_mesh.startInterface()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.startInterface()");
   the_mesh.startInterface(serial_interface);
-  Serial.println("setup() - the_mesh.startInterface() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.startInterface() done");
 
 #elif defined(ESP32)
-  Serial.println("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
+  MESH_DEBUG_PRINTLN("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
   SPIFFS.begin(true);
-  Serial.println("setup() - SPIFFS.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
   
-  Serial.println("setup() - about to call store.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
   store.begin();
-  Serial.println("setup() - store.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - store.begin() done");
   
-  Serial.println("setup() - about to call the_mesh.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.begin()");
   the_mesh.begin(
     #ifdef DISPLAY_CLASS
         disp != NULL
@@ -260,16 +260,16 @@ void setup() {
         false
     #endif
   );
-  Serial.println("setup() - the_mesh.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
 
 #ifdef WIFI_SSID
-  Serial.println("setup() - WiFi mode");
+  MESH_DEBUG_PRINTLN("setup() - WiFi mode");
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   serial_interface.begin(TCP_PORT);
 #elif defined(BLE_PIN_CODE)
-  Serial.println("setup() - about to call serial_interface.begin() with BLE");
+  MESH_DEBUG_PRINTLN("setup() - about to call serial_interface.begin() with BLE");
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
-  Serial.println("setup() - serial_interface.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - serial_interface.begin() done");
 #elif defined(SERIAL_RX)
   companion_serial.setPins(SERIAL_RX, SERIAL_TX);
   companion_serial.begin(115200);
@@ -277,30 +277,30 @@ void setup() {
 #else
   serial_interface.begin(Serial);
 #endif
-  Serial.println("setup() - about to call the_mesh.startInterface()");
+  MESH_DEBUG_PRINTLN("setup() - about to call the_mesh.startInterface()");
   the_mesh.startInterface(serial_interface);
-  Serial.println("setup() - the_mesh.startInterface() done");
+  MESH_DEBUG_PRINTLN("setup() - the_mesh.startInterface() done");
 
 #else
   #error "need to define filesystem"
 #endif
 
-  Serial.println("setup() - about to call sensors.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call sensors.begin()");
   sensors.begin();
-  Serial.println("setup() - sensors.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - sensors.begin() done");
 
   // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1
   // We need to reinitialize Serial2 to reclaim them
   #if HAS_GPS
     Serial2.end();  // Close any existing Serial2
     Serial2.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-    Serial.println("setup() - Reinitialized Serial2 for GPS after sensors.begin()");
+    MESH_DEBUG_PRINTLN("setup() - Reinitialized Serial2 for GPS after sensors.begin()");
   #endif
 
 #ifdef DISPLAY_CLASS
-  Serial.println("setup() - about to call ui_task.begin()");
+  MESH_DEBUG_PRINTLN("setup() - about to call ui_task.begin()");
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
-  Serial.println("setup() - ui_task.begin() done");
+  MESH_DEBUG_PRINTLN("setup() - ui_task.begin() done");
 #endif
 
   // Enable GPS by default on T-Deck Pro
@@ -309,10 +309,10 @@ void setup() {
     sensors.setSettingValue("gps", "1");
     the_mesh.getNodePrefs()->gps_enabled = 1;
     the_mesh.savePrefs();
-    Serial.println("setup() - GPS enabled by default");
+    MESH_DEBUG_PRINTLN("setup() - GPS enabled by default");
   #endif
 
-  Serial.println("=== setup() - COMPLETE ===");
+  MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
 void loop() {
@@ -322,24 +322,4 @@ void loop() {
   ui_task.loop();
 #endif
   rtc_clock.tick();
-
-  // Debug: Check for GPS data on Serial2
-  #if HAS_GPS
-  static unsigned long lastGpsDebug = 0;
-  if (millis() - lastGpsDebug > 5000) {  // Every 5 seconds
-    lastGpsDebug = millis();
-    Serial.print("GPS Debug - Serial2 available: ");
-    Serial.print(Serial2.available());
-    Serial.print(" bytes");
-    LocationProvider* loc = sensors.getLocationProvider();
-    if (loc) {
-      Serial.print(", valid: ");
-      Serial.print(loc->isValid() ? "YES" : "NO");
-      Serial.print(", sats: ");
-      Serial.println(loc->satellitesCount());
-    } else {
-      Serial.println(", LocationProvider: NULL");
-    }
-  }
-  #endif
 }
