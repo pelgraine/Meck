@@ -51,6 +51,7 @@ class UITask : public AbstractUITask {
   UIScreen* splash;
   UIScreen* home;
   UIScreen* msg_preview;
+  UIScreen* channel_screen;  // Channel message history screen
   UIScreen* curr;
 
   void userLedHandler();
@@ -73,15 +74,23 @@ public:
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen() { setCurrScreen(home); }
+  void gotoChannelScreen();  // Navigate to channel message screen
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
+  bool isOnChannelScreen() const { return curr == channel_screen; }
 
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
 
+  // Inject a key press from external source (e.g., keyboard)
+  void injectKey(char c);
+  
+  // Get current screen for checking state
+  UIScreen* getCurrentScreen() const { return curr; }
+  UIScreen* getMsgPreviewScreen() const { return msg_preview; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

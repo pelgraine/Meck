@@ -4,6 +4,22 @@
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
 #include "target.h"    // For sensors, board, etc.
 
+// T-Deck Pro Keyboard support
+#if defined(LilyGo_TDeck_Pro)
+  #include "TCA8418Keyboard.h"
+  TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
+  
+  // Compose mode state
+  static bool composeMode = false;
+  static char composeBuffer[138];  // 137 chars max + null terminator
+  static int composePos = 0;
+  
+  void initKeyboard();
+  void handleKeyboardInput();
+  void drawComposeScreen();
+  void sendComposedMessage();
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -303,6 +319,11 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - ui_task.begin() done");
 #endif
 
+  // Initialize T-Deck Pro keyboard
+  #if defined(LilyGo_TDeck_Pro)
+    initKeyboard();
+  #endif
+
   // Enable GPS by default on T-Deck Pro
   #if HAS_GPS
     // Set GPS enabled in both sensor manager and node prefs
@@ -319,7 +340,232 @@ void loop() {
   the_mesh.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS
+  // Skip UITask rendering when in compose mode to prevent flickering
+  #if defined(LilyGo_TDeck_Pro)
+  if (!composeMode) {
+    ui_task.loop();
+  }
+  #else
   ui_task.loop();
+  #endif
 #endif
   rtc_clock.tick();
+
+  // Handle T-Deck Pro keyboard input
+  #if defined(LilyGo_TDeck_Pro)
+    handleKeyboardInput();
+  #endif
 }
+
+// ============================================================================
+// T-DECK PRO KEYBOARD FUNCTIONS
+// ============================================================================
+
+#if defined(LilyGo_TDeck_Pro)
+
+void initKeyboard() {
+  // Keyboard uses the same I2C bus as other peripherals (already initialized)
+  if (keyboard.begin()) {
+    MESH_DEBUG_PRINTLN("setup() - Keyboard initialized");
+    composeBuffer[0] = '\0';
+    composePos = 0;
+    composeMode = false;
+  } else {
+    MESH_DEBUG_PRINTLN("setup() - Keyboard initialization failed!");
+  }
+}
+
+void handleKeyboardInput() {
+  if (!keyboard.isReady()) return;
+  
+  char key = keyboard.readKey();
+  if (key == 0) return;
+  
+  Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
+                key >= 32 ? key : '?', key, composeMode);
+  
+  if (composeMode) {
+    // In compose mode - handle text input
+    if (key == '\r') {
+      // Enter - send the message
+      Serial.println("Compose: Enter pressed, sending...");
+      if (composePos > 0) {
+        sendComposedMessage();
+      }
+      composeMode = false;
+      composeBuffer[0] = '\0';
+      composePos = 0;
+      ui_task.gotoHomeScreen();
+      return;
+    }
+    
+    if (key == '\b') {
+      // Backspace - check if shift was recently pressed for cancel combo
+      if (keyboard.wasShiftRecentlyPressed(500)) {
+        // Shift+Backspace = Cancel
+        Serial.println("Compose: Shift+Backspace, cancelling...");
+        composeMode = false;
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        ui_task.gotoHomeScreen();
+        return;
+      }
+      // Regular backspace - delete last character
+      if (composePos > 0) {
+        composePos--;
+        composeBuffer[composePos] = '\0';
+        Serial.printf("Compose: Backspace, pos now %d\n", composePos);
+        drawComposeScreen();
+      }
+      return;
+    }
+    
+    // Regular character input
+    if (key >= 32 && key < 127 && composePos < 137) {
+      composeBuffer[composePos++] = key;
+      composeBuffer[composePos] = '\0';
+      Serial.printf("Compose: Added '%c', pos now %d\n", key, composePos);
+      drawComposeScreen();
+    }
+    return;
+  }
+  
+  // Normal mode - not composing
+  switch (key) {
+    case 'c':
+    case 'C':
+      // Enter compose mode
+      composeMode = true;
+      composeBuffer[0] = '\0';
+      composePos = 0;
+      Serial.println("Entering compose mode");
+      drawComposeScreen();
+      break;
+    
+    case 'm':
+    case 'M':
+      // Go to channel message screen
+      Serial.println("Opening channel messages");
+      ui_task.gotoChannelScreen();
+      break;
+    
+    case 'w':
+    case 'W':
+    case 'a':
+    case 'A':
+      // Navigate left/previous
+      Serial.println("Nav: Previous");
+      ui_task.injectKey(0xF2);  // KEY_PREV
+      break;
+      
+    case 's':
+    case 'S':
+    case 'd':
+    case 'D':
+      // Navigate right/next
+      Serial.println("Nav: Next");
+      ui_task.injectKey(0xF1);  // KEY_NEXT
+      break;
+      
+    case '\r':
+      // Select/Enter
+      Serial.println("Nav: Enter/Select");
+      ui_task.injectKey(13);  // KEY_ENTER
+      break;
+      
+    case 'q':
+    case 'Q':
+    case '\b':
+      // Go back to home screen
+      Serial.println("Nav: Back to home");
+      ui_task.gotoHomeScreen();
+      break;
+      
+    case ' ':
+      // Space - also acts as next/select
+      Serial.println("Nav: Space (Next)");
+      ui_task.injectKey(0xF1);  // KEY_NEXT
+      break;
+      
+    default:
+      Serial.printf("Unhandled key in normal mode: '%c' (0x%02X)\n", key, key);
+      break;
+  }
+}
+
+void drawComposeScreen() {
+  #ifdef DISPLAY_CLASS
+  display.startFrame();
+  display.setTextSize(1);
+  display.setColor(DisplayDriver::GREEN);
+  display.setCursor(0, 0);
+  display.print("Compose - Public Channel");
+  
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, 11, display.width(), 1);
+  
+  display.setCursor(0, 14);
+  display.setColor(DisplayDriver::LIGHT);
+  
+  // Word wrap the compose buffer
+  int x = 0;
+  int y = 14;
+  int charsPerLine = display.width() / 6;
+  char charStr[2] = {0, 0};  // Buffer for single character as string
+  
+  for (int i = 0; i < composePos; i++) {
+    charStr[0] = composeBuffer[i];
+    display.print(charStr);
+    x++;
+    if (x >= charsPerLine) {
+      x = 0;
+      y += 11;
+      display.setCursor(0, y);
+    }
+  }
+  
+  // Show cursor
+  display.print("_");
+  
+  // Status bar
+  int statusY = display.height() - 12;
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, statusY - 2, display.width(), 1);
+  display.setCursor(0, statusY);
+  display.setColor(DisplayDriver::YELLOW);
+  
+  char status[50];
+  sprintf(status, "%d/137 Enter:Send Sh+Del:Cancel", composePos);
+  display.print(status);
+  
+  display.endFrame();
+  #endif
+}
+
+void sendComposedMessage() {
+  if (composePos == 0) return;
+  
+  MESH_DEBUG_PRINTLN("Sending message: %s", composeBuffer);
+  
+  // Get the Public channel (index 0)
+  ChannelDetails channel;
+  if (the_mesh.getChannel(0, channel)) {
+    uint32_t timestamp = rtc_clock.getCurrentTime();
+    
+    // Send to channel
+    if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
+                                   the_mesh.getNodePrefs()->node_name, 
+                                   composeBuffer, composePos)) {
+      MESH_DEBUG_PRINTLN("Message sent to Public channel");
+      ui_task.showAlert("Sent!", 1500);
+    } else {
+      MESH_DEBUG_PRINTLN("Failed to send message");
+      ui_task.showAlert("Send failed!", 1500);
+    }
+  } else {
+    MESH_DEBUG_PRINTLN("Could not get Public channel");
+    ui_task.showAlert("No channel!", 1500);
+  }
+}
+
+#endif // LilyGo_TDeck_Pro

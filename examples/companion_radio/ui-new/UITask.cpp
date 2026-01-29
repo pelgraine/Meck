@@ -30,6 +30,7 @@
 #endif
 
 #include "icons.h"
+#include "ChannelScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -580,6 +581,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
+  channel_screen = new ChannelScreen(this, &rtc_clock);
   setCurrScreen(splash);
 }
 
@@ -628,7 +630,12 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
 
+  // Add to preview screen (for notifications)
   ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
+  
+  // Also add to channel history screen
+  ((ChannelScreen *) channel_screen)->addMessage(path_len, from_name, text);
+  
   setCurrScreen(msg_preview);
 
   if (_display != NULL) {
@@ -921,4 +928,26 @@ void UITask::toggleBuzzer() {
     showAlert(buzzer.isQuiet() ? "Buzzer: OFF" : "Buzzer: ON", 800);
     _next_refresh = 0;  // trigger refresh
   #endif
+}
+
+void UITask::injectKey(char c) {
+  if (c != 0 && curr) {
+    // Turn on display if it's off
+    if (_display != NULL && !_display->isOn()) {
+      _display->turnOn();
+    }
+    curr->handleInput(c);
+    _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
+    _next_refresh = 100;  // trigger refresh
+  }
+}
+
+void UITask::gotoChannelScreen() {
+  ((ChannelScreen *) channel_screen)->resetScroll();
+  setCurrScreen(channel_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
 }
