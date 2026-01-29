@@ -16,6 +16,13 @@ class TDeckBoard : public ESP32Board {
 public:
   void begin();
 
+  void powerOff() override {
+    // Stop Bluetooth before power off
+    btStop();
+    // Don't call parent or enterDeepSleep - let normal shutdown continue
+    // Display will show "hibernating..." text
+  }
+
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
