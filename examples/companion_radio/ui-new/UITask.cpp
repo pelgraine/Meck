@@ -967,3 +967,12 @@ void UITask::gotoChannelScreen() {
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
 }
+
+void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {
+  // Format the message as "Sender: message"
+  char formattedMsg[CHANNEL_MSG_TEXT_LEN];
+  snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
+  
+  // Add to channel history with path_len=0 (local message)
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+}

@@ -126,8 +126,12 @@ public:
       int headerHeight = 14;
       int footerHeight = 14;
       
-      // Calculate chars per line based on display width
-      int charsPerLine = display.width() / 6;
+      // Calculate chars per line based on actual font width (not assumed 6px)
+      // Measure a test string and scale accordingly
+      uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
+      int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
+      if (charsPerLine < 12) charsPerLine = 12;  // Minimum reasonable
+      if (charsPerLine > 40) charsPerLine = 40;  // Maximum reasonable
       
       int y = headerHeight;
       
@@ -168,40 +172,37 @@ public:
         display.print(tmp);
         y += lineHeight;
         
-        // Message text with word wrap
+        // Message text with character wrapping (like compose screen - fills full width)
         display.setColor(DisplayDriver::LIGHT);
         
         int textLen = strlen(msg->text);
         int pos = 0;
         int linesForThisMsg = 0;
-        int maxLinesPerMsg = 3;
+        int maxLinesPerMsg = 6;  // Allow more lines per message
+        int x = 0;
+        char charStr[2] = {0, 0};
+        
+        display.setCursor(0, y);
         
         while (pos < textLen && linesForThisMsg < maxLinesPerMsg && y < display.height() - footerHeight - 2) {
-          display.setCursor(0, y);
+          charStr[0] = msg->text[pos];
+          display.print(charStr);
+          x++;
+          pos++;
           
-          int lineEnd = pos + charsPerLine;
-          if (lineEnd >= textLen) {
-            lineEnd = textLen;
-          } else {
-            int lastSpace = -1;
-            for (int j = pos; j < lineEnd && j < textLen; j++) {
-              if (msg->text[j] == ' ') lastSpace = j;
+          if (x >= charsPerLine) {
+            x = 0;
+            linesForThisMsg++;
+            y += lineHeight;
+            if (linesForThisMsg < maxLinesPerMsg && y < display.height() - footerHeight - 2) {
+              display.setCursor(0, y);
             }
-            if (lastSpace > pos) lineEnd = lastSpace;
           }
-          
-          char lineBuf[42];
-          int lineLen = lineEnd - pos;
-          if (lineLen > 40) lineLen = 40;
-          strncpy(lineBuf, msg->text + pos, lineLen);
-          lineBuf[lineLen] = '\0';
-          display.print(lineBuf);
-          
-          pos = lineEnd;
-          while (pos < textLen && msg->text[pos] == ' ') pos++;
-          
+        }
+        
+        // If we didn't end on a full line, still count it
+        if (x > 0) {
           y += lineHeight;
-          linesForThisMsg++;
         }
         
         y += 2;

@@ -89,6 +89,9 @@ public:
   // Inject a key press from external source (e.g., keyboard)
   void injectKey(char c);
   
+  // Add a sent message to the channel screen history
+  void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text);
+  
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }

@@ -14,6 +14,9 @@
   static char composeBuffer[138];  // 137 chars max + null terminator
   static int composePos = 0;
   static uint8_t composeChannelIdx = 0;  // Which channel to send to
+  static unsigned long lastComposeRefresh = 0;
+  static bool composeNeedsRefresh = false;
+  #define COMPOSE_REFRESH_INTERVAL 250  // ms between e-ink refreshes while typing
   
   void initKeyboard();
   void handleKeyboardInput();
@@ -345,6 +348,13 @@ void loop() {
   #if defined(LilyGo_TDeck_Pro)
   if (!composeMode) {
     ui_task.loop();
+  } else {
+    // Handle debounced compose screen refresh
+    if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+      drawComposeScreen();
+      lastComposeRefresh = millis();
+      composeNeedsRefresh = false;
+    }
   }
   #else
   ui_task.loop();
@@ -371,6 +381,8 @@ void initKeyboard() {
     composeBuffer[0] = '\0';
     composePos = 0;
     composeMode = false;
+    composeNeedsRefresh = false;
+    lastComposeRefresh = 0;
   } else {
     MESH_DEBUG_PRINTLN("setup() - Keyboard initialization failed!");
   }
@@ -416,7 +428,7 @@ void handleKeyboardInput() {
         composePos--;
         composeBuffer[composePos] = '\0';
         Serial.printf("Compose: Backspace, pos now %d\n", composePos);
-        drawComposeScreen();
+        composeNeedsRefresh = true;  // Use debounced refresh
       }
       return;
     }
@@ -460,7 +472,7 @@ void handleKeyboardInput() {
       composeBuffer[composePos++] = key;
       composeBuffer[composePos] = '\0';
       Serial.printf("Compose: Added '%c', pos now %d\n", key, composePos);
-      drawComposeScreen();
+      composeNeedsRefresh = true;  // Use debounced refresh
     }
     return;
   }
@@ -581,10 +593,13 @@ void drawComposeScreen() {
   display.setCursor(0, 14);
   display.setColor(DisplayDriver::LIGHT);
   
-  // Word wrap the compose buffer
+  // Word wrap the compose buffer - calculate chars per line based on actual font width
   int x = 0;
   int y = 14;
-  int charsPerLine = display.width() / 6;
+  uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
+  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
+  if (charsPerLine < 12) charsPerLine = 12;
+  if (charsPerLine > 40) charsPerLine = 40;
   char charStr[2] = {0, 0};  // Buffer for single character as string
   
   for (int i = 0; i < composePos; i++) {
@@ -643,6 +658,12 @@ void sendComposedMessage() {
                                    the_mesh.getNodePrefs()->node_name, 
                                    composeBuffer, composePos)) {
       MESH_DEBUG_PRINTLN("Message sent to channel %s", channel.name);
+      
+      // Add the sent message to local channel history so we can see what we sent
+      ui_task.addSentChannelMessage(composeChannelIdx, 
+                                     the_mesh.getNodePrefs()->node_name, 
+                                     composeBuffer);
+      
       ui_task.showAlert("Sent!", 1500);
     } else {
       MESH_DEBUG_PRINTLN("Failed to send message");
