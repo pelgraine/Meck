@@ -630,7 +630,7 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
 
-  // Add to preview screen (for notifications)
+  // Add to preview screen (for notifications on non-keyboard devices)
   ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
   
   // Determine channel index by looking up the channel name
@@ -648,7 +648,16 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Add to channel history screen with channel index
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text);
   
+#if defined(LilyGo_TDeck_Pro)
+  // T-Deck Pro: Don't interrupt user with popup - just show brief notification
+  // Messages are stored in channel history, accessible via 'M' key
+  char alertBuf[40];
+  snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
+  showAlert(alertBuf, 2000);
+#else
+  // Other devices: Show full preview screen (legacy behavior)
   setCurrScreen(msg_preview);
+#endif
 
   if (_display != NULL) {
     if (!_display->isOn() && !hasConnection()) {
