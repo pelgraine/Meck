@@ -1,7 +1,64 @@
 ## Meshcore + Fork = Meck 
 This fork was created specifically to focus on enabling BLE companion firmware for the LilyGo T-Deck Pro. Created with the assistance of Claude AI using Meshcore v1.11 code. 
 
-⭐ ***Please note as of 28 Jan 2026, the T-Deck Pro repeater & usb firmware has not been finalised nor confirmed as functioning.*** ⭐
+⭐ ***Please note as of 1 Feb 2026, the T-Deck Pro repeater & usb firmware has not been finalised nor confirmed as functioning.*** ⭐
+
+## T-Deck Pro Keyboard Controls
+
+The T-Deck Pro BLE companion firmware includes full keyboard support for standalone messaging without a phone.
+
+### Navigation (Home Screen)
+
+| Key | Action |
+|-----|--------|
+| W / A | Previous page |
+| S / D | Next page |
+| Enter | Select / Confirm |
+| M | Open channel messages |
+| Q | Back to home screen |
+
+### Channel Message Screen
+
+| Key | Action |
+|-----|--------|
+| W / S | Scroll messages up/down |
+| A / D | Switch between channels |
+| C | Compose new message |
+| Q | Back to home screen |
+
+### Compose Mode
+
+| Key | Action |
+|-----|--------|
+| A / D | Switch destination channel (when message is empty) |
+| Enter | Send message |
+| Backspace | Delete last character |
+| Shift + Backspace | Cancel and exit compose mode |
+
+### Symbol Entry (Sym Key)
+
+Press the **Sym** key then the letter key to enter numbers and symbols:
+
+| Key | Sym+ | | Key | Sym+ | | Key | Sym+ |
+|-----|------|-|-----|------|-|-----|------|
+| Q | # | | A | * | | Z | 7 |
+| W | 1 | | S | 4 | | X | 8 |
+| E | 2 | | D | 5 | | C | 9 |
+| R | 3 | | F | 6 | | V | ? |
+| T | ( | | G | / | | B | ! |
+| Y | ) | | H | : | | N | , |
+| U | _ | | J | ; | | M | . |
+| I | - | | K | ' | | Mic | 0 |
+| O | + | | L | " | | $ | (dedicated) |
+| P | @ | | | | | | |
+
+### Other Keys
+
+| Key | Action |
+|-----|--------|
+| Shift | Uppercase next letter |
+| Alt | Same as Sym (for numbers/symbols) |
+| Space | Space character / Next in navigation |
 
 ## About MeshCore
 
@@ -18,10 +75,10 @@ MeshCore provides the ability to create wireless mesh networks, similar to Mesht
   * Devices can forward messages across multiple nodes, extending range beyond a single radio's reach.
   * Supports up to a configurable number of hops to balance network efficiency and prevent excessive traffic.
   * Nodes use fixed roles where "Companion" nodes are not repeating messages at all to prevent adverse routing paths from being used.
-* Supports LoRa Radios – Works with Heltec, RAK Wireless, and other LoRa-based hardware.
-* Decentralized & Resilient – No central server or internet required; the network is self-healing.
-* Low Power Consumption – Ideal for battery-powered or solar-powered devices.
-* Simple to Deploy – Pre-built example applications make it easy to get started.
+* Supports LoRa Radios — Works with Heltec, RAK Wireless, and other LoRa-based hardware.
+* Decentralized & Resilient — No central server or internet required; the network is self-healing.
+* Low Power Consumption — Ideal for battery-powered or solar-powered devices.
+* Simple to Deploy — Pre-built example applications make it easy to get started.
 
 ## What Can You Use MeshCore For?
 
@@ -47,19 +104,19 @@ For developers;
 
 ## MeshCore Flasher
 
-We have prebuilt firmware ready to flash on supported devices.
+Download a copy of the Meck firmware bin from https://github.com/pelgraine/Meck/releases, then:
 
 - Launch https://flasher.meshcore.co.uk
-- Select a supported device
-- Flash one of the firmware types:
-  - Companion, Repeater or Room Server
+- Select Custom Firmware
+- Select the .bin file you just downloaded, and click Open or press Enter.
+- Click Flash, then select your device in the popup window (eg. USB JTAG/serial debug unit cu.usbmodem101 as an example), then click Connect.
 - Once flashing is complete, you can connect with one of the MeshCore clients below.
 
 ## MeshCore Clients
 
 **Companion Firmware**
 
-The companion firmware can be connected to via BLE, USB or WiFi depending on the firmware type you flashed.
+The companion firmware can be connected to via BLE. USB is planned for a future update.
 
 - Web: https://app.meshcore.nz
 - Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
@@ -93,10 +150,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
 - [ ] Canned messages function for Companion BLE firmware
-- [ ] Text entry for Companion BLE firmware
+- [X] Text entry for Companion BLE firmware
 
 ## 📞 Get Support
 
 - Join [MeshCore Discord](https://discord.gg/BMwCtwHj5V) to chat with the developers and get help from the community.
-
-
