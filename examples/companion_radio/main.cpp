@@ -664,6 +664,11 @@ void sendComposedMessage() {
                                      the_mesh.getNodePrefs()->node_name, 
                                      composeBuffer);
       
+      // Queue message for BLE app sync (so sent messages appear in companion app)
+      the_mesh.queueSentChannelMessage(composeChannelIdx, timestamp,
+                                        the_mesh.getNodePrefs()->node_name,
+                                        composeBuffer);
+      
       ui_task.showAlert("Sent!", 1500);
     } else {
       MESH_DEBUG_PRINTLN("Failed to send message");

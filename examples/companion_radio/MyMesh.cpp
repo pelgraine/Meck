@@ -541,6 +541,46 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
 #endif
 }
 
+void MyMesh::queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text) {
+  // Format message the same way as onChannelMessageRecv for BLE app sync
+  // This allows sent messages from device keyboard to appear in the app
+  int i = 0;
+  if (app_target_ver >= 3) {
+    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+    out_frame[i++] = 0;  // SNR not applicable for sent messages
+    out_frame[i++] = 0;  // reserved1
+    out_frame[i++] = 0;  // reserved2
+  } else {
+    out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
+  }
+
+  out_frame[i++] = channel_idx;
+  out_frame[i++] = 0;  // path_len = 0 indicates local/sent message
+
+  out_frame[i++] = TXT_TYPE_PLAIN;
+  memcpy(&out_frame[i], &timestamp, 4);
+  i += 4;
+  
+  // Format as "sender: text" like the app expects
+  char formatted[MAX_FRAME_SIZE];
+  snprintf(formatted, sizeof(formatted), "%s: %s", sender, text);
+  int tlen = strlen(formatted);
+  if (i + tlen > MAX_FRAME_SIZE) {
+    tlen = MAX_FRAME_SIZE - i;
+  }
+  memcpy(&out_frame[i], formatted, tlen);
+  i += tlen;
+  
+  addToOfflineQueue(out_frame, i);
+
+  // If app is connected, send push notification
+  if (_serial->isConnected()) {
+    uint8_t frame[1];
+    frame[0] = PUSH_CODE_MSG_WAITING;
+    _serial->writeFrame(frame, 1);
+  }
+}
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {

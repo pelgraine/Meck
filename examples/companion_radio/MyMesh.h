@@ -101,6 +101,9 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
+  
+  // Queue a sent channel message for BLE app sync
+  void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
 
 protected:
   float getAirtimeBudgetFactor() const override;
