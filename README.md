@@ -146,11 +146,13 @@ Here are some general principals you should try to adhere to:
 
 There are a number of fairly major features in the pipeline, with no particular time-frames attached yet. In partly chronological order:
 - [X] Companion radio: BLE
+- [X] Text entry for Public channel messages Companion BLE firmware
+- [X] View and compose all channel messages Companion BLE firmware
+- [ ] Standalone DM functionality for Companion BLE firmware
 - [ ] Companion radio: USB
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
 - [ ] Canned messages function for Companion BLE firmware
-- [X] Text entry for Companion BLE firmware
 
 ## 📞 Get Support
 
