@@ -29,6 +29,7 @@ private:
   bool _initialized;
   bool _shiftActive;   // Sticky shift (one-shot)
   bool _altActive;     // Sticky alt (one-shot)
+  bool _symActive;     // Sticky sym (one-shot)
   unsigned long _lastShiftTime;  // For Shift+key combos
 
   uint8_t readReg(uint8_t reg) {
@@ -82,54 +83,62 @@ private:
       case 25: return 'b';
       case 24: return 'n';
       case 23: return 'm';
-      case 22: return 0;    // Symbol/volume
+      case 22: return 0;    // Symbol key - handled separately
       case 21: return '\r'; // Enter
       
       // Row 4 - Shift Mic Space Sym Shift
       case 35: return 0;    // Left shift - handled separately
       case 34: return 0;    // Mic
       case 33: return ' ';  // Space
-      case 32: return 0;    // Sym
+      case 32: return 0;    // Sym - handled separately
       case 31: return 0;    // Right shift - handled separately
       
       default: return 0;
     }
   }
 
-  // Map key with Alt modifier for numbers/symbols
+  // Map key with Alt modifier - same as Sym for this keyboard
   char getAltChar(uint8_t keyCode) {
+    return getSymChar(keyCode);  // Alt does same as Sym
+  }
+
+  // Map key with Sym modifier - based on actual T-Deck Pro keyboard silk-screen
+  char getSymChar(uint8_t keyCode) {
     switch (keyCode) {
-      // Top row with Alt -> numbers
-      case 10: return '1';  // Q -> 1
-      case 9:  return '2';  // W -> 2
-      case 8:  return '3';  // E -> 3
-      case 7:  return '4';  // R -> 4
-      case 6:  return '5';  // T -> 5
-      case 5:  return '6';  // Y -> 6
-      case 4:  return '7';  // U -> 7
-      case 3:  return '8';  // I -> 8
-      case 2:  return '9';  // O -> 9
-      case 1:  return '0';  // P -> 0
+      // Row 1: Q W E R T Y U I O P
+      case 10: return '#';  // Q -> #
+      case 9:  return '1';  // W -> 1
+      case 8:  return '2';  // E -> 2
+      case 7:  return '3';  // R -> 3
+      case 6:  return '(';  // T -> (
+      case 5:  return ')';  // Y -> )
+      case 4:  return '_';  // U -> _
+      case 3:  return '-';  // I -> -
+      case 2:  return '+';  // O -> +
+      case 1:  return '@';  // P -> @
       
-      // Common symbols with Alt
-      case 20: return '@';  // A -> @
-      case 19: return '#';  // S -> #
-      case 18: return '$';  // D -> $
-      case 17: return '%';  // F -> %
-      case 16: return '&';  // G -> &
-      case 15: return '*';  // H -> *
-      case 14: return '-';  // J -> -
-      case 13: return '+';  // K -> +
-      case 12: return '=';  // L -> =
+      // Row 2: A S D F G H J K L
+      case 20: return '*';  // A -> *
+      case 19: return '4';  // S -> 4
+      case 18: return '5';  // D -> 5
+      case 17: return '6';  // F -> 6
+      case 16: return '/';  // G -> /
+      case 15: return ':';  // H -> :
+      case 14: return ';';  // J -> ;
+      case 13: return '\''; // K -> '
+      case 12: return '"';  // L -> "
       
-      // More symbols
-      case 29: return '!';  // Z -> !
-      case 28: return '?';  // X -> ?
-      case 27: return ':';  // C -> :
-      case 26: return ';';  // V -> ;
-      case 25: return '\''; // B -> '
-      case 24: return '"';  // N -> "
-      case 23: return ',';  // M -> ,
+      // Row 3: Z X C V B N M
+      case 29: return '7';  // Z -> 7
+      case 28: return '8';  // X -> 8
+      case 27: return '9';  // C -> 9
+      case 26: return '?';  // V -> ?
+      case 25: return '!';  // B -> !
+      case 24: return ',';  // N -> ,
+      case 23: return '.';  // M -> .
+      
+      // Row 4: Mic key -> 0
+      case 34: return '0';  // Mic -> 0
       
       default: return 0;
     }
@@ -138,7 +147,7 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _altActive(false), _lastShiftTime(0) {}
+      _shiftActive(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -210,8 +219,26 @@ public:
       Serial.println("KB: Alt activated");
       return 0;
     }
-    if (keyCode == 22 || keyCode == 32 || keyCode == 34) {  // Sym/Mic - ignore
+    if (keyCode == 32) {  // Sym key (bottom row)
+      _symActive = true;
+      Serial.println("KB: Sym activated");
       return 0;
+    }
+    
+    // Handle dedicated $ key (key code 22, next to M)
+    if (keyCode == 22) {
+      Serial.println("KB: $ key pressed");
+      return '$';
+    }
+    
+    // Handle Mic key - produces 0 with Sym, otherwise ignore
+    if (keyCode == 34) {
+      if (_symActive) {
+        _symActive = false;
+        Serial.println("KB: Sym+Mic -> '0'");
+        return '0';
+      }
+      return 0;  // Ignore mic without Sym
     }
 
     // Get the character
@@ -222,6 +249,15 @@ public:
       _altActive = false;  // Reset sticky alt
       if (c != 0) {
         Serial.printf("KB: Alt+key -> '%c'\n", c);
+        return c;
+      }
+    }
+    
+    if (_symActive) {
+      c = getSymChar(keyCode);
+      _symActive = false;  // Reset sticky sym
+      if (c != 0) {
+        Serial.printf("KB: Sym+key -> '%c'\n", c);
         return c;
       }
     }
