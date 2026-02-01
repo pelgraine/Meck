@@ -13,6 +13,7 @@
   static bool composeMode = false;
   static char composeBuffer[138];  // 137 chars max + null terminator
   static int composePos = 0;
+  static uint8_t composeChannelIdx = 0;  // Which channel to send to
   
   void initKeyboard();
   void handleKeyboardInput();
@@ -402,7 +403,7 @@ void handleKeyboardInput() {
     if (key == '\b') {
       // Backspace - check if shift was recently pressed for cancel combo
       if (keyboard.wasShiftRecentlyPressed(500)) {
-        // Shift+Backspace = Cancel
+        // Shift+Backspace = Cancel (works anytime)
         Serial.println("Compose: Shift+Backspace, cancelling...");
         composeMode = false;
         composeBuffer[0] = '\0';
@@ -417,6 +418,40 @@ void handleKeyboardInput() {
         Serial.printf("Compose: Backspace, pos now %d\n", composePos);
         drawComposeScreen();
       }
+      return;
+    }
+    
+    // A/D keys switch channels (only when buffer is empty or as special function)
+    if ((key == 'a' || key == 'A') && composePos == 0) {
+      // Previous channel
+      if (composeChannelIdx > 0) {
+        composeChannelIdx--;
+      } else {
+        // Wrap to last valid channel
+        for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
+            composeChannelIdx = i;
+            break;
+          }
+        }
+      }
+      Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
+      drawComposeScreen();
+      return;
+    }
+    
+    if ((key == 'd' || key == 'D') && composePos == 0) {
+      // Next channel
+      ChannelDetails ch;
+      uint8_t nextIdx = composeChannelIdx + 1;
+      if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
+        composeChannelIdx = nextIdx;
+      } else {
+        composeChannelIdx = 0;  // Wrap to first channel
+      }
+      Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
+      drawComposeScreen();
       return;
     }
     
@@ -438,7 +473,11 @@ void handleKeyboardInput() {
       composeMode = true;
       composeBuffer[0] = '\0';
       composePos = 0;
-      Serial.println("Entering compose mode");
+      // If on channel screen, sync compose channel with viewed channel
+      if (ui_task.isOnChannelScreen()) {
+        composeChannelIdx = ui_task.getChannelScreenViewIdx();
+      }
+      Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
       drawComposeScreen();
       break;
     
@@ -451,20 +490,46 @@ void handleKeyboardInput() {
     
     case 'w':
     case 'W':
-    case 'a':
-    case 'A':
-      // Navigate left/previous
-      Serial.println("Nav: Previous");
-      ui_task.injectKey(0xF2);  // KEY_PREV
+      // Navigate up/previous (scroll on channel screen)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('w');  // Pass directly for channel switching
+      } else {
+        Serial.println("Nav: Previous");
+        ui_task.injectKey(0xF2);  // KEY_PREV
+      }
       break;
-      
+    
     case 's':
     case 'S':
+      // Navigate down/next (scroll on channel screen)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('s');  // Pass directly for channel switching
+      } else {
+        Serial.println("Nav: Next");
+        ui_task.injectKey(0xF1);  // KEY_NEXT
+      }
+      break;
+      
+    case 'a':
+    case 'A':
+      // Navigate left or switch channel (on channel screen)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('a');  // Pass directly for channel switching
+      } else {
+        Serial.println("Nav: Previous");
+        ui_task.injectKey(0xF2);  // KEY_PREV
+      }
+      break;
+      
     case 'd':
     case 'D':
-      // Navigate right/next
-      Serial.println("Nav: Next");
-      ui_task.injectKey(0xF1);  // KEY_NEXT
+      // Navigate right or switch channel (on channel screen)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('d');  // Pass directly for channel switching
+      } else {
+        Serial.println("Nav: Next");
+        ui_task.injectKey(0xF1);  // KEY_NEXT
+      }
       break;
       
     case '\r':
@@ -499,7 +564,16 @@ void drawComposeScreen() {
   display.setTextSize(1);
   display.setColor(DisplayDriver::GREEN);
   display.setCursor(0, 0);
-  display.print("Compose - Public Channel");
+  
+  // Get the channel name for display
+  ChannelDetails channel;
+  char headerBuf[40];
+  if (the_mesh.getChannel(composeChannelIdx, channel)) {
+    snprintf(headerBuf, sizeof(headerBuf), "To: %s", channel.name);
+  } else {
+    snprintf(headerBuf, sizeof(headerBuf), "To: Channel %d", composeChannelIdx);
+  }
+  display.print(headerBuf);
   
   display.setColor(DisplayDriver::LIGHT);
   display.drawRect(0, 11, display.width(), 1);
@@ -534,9 +608,21 @@ void drawComposeScreen() {
   display.setCursor(0, statusY);
   display.setColor(DisplayDriver::YELLOW);
   
-  char status[50];
-  sprintf(status, "%d/137 Enter:Send Sh+Del:Cancel", composePos);
-  display.print(status);
+  char status[40];
+  if (composePos == 0) {
+    // Empty buffer - show channel switching hint
+    display.print("A/D:Ch");
+    sprintf(status, "Sh+Del:X");
+    display.setCursor(display.width() - display.getTextWidth(status) - 2, statusY);
+    display.print(status);
+  } else {
+    // Has text - show send/cancel hint
+    sprintf(status, "%d/137 Ent:Send", composePos);
+    display.print(status);
+    sprintf(status, "Sh+Del:X");
+    display.setCursor(display.width() - display.getTextWidth(status) - 2, statusY);
+    display.print(status);
+  }
   
   display.endFrame();
   #endif
@@ -545,25 +631,25 @@ void drawComposeScreen() {
 void sendComposedMessage() {
   if (composePos == 0) return;
   
-  MESH_DEBUG_PRINTLN("Sending message: %s", composeBuffer);
+  MESH_DEBUG_PRINTLN("Sending message to channel %d: %s", composeChannelIdx, composeBuffer);
   
-  // Get the Public channel (index 0)
+  // Get the selected channel
   ChannelDetails channel;
-  if (the_mesh.getChannel(0, channel)) {
+  if (the_mesh.getChannel(composeChannelIdx, channel)) {
     uint32_t timestamp = rtc_clock.getCurrentTime();
     
     // Send to channel
     if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
                                    the_mesh.getNodePrefs()->node_name, 
                                    composeBuffer, composePos)) {
-      MESH_DEBUG_PRINTLN("Message sent to Public channel");
+      MESH_DEBUG_PRINTLN("Message sent to channel %s", channel.name);
       ui_task.showAlert("Sent!", 1500);
     } else {
       MESH_DEBUG_PRINTLN("Failed to send message");
       ui_task.showAlert("Send failed!", 1500);
     }
   } else {
-    MESH_DEBUG_PRINTLN("Could not get Public channel");
+    MESH_DEBUG_PRINTLN("Could not get channel %d", composeChannelIdx);
     ui_task.showAlert("No channel!", 1500);
   }
 }

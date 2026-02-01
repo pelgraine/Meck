@@ -80,6 +80,7 @@ public:
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
   bool isOnChannelScreen() const { return curr == channel_screen; }
+  uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
   bool getGPSState();

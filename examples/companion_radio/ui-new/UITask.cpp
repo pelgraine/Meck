@@ -633,8 +633,20 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Add to preview screen (for notifications)
   ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
   
-  // Also add to channel history screen
-  ((ChannelScreen *) channel_screen)->addMessage(path_len, from_name, text);
+  // Determine channel index by looking up the channel name
+  // For channel messages, from_name is the channel name
+  // For contact messages, from_name is the contact name (channel_idx = 0xFF)
+  uint8_t channel_idx = 0xFF;  // Default: unknown/contact message
+  for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    ChannelDetails ch;
+    if (the_mesh.getChannel(i, ch) && strcmp(ch.name, from_name) == 0) {
+      channel_idx = i;
+      break;
+    }
+  }
+  
+  // Add to channel history screen with channel index
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text);
   
   setCurrScreen(msg_preview);
 
@@ -950,4 +962,8 @@ void UITask::gotoChannelScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+}
+
+uint8_t UITask::getChannelScreenViewIdx() const {
+  return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
 }
