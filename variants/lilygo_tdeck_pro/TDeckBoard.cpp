@@ -46,6 +46,14 @@ void TDeckBoard::begin() {
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - GPS Serial2 initialized at %d baud", GPS_BAUDRATE);
   #endif
 
+  // Disable 4G modem power (only present on 4G version, not audio version)
+  // This turns off the red status LED on the modem module
+  #ifdef MODEM_POWER_EN
+    pinMode(MODEM_POWER_EN, OUTPUT);
+    digitalWrite(MODEM_POWER_EN, LOW);  // Cut power to modem
+    MESH_DEBUG_PRINTLN("TDeckBoard::begin() - 4G modem power disabled");
+  #endif
+
   // Configure user button
   pinMode(PIN_USER_BTN, INPUT);
 
