@@ -16,7 +16,7 @@
   static uint8_t composeChannelIdx = 0;  // Which channel to send to
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 250  // ms between e-ink refreshes while typing
+  #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
   
   void initKeyboard();
   void handleKeyboardInput();
@@ -646,8 +646,6 @@ void drawComposeScreen() {
 void sendComposedMessage() {
   if (composePos == 0) return;
   
-  MESH_DEBUG_PRINTLN("Sending message to channel %d: %s", composeChannelIdx, composeBuffer);
-  
   // Get the selected channel
   ChannelDetails channel;
   if (the_mesh.getChannel(composeChannelIdx, channel)) {
@@ -657,8 +655,6 @@ void sendComposedMessage() {
     if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
                                    the_mesh.getNodePrefs()->node_name, 
                                    composeBuffer, composePos)) {
-      MESH_DEBUG_PRINTLN("Message sent to channel %s", channel.name);
-      
       // Add the sent message to local channel history so we can see what we sent
       ui_task.addSentChannelMessage(composeChannelIdx, 
                                      the_mesh.getNodePrefs()->node_name, 
@@ -671,11 +667,9 @@ void sendComposedMessage() {
       
       ui_task.showAlert("Sent!", 1500);
     } else {
-      MESH_DEBUG_PRINTLN("Failed to send message");
       ui_task.showAlert("Send failed!", 1500);
     }
   } else {
-    MESH_DEBUG_PRINTLN("Could not get channel %d", composeChannelIdx);
     ui_task.showAlert("No channel!", 1500);
   }
 }
