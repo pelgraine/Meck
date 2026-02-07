@@ -128,6 +128,9 @@ public:
       int lineHeight = 9;   // 8px font + 1px spacing
       int headerHeight = 14;
       int footerHeight = 14;
+      // Hard cutoff: no text may START at or beyond this y value
+      // This ensures rendered glyphs (which extend lineHeight below y) stay above the footer
+      int maxY = display.height() - footerHeight;
       
       // Calculate chars per line based on actual font width
       uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
@@ -153,40 +156,41 @@ public:
       
       // Display messages from scroll position
       int msgsDrawn = 0;
-      for (int i = _scrollPos; i < numChannelMsgs && y < display.height() - footerHeight - lineHeight; i++) {
+      for (int i = _scrollPos; i < numChannelMsgs && y + lineHeight <= maxY; i++) {
         int idx = channelMsgs[i];
         ChannelMessage* msg = &_messages[idx];
         
-        // Time indicator with hop count
+        // Time indicator with hop count - inline on same line as message start
         display.setCursor(0, y);
         display.setColor(DisplayDriver::YELLOW);
         
         uint32_t age = _rtc->getCurrentTime() - msg->timestamp;
         if (age < 60) {
-          sprintf(tmp, "(%d) %ds", msg->path_len == 0xFF ? 0 : msg->path_len, age);
+          sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : msg->path_len, age);
         } else if (age < 3600) {
-          sprintf(tmp, "(%d) %dm", msg->path_len == 0xFF ? 0 : msg->path_len, age / 60);
+          sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 60);
         } else if (age < 86400) {
-          sprintf(tmp, "(%d) %dh", msg->path_len == 0xFF ? 0 : msg->path_len, age / 3600);
+          sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 3600);
         } else {
-          sprintf(tmp, "(%d) %dd", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
+          sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
         }
         display.print(tmp);
-        y += lineHeight;
+        int prefixLen = strlen(tmp);  // Characters used by timestamp on first line
+        // DO NOT advance y - message text continues on the same line
         
-        // Message text with character wrapping
+        // Message text with character wrapping (continues after timestamp on first line)
         display.setColor(DisplayDriver::LIGHT);
         
         int textLen = strlen(msg->text);
         int pos = 0;
         int linesForThisMsg = 0;
-        int maxLinesPerMsg = 8;  // More lines now that font is smaller
-        int x = 0;
+        int maxLinesPerMsg = 8;
+        int x = prefixLen;  // First line starts after the timestamp prefix
         char charStr[2] = {0, 0};
         
-        display.setCursor(0, y);
+        // Cursor already positioned after timestamp print - don't reset it
         
-        while (pos < textLen && linesForThisMsg < maxLinesPerMsg && y < display.height() - footerHeight - 2) {
+        while (pos < textLen && linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
           charStr[0] = msg->text[pos];
           display.print(charStr);
           x++;
@@ -196,7 +200,7 @@ public:
             x = 0;
             linesForThisMsg++;
             y += lineHeight;
-            if (linesForThisMsg < maxLinesPerMsg && y < display.height() - footerHeight - 2) {
+            if (linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
               display.setCursor(0, y);
             }
           }
@@ -207,7 +211,7 @@ public:
           y += lineHeight;
         }
         
-        y += 2;
+        y += 2;  // Small gap between messages
         msgsDrawn++;
         _msgsPerPage = msgsDrawn;
       }
