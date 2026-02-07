@@ -343,10 +343,13 @@ void setup() {
     
     if (SD.begin(SDCARD_CS, displaySpi, 4000000)) {
       MESH_DEBUG_PRINTLN("setup() - SD card initialized");
-      // Tell the text reader that SD is ready
+      // Tell the text reader that SD is ready, then pre-index books at boot
       TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
       if (reader) {
         reader->setSDReady(true);
+        if (disp) {
+          reader->bootIndex(*disp);
+        }
       }
     } else {
       MESH_DEBUG_PRINTLN("setup() - SD card initialization failed!");

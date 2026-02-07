@@ -163,7 +163,9 @@ private:
   UITask* _task;
   Mode _mode;
   bool _sdReady;
-  bool _initialized;  // Layout metrics calculated
+  bool _initialized;       // Layout metrics calculated
+  bool _bootIndexed;       // Boot-time pre-indexing done
+  DisplayDriver* _display; // Stored reference for splash screens
 
   // Display layout (calculated once from display metrics)
   int _charsPerLine;
@@ -189,6 +191,138 @@ private:
   char _pageBuf[READER_BUF_SIZE];
   int _pageBufLen;
   bool _contentDirty;  // Need to re-read from SD
+
+  // ---- Splash Screen Drawing ----
+  // Draw directly to display outside the normal render cycle.
+  // Matches the style of the standalone text reader firmware splash.
+
+  // Word-wrapping splash for opening a large book.
+  // Shows: "Indexing / Pages..." (large), word-wrapped filename, "Please wait. / Loading shortly..."
+  void drawIndexingSplash(const String& filename) {
+    if (!_display) return;
+    _display->startFrame();
+
+    // "Indexing" / "Pages..." in large text
+    // Original: textSize(2) at real (20, 40) and (20, 65)
+    // Virtual: (10, 11) and (10, 21)
+    _display->setTextSize(2);
+    _display->setColor(DisplayDriver::GREEN);
+    _display->setCursor(10, 11);
+    _display->print("Indexing");
+    _display->setCursor(10, 21);
+    _display->print("Pages...");
+
+    // Word-wrapped filename in normal text
+    _display->setTextSize(1);
+    _display->setColor(DisplayDriver::LIGHT);
+    int y = 39;
+    int leftMargin = 10;
+    // Calculate max chars that fit: (display_width - margin) / char_width
+    uint16_t charW = _display->getTextWidth("M");
+    int maxChars = charW > 0 ? (_display->width() - leftMargin) / charW : 20;
+    if (maxChars < 10) maxChars = 10;
+    if (maxChars > 40) maxChars = 40;
+    String remaining = filename;
+
+    while (remaining.length() > 0 && y < 80) {
+      String line;
+      if ((int)remaining.length() <= maxChars) {
+        line = remaining;
+        remaining = "";
+      } else {
+        int breakPoint = maxChars;
+        for (int i = maxChars; i > 0; i--) {
+          if (remaining[i] == ' ' || remaining[i] == '-' || remaining[i] == '_') {
+            breakPoint = i;
+            break;
+          }
+        }
+        line = remaining.substring(0, breakPoint);
+        remaining = remaining.substring(breakPoint);
+        remaining.trim();
+      }
+      _display->setCursor(10, y);
+      _display->print(line.c_str());
+      y += 5;
+    }
+
+    // "Please wait." / "Loading shortly..."
+    // Original: textSize(1) at real (20, 230) and (20, 245)
+    // Virtual: y=87 and y=93
+    _display->setColor(DisplayDriver::LIGHT);
+    _display->setCursor(10, 87);
+    _display->print("Please wait.");
+    _display->setCursor(10, 93);
+    _display->print("Loading shortly...");
+
+    _display->endFrame();
+  }
+
+  // Boot-time progress splash with file counter.
+  // Shows: "Indexing / Pages..." (large), "(2/10)", word-wrapped filename, "Please wait."
+  // If current==0 and total==0, skips the progress counter (used for initial scan splash).
+  void drawBootSplash(int current, int total, const String& filename) {
+    if (!_display) return;
+    _display->startFrame();
+
+    // "Indexing" / "Pages..." in large text
+    _display->setTextSize(2);
+    _display->setColor(DisplayDriver::GREEN);
+    _display->setCursor(10, 11);
+    _display->print("Indexing");
+    _display->setCursor(10, 21);
+    _display->print("Pages...");
+
+    _display->setTextSize(1);
+    _display->setColor(DisplayDriver::LIGHT);
+
+    int y = 35;
+
+    // Progress counter (skip if both zero)
+    if (current > 0 || total > 0) {
+      char progress[20];
+      sprintf(progress, "(%d/%d)", current, total);
+      _display->setCursor(10, y);
+      _display->print(progress);
+      y += 8;
+    }
+
+    // Word-wrapped filename
+    int leftMargin = 10;
+    uint16_t charW = _display->getTextWidth("M");
+    int maxChars = charW > 0 ? (_display->width() - leftMargin) / charW : 20;
+    if (maxChars < 10) maxChars = 10;
+    if (maxChars > 40) maxChars = 40;
+    String remaining = filename;
+
+    while (remaining.length() > 0 && y < 80) {
+      String line;
+      if ((int)remaining.length() <= maxChars) {
+        line = remaining;
+        remaining = "";
+      } else {
+        int breakPoint = maxChars;
+        for (int i = maxChars; i > 0; i--) {
+          if (remaining[i] == ' ' || remaining[i] == '-' || remaining[i] == '_') {
+            breakPoint = i;
+            break;
+          }
+        }
+        line = remaining.substring(0, breakPoint);
+        remaining = remaining.substring(breakPoint);
+        remaining.trim();
+      }
+      _display->setCursor(10, y);
+      _display->print(line.c_str());
+      y += 5;
+    }
+
+    // "Please wait."
+    _display->setCursor(10, 87);
+    _display->print("Please wait.");
+
+    _display->endFrame();
+  }
 
   // ---- SD Index I/O ----
 
@@ -333,45 +467,6 @@ private:
     Serial.printf("TextReader: Found %d files\n", _fileList.size());
   }
 
-  void buildIndexes() {
-    _fileCache.clear();
-    for (int i = 0; i < (int)_fileList.size(); i++) {
-      FileCache cache;
-      if (loadIndex(_fileList[i], cache)) {
-        Serial.printf("TextReader: %s - loaded %d pages (resume pg %d)\n",
-                      _fileList[i].c_str(), cache.pagePositions.size(),
-                      cache.lastReadPage + 1);
-        _fileCache.push_back(cache);
-        continue;
-      }
-
-      // Build new index
-      String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
-      File file = SD.open(fullPath.c_str(), FILE_READ);
-      if (!file) continue;
-
-      cache.filename = _fileList[i];
-      cache.fileSize = file.size();
-      cache.fullyIndexed = false;
-      cache.lastReadPage = 0;
-      cache.pagePositions.push_back(0);
-
-      int added = indexPagesWordWrap(file, 0, cache.pagePositions,
-                                     _linesPerPage, _charsPerLine,
-                                     PREINDEX_PAGES - 1);
-      cache.fullyIndexed = !file.available();
-      file.close();
-
-      saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
-                cache.fullyIndexed, 0);
-      _fileCache.push_back(cache);
-
-      Serial.printf("TextReader: %s - indexed %d pages%s\n",
-                    _fileList[i].c_str(), (int)cache.pagePositions.size(),
-                    cache.fullyIndexed ? " (complete)" : "");
-    }
-  }
-
   // ---- Book Open/Close ----
 
   void openBook(const String& filename) {
@@ -406,18 +501,31 @@ private:
         _currentPage = cache->lastReadPage;
       }
 
+      // Already fully indexed - open immediately
       if (cache->fullyIndexed) {
         _totalPages = _pagePositions.size();
         _mode = READING;
         loadPageContent();
+        Serial.printf("TextReader: Opened %s, %d pages, resume pg %d\n",
+                      filename.c_str(), _totalPages, _currentPage + 1);
         return;
       }
 
-      // Continue indexing from cache
+      // Partially indexed - show splash and finish indexing
+      Serial.printf("TextReader: Finishing index for %s (have %d pages so far)\n",
+                    filename.c_str(), (int)_pagePositions.size());
+
+      drawIndexingSplash(filename);
+
       long lastPos = cache->pagePositions.back();
       indexPagesWordWrap(_file, lastPos, _pagePositions,
                          _linesPerPage, _charsPerLine, 0);
     } else {
+      // No cache at all - full index from scratch with splash
+      Serial.printf("TextReader: Full index for %s\n", filename.c_str());
+
+      drawIndexingSplash(filename);
+
       _pagePositions.push_back(0);
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0);
@@ -465,8 +573,8 @@ private:
   }
 
   // ---- Page Content Loading ----
-  // FIX: Read exact span between indexed page positions instead of guessing.
-  // This ensures the renderer gets exactly the bytes the indexer counted.
+  // Read exact span between indexed page positions so renderer gets
+  // exactly the bytes the indexer counted for this page.
 
   void loadPageContent() {
     if (!_fileOpen || _currentPage >= _totalPages) {
@@ -490,9 +598,6 @@ private:
     _pageBufLen = _file.readBytes(_pageBuf, toRead);
     _pageBuf[_pageBufLen] = '\0';
     _contentDirty = false;
-
-    Serial.printf("TextReader: Page %d/%d, filePos=%ld, span=%ld, read=%d bytes\n",
-                  _currentPage + 1, _totalPages, pageStart, pageSpan, _pageBufLen);
 
     // Deselect SD to free SPI bus for display
     digitalWrite(SDCARD_CS, HIGH);
@@ -541,8 +646,8 @@ private:
 
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
-          // FIX: setCursor adds +5 to y internally, but fillRect does not.
-          // So we offset fillRect by +5 to align the highlight bar with the text.
+          // setCursor adds +5 to y internally, but fillRect does not.
+          // Offset fillRect by +5 to align highlight bar with text.
           display.fillRect(0, y + 5, display.width(), listLineH);
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -649,6 +754,7 @@ private:
 public:
   TextReaderScreen(UITask* task)
     : _task(task), _mode(FILE_LIST), _sdReady(false), _initialized(false),
+      _bootIndexed(false), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5),
       _headerHeight(14), _footerHeight(14),
       _selectedFile(0), _fileOpen(false), _currentPage(0), _totalPages(0),
@@ -658,6 +764,9 @@ public:
   // Call once after display is available to calculate layout metrics
   void initLayout(DisplayDriver& display) {
     if (_initialized) return;
+
+    // Store display reference for splash screens during openBook
+    _display = &display;
 
     // Measure tiny font metrics using the display driver
     display.setTextSize(0);
@@ -672,13 +781,12 @@ public:
 
     // Line height for built-in 6x8 font:
     // setCursor adds +5 to y, so effective text top = (y+5)*scale_y
-    // The font is ~8px tall in real coords. In virtual coords: 8/scale_y ≈ 3.2 units
-    // We need inter-line spacing, so use measured char width to estimate:
-    // Built-in font: 6px wide, 8px tall → height ≈ width * 8/6
+    // The font is ~8px tall in real coords. In virtual coords: 8/scale_y ~ 3.2 units
+    // We derive from measured char width since we can't measure height directly.
+    // Built-in font: 6px wide, 8px tall -> height ~ width * 7/6
     // Then add ~20% for spacing
     uint16_t mWidth = display.getTextWidth("M");
     if (mWidth > 0) {
-      // Use a 1.2x multiplier on estimated character height for line spacing
       _lineHeight = max(3, (int)((mWidth * 7 * 12) / (6 * 10)));
     } else {
       _lineHeight = 5;  // Safe fallback
@@ -698,22 +806,96 @@ public:
                   _charsPerLine, _linesPerPage, _lineHeight, display.width(), display.height());
   }
 
-  // Initialize SD card access. Call from main.cpp setup().
-  // Returns true if SD is ready.
+  // ---- Boot-time Indexing ----
+  // Called from setup() after SD card init. Scans files, pre-indexes first
+  // 100 pages of each, and shows progress on the e-ink display.
+
+  void bootIndex(DisplayDriver& display) {
+    if (!_sdReady) return;
+
+    // Calculate layout metrics first (needed for indexing)
+    initLayout(display);
+
+    // Show initial splash
+    drawBootSplash(0, 0, "Scanning...");
+    Serial.println("TextReader: Boot indexing started");
+
+    // Scan for files
+    scanFiles();
+
+    if (_fileList.size() == 0) {
+      Serial.println("TextReader: No files to index");
+      _bootIndexed = true;
+      return;
+    }
+
+    // Pre-index each file, showing progress
+    _fileCache.clear();
+    for (int i = 0; i < (int)_fileList.size(); i++) {
+      // Draw progress splash
+      drawBootSplash(i + 1, (int)_fileList.size(), _fileList[i]);
+
+      FileCache cache;
+      if (loadIndex(_fileList[i], cache)) {
+        Serial.printf("TextReader: %s - loaded %d pages (resume pg %d)\n",
+                      _fileList[i].c_str(), cache.pagePositions.size(),
+                      cache.lastReadPage + 1);
+        _fileCache.push_back(cache);
+        continue;
+      }
+
+      // Build new index (first 100 pages only)
+      String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
+      File file = SD.open(fullPath.c_str(), FILE_READ);
+      if (!file) continue;
+
+      cache.filename = _fileList[i];
+      cache.fileSize = file.size();
+      cache.fullyIndexed = false;
+      cache.lastReadPage = 0;
+      cache.pagePositions.push_back(0);
+
+      int added = indexPagesWordWrap(file, 0, cache.pagePositions,
+                                     _linesPerPage, _charsPerLine,
+                                     PREINDEX_PAGES - 1);
+      cache.fullyIndexed = !file.available();
+      file.close();
+
+      saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
+                cache.fullyIndexed, 0);
+      _fileCache.push_back(cache);
+
+      Serial.printf("TextReader: %s - indexed %d pages%s\n",
+                    _fileList[i].c_str(), (int)cache.pagePositions.size(),
+                    cache.fullyIndexed ? " (complete)" : "");
+    }
+
+    // Deselect SD to free SPI bus
+    digitalWrite(SDCARD_CS, HIGH);
+
+    _bootIndexed = true;
+    Serial.printf("TextReader: Boot indexing complete, %d files\n", (int)_fileList.size());
+  }
+
+  // ---- Public Interface ----
+
   void setSDReady(bool ready) { _sdReady = ready; }
   bool isSDReady() const { return _sdReady; }
 
-  // Called when entering the reader screen
+  // Called when entering the reader screen (press R).
+  // If boot indexing already ran, this is lightweight.
   void enter(DisplayDriver& display) {
     initLayout(display);
-    if (_sdReady && !_fileOpen) {
-      scanFiles();
-      buildIndexes();
-      // Deselect SD to free SPI bus for display rendering
-      digitalWrite(SDCARD_CS, HIGH);
+
+    if (_sdReady && !_bootIndexed) {
+      // Boot indexing didn't run (shouldn't happen, but safety fallback)
+      bootIndex(display);
+    }
+
+    if (!_fileOpen) {
       _selectedFile = 0;
       _mode = FILE_LIST;
-    } else if (_fileOpen) {
+    } else {
       _mode = READING;
       loadPageContent();
     }
