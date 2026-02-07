@@ -1,0 +1,823 @@
+#pragma once
+
+#include <helpers/ui/UIScreen.h>
+#include <helpers/ui/DisplayDriver.h>
+#include <SD.h>
+#include <vector>
+
+// Forward declarations
+class UITask;
+
+// ============================================================================
+// Configuration
+// ============================================================================
+#define BOOKS_FOLDER      "/books"
+#define INDEX_FOLDER      "/.indexes"
+#define INDEX_VERSION     4
+#define PREINDEX_PAGES    100
+#define READER_MAX_FILES  50
+#define READER_BUF_SIZE   4096
+
+// ============================================================================
+// Word Wrap Helper (same algorithm as standalone reader)
+// ============================================================================
+struct WrapResult {
+  int lineEnd;
+  int nextStart;
+};
+
+inline WrapResult findLineBreak(const char* buffer, int bufLen, int lineStart, int maxChars) {
+  WrapResult result;
+  result.lineEnd = lineStart;
+  result.nextStart = lineStart;
+
+  if (lineStart >= bufLen) return result;
+
+  int charCount = 0;
+  int lastBreakPoint = -1;
+  bool inWord = false;
+
+  for (int i = lineStart; i < bufLen; i++) {
+    char c = buffer[i];
+
+    if (c == '\n') {
+      result.lineEnd = i;
+      result.nextStart = i + 1;
+      if (result.nextStart < bufLen && buffer[result.nextStart] == '\r')
+        result.nextStart++;
+      return result;
+    }
+    if (c == '\r') {
+      result.lineEnd = i;
+      result.nextStart = i + 1;
+      if (result.nextStart < bufLen && buffer[result.nextStart] == '\n')
+        result.nextStart++;
+      return result;
+    }
+
+    if (c >= 32) {
+      charCount++;
+      if (c == ' ' || c == '\t') {
+        if (inWord) {
+          lastBreakPoint = i;
+          inWord = false;
+        }
+      } else if (c == '-') {
+        if (inWord) {
+          lastBreakPoint = i + 1;
+        }
+      } else {
+        inWord = true;
+      }
+
+      if (charCount >= maxChars) {
+        if (lastBreakPoint > lineStart) {
+          result.lineEnd = lastBreakPoint;
+          result.nextStart = lastBreakPoint;
+          while (result.nextStart < bufLen &&
+                 (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
+            result.nextStart++;
+        } else {
+          result.lineEnd = i;
+          result.nextStart = i;
+        }
+        return result;
+      }
+    }
+  }
+
+  result.lineEnd = bufLen;
+  result.nextStart = bufLen;
+  return result;
+}
+
+// ============================================================================
+// Page Indexer (word-wrap aware, matches display rendering)
+// ============================================================================
+inline int indexPagesWordWrap(File& file, long startPos,
+                              std::vector<long>& pagePositions,
+                              int linesPerPage, int charsPerLine,
+                              int maxPages) {
+  const int BUF_SIZE = 2048;
+  char buffer[BUF_SIZE];
+
+  file.seek(startPos);
+  int pagesAdded = 0;
+  int lineCount = 0;
+  int leftover = 0;
+  long chunkFileStart = startPos;
+
+  while (file.available() && (maxPages <= 0 || pagesAdded < maxPages)) {
+    int bytesRead = file.readBytes(buffer + leftover, BUF_SIZE - leftover);
+    int bufLen = leftover + bytesRead;
+    if (bufLen == 0) break;
+
+    int pos = 0;
+    while (pos < bufLen) {
+      WrapResult wrap = findLineBreak(buffer, bufLen, pos, charsPerLine);
+      if (wrap.nextStart <= pos && wrap.lineEnd >= bufLen) break;
+
+      lineCount++;
+      pos = wrap.nextStart;
+
+      if (lineCount >= linesPerPage) {
+        long pageFilePos = chunkFileStart + pos;
+        pagePositions.push_back(pageFilePos);
+        pagesAdded++;
+        lineCount = 0;
+        if (maxPages > 0 && pagesAdded >= maxPages) break;
+      }
+      if (pos >= bufLen) break;
+    }
+
+    leftover = bufLen - pos;
+    if (leftover > 0 && leftover < BUF_SIZE) {
+      memmove(buffer, buffer + pos, leftover);
+    } else {
+      leftover = 0;
+    }
+    chunkFileStart = file.position() - leftover;
+  }
+
+  return pagesAdded;
+}
+
+// ============================================================================
+// TextReaderScreen
+// ============================================================================
+
+class TextReaderScreen : public UIScreen {
+public:
+  enum Mode { FILE_LIST, READING };
+
+  // File cache entry (index + resume position)
+  struct FileCache {
+    String filename;
+    std::vector<long> pagePositions;
+    unsigned long fileSize;
+    bool fullyIndexed;
+    int lastReadPage;
+  };
+
+private:
+  UITask* _task;
+  Mode _mode;
+  bool _sdReady;
+  bool _initialized;  // Layout metrics calculated
+
+  // Display layout (calculated once from display metrics)
+  int _charsPerLine;
+  int _linesPerPage;
+  int _lineHeight;     // virtual coord units per text line
+  int _headerHeight;
+  int _footerHeight;
+
+  // File list state
+  std::vector<String> _fileList;
+  std::vector<FileCache> _fileCache;
+  int _selectedFile;
+
+  // Reading state
+  File _file;
+  String _currentFile;
+  bool _fileOpen;
+  int _currentPage;
+  int _totalPages;
+  std::vector<long> _pagePositions;
+
+  // Page content buffer (pre-read from SD before render)
+  char _pageBuf[READER_BUF_SIZE];
+  int _pageBufLen;
+  bool _contentDirty;  // Need to re-read from SD
+
+  // ---- SD Index I/O ----
+
+  String getIndexPath(const String& filename) {
+    return String(INDEX_FOLDER) + "/" + filename + ".idx";
+  }
+
+  bool loadIndex(const String& filename, FileCache& cache) {
+    String idxPath = getIndexPath(filename);
+    File idxFile = SD.open(idxPath.c_str(), FILE_READ);
+    if (!idxFile) return false;
+
+    uint8_t version = 0;
+    unsigned long savedSize = 0, pageCount = 0;
+    uint8_t fullyFlag = 0;
+    int lastRead = 0;
+
+    idxFile.read(&version, 1);
+    if (version != INDEX_VERSION) {
+      // Wrong version - discard and rebuild
+      idxFile.close();
+      SD.remove(idxPath.c_str());
+      return false;
+    }
+
+    idxFile.read((uint8_t*)&savedSize, 4);
+    idxFile.read((uint8_t*)&pageCount, 4);
+    idxFile.read(&fullyFlag, 1);
+    idxFile.read((uint8_t*)&lastRead, 4);
+
+    // Verify file hasn't changed
+    String fullPath = String(BOOKS_FOLDER) + "/" + filename;
+    File txtFile = SD.open(fullPath.c_str(), FILE_READ);
+    if (!txtFile) { idxFile.close(); return false; }
+    unsigned long curSize = txtFile.size();
+    txtFile.close();
+
+    if (savedSize != curSize) {
+      idxFile.close();
+      SD.remove(idxPath.c_str());
+      return false;
+    }
+
+    cache.filename = filename;
+    cache.fileSize = savedSize;
+    cache.fullyIndexed = (fullyFlag == 1);
+    cache.lastReadPage = lastRead;
+    cache.pagePositions.clear();
+
+    for (unsigned long i = 0; i < pageCount; i++) {
+      long pos = 0;
+      idxFile.read((uint8_t*)&pos, 4);
+      cache.pagePositions.push_back(pos);
+    }
+
+    idxFile.close();
+    return true;
+  }
+
+  bool saveIndex(const String& filename, const std::vector<long>& pages,
+                 unsigned long fileSize, bool fullyIndexed, int lastReadPage) {
+    if (!SD.exists(INDEX_FOLDER)) SD.mkdir(INDEX_FOLDER);
+
+    String idxPath = getIndexPath(filename);
+    if (SD.exists(idxPath.c_str())) SD.remove(idxPath.c_str());
+
+    File idxFile = SD.open(idxPath.c_str(), FILE_WRITE);
+    if (!idxFile) return false;
+
+    uint8_t version = INDEX_VERSION;
+    unsigned long pageCount = pages.size();
+    uint8_t fullyFlag = fullyIndexed ? 1 : 0;
+
+    idxFile.write(&version, 1);
+    idxFile.write((uint8_t*)&fileSize, 4);
+    idxFile.write((uint8_t*)&pageCount, 4);
+    idxFile.write(&fullyFlag, 1);
+    idxFile.write((uint8_t*)&lastReadPage, 4);
+
+    for (unsigned long i = 0; i < pageCount; i++) {
+      long pos = pages[i];
+      idxFile.write((uint8_t*)&pos, 4);
+    }
+    idxFile.close();
+    return true;
+  }
+
+  bool saveReadingPosition(const String& filename, int page) {
+    String idxPath = getIndexPath(filename);
+    File idxFile = SD.open(idxPath.c_str(), "r+");
+    if (!idxFile) return false;
+
+    uint8_t version = 0;
+    idxFile.read(&version, 1);
+
+    if (version != INDEX_VERSION) {
+      idxFile.close();
+      for (int i = 0; i < (int)_fileCache.size(); i++) {
+        if (_fileCache[i].filename == filename) {
+          _fileCache[i].lastReadPage = page;
+          return saveIndex(filename, _fileCache[i].pagePositions,
+                           _fileCache[i].fileSize, _fileCache[i].fullyIndexed, page);
+        }
+      }
+      return false;
+    }
+
+    // Seek to lastReadPage field: version(1) + fileSize(4) + pageCount(4) + fullyIndexed(1)
+    idxFile.seek(1 + 4 + 4 + 1);
+    idxFile.write((uint8_t*)&page, 4);
+    idxFile.close();
+    return true;
+  }
+
+  // ---- File Scanning ----
+
+  void scanFiles() {
+    _fileList.clear();
+    if (!SD.exists(BOOKS_FOLDER)) {
+      SD.mkdir(BOOKS_FOLDER);
+      Serial.printf("TextReader: Created %s\n", BOOKS_FOLDER);
+    }
+
+    File root = SD.open(BOOKS_FOLDER);
+    if (!root || !root.isDirectory()) return;
+
+    File f = root.openNextFile();
+    while (f && _fileList.size() < READER_MAX_FILES) {
+      if (!f.isDirectory()) {
+        String name = String(f.name());
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+
+        if (!name.startsWith(".") &&
+            (name.endsWith(".txt") || name.endsWith(".TXT"))) {
+          _fileList.push_back(name);
+        }
+      }
+      f = root.openNextFile();
+    }
+    root.close();
+    Serial.printf("TextReader: Found %d files\n", _fileList.size());
+  }
+
+  void buildIndexes() {
+    _fileCache.clear();
+    for (int i = 0; i < (int)_fileList.size(); i++) {
+      FileCache cache;
+      if (loadIndex(_fileList[i], cache)) {
+        Serial.printf("TextReader: %s - loaded %d pages (resume pg %d)\n",
+                      _fileList[i].c_str(), cache.pagePositions.size(),
+                      cache.lastReadPage + 1);
+        _fileCache.push_back(cache);
+        continue;
+      }
+
+      // Build new index
+      String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
+      File file = SD.open(fullPath.c_str(), FILE_READ);
+      if (!file) continue;
+
+      cache.filename = _fileList[i];
+      cache.fileSize = file.size();
+      cache.fullyIndexed = false;
+      cache.lastReadPage = 0;
+      cache.pagePositions.push_back(0);
+
+      int added = indexPagesWordWrap(file, 0, cache.pagePositions,
+                                     _linesPerPage, _charsPerLine,
+                                     PREINDEX_PAGES - 1);
+      cache.fullyIndexed = !file.available();
+      file.close();
+
+      saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
+                cache.fullyIndexed, 0);
+      _fileCache.push_back(cache);
+
+      Serial.printf("TextReader: %s - indexed %d pages%s\n",
+                    _fileList[i].c_str(), (int)cache.pagePositions.size(),
+                    cache.fullyIndexed ? " (complete)" : "");
+    }
+  }
+
+  // ---- Book Open/Close ----
+
+  void openBook(const String& filename) {
+    if (_fileOpen) closeBook();
+
+    // Find cached index
+    FileCache* cache = nullptr;
+    for (int i = 0; i < (int)_fileCache.size(); i++) {
+      if (_fileCache[i].filename == filename) {
+        cache = &_fileCache[i];
+        break;
+      }
+    }
+
+    String fullPath = String(BOOKS_FOLDER) + "/" + filename;
+    _file = SD.open(fullPath.c_str(), FILE_READ);
+    if (!_file) {
+      Serial.printf("TextReader: Failed to open %s\n", filename.c_str());
+      return;
+    }
+
+    _currentFile = filename;
+    _fileOpen = true;
+    _currentPage = 0;
+    _pagePositions.clear();
+
+    if (cache) {
+      for (int i = 0; i < (int)cache->pagePositions.size(); i++) {
+        _pagePositions.push_back(cache->pagePositions[i]);
+      }
+      if (cache->lastReadPage > 0 && cache->lastReadPage < (int)cache->pagePositions.size()) {
+        _currentPage = cache->lastReadPage;
+      }
+
+      if (cache->fullyIndexed) {
+        _totalPages = _pagePositions.size();
+        _mode = READING;
+        loadPageContent();
+        return;
+      }
+
+      // Continue indexing from cache
+      long lastPos = cache->pagePositions.back();
+      indexPagesWordWrap(_file, lastPos, _pagePositions,
+                         _linesPerPage, _charsPerLine, 0);
+    } else {
+      _pagePositions.push_back(0);
+      indexPagesWordWrap(_file, 0, _pagePositions,
+                         _linesPerPage, _charsPerLine, 0);
+    }
+
+    _totalPages = _pagePositions.size();
+    saveIndex(filename, _pagePositions, _file.size(), true, _currentPage);
+
+    // Update cache entry
+    for (int i = 0; i < (int)_fileCache.size(); i++) {
+      if (_fileCache[i].filename == filename) {
+        _fileCache[i].pagePositions = _pagePositions;
+        _fileCache[i].fullyIndexed = true;
+        break;
+      }
+    }
+
+    // Deselect SD to free SPI bus
+    digitalWrite(SDCARD_CS, HIGH);
+
+    _mode = READING;
+    loadPageContent();
+    Serial.printf("TextReader: Opened %s, %d pages, resume pg %d\n",
+                  filename.c_str(), _totalPages, _currentPage + 1);
+  }
+
+  void closeBook() {
+    if (!_fileOpen) return;
+    saveReadingPosition(_currentFile, _currentPage);
+
+    for (int i = 0; i < (int)_fileCache.size(); i++) {
+      if (_fileCache[i].filename == _currentFile) {
+        _fileCache[i].lastReadPage = _currentPage;
+        break;
+      }
+    }
+
+    _file.close();
+    _fileOpen = false;
+    _pagePositions.clear();
+    _pagePositions.shrink_to_fit();
+    // Deselect SD to free SPI bus
+    digitalWrite(SDCARD_CS, HIGH);
+    Serial.printf("TextReader: Closed, saved at page %d\n", _currentPage + 1);
+  }
+
+  // ---- Page Content Loading ----
+  // FIX: Read exact span between indexed page positions instead of guessing.
+  // This ensures the renderer gets exactly the bytes the indexer counted.
+
+  void loadPageContent() {
+    if (!_fileOpen || _currentPage >= _totalPages) {
+      _pageBufLen = 0;
+      return;
+    }
+
+    long pageStart = _pagePositions[_currentPage];
+    long pageEnd;
+    if (_currentPage + 1 < _totalPages) {
+      pageEnd = _pagePositions[_currentPage + 1];
+    } else {
+      // Last page - read remaining file content
+      pageEnd = _file.size();
+    }
+
+    long pageSpan = pageEnd - pageStart;
+    int toRead = (int)min((long)(READER_BUF_SIZE - 1), pageSpan);
+
+    _file.seek(pageStart);
+    _pageBufLen = _file.readBytes(_pageBuf, toRead);
+    _pageBuf[_pageBufLen] = '\0';
+    _contentDirty = false;
+
+    Serial.printf("TextReader: Page %d/%d, filePos=%ld, span=%ld, read=%d bytes\n",
+                  _currentPage + 1, _totalPages, pageStart, pageSpan, _pageBufLen);
+
+    // Deselect SD to free SPI bus for display
+    digitalWrite(SDCARD_CS, HIGH);
+  }
+
+  // ---- Rendering Helpers ----
+
+  void renderFileList(DisplayDriver& display) {
+    char tmp[40];
+
+    // Header
+    display.setCursor(0, 0);
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.print("Text Reader");
+
+    sprintf(tmp, "[%d]", (int)_fileList.size());
+    display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
+    display.print(tmp);
+
+    display.drawRect(0, 11, display.width(), 1);
+
+    if (_fileList.size() == 0) {
+      display.setCursor(0, 18);
+      display.setColor(DisplayDriver::LIGHT);
+      display.print("No .txt files found");
+      display.setCursor(0, 30);
+      display.print("Add files to /books/");
+      display.setCursor(0, 42);
+      display.print("on SD card");
+    } else {
+      display.setTextSize(0);  // Tiny font for file list
+      int listLineH = 8;  // Approximate tiny font line height in virtual coords
+      int startY = 14;
+      int maxVisible = (display.height() - startY - _footerHeight) / listLineH;
+      if (maxVisible < 3) maxVisible = 3;
+      if (maxVisible > 15) maxVisible = 15;
+
+      int startIdx = max(0, min(_selectedFile - maxVisible / 2,
+                                (int)_fileList.size() - maxVisible));
+      int endIdx = min((int)_fileList.size(), startIdx + maxVisible);
+
+      int y = startY;
+      for (int i = startIdx; i < endIdx; i++) {
+        bool selected = (i == _selectedFile);
+
+        if (selected) {
+          display.setColor(DisplayDriver::LIGHT);
+          // FIX: setCursor adds +5 to y internally, but fillRect does not.
+          // So we offset fillRect by +5 to align the highlight bar with the text.
+          display.fillRect(0, y + 5, display.width(), listLineH);
+          display.setColor(DisplayDriver::DARK);
+        } else {
+          display.setColor(DisplayDriver::LIGHT);
+        }
+
+        // Set cursor AFTER fillRect so text draws on top of highlight
+        display.setCursor(0, y);
+
+        // Build display string: "> filename.txt *" (asterisk if has bookmark)
+        String line = selected ? "> " : "  ";
+        String name = _fileList[i];
+
+        // Check for resume indicator
+        String suffix = "";
+        for (int j = 0; j < (int)_fileCache.size(); j++) {
+          if (_fileCache[j].filename == name && _fileCache[j].lastReadPage > 0) {
+            suffix = " *";
+            break;
+          }
+        }
+
+        // Truncate if needed
+        int maxLen = _charsPerLine - 4 - suffix.length();
+        if ((int)name.length() > maxLen) {
+          name = name.substring(0, maxLen - 3) + "...";
+        }
+        line += name + suffix;
+        display.print(line.c_str());
+
+        y += listLineH;
+      }
+      display.setTextSize(1);  // Restore
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setCursor(0, footerY);
+    display.setColor(DisplayDriver::YELLOW);
+    display.print("Q:Back W/S:Nav");
+
+    const char* right = "Ent:Open";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+  }
+
+  void renderPage(DisplayDriver& display) {
+    // Use tiny font for maximum text density
+    display.setTextSize(0);
+    display.setColor(DisplayDriver::LIGHT);
+
+    int y = 0;
+    int lineCount = 0;
+    int pos = 0;
+    int maxY = display.height() - _footerHeight - _lineHeight;
+
+    // Render all lines in the page buffer using word wrap.
+    // The buffer contains exactly the bytes for this page (from indexed positions),
+    // so we render everything in it.
+    while (pos < _pageBufLen && lineCount < _linesPerPage && y <= maxY) {
+      int oldPos = pos;
+      WrapResult wrap = findLineBreak(_pageBuf, _pageBufLen, pos, _charsPerLine);
+
+      // Safety: stop if findLineBreak made no progress (stuck at end of buffer)
+      if (wrap.nextStart <= oldPos && wrap.lineEnd >= _pageBufLen) break;
+
+      display.setCursor(0, y);
+      // Print line character by character (only printable)
+      char charStr[2] = {0, 0};
+      for (int j = pos; j < wrap.lineEnd && j < _pageBufLen; j++) {
+        if (_pageBuf[j] >= 32) {
+          charStr[0] = _pageBuf[j];
+          display.print(charStr);
+        }
+      }
+
+      y += _lineHeight;
+      lineCount++;
+      pos = wrap.nextStart;
+      if (pos >= _pageBufLen) break;
+    }
+
+    // Restore text size for footer
+    display.setTextSize(1);
+
+    // Footer: page info on left, navigation hints on right
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+
+    char status[30];
+    int pct = _totalPages > 1 ? (_currentPage * 100) / (_totalPages - 1) : 100;
+    sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
+    display.setCursor(0, footerY);
+    display.print(status);
+
+    const char* right = "W/S:Nav Q:Back";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+  }
+
+public:
+  TextReaderScreen(UITask* task)
+    : _task(task), _mode(FILE_LIST), _sdReady(false), _initialized(false),
+      _charsPerLine(38), _linesPerPage(22), _lineHeight(5),
+      _headerHeight(14), _footerHeight(14),
+      _selectedFile(0), _fileOpen(false), _currentPage(0), _totalPages(0),
+      _pageBufLen(0), _contentDirty(true) {
+  }
+
+  // Call once after display is available to calculate layout metrics
+  void initLayout(DisplayDriver& display) {
+    if (_initialized) return;
+
+    // Measure tiny font metrics using the display driver
+    display.setTextSize(0);
+
+    // Measure character width: use 10 M's to get accurate average
+    uint16_t tenCharsW = display.getTextWidth("MMMMMMMMMM");
+    if (tenCharsW > 0) {
+      _charsPerLine = (display.width() * 10) / tenCharsW;
+    }
+    if (_charsPerLine < 15) _charsPerLine = 15;
+    if (_charsPerLine > 60) _charsPerLine = 60;
+
+    // Line height for built-in 6x8 font:
+    // setCursor adds +5 to y, so effective text top = (y+5)*scale_y
+    // The font is ~8px tall in real coords. In virtual coords: 8/scale_y ≈ 3.2 units
+    // We need inter-line spacing, so use measured char width to estimate:
+    // Built-in font: 6px wide, 8px tall → height ≈ width * 8/6
+    // Then add ~20% for spacing
+    uint16_t mWidth = display.getTextWidth("M");
+    if (mWidth > 0) {
+      // Use a 1.2x multiplier on estimated character height for line spacing
+      _lineHeight = max(3, (int)((mWidth * 7 * 12) / (6 * 10)));
+    } else {
+      _lineHeight = 5;  // Safe fallback
+    }
+
+    _headerHeight = 0;  // No header in reading mode (maximize text area)
+    _footerHeight = 14;
+    int textAreaHeight = display.height() - _headerHeight - _footerHeight;
+    _linesPerPage = textAreaHeight / _lineHeight;
+    if (_linesPerPage < 5) _linesPerPage = 5;
+    if (_linesPerPage > 40) _linesPerPage = 40;
+
+    display.setTextSize(1);  // Restore
+    _initialized = true;
+
+    Serial.printf("TextReader layout: %d chars/line, %d lines/page, lineH=%d (display %dx%d)\n",
+                  _charsPerLine, _linesPerPage, _lineHeight, display.width(), display.height());
+  }
+
+  // Initialize SD card access. Call from main.cpp setup().
+  // Returns true if SD is ready.
+  void setSDReady(bool ready) { _sdReady = ready; }
+  bool isSDReady() const { return _sdReady; }
+
+  // Called when entering the reader screen
+  void enter(DisplayDriver& display) {
+    initLayout(display);
+    if (_sdReady && !_fileOpen) {
+      scanFiles();
+      buildIndexes();
+      // Deselect SD to free SPI bus for display rendering
+      digitalWrite(SDCARD_CS, HIGH);
+      _selectedFile = 0;
+      _mode = FILE_LIST;
+    } else if (_fileOpen) {
+      _mode = READING;
+      loadPageContent();
+    }
+  }
+
+  // Are we currently reading a book? (for key routing in main.cpp)
+  bool isReading() const { return _mode == READING; }
+  bool isInFileList() const { return _mode == FILE_LIST; }
+
+  int render(DisplayDriver& display) override {
+    if (!_sdReady) {
+      display.setCursor(0, 20);
+      display.setTextSize(1);
+      display.setColor(DisplayDriver::LIGHT);
+      display.print("SD card not found");
+      display.setCursor(0, 35);
+      display.print("Insert SD with /books/");
+      return 5000;
+    }
+
+    if (_mode == FILE_LIST) {
+      renderFileList(display);
+    } else if (_mode == READING) {
+      renderPage(display);
+    }
+
+    return 5000;  // E-ink refresh interval
+  }
+
+  bool handleInput(char c) override {
+    if (_mode == FILE_LIST) {
+      return handleFileListInput(c);
+    } else if (_mode == READING) {
+      return handleReadingInput(c);
+    }
+    return false;
+  }
+
+  bool handleFileListInput(char c) {
+    // W - scroll up
+    if (c == 'w' || c == 'W' || c == 0xF2) {
+      if (_selectedFile > 0) {
+        _selectedFile--;
+        return true;
+      }
+      return false;
+    }
+
+    // S - scroll down
+    if (c == 's' || c == 'S' || c == 0xF1) {
+      if (_selectedFile < (int)_fileList.size() - 1) {
+        _selectedFile++;
+        return true;
+      }
+      return false;
+    }
+
+    // Enter - open selected file
+    if (c == '\r' || c == 13) {
+      if (_fileList.size() > 0 && _selectedFile < (int)_fileList.size()) {
+        openBook(_fileList[_selectedFile]);
+        return true;
+      }
+      return false;
+    }
+
+    return false;
+  }
+
+  bool handleReadingInput(char c) {
+    // W/A - previous page
+    if (c == 'w' || c == 'W' || c == 'a' || c == 'A' || c == 0xF2) {
+      if (_currentPage > 0) {
+        _currentPage--;
+        loadPageContent();
+        return true;
+      }
+      return false;
+    }
+
+    // S/D/Space/Enter - next page
+    if (c == 's' || c == 'S' || c == 'd' || c == 'D' ||
+        c == ' ' || c == '\r' || c == 13 || c == 0xF1) {
+      if (_currentPage < _totalPages - 1) {
+        _currentPage++;
+        loadPageContent();
+        return true;
+      }
+      return false;
+    }
+
+    // Q - close book, back to file list
+    if (c == 'q' || c == 'Q') {
+      closeBook();
+      _mode = FILE_LIST;
+      return true;
+    }
+
+    return false;
+  }
+
+  // External close (called when leaving reader screen entirely)
+  void exitReader() {
+    if (_fileOpen) closeBook();
+    _mode = FILE_LIST;
+  }
+};

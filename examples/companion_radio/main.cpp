@@ -7,6 +7,10 @@
 // T-Deck Pro Keyboard support
 #if defined(LilyGo_TDeck_Pro)
   #include "TCA8418Keyboard.h"
+  #include <SD.h>
+  #include "TextReaderScreen.h"
+  extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
+
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
   
   // Compose mode state
@@ -17,6 +21,9 @@
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
   #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
+  
+  // Text reader mode state
+  static bool readerMode = false;
   
   void initKeyboard();
   void handleKeyboardInput();
@@ -328,6 +335,25 @@ void setup() {
     initKeyboard();
   #endif
 
+  // Initialize SD card for text reader
+  #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+  {
+    pinMode(SDCARD_CS, OUTPUT);
+    digitalWrite(SDCARD_CS, HIGH);  // Deselect SD initially
+    
+    if (SD.begin(SDCARD_CS, displaySpi, 4000000)) {
+      MESH_DEBUG_PRINTLN("setup() - SD card initialized");
+      // Tell the text reader that SD is ready
+      TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+      if (reader) {
+        reader->setSDReady(true);
+      }
+    } else {
+      MESH_DEBUG_PRINTLN("setup() - SD card initialization failed!");
+    }
+  }
+  #endif
+
   // Enable GPS by default on T-Deck Pro
   #if HAS_GPS
     // Set GPS enabled in both sensor manager and node prefs
@@ -356,6 +382,8 @@ void loop() {
       composeNeedsRefresh = false;
     }
   }
+  // Track reader mode state for key routing
+  readerMode = ui_task.isOnTextReader();
   #else
   ui_task.loop();
   #endif
@@ -477,6 +505,40 @@ void handleKeyboardInput() {
     return;
   }
   
+  // *** TEXT READER MODE ***
+  if (readerMode) {
+    TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+    
+    // Q key: if reading, reader handles it (close book -> file list)
+    //         if on file list, exit reader entirely
+    if (key == 'q' || key == 'Q') {
+      if (reader->isReading()) {
+        // Let the reader handle Q (close book, go to file list)
+        ui_task.injectKey('q');
+      } else {
+        // On file list - exit reader, go home
+        reader->exitReader();
+        Serial.println("Exiting text reader");
+        ui_task.gotoHomeScreen();
+      }
+      return;
+    }
+    
+    // C key: allow entering compose mode from reader
+    if (key == 'c' || key == 'C') {
+      composeMode = true;
+      composeBuffer[0] = '\0';
+      composePos = 0;
+      Serial.printf("Entering compose mode from reader, channel %d\n", composeChannelIdx);
+      drawComposeScreen();
+      return;
+    }
+    
+    // All other keys pass through to the reader screen
+    ui_task.injectKey(key);
+    return;
+  }
+
   // Normal mode - not composing
   switch (key) {
     case 'c':
@@ -498,6 +560,13 @@ void handleKeyboardInput() {
       // Go to channel message screen
       Serial.println("Opening channel messages");
       ui_task.gotoChannelScreen();
+      break;
+    
+    case 'r':
+    case 'R':
+      // Open text reader
+      Serial.println("Opening text reader");
+      ui_task.gotoTextReader();
       break;
     
     case 'w':
@@ -573,7 +642,7 @@ void handleKeyboardInput() {
 void drawComposeScreen() {
   #ifdef DISPLAY_CLASS
   display.startFrame();
-  display.setTextSize(1);  // Header stays normal size
+  display.setTextSize(1);
   display.setColor(DisplayDriver::GREEN);
   display.setCursor(0, 0);
   
@@ -590,19 +659,16 @@ void drawComposeScreen() {
   display.setColor(DisplayDriver::LIGHT);
   display.drawRect(0, 11, display.width(), 1);
   
-  // Switch to tiny font for compose body
-  display.setTextSize(0);
   display.setCursor(0, 14);
   display.setColor(DisplayDriver::LIGHT);
   
   // Word wrap the compose buffer - calculate chars per line based on actual font width
   int x = 0;
   int y = 14;
-  int lineHeight = 9;  // 8px font + 1px spacing
   uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
-  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 35;
-  if (charsPerLine < 20) charsPerLine = 20;
-  if (charsPerLine > 60) charsPerLine = 60;
+  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
+  if (charsPerLine < 12) charsPerLine = 12;
+  if (charsPerLine > 40) charsPerLine = 40;
   char charStr[2] = {0, 0};  // Buffer for single character as string
   
   for (int i = 0; i < composePos; i++) {
@@ -611,16 +677,13 @@ void drawComposeScreen() {
     x++;
     if (x >= charsPerLine) {
       x = 0;
-      y += lineHeight;
+      y += 11;
       display.setCursor(0, y);
     }
   }
   
   // Show cursor
   display.print("_");
-  
-  // Switch back to normal font for status bar
-  display.setTextSize(1);
   
   // Status bar
   int statusY = display.height() - 12;

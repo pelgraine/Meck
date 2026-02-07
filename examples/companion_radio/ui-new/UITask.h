@@ -52,6 +52,7 @@ class UITask : public AbstractUITask {
   UIScreen* home;
   UIScreen* msg_preview;
   UIScreen* channel_screen;  // Channel message history screen
+  UIScreen* text_reader;     // *** NEW: Text reader screen ***
   UIScreen* curr;
 
   void userLedHandler();
@@ -75,11 +76,13 @@ public:
 
   void gotoHomeScreen() { setCurrScreen(home); }
   void gotoChannelScreen();  // Navigate to channel message screen
+  void gotoTextReader();     // *** NEW: Navigate to text reader ***
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
   bool isOnChannelScreen() const { return curr == channel_screen; }
+  bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
@@ -95,6 +98,7 @@ public:
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
+  UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
