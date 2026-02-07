@@ -104,29 +104,53 @@ class HomeScreen : public UIScreen {
 
 
   void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
-    // Convert millivolts to percentage
-    const int minMilliVolts = 3000; // Minimum voltage (e.g., 3.0V)
-    const int maxMilliVolts = 4200; // Maximum voltage (e.g., 4.2V)
-    int batteryPercentage = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
-    if (batteryPercentage < 0) batteryPercentage = 0; // Clamp to 0%
-    if (batteryPercentage > 100) batteryPercentage = 100; // Clamp to 100%
+    // Try to get accurate SOC from BQ27220 fuel gauge first
+    uint8_t batteryPercentage = board.getBatteryPercent();
 
-    // battery icon
-    int iconWidth = 22;
-    int iconHeight = 8;
-    int iconX = display.width() - iconWidth - 5; // Position the icon near the top-right corner
-    int iconY = 0;
+    // Fall back to voltage-based estimation if fuel gauge returns 0
+    if (batteryPercentage == 0 && batteryMilliVolts > 0) {
+      const int minMilliVolts = 3000;
+      const int maxMilliVolts = 4200;
+      int pct = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
+      if (pct < 0) pct = 0;
+      if (pct > 100) pct = 100;
+      batteryPercentage = (uint8_t)pct;
+    }
+
     display.setColor(DisplayDriver::GREEN);
+
+    // battery icon dimensions (smaller to match tiny percentage text)
+    int iconWidth = 16;
+    int iconHeight = 6;
+
+    // measure percentage text width to position icon + text together at right edge
+    display.setTextSize(0);
+    char pctStr[5];
+    sprintf(pctStr, "%d%%", batteryPercentage);
+    uint16_t textWidth = display.getTextWidth(pctStr);
+
+    // layout: [icon 16px][cap 2px][gap 2px][text][margin 2px]
+    int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
+    int iconX = display.width() - totalWidth;
+    int iconY = 0;  // vertically align with node name text
 
     // battery outline
     display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
     // battery "cap"
-    display.fillRect(iconX + iconWidth, iconY + (iconHeight / 4), 3, iconHeight / 2);
+    display.fillRect(iconX + iconWidth, iconY + (iconHeight / 4), 2, iconHeight / 2);
 
     // fill the battery based on the percentage
     int fillWidth = (batteryPercentage * (iconWidth - 4)) / 100;
     display.fillRect(iconX + 2, iconY + 2, fillWidth, iconHeight - 4);
+
+    // draw percentage text after the battery cap, offset upward to center with icon
+    // (setCursor adds +5 internally for baseline, so compensate for the tiny font)
+    int textX = iconX + iconWidth + 2 + 2;  // after cap + gap
+    int textY = iconY - 3;  // offset up to vertically center with icon
+    display.setCursor(textX, textY);
+    display.print(pctStr);
+    display.setTextSize(1);  // restore default text size
   }
 
   CayenneLPP sensors_lpp;

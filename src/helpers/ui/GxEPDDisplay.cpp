@@ -84,6 +84,10 @@ void GxEPDDisplay::startFrame(Color bkg) {
 void GxEPDDisplay::setTextSize(int sz) {
   display_crc.update<int>(sz);
   switch(sz) {
+    case 0:  // Tiny - built-in 6x8 pixel font
+      display.setFont(NULL);
+      display.setTextSize(1);
+      break;
     case 1:  // Small - use 9pt (was 9pt)
       display.setFont(&FreeSans9pt7b);
       break;
