@@ -12,7 +12,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v0.6.3"
+#define FIRMWARE_VERSION "Meck v0.6.4"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -231,6 +231,19 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+  // Sent message repeat tracking
+  #define SENT_TRACK_SIZE          4
+  #define SENT_FINGERPRINT_SIZE    12
+  #define SENT_TRACK_EXPIRY_MS     30000  // stop tracking after 30 seconds
+  struct SentMsgTrack {
+    uint8_t fingerprint[SENT_FINGERPRINT_SIZE];
+    uint8_t repeat_count;
+    unsigned long sent_millis;
+    bool active;
+  };
+  SentMsgTrack _sent_track[SENT_TRACK_SIZE];
+  int _sent_track_idx;  // next slot in circular buffer
 };
 
 extern MyMesh the_mesh;

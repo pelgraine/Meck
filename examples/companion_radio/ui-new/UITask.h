@@ -75,7 +75,8 @@ public:
 
   void gotoHomeScreen() { setCurrScreen(home); }
   void gotoChannelScreen();  // Navigate to channel message screen
-  void showAlert(const char* text, int duration_millis);
+  void showAlert(const char* text, int duration_millis) override;
+  void forceRefresh() override { _next_refresh = 100; }
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;

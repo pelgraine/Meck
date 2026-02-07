@@ -446,9 +446,37 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 }
 
 bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
-  // REVISIT: try to determine which Region (from transport_codes[1]) that Sender is indicating for replies/responses
-  //    if unknown, fallback to finding Region from transport_codes[0], the 'scope' used by Sender
-  return false;
+  // Check if this incoming flood packet is a repeat of a message we recently sent
+  if (packet->payload_len >= SENT_FINGERPRINT_SIZE) {
+    unsigned long now = millis();
+    for (int i = 0; i < SENT_TRACK_SIZE; i++) {
+      SentMsgTrack* t = &_sent_track[i];
+      if (!t->active) continue;
+
+      // Expire old entries
+      if ((now - t->sent_millis) > SENT_TRACK_EXPIRY_MS) {
+        t->active = false;
+        continue;
+      }
+
+      // Compare payload fingerprint
+      if (memcmp(packet->payload, t->fingerprint, SENT_FINGERPRINT_SIZE) == 0) {
+        t->repeat_count++;
+        MESH_DEBUG_PRINTLN("SentTrack: heard repeat #%d (SNR=%.1f)", t->repeat_count, packet->getSNR());
+        
+#ifdef DISPLAY_CLASS
+        if (_ui) {
+          char buf[40];
+          snprintf(buf, sizeof(buf), "Sent! (%d)", t->repeat_count);
+          _ui->showAlert(buf, 2000);  // show/extend alert with updated count
+        }
+#endif
+        break;  // found match, no need to check other entries
+      }
+    }
+  }
+
+  return false;  // never filter — let normal processing continue
 }
 
 void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -463,6 +491,17 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
   }
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
+  // Capture payload fingerprint for repeat tracking before sending
+  if (pkt->payload_len >= SENT_FINGERPRINT_SIZE) {
+    SentMsgTrack* t = &_sent_track[_sent_track_idx];
+    memcpy(t->fingerprint, pkt->payload, SENT_FINGERPRINT_SIZE);
+    t->repeat_count = 0;
+    t->sent_millis = millis();
+    t->active = true;
+    _sent_track_idx = (_sent_track_idx + 1) % SENT_TRACK_SIZE;
+    MESH_DEBUG_PRINTLN("SentTrack: captured fingerprint for channel msg");
+  }
+
   // TODO: have per-channel send_scope
   if (send_scope.isNull()) {
     sendFlood(pkt, delay_millis);
@@ -826,6 +865,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   dirty_contacts_expiry = 0;
   memset(advert_paths, 0, sizeof(advert_paths));
   memset(send_scope.key, 0, sizeof(send_scope.key));
+  memset(_sent_track, 0, sizeof(_sent_track));
+  _sent_track_idx = 0;
 
   // defaults
   memset(&_prefs, 0, sizeof(_prefs));

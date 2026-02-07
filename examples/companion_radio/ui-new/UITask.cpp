@@ -610,6 +610,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 void UITask::showAlert(const char* text, int duration_millis) {
   strcpy(_alert, text);
   _alert_expiry = millis() + duration_millis;
+  _next_refresh = millis() + 100;  // trigger re-render to show updated text
 }
 
 void UITask::notify(UIEventType t) {
