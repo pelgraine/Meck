@@ -829,52 +829,73 @@ public:
       return;
     }
 
-    // Pre-index each file, showing progress
+    // --- Pass 1: Fast cache load (no per-file splash screens) ---
+    // Try to load existing .idx files from SD for every file.
+    // This is just SD reads — no indexing, no e-ink refreshes.
     _fileCache.clear();
+    _fileCache.resize(_fileList.size());  // Pre-allocate slots to maintain alignment with _fileList
+
+    int cachedCount = 0;
+    int needsIndexCount = 0;
+
     for (int i = 0; i < (int)_fileList.size(); i++) {
-      // Draw progress splash
-      drawBootSplash(i + 1, (int)_fileList.size(), _fileList[i]);
-
-      FileCache cache;
-      if (loadIndex(_fileList[i], cache)) {
-        Serial.printf("TextReader: %s - loaded %d pages (resume pg %d)\n",
-                      _fileList[i].c_str(), cache.pagePositions.size(),
-                      cache.lastReadPage + 1);
-        _fileCache.push_back(cache);
-        continue;
+      if (loadIndex(_fileList[i], _fileCache[i])) {
+        Serial.printf("TextReader: %s - cached %d pages (resume pg %d)\n",
+                      _fileList[i].c_str(), _fileCache[i].pagePositions.size(),
+                      _fileCache[i].lastReadPage + 1);
+        cachedCount++;
+      } else {
+        // Mark as needing indexing (filename will be empty)
+        _fileCache[i].filename = "";
+        needsIndexCount++;
       }
+    }
 
-      // Build new index (first 100 pages only)
-      String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
-      File file = SD.open(fullPath.c_str(), FILE_READ);
-      if (!file) continue;
+    Serial.printf("TextReader: %d cached, %d need indexing\n", cachedCount, needsIndexCount);
 
-      cache.filename = _fileList[i];
-      cache.fileSize = file.size();
-      cache.fullyIndexed = false;
-      cache.lastReadPage = 0;
-      cache.pagePositions.push_back(0);
+    // --- Pass 2: Index only new/changed files (with splash screens) ---
+    if (needsIndexCount > 0) {
+      int indexProgress = 0;
+      for (int i = 0; i < (int)_fileList.size(); i++) {
+        // Skip files that loaded from cache
+        if (_fileCache[i].filename.length() > 0) continue;
 
-      int added = indexPagesWordWrap(file, 0, cache.pagePositions,
-                                     _linesPerPage, _charsPerLine,
-                                     PREINDEX_PAGES - 1);
-      cache.fullyIndexed = !file.available();
-      file.close();
+        indexProgress++;
+        drawBootSplash(indexProgress, needsIndexCount, _fileList[i]);
 
-      saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
-                cache.fullyIndexed, 0);
-      _fileCache.push_back(cache);
+        String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
+        File file = SD.open(fullPath.c_str(), FILE_READ);
+        if (!file) continue;
 
-      Serial.printf("TextReader: %s - indexed %d pages%s\n",
-                    _fileList[i].c_str(), (int)cache.pagePositions.size(),
-                    cache.fullyIndexed ? " (complete)" : "");
+        FileCache& cache = _fileCache[i];
+        cache.filename = _fileList[i];
+        cache.fileSize = file.size();
+        cache.fullyIndexed = false;
+        cache.lastReadPage = 0;
+        cache.pagePositions.clear();
+        cache.pagePositions.push_back(0);
+
+        int added = indexPagesWordWrap(file, 0, cache.pagePositions,
+                                       _linesPerPage, _charsPerLine,
+                                       PREINDEX_PAGES - 1);
+        cache.fullyIndexed = !file.available();
+        file.close();
+
+        saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
+                  cache.fullyIndexed, 0);
+
+        Serial.printf("TextReader: %s - indexed %d pages%s\n",
+                      _fileList[i].c_str(), (int)cache.pagePositions.size(),
+                      cache.fullyIndexed ? " (complete)" : "");
+      }
     }
 
     // Deselect SD to free SPI bus
     digitalWrite(SDCARD_CS, HIGH);
 
     _bootIndexed = true;
-    Serial.printf("TextReader: Boot indexing complete, %d files\n", (int)_fileList.size());
+    Serial.printf("TextReader: Boot indexing complete, %d files (%d cached, %d newly indexed)\n",
+                  (int)_fileList.size(), cachedCount, needsIndexCount);
   }
 
   // ---- Public Interface ----
