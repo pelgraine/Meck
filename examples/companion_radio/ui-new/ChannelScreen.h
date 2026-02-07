@@ -114,24 +114,26 @@ public:
     display.drawRect(0, 11, display.width(), 1);
     
     if (channelMsgCount == 0) {
-      display.setCursor(0, 25);
+      display.setTextSize(0);  // Tiny font for body text
+      display.setCursor(0, 20);
       display.setColor(DisplayDriver::LIGHT);
       display.print("No messages yet");
-      display.setCursor(0, 40);
+      display.setCursor(0, 30);
       display.print("A/D: Switch channel");
-      display.setCursor(0, 52);
+      display.setCursor(0, 40);
       display.print("C: Compose message");
+      display.setTextSize(1);  // Restore for footer
     } else {
-      int lineHeight = 10;
+      display.setTextSize(0);  // Tiny font for message body
+      int lineHeight = 9;   // 8px font + 1px spacing
       int headerHeight = 14;
       int footerHeight = 14;
       
-      // Calculate chars per line based on actual font width (not assumed 6px)
-      // Measure a test string and scale accordingly
+      // Calculate chars per line based on actual font width
       uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
-      int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
-      if (charsPerLine < 12) charsPerLine = 12;  // Minimum reasonable
-      if (charsPerLine > 40) charsPerLine = 40;  // Maximum reasonable
+      int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 35;
+      if (charsPerLine < 20) charsPerLine = 20;  // Minimum reasonable
+      if (charsPerLine > 60) charsPerLine = 60;  // Maximum reasonable
       
       int y = headerHeight;
       
@@ -172,13 +174,13 @@ public:
         display.print(tmp);
         y += lineHeight;
         
-        // Message text with character wrapping (like compose screen - fills full width)
+        // Message text with character wrapping
         display.setColor(DisplayDriver::LIGHT);
         
         int textLen = strlen(msg->text);
         int pos = 0;
         int linesForThisMsg = 0;
-        int maxLinesPerMsg = 6;  // Allow more lines per message
+        int maxLinesPerMsg = 8;  // More lines now that font is smaller
         int x = 0;
         char charStr[2] = {0, 0};
         
@@ -209,6 +211,8 @@ public:
         msgsDrawn++;
         _msgsPerPage = msgsDrawn;
       }
+      
+      display.setTextSize(1);  // Restore for footer
     }
     
     // Footer with controls

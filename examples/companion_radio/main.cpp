@@ -573,7 +573,7 @@ void handleKeyboardInput() {
 void drawComposeScreen() {
   #ifdef DISPLAY_CLASS
   display.startFrame();
-  display.setTextSize(1);
+  display.setTextSize(1);  // Header stays normal size
   display.setColor(DisplayDriver::GREEN);
   display.setCursor(0, 0);
   
@@ -590,16 +590,19 @@ void drawComposeScreen() {
   display.setColor(DisplayDriver::LIGHT);
   display.drawRect(0, 11, display.width(), 1);
   
+  // Switch to tiny font for compose body
+  display.setTextSize(0);
   display.setCursor(0, 14);
   display.setColor(DisplayDriver::LIGHT);
   
   // Word wrap the compose buffer - calculate chars per line based on actual font width
   int x = 0;
   int y = 14;
+  int lineHeight = 9;  // 8px font + 1px spacing
   uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
-  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
-  if (charsPerLine < 12) charsPerLine = 12;
-  if (charsPerLine > 40) charsPerLine = 40;
+  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 35;
+  if (charsPerLine < 20) charsPerLine = 20;
+  if (charsPerLine > 60) charsPerLine = 60;
   char charStr[2] = {0, 0};  // Buffer for single character as string
   
   for (int i = 0; i < composePos; i++) {
@@ -608,13 +611,16 @@ void drawComposeScreen() {
     x++;
     if (x >= charsPerLine) {
       x = 0;
-      y += 11;
+      y += lineHeight;
       display.setCursor(0, y);
     }
   }
   
   // Show cursor
   display.print("_");
+  
+  // Switch back to normal font for status bar
+  display.setTextSize(1);
   
   // Status bar
   int statusY = display.height() - 12;
