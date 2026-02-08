@@ -351,9 +351,7 @@ void setup() {
           reader->bootIndex(*disp);
         }
       }
-    } else {
-      MESH_DEBUG_PRINTLN("setup() - SD card initialization failed!");
-    }
+  }
   }
   #endif
 

@@ -4,6 +4,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <SD.h>
 #include <vector>
+#include "EpubProcessor.h"
 
 // Forward declarations
 class UITask;
@@ -196,6 +197,38 @@ private:
   // Draw directly to display outside the normal render cycle.
   // Matches the style of the standalone text reader firmware splash.
 
+  // Generic splash screen: title (large green), subtitle (normal), detail (normal)
+  void drawSplash(const char* title, const char* subtitle, const char* detail) {
+    if (!_display) return;
+    _display->startFrame();
+
+    // Title in large text
+    _display->setTextSize(2);
+    _display->setColor(DisplayDriver::GREEN);
+    _display->setCursor(10, 11);
+    _display->print(title);
+
+    _display->setTextSize(1);
+    _display->setColor(DisplayDriver::LIGHT);
+
+    int y = 35;
+
+    // Subtitle
+    if (subtitle && subtitle[0]) {
+      _display->setCursor(10, y);
+      _display->print(subtitle);
+      y += 8;
+    }
+
+    // Detail line
+    if (detail && detail[0]) {
+      _display->setCursor(10, y);
+      _display->print(detail);
+    }
+
+    _display->endFrame();
+  }
+
   // Word-wrapping splash for opening a large book.
   // Shows: "Indexing / Pages..." (large), word-wrapped filename, "Please wait. / Loading shortly..."
   void drawIndexingSplash(const String& filename) {
@@ -353,9 +386,14 @@ private:
     idxFile.read(&fullyFlag, 1);
     idxFile.read((uint8_t*)&lastRead, 4);
 
-    // Verify file hasn't changed
+    // Verify file hasn't changed - try BOOKS_FOLDER first, then epub cache
     String fullPath = String(BOOKS_FOLDER) + "/" + filename;
     File txtFile = SD.open(fullPath.c_str(), FILE_READ);
+    if (!txtFile) {
+      // Fallback: check epub cache directory
+      String cachePath = String("/books/.epub_cache/") + filename;
+      txtFile = SD.open(cachePath.c_str(), FILE_READ);
+    }
     if (!txtFile) { idxFile.close(); return false; }
     unsigned long curSize = txtFile.size();
     txtFile.close();
@@ -457,7 +495,8 @@ private:
         if (slash >= 0) name = name.substring(slash + 1);
 
         if (!name.startsWith(".") &&
-            (name.endsWith(".txt") || name.endsWith(".TXT"))) {
+            (name.endsWith(".txt") || name.endsWith(".TXT") ||
+             name.endsWith(".epub") || name.endsWith(".EPUB"))) {
           _fileList.push_back(name);
         }
       }
@@ -472,23 +511,86 @@ private:
   void openBook(const String& filename) {
     if (_fileOpen) closeBook();
 
-    // Find cached index
+    // ---- EPUB auto-conversion ----
+    String actualFilename = filename;
+    String actualFullPath = String(BOOKS_FOLDER) + "/" + filename;
+    bool isEpub = filename.endsWith(".epub") || filename.endsWith(".EPUB");
+
+    if (isEpub) {
+      // Build cache path for this EPUB
+      char cachePath[160];
+      EpubProcessor::buildCachePath(actualFullPath.c_str(), cachePath, sizeof(cachePath));
+
+      // Check if already converted
+      digitalWrite(SDCARD_CS, LOW);
+      bool cached = SD.exists(cachePath);
+      digitalWrite(SDCARD_CS, HIGH);
+
+      if (!cached) {
+        // Show conversion splash on e-ink
+        char shortName[28];
+        if (filename.length() > 24) {
+          strncpy(shortName, filename.c_str(), 21);
+          shortName[21] = '\0';
+          strcat(shortName, "...");
+        } else {
+          strncpy(shortName, filename.c_str(), sizeof(shortName) - 1);
+          shortName[sizeof(shortName) - 1] = '\0';
+        }
+        drawSplash("Converting EPUB...", "Please wait", shortName);
+
+        Serial.printf("TextReader: Converting EPUB '%s'\n", filename.c_str());
+        unsigned long t0 = millis();
+
+        digitalWrite(SDCARD_CS, LOW);
+        bool ok = EpubProcessor::processToText(actualFullPath.c_str(), cachePath);
+        digitalWrite(SDCARD_CS, HIGH);
+
+        if (!ok) {
+          Serial.println("TextReader: EPUB conversion failed!");
+          drawSplash("Convert failed!", "", shortName);
+          delay(2000);
+          return;  // Stay in file list
+        }
+        Serial.printf("TextReader: EPUB converted in %lu ms\n", millis() - t0);
+      } else {
+        Serial.printf("TextReader: EPUB cache hit for '%s'\n", filename.c_str());
+      }
+
+      // Redirect to the cached .txt
+      actualFullPath = String(cachePath);
+      const char* lastSlash = strrchr(cachePath, '/');
+      actualFilename = String(lastSlash ? lastSlash + 1 : cachePath);
+    }
+    // ---- End EPUB auto-conversion ----
+
+    // Find cached index for this file
     FileCache* cache = nullptr;
     for (int i = 0; i < (int)_fileCache.size(); i++) {
-      if (_fileCache[i].filename == filename) {
+      if (_fileCache[i].filename == actualFilename) {
         cache = &_fileCache[i];
         break;
       }
     }
 
-    String fullPath = String(BOOKS_FOLDER) + "/" + filename;
-    _file = SD.open(fullPath.c_str(), FILE_READ);
+    _file = SD.open(actualFullPath.c_str(), FILE_READ);
+
+    // Fallback: try epub cache dir (for files discovered during boot scan)
+    if (!_file && !isEpub) {
+      String cacheFallback = String("/books/.epub_cache/") + actualFilename;
+      _file = SD.open(cacheFallback.c_str(), FILE_READ);
+      if (_file) {
+        actualFullPath = cacheFallback;
+        Serial.printf("TextReader: Opened from epub cache: %s\n", actualFilename.c_str());
+      }
+    }
+
     if (!_file) {
-      Serial.printf("TextReader: Failed to open %s\n", filename.c_str());
+      Serial.printf("TextReader: Failed to open %s\n", actualFilename.c_str());
       return;
     }
 
-    _currentFile = filename;
+    _currentFile = actualFilename;
     _fileOpen = true;
     _currentPage = 0;
     _pagePositions.clear();
@@ -501,55 +603,91 @@ private:
         _currentPage = cache->lastReadPage;
       }
 
-      // Already fully indexed - open immediately
+      // Already fully indexed — open immediately
       if (cache->fullyIndexed) {
         _totalPages = _pagePositions.size();
         _mode = READING;
         loadPageContent();
         Serial.printf("TextReader: Opened %s, %d pages, resume pg %d\n",
-                      filename.c_str(), _totalPages, _currentPage + 1);
+                      actualFilename.c_str(), _totalPages, _currentPage + 1);
         return;
       }
 
-      // Partially indexed - show splash and finish indexing
+      // Partially indexed — finish indexing with splash
       Serial.printf("TextReader: Finishing index for %s (have %d pages so far)\n",
-                    filename.c_str(), (int)_pagePositions.size());
+                    actualFilename.c_str(), (int)_pagePositions.size());
 
-      drawIndexingSplash(filename);
+      char shortName[28];
+      if (actualFilename.length() > 24) {
+        strncpy(shortName, actualFilename.c_str(), 21);
+        shortName[21] = '\0';
+        strcat(shortName, "...");
+      } else {
+        strncpy(shortName, actualFilename.c_str(), sizeof(shortName) - 1);
+        shortName[sizeof(shortName) - 1] = '\0';
+      }
+      drawSplash("Indexing...", "Please wait", shortName);
 
-      long lastPos = cache->pagePositions.back();
-      indexPagesWordWrap(_file, lastPos, _pagePositions,
-                         _linesPerPage, _charsPerLine, 0);
+      if (_pagePositions.empty()) {
+        // Cache had no pages (e.g. dummy entry) — full index from scratch
+        _pagePositions.push_back(0);
+        indexPagesWordWrap(_file, 0, _pagePositions,
+                           _linesPerPage, _charsPerLine, 0);
+      } else {
+        long lastPos = cache->pagePositions.back();
+        indexPagesWordWrap(_file, lastPos, _pagePositions,
+                           _linesPerPage, _charsPerLine, 0);
+      }
     } else {
-      // No cache at all - full index from scratch with splash
-      Serial.printf("TextReader: Full index for %s\n", filename.c_str());
+      // No cache — full index from scratch
+      Serial.printf("TextReader: Full index for %s\n", actualFilename.c_str());
 
-      drawIndexingSplash(filename);
+      char shortName[28];
+      if (actualFilename.length() > 24) {
+        strncpy(shortName, actualFilename.c_str(), 21);
+        shortName[21] = '\0';
+        strcat(shortName, "...");
+      } else {
+        strncpy(shortName, actualFilename.c_str(), sizeof(shortName) - 1);
+        shortName[sizeof(shortName) - 1] = '\0';
+      }
+      drawSplash("Indexing...", "Please wait", shortName);
 
       _pagePositions.push_back(0);
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0);
     }
 
+    // Save complete index
     _totalPages = _pagePositions.size();
-    saveIndex(filename, _pagePositions, _file.size(), true, _currentPage);
 
-    // Update cache entry
+    // Update or create cache entry
+    bool foundCache = false;
     for (int i = 0; i < (int)_fileCache.size(); i++) {
-      if (_fileCache[i].filename == filename) {
+      if (_fileCache[i].filename == actualFilename) {
         _fileCache[i].pagePositions = _pagePositions;
         _fileCache[i].fullyIndexed = true;
+        _fileCache[i].fileSize = _file.size();
+        foundCache = true;
         break;
       }
     }
+    if (!foundCache) {
+      FileCache newCache;
+      newCache.filename = actualFilename;
+      newCache.fileSize = _file.size();
+      newCache.fullyIndexed = true;
+      newCache.lastReadPage = _currentPage;
+      newCache.pagePositions = _pagePositions;
+      _fileCache.push_back(newCache);
+    }
 
-    // Deselect SD to free SPI bus
-    digitalWrite(SDCARD_CS, HIGH);
+    saveIndex(actualFilename, _pagePositions, _file.size(), true, _currentPage);
 
     _mode = READING;
     loadPageContent();
-    Serial.printf("TextReader: Opened %s, %d pages, resume pg %d\n",
-                  filename.c_str(), _totalPages, _currentPage + 1);
+    Serial.printf("TextReader: Opened %s, %d pages\n",
+                  actualFilename.c_str(), _totalPages);
   }
 
   void closeBook() {
@@ -623,11 +761,11 @@ private:
     if (_fileList.size() == 0) {
       display.setCursor(0, 18);
       display.setColor(DisplayDriver::LIGHT);
-      display.print("No .txt files found");
+      display.print("No files found");
       display.setCursor(0, 30);
-      display.print("Add files to /books/");
+      display.print("Add .txt or .epub to");
       display.setCursor(0, 42);
-      display.print("on SD card");
+      display.print("/books/ on SD card");
     } else {
       display.setTextSize(0);  // Tiny font for file list
       int listLineH = 8;  // Approximate tiny font line height in virtual coords
@@ -820,8 +958,36 @@ public:
     drawBootSplash(0, 0, "Scanning...");
     Serial.println("TextReader: Boot indexing started");
 
-    // Scan for files
+    // Scan for files (includes .txt and .epub)
     scanFiles();
+
+    // Also pick up previously converted EPUB cache files
+    if (SD.exists("/books/.epub_cache")) {
+      File cacheDir = SD.open("/books/.epub_cache");
+      if (cacheDir && cacheDir.isDirectory()) {
+        File f = cacheDir.openNextFile();
+        while (f && _fileList.size() < READER_MAX_FILES) {
+          if (!f.isDirectory()) {
+            String name = String(f.name());
+            int slash = name.lastIndexOf('/');
+            if (slash >= 0) name = name.substring(slash + 1);
+            if (name.endsWith(".txt") || name.endsWith(".TXT")) {
+              // Avoid duplicates
+              bool dup = false;
+              for (int i = 0; i < (int)_fileList.size(); i++) {
+                if (_fileList[i] == name) { dup = true; break; }
+              }
+              if (!dup) {
+                _fileList.push_back(name);
+                Serial.printf("TextReader: Found cached EPUB txt: %s\n", name.c_str());
+              }
+            }
+          }
+          f = cacheDir.openNextFile();
+        }
+        cacheDir.close();
+      }
+    }
 
     if (_fileList.size() == 0) {
       Serial.println("TextReader: No files to index");
@@ -860,11 +1026,22 @@ public:
         // Skip files that loaded from cache
         if (_fileCache[i].filename.length() > 0) continue;
 
+        // Skip .epub files — they'll be converted on first open via openBook()
+        if (_fileList[i].endsWith(".epub") || _fileList[i].endsWith(".EPUB")) {
+          needsIndexCount--;  // Don't count epubs in progress display
+          continue;
+        }
+
         indexProgress++;
         drawBootSplash(indexProgress, needsIndexCount, _fileList[i]);
 
+        // Try BOOKS_FOLDER first, then epub cache fallback
         String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
         File file = SD.open(fullPath.c_str(), FILE_READ);
+        if (!file) {
+          String cacheFallback = String("/books/.epub_cache/") + _fileList[i];
+          file = SD.open(cacheFallback.c_str(), FILE_READ);
+        }
         if (!file) continue;
 
         FileCache& cache = _fileCache[i];
