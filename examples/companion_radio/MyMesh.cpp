@@ -476,7 +476,7 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
     }
   }
 
-  return false;  // never filter — let normal processing continue
+  return false;  // never filter â€” let normal processing continue
 }
 
 void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -1088,6 +1088,12 @@ void MyMesh::handleCmdFrame(size_t len) {
       bool success = getChannel(channel_idx, channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
+#ifdef DISPLAY_CLASS
+        // Show BLE-app-sent message on device channel screen
+        if (_ui) {
+          _ui->addSentChannelMessage(channel_idx, _prefs.node_name, text);
+        }
+#endif
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
       }

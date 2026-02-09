@@ -149,9 +149,19 @@ public:
         }
       }
       
-      // Display messages from scroll position
+      // Reverse to chronological order (oldest first, newest last at bottom)
+      for (int l = 0, r = numChannelMsgs - 1; l < r; l++, r--) {
+        int tmp = channelMsgs[l]; channelMsgs[l] = channelMsgs[r]; channelMsgs[r] = tmp;
+      }
+      
+      // Calculate start index so newest messages appear at the bottom
+      // scrollPos=0 shows the most recent messages, scrollPos++ scrolls up to older
+      int startIdx = numChannelMsgs - _msgsPerPage - _scrollPos;
+      if (startIdx < 0) startIdx = 0;
+      
+      // Display messages oldest-to-newest (top to bottom)
       int msgsDrawn = 0;
-      for (int i = _scrollPos; i < numChannelMsgs && y + lineHeight <= maxY; i++) {
+      for (int i = startIdx; i < numChannelMsgs && y + lineHeight <= maxY; i++) {
         int idx = channelMsgs[i];
         ChannelMessage* msg = &_messages[idx];
         

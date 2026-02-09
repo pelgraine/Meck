@@ -45,4 +45,5 @@ public:
   virtual void loop() = 0;
   virtual void showAlert(const char* text, int duration_millis) {}
   virtual void forceRefresh() {}
+  virtual void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {}
 };

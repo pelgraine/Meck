@@ -94,7 +94,7 @@ public:
   void injectKey(char c);
   
   // Add a sent message to the channel screen history
-  void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text);
+  void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }

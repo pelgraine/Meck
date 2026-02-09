@@ -21,7 +21,7 @@
 #define KB_KEY_BACKSPACE '\b'
 #define KB_KEY_ENTER     '\r'
 #define KB_KEY_SPACE     ' '
-#define KB_KEY_EMOJI     0x01  // Internal code: bare $ key (emoji picker trigger)
+#define KB_KEY_EMOJI     0x01   // Non-printable code for $ key (emoji picker)
 
 class TCA8418Keyboard {
 private:
@@ -226,15 +226,15 @@ public:
       return 0;
     }
     
-    // Handle $ key (key code 22, next to M)
-    // Bare press -> emoji picker trigger, Sym+$ -> literal '$' character
+    // Handle dedicated $ key (key code 22, next to M)
+    // Bare press = emoji picker, Sym+$ = literal '$'
     if (keyCode == 22) {
       if (_symActive) {
         _symActive = false;
         Serial.println("KB: Sym+$ -> '$'");
         return '$';
       }
-      Serial.println("KB: $ key -> emoji trigger");
+      Serial.println("KB: $ key -> emoji");
       return KB_KEY_EMOJI;
     }
     

@@ -546,7 +546,7 @@ void handleKeyboardInput() {
       return;
     }
     
-    // $ key opens emoji picker (Sym+$ types literal '$')
+    // '$' key (without Sym) opens emoji picker
     if (key == KB_KEY_EMOJI) {
       emojiPicker.reset();
       emojiPickerMode = true;
@@ -855,10 +855,10 @@ void sendComposedMessage() {
     if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
                                    the_mesh.getNodePrefs()->node_name, 
                                    utf8Buf, utf8Len)) {
-      // Add escape-byte version to local display (renders as sprites)
+      // Add to local display (UTF-8 gets sanitized to escape bytes by addMessage)
       ui_task.addSentChannelMessage(composeChannelIdx, 
                                      the_mesh.getNodePrefs()->node_name, 
-                                     composeBuffer);
+                                     utf8Buf);
       
       // Queue UTF-8 version for BLE app sync (so companion app shows real emoji)
       the_mesh.queueSentChannelMessage(composeChannelIdx, timestamp,
