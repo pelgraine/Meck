@@ -1,7 +1,7 @@
 #pragma once
 
 // Emoji Picker with scrolling grid and scroll bar
-// 5 columns, 4 visible rows, scrollable through all 47 emoji
+// 5 columns, 4 visible rows, scrollable through all 46 emoji
 // WASD navigation, Enter to select, $/Q/Backspace to cancel
 
 #include <helpers/ui/DisplayDriver.h>
@@ -34,31 +34,30 @@ static const char* EMOJI_LABELS[EMOJI_COUNT] = {
   "Inv",    // 19 invader
   "Dagr",   // 20 dagger
   "Grim",   // 21 grimace
-  "Fone",   // 22 telephone
-  "Mtn",    // 23 mountain
-  "End",    // 24 end_arrow
-  "Ring",   // 25 hollow_circle
-  "Drag",   // 26 dragon
-  "Web",    // 27 globe_meridians
-  "Eggp",   // 28 eggplant
-  "Shld",   // 29 shield
-  "Gogl",   // 30 goggles
-  "Lzrd",   // 31 lizard
-  "Zany",   // 32 zany_face
-  "Roo",    // 33 kangaroo
-  "Fthr",   // 34 feather
-  "Sun",    // 35 bright
-  "Wave",   // 36 part_alt
-  "Boat",   // 37 motorboat
-  "Card",   // 38 playing_card
-  "Dish",   // 39 satellite
-  "Pass",   // 40 customs
-  "Cowb",   // 41 cowboy
-  "Whl",    // 42 wheel
-  "Koal",   // 43 koala
-  "Knob",   // 44 control_knobs
-  "Pch",    // 45 peach
-  "Race",   // 46 racing_car
+  "Mtn",    // 22 mountain
+  "End",    // 23 end_arrow
+  "Ring",   // 24 hollow_circle
+  "Drag",   // 25 dragon
+  "Web",    // 26 globe_meridians
+  "Eggp",   // 27 eggplant
+  "Shld",   // 28 shield
+  "Gogl",   // 29 goggles
+  "Lzrd",   // 30 lizard
+  "Zany",   // 31 zany_face
+  "Roo",    // 32 kangaroo
+  "Fthr",   // 33 feather
+  "Sun",    // 34 bright
+  "Wave",   // 35 part_alt
+  "Boat",   // 36 motorboat
+  "Domi",   // 37 domino
+  "Dish",   // 38 satellite
+  "Pass",   // 39 customs
+  "Cowb",   // 40 cowboy
+  "Whl",    // 41 wheel
+  "Koal",   // 42 koala
+  "Knob",   // 43 control_knobs
+  "Pch",    // 44 peach
+  "Race",   // 45 racing_car
 };
 
 struct EmojiPicker {
