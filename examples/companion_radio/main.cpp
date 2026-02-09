@@ -546,8 +546,8 @@ void handleKeyboardInput() {
       return;
     }
     
-    // '$' opens emoji picker
-    if (key == '$') {
+    // $ key opens emoji picker (Sym+$ types literal '$')
+    if (key == KB_KEY_EMOJI) {
       emojiPicker.reset();
       emojiPickerMode = true;
       drawEmojiPicker();
@@ -846,7 +846,7 @@ void sendComposedMessage() {
     uint32_t timestamp = rtc_clock.getCurrentTime();
     
     // Convert escape bytes back to UTF-8 for mesh transmission and BLE app
-    // Worst case: each escape byte → 8 bytes UTF-8 (flag emoji), plus ASCII chars
+    // Worst case: each escape byte â†’ 8 bytes UTF-8 (flag emoji), plus ASCII chars
     char utf8Buf[512];
     emojiUnescape(composeBuffer, utf8Buf, sizeof(utf8Buf));
     int utf8Len = strlen(utf8Buf);

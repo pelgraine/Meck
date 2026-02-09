@@ -103,7 +103,7 @@ struct EmojiPicker {
       case '\r':
         ensureVisible();
         return (uint8_t)(EMOJI_ESCAPE_START + cursor);
-      case '\b': case 'q': case 'Q': case '$':
+      case '\b': case 'q': case 'Q': case KB_KEY_EMOJI:
         return 0xFF;
       default:
         return 0;
