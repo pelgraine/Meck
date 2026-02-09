@@ -4,6 +4,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <helpers/ChannelDetails.h>
 #include <MeshCore.h>
+#include "EmojiSprites.h"
 
 // Maximum messages to store in history
 #define CHANNEL_MSG_HISTORY_SIZE 20
@@ -59,9 +60,9 @@ public:
     msg->channel_idx = channel_idx;
     msg->valid = true;
     
-    // The text already contains "Sender: message" format, just store it
-    strncpy(msg->text, text, CHANNEL_MSG_TEXT_LEN - 1);
-    msg->text[CHANNEL_MSG_TEXT_LEN - 1] = '\0';
+    // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
+    // The text already contains "Sender: message" format
+    emojiSanitize(text, msg->text, CHANNEL_MSG_TEXT_LEN);
     
     if (_msgCount < CHANNEL_MSG_HISTORY_SIZE) {
       _msgCount++;
@@ -132,12 +133,6 @@ public:
       // This ensures rendered glyphs (which extend lineHeight below y) stay above the footer
       int maxY = display.height() - footerHeight;
       
-      // Calculate chars per line based on actual font width
-      uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
-      int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 35;
-      if (charsPerLine < 20) charsPerLine = 20;  // Minimum reasonable
-      if (charsPerLine > 60) charsPerLine = 60;  // Maximum reasonable
-      
       int y = headerHeight;
       
       // Build list of messages for this channel (newest first)
@@ -175,39 +170,63 @@ public:
           sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
         }
         display.print(tmp);
-        int prefixLen = strlen(tmp);  // Characters used by timestamp on first line
         // DO NOT advance y - message text continues on the same line
         
-        // Message text with character wrapping (continues after timestamp on first line)
+        // Message text with character wrapping and inline emoji support
+        // (continues after timestamp on first line)
         display.setColor(DisplayDriver::LIGHT);
         
         int textLen = strlen(msg->text);
         int pos = 0;
         int linesForThisMsg = 0;
         int maxLinesPerMsg = 8;
-        int x = prefixLen;  // First line starts after the timestamp prefix
         char charStr[2] = {0, 0};
+        
+        // Track position in pixels for tight emoji placement
+        int lineW = display.width();
+        int px = display.getTextWidth(tmp);  // Pixel X after timestamp
         
         // Cursor already positioned after timestamp print - don't reset it
         
         while (pos < textLen && linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
-          charStr[0] = msg->text[pos];
-          display.print(charStr);
-          x++;
-          pos++;
+          uint8_t b = (uint8_t)msg->text[pos];
           
-          if (x >= charsPerLine) {
-            x = 0;
-            linesForThisMsg++;
-            y += lineHeight;
-            if (linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
+          if (isEmojiEscape(b)) {
+            // Check if emoji fits on this line
+            if (px + EMOJI_SM_W > lineW) {
+              px = 0;
+              linesForThisMsg++;
+              y += lineHeight;
+              if (linesForThisMsg >= maxLinesPerMsg || y + lineHeight > maxY) break;
               display.setCursor(0, y);
             }
+            
+            const uint8_t* sprite = getEmojiSpriteSm(b);
+            if (sprite) {
+              display.drawXbm(px, y - 1, sprite, EMOJI_SM_W, EMOJI_SM_H);
+            }
+            pos++;
+            px += EMOJI_SM_W + 1;  // sprite width + 1px gap
+            display.setCursor(px, y);
+          } else {
+            charStr[0] = (char)b;
+            int cw = display.getTextWidth(charStr);
+            if (px + cw > lineW) {
+              px = 0;
+              linesForThisMsg++;
+              y += lineHeight;
+              if (linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
+                display.setCursor(0, y);
+              } else break;
+            }
+            display.print(charStr);
+            px += cw;
+            pos++;
           }
         }
         
         // If we didn't end on a full line, still count it
-        if (x > 0) {
+        if (px > 0) {
           y += lineHeight;
         }
         

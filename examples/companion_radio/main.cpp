@@ -15,12 +15,17 @@
   
   // Compose mode state
   static bool composeMode = false;
-  static char composeBuffer[138];  // 137 chars max + null terminator
-  static int composePos = 0;
-  static uint8_t composeChannelIdx = 0;  // Which channel to send to
+  static char composeBuffer[138];  // 137 bytes max + null terminator (matches BLE wire cost)
+  static int composePos = 0;       // Current wire-cost byte count
+  static uint8_t composeChannelIdx = 0;
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
   #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
+  
+  // Emoji picker state
+  #include "EmojiPicker.h"
+  static bool emojiPickerMode = false;
+  static EmojiPicker emojiPicker;
   
   // Text reader mode state
   static bool readerMode = false;
@@ -28,6 +33,7 @@
   void initKeyboard();
   void handleKeyboardInput();
   void drawComposeScreen();
+  void drawEmojiPicker();
   void sendComposedMessage();
 #endif
 
@@ -376,9 +382,13 @@ void loop() {
   if (!composeMode) {
     ui_task.loop();
   } else {
-    // Handle debounced compose screen refresh
+    // Handle debounced compose/emoji picker screen refresh
     if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
-      drawComposeScreen();
+      if (emojiPickerMode) {
+        drawEmojiPicker();
+      } else {
+        drawComposeScreen();
+      }
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
     }
@@ -427,6 +437,37 @@ void handleKeyboardInput() {
                 key >= 32 ? key : '?', key, composeMode);
   
   if (composeMode) {
+    // Emoji picker sub-mode
+    if (emojiPickerMode) {
+      uint8_t result = emojiPicker.handleInput(key);
+      if (result == 0xFF) {
+        // Cancelled - immediate draw to return to compose
+        emojiPickerMode = false;
+        drawComposeScreen();
+        lastComposeRefresh = millis();
+        composeNeedsRefresh = false;
+      } else if (result >= EMOJI_ESCAPE_START && result <= EMOJI_ESCAPE_END) {
+        // Emoji selected - insert escape byte + padding to match UTF-8 wire cost
+        int cost = emojiUtf8Cost(result);
+        if (composePos + cost <= 137) {
+          composeBuffer[composePos++] = (char)result;
+          for (int p = 1; p < cost; p++) {
+            composeBuffer[composePos++] = (char)EMOJI_PAD_BYTE;
+          }
+          composeBuffer[composePos] = '\0';
+          Serial.printf("Compose: Inserted emoji 0x%02X cost=%d, pos=%d\n", result, cost, composePos);
+        }
+        emojiPickerMode = false;
+        drawComposeScreen();
+        lastComposeRefresh = millis();
+        composeNeedsRefresh = false;
+      } else {
+        // Navigation - debounce (don't draw immediately, let loop handle it)
+        composeNeedsRefresh = true;
+      }
+      return;
+    }
+    
     // In compose mode - handle text input
     if (key == '\r') {
       // Enter - send the message
@@ -435,6 +476,7 @@ void handleKeyboardInput() {
         sendComposedMessage();
       }
       composeMode = false;
+      emojiPickerMode = false;
       composeBuffer[0] = '\0';
       composePos = 0;
       ui_task.gotoHomeScreen();
@@ -447,16 +489,24 @@ void handleKeyboardInput() {
         // Shift+Backspace = Cancel (works anytime)
         Serial.println("Compose: Shift+Backspace, cancelling...");
         composeMode = false;
+        emojiPickerMode = false;
         composeBuffer[0] = '\0';
         composePos = 0;
         ui_task.gotoHomeScreen();
         return;
       }
-      // Regular backspace - delete last character
+      // Regular backspace - delete last character (or entire emoji including pads)
       if (composePos > 0) {
-        composePos--;
+        // Delete trailing pad bytes first, then the escape byte
+        while (composePos > 0 && (uint8_t)composeBuffer[composePos - 1] == EMOJI_PAD_BYTE) {
+          composePos--;
+        }
+        // Now delete the actual character (escape byte or regular char)
+        if (composePos > 0) {
+          composePos--;
+        }
         composeBuffer[composePos] = '\0';
-        Serial.printf("Compose: Backspace, pos now %d\n", composePos);
+        Serial.printf("Compose: Backspace, pos=%d\n", composePos);
         composeNeedsRefresh = true;  // Use debounced refresh
       }
       return;
@@ -478,7 +528,7 @@ void handleKeyboardInput() {
         }
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      drawComposeScreen();
+      composeNeedsRefresh = true;  // Debounced refresh
       return;
     }
     
@@ -492,7 +542,17 @@ void handleKeyboardInput() {
         composeChannelIdx = 0;  // Wrap to first channel
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      drawComposeScreen();
+      composeNeedsRefresh = true;  // Debounced refresh
+      return;
+    }
+    
+    // '$' opens emoji picker
+    if (key == '$') {
+      emojiPicker.reset();
+      emojiPickerMode = true;
+      drawEmojiPicker();
+      lastComposeRefresh = millis();
+      composeNeedsRefresh = false;
       return;
     }
     
@@ -500,7 +560,7 @@ void handleKeyboardInput() {
     if (key >= 32 && key < 127 && composePos < 137) {
       composeBuffer[composePos++] = key;
       composeBuffer[composePos] = '\0';
-      Serial.printf("Compose: Added '%c', pos now %d\n", key, composePos);
+      Serial.printf("Compose: Added '%c', pos=%d\n", key, composePos);
       composeNeedsRefresh = true;  // Use debounced refresh
     }
     return;
@@ -532,6 +592,7 @@ void handleKeyboardInput() {
       composePos = 0;
       Serial.printf("Entering compose mode from reader, channel %d\n", composeChannelIdx);
       drawComposeScreen();
+      lastComposeRefresh = millis();
       return;
     }
     
@@ -554,6 +615,7 @@ void handleKeyboardInput() {
       }
       Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
       drawComposeScreen();
+      lastComposeRefresh = millis();
       break;
     
     case 'm':
@@ -664,22 +726,42 @@ void drawComposeScreen() {
   display.setColor(DisplayDriver::LIGHT);
   
   // Word wrap the compose buffer - calculate chars per line based on actual font width
-  int x = 0;
   int y = 14;
-  uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");  // 10 wide chars
-  int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
-  if (charsPerLine < 12) charsPerLine = 12;
-  if (charsPerLine > 40) charsPerLine = 40;
   char charStr[2] = {0, 0};  // Buffer for single character as string
   
+  // Track position in pixels for tight emoji placement
+  int px = 0;  // Current pixel X position
+  int lineW = display.width();
+  
   for (int i = 0; i < composePos; i++) {
-    charStr[0] = composeBuffer[i];
-    display.print(charStr);
-    x++;
-    if (x >= charsPerLine) {
-      x = 0;
-      y += 11;
-      display.setCursor(0, y);
+    uint8_t b = (uint8_t)composeBuffer[i];
+    
+    // Skip emoji padding bytes (used to match wire cost)
+    if (b == EMOJI_PAD_BYTE) continue;
+    
+    if (isEmojiEscape(b)) {
+      // Check if emoji fits on this line
+      if (px + EMOJI_LG_W > lineW) {
+        px = 0;
+        y += 11;
+        display.setCursor(0, y);
+      }
+      const uint8_t* sprite = getEmojiSpriteLg(b);
+      if (sprite) {
+        display.drawXbm(px, y - 1, sprite, EMOJI_LG_W, EMOJI_LG_H);
+      }
+      px += EMOJI_LG_W + 1;  // sprite width + 1px gap
+      display.setCursor(px, y);
+    } else {
+      charStr[0] = (char)b;
+      int cw = display.getTextWidth(charStr);
+      if (px + cw > lineW) {
+        px = 0;
+        y += 11;
+        display.setCursor(0, y);
+      }
+      display.print(charStr);
+      px += cw;
     }
   }
   
@@ -696,19 +778,27 @@ void drawComposeScreen() {
   char status[40];
   if (composePos == 0) {
     // Empty buffer - show channel switching hint
-    display.print("A/D:Ch");
+    display.print("A/D:Ch $:Emoji");
     sprintf(status, "Sh+Del:X");
     display.setCursor(display.width() - display.getTextWidth(status) - 2, statusY);
     display.print(status);
   } else {
     // Has text - show send/cancel hint
-    sprintf(status, "%d/137 Ent:Send", composePos);
+    sprintf(status, "%d/137 $:Emj", composePos);
     display.print(status);
     sprintf(status, "Sh+Del:X");
     display.setCursor(display.width() - display.getTextWidth(status) - 2, statusY);
     display.print(status);
   }
   
+  display.endFrame();
+  #endif
+}
+
+void drawEmojiPicker() {
+  #ifdef DISPLAY_CLASS
+  display.startFrame();
+  emojiPicker.draw(display);
   display.endFrame();
   #endif
 }
@@ -721,19 +811,25 @@ void sendComposedMessage() {
   if (the_mesh.getChannel(composeChannelIdx, channel)) {
     uint32_t timestamp = rtc_clock.getCurrentTime();
     
-    // Send to channel
+    // Convert escape bytes back to UTF-8 for mesh transmission and BLE app
+    // Worst case: each escape byte → 8 bytes UTF-8 (flag emoji), plus ASCII chars
+    char utf8Buf[512];
+    emojiUnescape(composeBuffer, utf8Buf, sizeof(utf8Buf));
+    int utf8Len = strlen(utf8Buf);
+    
+    // Send UTF-8 version to mesh (so other devices/apps see real emoji)
     if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
                                    the_mesh.getNodePrefs()->node_name, 
-                                   composeBuffer, composePos)) {
-      // Add the sent message to local channel history so we can see what we sent
+                                   utf8Buf, utf8Len)) {
+      // Add escape-byte version to local display (renders as sprites)
       ui_task.addSentChannelMessage(composeChannelIdx, 
                                      the_mesh.getNodePrefs()->node_name, 
                                      composeBuffer);
       
-      // Queue message for BLE app sync (so sent messages appear in companion app)
+      // Queue UTF-8 version for BLE app sync (so companion app shows real emoji)
       the_mesh.queueSentChannelMessage(composeChannelIdx, timestamp,
                                         the_mesh.getNodePrefs()->node_name,
-                                        composeBuffer);
+                                        utf8Buf);
       
       ui_task.showAlert("Sent!", 1500);
     } else {
