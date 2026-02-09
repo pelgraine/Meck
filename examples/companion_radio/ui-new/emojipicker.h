@@ -1,78 +1,119 @@
 #pragma once
 
-// Emoji Picker for compose mode
-// Shows a grid of available emoji sprites, navigable with WASD + Enter to select
-// Requires EmojiSprites.h to be included before this file
+// Emoji Picker with scrolling grid and scroll bar
+// 5 columns, 4 visible rows, scrollable through all 47 emoji
+// WASD navigation, Enter to select, $/Q/Backspace to cancel
 
 #include <helpers/ui/DisplayDriver.h>
 #include "EmojiSprites.h"
 
-// Grid layout: 5 columns x 4 rows = 20 emojis
 #define EMOJI_PICKER_COLS 5
-#define EMOJI_PICKER_ROWS 4
+#define EMOJI_PICKER_VISIBLE_ROWS 4
+#define EMOJI_PICKER_TOTAL_ROWS ((EMOJI_COUNT + EMOJI_PICKER_COLS - 1) / EMOJI_PICKER_COLS)
 
-// Short labels shown alongside sprites for identification
 static const char* EMOJI_LABELS[EMOJI_COUNT] = {
-  "WiFi",   // 0  🛜
-  "Inf",    // 1  ♾️
-  "Rex",    // 2  🦖
-  "Skul",   // 3  ☠️
-  "Cros",   // 4  ✝️
-  "Bolt",   // 5  ⚡
-  "Hat",    // 6  🎩
-  "Moto",   // 7  🏍️
-  "Leaf",   // 8  🌱
-  "AU",     // 9  🇦🇺
-  "Umbr",   // 10 ☂️
-  "Eye",    // 11 🧿
-  "Glob",   // 12 🌏
-  "Rad",    // 13 ☢️
-  "Cow",    // 14 🐄
-  "ET",     // 15 👽
-  "Inv",    // 16 👾
-  "Dagr",   // 17 🗡️
-  "Grim",   // 18 😬
-  "Fone",   // 19 ☎️
+  "Lol",    // 0  joy
+  "Like",   // 1  thumbsup
+  "Sad",    // 2  frown
+  "WiFi",   // 3  wireless
+  "Inf",    // 4  infinity
+  "Rex",    // 5  trex
+  "Skul",   // 6  skull
+  "Cros",   // 7  cross
+  "Bolt",   // 8  lightning
+  "Hat",    // 9  tophat
+  "Moto",   // 10 motorcycle
+  "Leaf",   // 11 seedling
+  "AU",     // 12 flag_au
+  "Umbr",   // 13 umbrella
+  "Eye",    // 14 nazar
+  "Glob",   // 15 globe
+  "Rad",    // 16 radioactive
+  "Cow",    // 17 cow
+  "ET",     // 18 alien
+  "Inv",    // 19 invader
+  "Dagr",   // 20 dagger
+  "Grim",   // 21 grimace
+  "Fone",   // 22 telephone
+  "Mtn",    // 23 mountain
+  "End",    // 24 end_arrow
+  "Ring",   // 25 hollow_circle
+  "Drag",   // 26 dragon
+  "Web",    // 27 globe_meridians
+  "Eggp",   // 28 eggplant
+  "Shld",   // 29 shield
+  "Gogl",   // 30 goggles
+  "Lzrd",   // 31 lizard
+  "Zany",   // 32 zany_face
+  "Roo",    // 33 kangaroo
+  "Fthr",   // 34 feather
+  "Sun",    // 35 bright
+  "Wave",   // 36 part_alt
+  "Boat",   // 37 motorboat
+  "Card",   // 38 playing_card
+  "Dish",   // 39 satellite
+  "Pass",   // 40 customs
+  "Cowb",   // 41 cowboy
+  "Whl",    // 42 wheel
+  "Koal",   // 43 koala
+  "Knob",   // 44 control_knobs
+  "Pch",    // 45 peach
+  "Race",   // 46 racing_car
 };
 
 struct EmojiPicker {
-  int cursor;  // 0 to EMOJI_COUNT-1
+  int cursor;
+  int scrollRow;
   
-  EmojiPicker() : cursor(0) {}
+  EmojiPicker() : cursor(0), scrollRow(0) {}
   
-  void reset() { cursor = 0; }
+  void reset() { cursor = 0; scrollRow = 0; }
   
-  // Returns the emoji escape byte for the selected emoji, or 0 if cancelled
-  // Navigate: W=up, S=down, A=left, D=right, Enter=select, Backspace/Q/$=cancel
+  void ensureVisible() {
+    int cursorRow = cursor / EMOJI_PICKER_COLS;
+    if (cursorRow < scrollRow) scrollRow = cursorRow;
+    else if (cursorRow >= scrollRow + EMOJI_PICKER_VISIBLE_ROWS)
+      scrollRow = cursorRow - EMOJI_PICKER_VISIBLE_ROWS + 1;
+    int maxScroll = EMOJI_PICKER_TOTAL_ROWS - EMOJI_PICKER_VISIBLE_ROWS;
+    if (maxScroll < 0) maxScroll = 0;
+    if (scrollRow > maxScroll) scrollRow = maxScroll;
+    if (scrollRow < 0) scrollRow = 0;
+  }
+  
+  // Returns emoji escape byte, 0xFF for cancel, 0 for no action
   uint8_t handleInput(char key) {
-    int col = cursor % EMOJI_PICKER_COLS;
     int row = cursor / EMOJI_PICKER_COLS;
+    int col = cursor % EMOJI_PICKER_COLS;
     
     switch (key) {
-      case 'w': case 'W': case 0xF2:  // Up
+      case 'w': case 'W': case 0xF2:
         if (row > 0) cursor -= EMOJI_PICKER_COLS;
-        return 0;
-      case 's': case 'S': case 0xF1:  // Down
-        if (row < EMOJI_PICKER_ROWS - 1) cursor += EMOJI_PICKER_COLS;
-        return 0;
-      case 'a': case 'A':  // Left
-        if (col > 0) cursor--;
-        else if (row > 0) cursor -= 1;  // Wrap to end of previous row
-        return 0;
-      case 'd': case 'D':  // Right
+        break;
+      case 's': case 'S': case 0xF1:
+        if (cursor + EMOJI_PICKER_COLS < EMOJI_COUNT)
+          cursor += EMOJI_PICKER_COLS;
+        else if (row < EMOJI_PICKER_TOTAL_ROWS - 1)
+          cursor = EMOJI_COUNT - 1;
+        break;
+      case 'a': case 'A':
+        if (cursor > 0) cursor--;
+        break;
+      case 'd': case 'D':
         if (cursor + 1 < EMOJI_COUNT) cursor++;
-        return 0;
-      case '\r':  // Enter - select
+        break;
+      case '\r':
+        ensureVisible();
         return (uint8_t)(EMOJI_ESCAPE_START + cursor);
-      case '\b': case 'q': case 'Q': case '$':  // Cancel
-        return 0xFF;  // Sentinel for "cancelled"
+      case '\b': case 'q': case 'Q': case '$':
+        return 0xFF;
       default:
-        return 0;  // No action
+        return 0;
     }
+    ensureVisible();
+    return 0;
   }
   
   void draw(DisplayDriver& display) {
-    // Header
     display.setTextSize(1);
     display.setCursor(0, 0);
     display.setColor(DisplayDriver::GREEN);
@@ -81,55 +122,77 @@ struct EmojiPicker {
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, 11, display.width(), 1);
     
-    // Grid area
-    display.setTextSize(0);  // Tiny font for labels
+    display.setTextSize(0);
     
     int startY = 14;
-    int cellW = display.width() / EMOJI_PICKER_COLS;
-    int cellH = (display.height() - startY - 14) / EMOJI_PICKER_ROWS;  // Leave room for footer
+    int scrollBarW = 4;
+    int gridW = display.width() - scrollBarW - 1;
+    int cellW = gridW / EMOJI_PICKER_COLS;
+    int footerHeight = 14;
+    int gridH = display.height() - startY - footerHeight;
+    int cellH = gridH / EMOJI_PICKER_VISIBLE_ROWS;
     
-    for (int i = 0; i < EMOJI_COUNT; i++) {
-      int col = i % EMOJI_PICKER_COLS;
-      int row = i / EMOJI_PICKER_COLS;
-      int cx = col * cellW;
-      int cy = startY + row * cellH;
+    for (int vr = 0; vr < EMOJI_PICKER_VISIBLE_ROWS; vr++) {
+      int absRow = scrollRow + vr;
+      if (absRow >= EMOJI_PICKER_TOTAL_ROWS) break;
       
-      // Draw selection border around highlighted cell
-      if (i == cursor) {
+      for (int col = 0; col < EMOJI_PICKER_COLS; col++) {
+        int idx = absRow * EMOJI_PICKER_COLS + col;
+        if (idx >= EMOJI_COUNT) break;
+        
+        int cx = col * cellW;
+        int cy = startY + vr * cellH;
+        
+        if (idx == cursor) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.drawRect(cx, cy, cellW, cellH);
+          display.drawRect(cx + 1, cy + 1, cellW - 2, cellH - 2);
+        }
+        
         display.setColor(DisplayDriver::LIGHT);
-        display.drawRect(cx, cy, cellW, cellH);
-        display.drawRect(cx + 1, cy + 1, cellW - 2, cellH - 2);  // Double border for visibility
+        const uint8_t* sprite = (const uint8_t*)pgm_read_ptr(&EMOJI_SPRITES_LG[idx]);
+        if (sprite) {
+          int spriteX = cx + (cellW - EMOJI_LG_W) / 2;
+          int spriteY = cy + 1;
+          display.drawXbm(spriteX, spriteY, sprite, EMOJI_LG_W, EMOJI_LG_H);
+        }
+        
+        display.setColor(DisplayDriver::YELLOW);
+        uint16_t labelW = display.getTextWidth(EMOJI_LABELS[idx]);
+        int labelX = cx + (cellW - (int)labelW) / 2;
+        if (labelX < cx) labelX = cx;
+        display.setCursor(labelX, cy + 14);
+        display.print(EMOJI_LABELS[idx]);
       }
-      
-      // Draw sprite centered in cell
-      display.setColor(DisplayDriver::LIGHT);
-      const uint8_t* sprite = (const uint8_t*)pgm_read_ptr(&EMOJI_SPRITES_LG[i]);
-      if (sprite) {
-        int spriteX = cx + (cellW - EMOJI_LG_W) / 2;
-        int spriteY = cy + 1;
-        display.drawXbm(spriteX, spriteY, sprite, EMOJI_LG_W, EMOJI_LG_H);
-      }
-      
-      // Label below sprite
-      display.setColor(DisplayDriver::YELLOW);
-      
-      // Center label text in cell
-      uint16_t labelW = display.getTextWidth(EMOJI_LABELS[i]);
-      int labelX = cx + (cellW * 7 - labelW) / (7 * 2);  // Approximate centering
-      display.setCursor(labelX, cy + 12);
-      display.print(EMOJI_LABELS[i]);
+    }
+    
+    // Scroll bar
+    int sbX = display.width() - scrollBarW;
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(sbX, startY, scrollBarW, gridH);
+    
+    if (EMOJI_PICKER_TOTAL_ROWS > EMOJI_PICKER_VISIBLE_ROWS) {
+      int thumbH = (EMOJI_PICKER_VISIBLE_ROWS * gridH) / EMOJI_PICKER_TOTAL_ROWS;
+      if (thumbH < 4) thumbH = 4;
+      int maxScroll = EMOJI_PICKER_TOTAL_ROWS - EMOJI_PICKER_VISIBLE_ROWS;
+      int thumbY = startY + (scrollRow * (gridH - thumbH)) / maxScroll;
+      for (int y = thumbY + 1; y < thumbY + thumbH - 1; y++)
+        display.drawRect(sbX + 1, y, scrollBarW - 2, 1);
+    } else {
+      for (int y = startY + 1; y < startY + gridH - 1; y++)
+        display.drawRect(sbX + 1, y, scrollBarW - 2, 1);
     }
     
     // Footer
     display.setTextSize(1);
     int footerY = display.height() - 12;
+    display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
     display.print("WASD:Nav Ent:Pick");
-    
-    const char* cancelText = "$:Back";
-    display.setCursor(display.width() - display.getTextWidth(cancelText) - 2, footerY);
-    display.print(cancelText);
+    const char* ct = "$:Back";
+    display.setCursor(display.width() - display.getTextWidth(ct) - 2, footerY);
+    display.print(ct);
   }
 };

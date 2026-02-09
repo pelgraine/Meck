@@ -182,45 +182,93 @@ public:
         int maxLinesPerMsg = 8;
         char charStr[2] = {0, 0};
         
-        // Track position in pixels for tight emoji placement
+        // Track position in pixels for emoji placement
+        // Uses advance width (cursor movement) not bounding box for px tracking
         int lineW = display.width();
         int px = display.getTextWidth(tmp);  // Pixel X after timestamp
-        
-        // Cursor already positioned after timestamp print - don't reset it
+        char dblStr[3] = {0, 0, 0};
         
         while (pos < textLen && linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
           uint8_t b = (uint8_t)msg->text[pos];
           
+          if (b == EMOJI_PAD_BYTE) { pos++; continue; }
+          
+          // Word wrap: when starting a new text word, check if it fits
+          if (b != ' ' && !isEmojiEscape(b) && px > 0) {
+            bool boundary = (pos == 0);
+            if (!boundary) {
+              for (int bp = pos - 1; bp >= 0; bp--) {
+                uint8_t pb = (uint8_t)msg->text[bp];
+                if (pb == EMOJI_PAD_BYTE) continue;
+                boundary = (pb == ' ' || isEmojiEscape(pb));
+                break;
+              }
+            }
+            if (boundary) {
+              int wordW = 0;
+              for (int j = pos; j < textLen; j++) {
+                uint8_t wb = (uint8_t)msg->text[j];
+                if (wb == EMOJI_PAD_BYTE) continue;
+                if (wb == ' ' || isEmojiEscape(wb)) break;
+                charStr[0] = (char)wb;
+                dblStr[0] = dblStr[1] = (char)wb;
+                wordW += display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+              }
+              if (px + wordW > lineW) {
+                px = 0;
+                linesForThisMsg++;
+                y += lineHeight;
+                if (linesForThisMsg >= maxLinesPerMsg || y + lineHeight > maxY) break;
+              }
+            }
+          }
+          
           if (isEmojiEscape(b)) {
-            // Check if emoji fits on this line
             if (px + EMOJI_SM_W > lineW) {
               px = 0;
               linesForThisMsg++;
               y += lineHeight;
               if (linesForThisMsg >= maxLinesPerMsg || y + lineHeight > maxY) break;
-              display.setCursor(0, y);
             }
-            
             const uint8_t* sprite = getEmojiSpriteSm(b);
             if (sprite) {
-              display.drawXbm(px, y - 1, sprite, EMOJI_SM_W, EMOJI_SM_H);
+              display.drawXbm(px, y, sprite, EMOJI_SM_W, EMOJI_SM_H);
             }
             pos++;
-            px += EMOJI_SM_W + 1;  // sprite width + 1px gap
+            px += EMOJI_SM_W + 1;
             display.setCursor(px, y);
-          } else {
-            charStr[0] = (char)b;
-            int cw = display.getTextWidth(charStr);
-            if (px + cw > lineW) {
+          } else if (b == ' ') {
+            charStr[0] = ' ';
+            dblStr[0] = dblStr[1] = ' ';
+            int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+            if (px + adv > lineW) {
               px = 0;
               linesForThisMsg++;
               y += lineHeight;
               if (linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
-                display.setCursor(0, y);
+                // skip trailing space at wrap
+              } else break;
+            } else {
+              display.setCursor(px, y);
+              display.print(charStr);
+              px += adv;
+            }
+            pos++;
+          } else {
+            charStr[0] = (char)b;
+            dblStr[0] = dblStr[1] = (char)b;
+            int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+            if (px + adv > lineW) {
+              px = 0;
+              linesForThisMsg++;
+              y += lineHeight;
+              if (linesForThisMsg < maxLinesPerMsg && y + lineHeight <= maxY) {
+                // continue to print below
               } else break;
             }
+            display.setCursor(px, y);
             display.print(charStr);
-            px += cw;
+            px += adv;
             pos++;
           }
         }

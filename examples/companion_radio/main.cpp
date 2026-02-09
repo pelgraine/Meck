@@ -725,47 +725,81 @@ void drawComposeScreen() {
   display.setCursor(0, 14);
   display.setColor(DisplayDriver::LIGHT);
   
-  // Word wrap the compose buffer - calculate chars per line based on actual font width
+  // Word wrap the compose buffer with word-boundary awareness
+  // Uses advance width (cursor movement) not bounding box width for px tracking.
+  // Advance = getTextWidth("cc") - getTextWidth("c") to get true cursor step.
   int y = 14;
-  char charStr[2] = {0, 0};  // Buffer for single character as string
+  char charStr[2] = {0, 0};
+  char dblStr[3] = {0, 0, 0};
   
-  // Track position in pixels for tight emoji placement
-  int px = 0;  // Current pixel X position
+  int px = 0;
   int lineW = display.width();
+  bool atWordBoundary = true;
   
   for (int i = 0; i < composePos; i++) {
     uint8_t b = (uint8_t)composeBuffer[i];
     
-    // Skip emoji padding bytes (used to match wire cost)
     if (b == EMOJI_PAD_BYTE) continue;
     
+    // Word wrap: when starting a new text word, check if it fits on this line
+    if (atWordBoundary && b != ' ' && !isEmojiEscape(b) && px > 0) {
+      int wordW = 0;
+      for (int j = i; j < composePos; j++) {
+        uint8_t wb = (uint8_t)composeBuffer[j];
+        if (wb == EMOJI_PAD_BYTE) continue;
+        if (wb == ' ' || isEmojiEscape(wb)) break;
+        dblStr[0] = dblStr[1] = (char)wb;
+        charStr[0] = (char)wb;
+        wordW += display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      }
+      if (px + wordW > lineW) {
+        px = 0;
+        y += 12;
+      }
+    }
+    
     if (isEmojiEscape(b)) {
-      // Check if emoji fits on this line
       if (px + EMOJI_LG_W > lineW) {
         px = 0;
-        y += 11;
-        display.setCursor(0, y);
+        y += 12;
       }
       const uint8_t* sprite = getEmojiSpriteLg(b);
       if (sprite) {
-        display.drawXbm(px, y - 1, sprite, EMOJI_LG_W, EMOJI_LG_H);
+        display.drawXbm(px, y, sprite, EMOJI_LG_W, EMOJI_LG_H);
       }
-      px += EMOJI_LG_W + 1;  // sprite width + 1px gap
+      px += EMOJI_LG_W + 1;
       display.setCursor(px, y);
+      atWordBoundary = true;
+    } else if (b == ' ') {
+      charStr[0] = ' ';
+      dblStr[0] = dblStr[1] = ' ';
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
+        px = 0;
+        y += 12;
+      } else {
+        display.setCursor(px, y);
+        display.print(charStr);
+        px += adv;
+      }
+      atWordBoundary = true;
     } else {
       charStr[0] = (char)b;
-      int cw = display.getTextWidth(charStr);
-      if (px + cw > lineW) {
+      dblStr[0] = dblStr[1] = (char)b;
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
         px = 0;
-        y += 11;
-        display.setCursor(0, y);
+        y += 12;
       }
+      display.setCursor(px, y);
       display.print(charStr);
-      px += cw;
+      px += adv;
+      atWordBoundary = false;
     }
   }
   
   // Show cursor
+  display.setCursor(px, y);
   display.print("_");
   
   // Status bar
