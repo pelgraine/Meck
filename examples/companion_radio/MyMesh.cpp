@@ -1080,17 +1080,20 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&msg_timestamp, &cmd_frame[i], 4);
     i += 4;
     const char *text = (char *)&cmd_frame[i];
+    int text_len = len - i;
 
     if (txt_type != TXT_TYPE_PLAIN) {
       writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
     } else {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
-      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
+      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, text_len)) {
         writeOKFrame();
 #ifdef DISPLAY_CLASS
         // Show BLE-app-sent message on device channel screen
         if (_ui) {
+          // Null-terminate text from BLE frame (frame buffer may have residual data)
+          cmd_frame[i + text_len] = 0;
           _ui->addSentChannelMessage(channel_idx, _prefs.node_name, text);
         }
 #endif
