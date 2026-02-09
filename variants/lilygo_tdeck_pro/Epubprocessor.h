@@ -547,6 +547,71 @@ private:
         }
       }
 
+      // Handle UTF-8 multi-byte sequences (smart quotes, em dashes, etc.)
+      // These appear as raw bytes in XHTML and must be mapped to ASCII
+      // since the e-ink font only supports ASCII characters.
+      if ((uint8_t)c >= 0xC0) {
+        uint32_t codepoint = 0;
+        int extraBytes = 0;
+
+        if (((uint8_t)c & 0xE0) == 0xC0) {
+          // 2-byte sequence: 110xxxxx 10xxxxxx
+          codepoint = (uint8_t)c & 0x1F;
+          extraBytes = 1;
+        } else if (((uint8_t)c & 0xF0) == 0xE0) {
+          // 3-byte sequence: 1110xxxx 10xxxxxx 10xxxxxx
+          codepoint = (uint8_t)c & 0x0F;
+          extraBytes = 2;
+        } else if (((uint8_t)c & 0xF8) == 0xF0) {
+          // 4-byte sequence: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+          codepoint = (uint8_t)c & 0x07;
+          extraBytes = 3;
+        }
+
+        // Read continuation bytes
+        bool valid = true;
+        for (int b = 0; b < extraBytes && p + 1 + b < end; b++) {
+          uint8_t cb = *(p + 1 + b);
+          if ((cb & 0xC0) != 0x80) { valid = false; break; }
+          codepoint = (codepoint << 6) | (cb & 0x3F);
+        }
+
+        if (valid && extraBytes > 0) {
+          p += extraBytes;  // Skip continuation bytes (loop increments past lead byte)
+
+          // Map Unicode codepoints to ASCII equivalents
+          char mapped = 0;
+          switch (codepoint) {
+            case 0x2018: case 0x2019: mapped = '\''; break;  // Smart single quotes
+            case 0x201C: case 0x201D: mapped = '"';  break;  // Smart double quotes
+            case 0x2013: case 0x2014: mapped = '-';  break;  // En/em dash
+            case 0x2026:             mapped = '.';  break;  // Ellipsis
+            case 0x2022:             mapped = '*';  break;  // Bullet
+            case 0x00A0:             mapped = ' ';  break;  // Non-breaking space
+            case 0x00AB: case 0x00BB: mapped = '"'; break;  // Guillemets
+            case 0x2032:             mapped = '\''; break;  // Prime
+            case 0x2033:             mapped = '"';  break;  // Double prime
+            case 0x2010: case 0x2011: mapped = '-'; break;  // Hyphens
+            case 0x2012:             mapped = '-';  break;  // Figure dash
+            case 0x2015:             mapped = '-';  break;  // Horizontal bar
+            case 0x2039: case 0x203A: mapped = '\''; break; // Single guillemets
+            default:
+              if (codepoint >= 0x20 && codepoint < 0x7F) {
+                mapped = (char)codepoint;  // Basic ASCII range
+              } else {
+                continue;  // Skip unmappable characters
+              }
+              break;
+          }
+          c = mapped;
+        } else {
+          continue;  // Skip malformed UTF-8
+        }
+      } else if ((uint8_t)c >= 0x80) {
+        // Stray continuation byte (0x80-0xBF) — skip
+        continue;
+      }
+
       // Whitespace collapsing
       if (c == '\n' || c == '\r') {
         if (!lastWasNewline && outPos > 0) {
