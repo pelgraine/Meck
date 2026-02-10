@@ -21,7 +21,10 @@
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
   #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
-  
+   // AGC reset - periodically re-assert RX boosted gain to prevent sensitivity drift
+  #define AGC_RESET_INTERVAL_MS 500
+  static unsigned long lastAGCReset = 0;
+
   // Emoji picker state
   #include "EmojiPicker.h"
   static bool emojiPickerMode = false;
@@ -400,7 +403,11 @@ void loop() {
   #endif
 #endif
   rtc_clock.tick();
-
+  // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
+  if ((millis() - lastAGCReset) >= AGC_RESET_INTERVAL_MS) {
+    radio_reset_agc();
+    lastAGCReset = millis();
+  }
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();

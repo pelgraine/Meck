@@ -73,3 +73,7 @@ mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng);
 }
+
+void radio_reset_agc() {
+  radio.setRxBoostedGainMode(true);
+}
