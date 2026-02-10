@@ -46,11 +46,20 @@ bool radio_init() {
   loraSpi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, P_LORA_NSS);
   MESH_DEBUG_PRINTLN("radio_init() - SPI initialized, calling radio.std_init()...");
   bool result = radio.std_init(&loraSpi);
+  if (result) {
+    radio.setPreambleLength(32);
+    MESH_DEBUG_PRINTLN("radio_init() - preamble set to 32 symbols");
+  }
   MESH_DEBUG_PRINTLN("radio_init() - radio.std_init() returned: %s", result ? "SUCCESS" : "FAILED");
   return result;
 #else
   MESH_DEBUG_PRINTLN("radio_init() - calling radio.std_init() without custom SPI...");
-  return radio.std_init();
+  bool result = radio.std_init();
+  if (result) {
+    radio.setPreambleLength(32);
+    MESH_DEBUG_PRINTLN("radio_init() - preamble set to 32 symbols");
+  }
+  return result;
 #endif
 }
 
