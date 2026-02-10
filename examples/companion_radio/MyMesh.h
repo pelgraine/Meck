@@ -12,7 +12,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v0.8.2"
+#define FIRMWARE_VERSION "Meck v0.8.3"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -180,6 +180,18 @@ public:
       backupSettingsToSD();
     #endif
   }
+  void saveChannels() {
+    _store->saveChannels(this);
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
+  }
+  void saveContacts() {
+    _store->saveContacts(this);
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
+  }
 
 private:
   void writeOKFrame();
@@ -198,20 +210,6 @@ private:
 
   void checkCLIRescueCmd();
   void checkSerialInterface();
-
-  // helpers, short-cuts
-  void saveChannels() {
-    _store->saveChannels(this);
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
-  }
-  void saveContacts() {
-    _store->saveContacts(this);
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
-  }
 
   DataStore* _store;
   NodePrefs _prefs;

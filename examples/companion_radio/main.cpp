@@ -11,6 +11,7 @@
   #include "TextReaderScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
+  #include "SettingsScreen.h"
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -447,6 +448,12 @@ void setup() {
   the_mesh.startInterface(serial_interface);
   MESH_DEBUG_PRINTLN("setup() - the_mesh.startInterface() done");
 
+  // T-Deck Pro: default BLE to OFF on boot (user can toggle with Bluetooth page)
+  #if defined(LilyGo_TDeck_Pro)
+    serial_interface.disable();
+    MESH_DEBUG_PRINTLN("setup() - BLE disabled by default (toggle via home screen)");
+  #endif
+
 #else
   #error "need to define filesystem"
 #endif
@@ -500,6 +507,23 @@ void setup() {
 
     // Do an initial settings backup to SD (captures any first-boot defaults)
     backupSettingsToSD();
+  }
+  #endif
+
+  // ---------------------------------------------------------------------------
+  // First-boot onboarding detection
+  // Check if node name is still the default hex prefix (first 4 bytes of pub key)
+  // If so, launch onboarding wizard to set name and radio preset
+  // ---------------------------------------------------------------------------
+  #if defined(LilyGo_TDeck_Pro)
+  {
+    char defaultName[10];
+    mesh::Utils::toHex(defaultName, the_mesh.self_id.pub_key, 4);
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    if (strcmp(prefs->node_name, defaultName) == 0) {
+      MESH_DEBUG_PRINTLN("setup() - Default node name detected, launching onboarding");
+      ui_task.gotoOnboarding();
+    }
   }
   #endif
 
@@ -745,20 +769,28 @@ void handleKeyboardInput() {
       return;
     }
     
-    // C key: allow entering compose mode from reader
-    if (key == 'c' || key == 'C') {
-      composeDM = false;
-      composeDMContactIdx = -1;
-      composeMode = true;
-      composeBuffer[0] = '\0';
-      composePos = 0;
-      Serial.printf("Entering compose mode from reader, channel %d\n", composeChannelIdx);
-      drawComposeScreen();
-      lastComposeRefresh = millis();
+    // All other keys pass through to the reader screen
+    ui_task.injectKey(key);
+    return;
+  }
+
+  // *** SETTINGS MODE ***
+  if (ui_task.isOnSettingsScreen()) {
+    SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
+
+    // Q key: exit settings (when not editing)
+    if (!settings->isEditing() && (key == 'q' || key == 'Q')) {
+      if (settings->hasRadioChanges()) {
+        // Let settings show "apply changes?" confirm dialog
+        ui_task.injectKey(key);
+      } else {
+        Serial.println("Exiting settings");
+        ui_task.gotoHomeScreen();
+      }
       return;
     }
-    
-    // All other keys pass through to the reader screen
+
+    // All other keys → settings screen via injectKey (no forceRefresh)
     ui_task.injectKey(key);
     return;
   }
@@ -767,38 +799,11 @@ void handleKeyboardInput() {
   switch (key) {
     case 'c':
     case 'C':
-      // Enter compose mode - DM if on contacts screen, channel otherwise
-      if (ui_task.isOnContactsScreen()) {
-        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
-        int idx = cs->getSelectedContactIdx();
-        uint8_t ctype = cs->getSelectedContactType();
-        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-          composeDM = true;
-          composeDMContactIdx = idx;
-          cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
-          composeMode = true;
-          composeBuffer[0] = '\0';
-          composePos = 0;
-          Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
-          drawComposeScreen();
-          lastComposeRefresh = millis();
-        }
-      } else {
-        composeDM = false;
-        composeDMContactIdx = -1;
-        composeMode = true;
-        composeBuffer[0] = '\0';
-        composePos = 0;
-        // If on channel screen, sync compose channel with viewed channel
-        if (ui_task.isOnChannelScreen()) {
-          composeChannelIdx = ui_task.getChannelScreenViewIdx();
-        }
-        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
-        drawComposeScreen();
-        lastComposeRefresh = millis();
-      }
+      // Open contacts list
+      Serial.println("Opening contacts");
+      ui_task.gotoContactsScreen();
       break;
-    
+
     case 'm':
     case 'M':
       // Go to channel message screen
@@ -806,18 +811,22 @@ void handleKeyboardInput() {
       ui_task.gotoChannelScreen();
       break;
     
-    case 'r':
-    case 'R':
-      // Open text reader
+    case 'e':
+    case 'E':
+      // Open text reader (ebooks)
       Serial.println("Opening text reader");
       ui_task.gotoTextReader();
       break;
     
-    case 'n':
-    case 'N':
-      // Open contacts list
-      Serial.println("Opening contacts");
-      ui_task.gotoContactsScreen();
+    case 's':
+    case 'S':
+      // Open settings (from home), or navigate down on channel/contacts
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('s');  // Pass directly for channel/contacts scrolling
+      } else {
+        Serial.println("Opening settings");
+        ui_task.gotoSettingsScreen();
+      }
       break;
     
     case 'w':
@@ -831,17 +840,6 @@ void handleKeyboardInput() {
       }
       break;
     
-    case 's':
-    case 'S':
-      // Navigate down/next (scroll on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
-        ui_task.injectKey('s');  // Pass directly for channel/contacts switching
-      } else {
-        Serial.println("Nav: Next");
-        ui_task.injectKey(0xF1);  // KEY_NEXT
-      }
-      break;
-      
     case 'a':
     case 'A':
       // Navigate left or switch channel (on channel screen)
@@ -865,7 +863,7 @@ void handleKeyboardInput() {
       break;
       
     case '\r':
-      // Select/Enter - if on contacts screen, enter DM compose for chat contacts
+      // Enter = compose (only from channel or contacts screen)
       if (ui_task.isOnContactsScreen()) {
         ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
         int idx = cs->getSelectedContactIdx();
@@ -881,12 +879,21 @@ void handleKeyboardInput() {
           drawComposeScreen();
           lastComposeRefresh = millis();
         } else if (idx >= 0) {
-          // Non-chat contact selected (repeater, room, etc.) - future use
           Serial.printf("Selected non-chat contact type=%d idx=%d\n", ctype, idx);
         }
+      } else if (ui_task.isOnChannelScreen()) {
+        composeDM = false;
+        composeDMContactIdx = -1;
+        composeChannelIdx = ui_task.getChannelScreenViewIdx();
+        composeMode = true;
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
+        drawComposeScreen();
+        lastComposeRefresh = millis();
       } else {
-        Serial.println("Nav: Enter/Select");
-        ui_task.injectKey(13);  // KEY_ENTER
+        // Other screens: pass Enter as generic select
+        ui_task.injectKey(13);
       }
       break;
       

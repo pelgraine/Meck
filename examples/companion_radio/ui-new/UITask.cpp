@@ -33,6 +33,7 @@
 #include "ChannelScreen.h"
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
+#include "SettingsScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -716,6 +717,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
+  settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   setCurrScreen(splash);
 }
 
@@ -1148,6 +1150,26 @@ void UITask::gotoTextReader() {
     reader->enter(*_display);
   }
   setCurrScreen(text_reader);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoSettingsScreen() {
+  ((SettingsScreen*)settings_screen)->enter();
+  setCurrScreen(settings_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoOnboarding() {
+  ((SettingsScreen*)settings_screen)->enterOnboarding();
+  setCurrScreen(settings_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

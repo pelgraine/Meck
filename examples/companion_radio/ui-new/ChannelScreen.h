@@ -74,7 +74,7 @@ private:
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(3), _viewChannelIdx(0), _sdReady(false) {
+      _msgsPerPage(CHANNEL_MSG_HISTORY_SIZE), _viewChannelIdx(0), _sdReady(false) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -327,6 +327,7 @@ public:
       
       // Display messages oldest-to-newest (top to bottom)
       int msgsDrawn = 0;
+      bool screenFull = false;
       for (int i = startIdx; i < numChannelMsgs && y + lineHeight <= maxY; i++) {
         int idx = channelMsgs[i];
         ChannelMessage* msg = &_messages[idx];
@@ -456,6 +457,13 @@ public:
         
         y += 2;  // Small gap between messages
         msgsDrawn++;
+        if (y + lineHeight > maxY) screenFull = true;
+      }
+      
+      // Only update _msgsPerPage when the screen actually filled up.
+      // If we ran out of messages before filling the screen, keep the
+      // previous (higher) value so startIdx doesn't under-count.
+      if (screenFull && msgsDrawn > 0) {
         _msgsPerPage = msgsDrawn;
       }
       
@@ -471,8 +479,8 @@ public:
     // Left side: Q:Back A/D:Ch
     display.print("Q:Back A/D:Ch");
     
-    // Right side: C:New
-    const char* rightText = "C:New";
+    // Right side: Entr:New
+    const char* rightText = "Entr:New";
     display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
     display.print(rightText);
 
