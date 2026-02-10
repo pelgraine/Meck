@@ -49,7 +49,7 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 | Y | ) | | H | : | | N | , |
 | U | _ | | J | ; | | M | . |
 | I | - | | K | ' | | Mic | 0 |
-| O | + | | L | " | | $ | (dedicated) |
+| O | + | | L | " | | $ | Emoji picker (Sym+$ for literal $) |
 | P | @ | | | | | | |
 
 ### Other Keys
@@ -59,6 +59,17 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 | Shift | Uppercase next letter |
 | Alt | Same as Sym (for numbers/symbols) |
 | Space | Space character / Next in navigation |
+
+### Emoji Picker
+
+While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 47 emoji is displayed in a 5-column layout.
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate up / down |
+| A / D | Navigate left / right |
+| Enter | Insert selected emoji |
+| $ / Q / Backspace | Cancel and return to compose |
 
 ## About MeshCore
 
