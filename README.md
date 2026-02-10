@@ -3,6 +3,32 @@ This fork was created specifically to focus on enabling BLE companion firmware f
 
 ⭐ ***Please note as of 1 Feb 2026, the T-Deck Pro repeater & usb firmware has not been finalised nor confirmed as functioning.*** ⭐
 
+### Contents
+- [T-Deck Pro Keyboard Controls](#t-deck-pro-keyboard-controls)
+  - [Navigation (Home Screen)](#navigation-home-screen)
+  - [Bluetooth (BLE)](#bluetooth-ble)
+  - [Clock & Timezone](#clock--timezone)
+  - [Channel Message Screen](#channel-message-screen)
+  - [Contacts Screen](#contacts-screen)
+  - [Sending a Direct Message](#sending-a-direct-message)
+  - [Repeater Admin Screen](#repeater-admin-screen)
+  - [Settings Screen](#settings-screen)
+  - [Compose Mode](#compose-mode)
+  - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
+  - [Emoji Picker](#emoji-picker)
+- [About MeshCore](#about-meshcore)
+- [What is MeshCore?](#what-is-meshcore)
+- [Key Features](#key-features)
+- [What Can You Use MeshCore For?](#what-can-you-use-meshcore-for)
+- [How to Get Started](#how-to-get-started)
+- [MeshCore Flasher](#meshcore-flasher)
+- [MeshCore Clients](#meshcore-clients)
+- [Hardware Compatibility](#-hardware-compatibility)
+- [License](#-license)
+- [Contributing](#contributing)
+- [Road-Map / To-Do](#road-map--to-do)
+- [Get Support](#-get-support)
+
 ## T-Deck Pro Keyboard Controls
 
 The T-Deck Pro BLE companion firmware includes full keyboard support for standalone messaging without a phone.
@@ -12,11 +38,12 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | Key | Action |
 |-----|--------|
 | W / A | Previous page |
-| S / D | Next page |
+| D | Next page |
 | Enter | Select / Confirm |
 | M | Open channel messages |
-| N | Open contacts list |
-| R | Open e-book reader |
+| C | Open contacts list |
+| E | Open e-book reader |
+| S | Open settings |
 | Q | Back to home screen |
 
 ### Bluetooth (BLE)
@@ -34,7 +61,7 @@ The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the d
 
 **Setting your timezone:**
 
-Navigate to the **GPS** home page and press **U** to open the UTC offset editor.
+The UTC offset can be set from the **Settings** screen (press **S** from the home screen), or from the **GPS** home page by pressing **U** to open the UTC offset editor.
 
 | Key | Action |
 |-----|--------|
@@ -53,24 +80,23 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 |-----|--------|
 | W / S | Scroll messages up/down |
 | A / D | Switch between channels |
-| C | Compose new message |
+| Enter | Compose new message |
 | Q | Back to home screen |
 
 ### Contacts Screen
 
-Press **N** from the home screen to open the contacts list. All known mesh contacts are shown sorted by most recently seen, with their type (Chat, Repeater, Room, Sensor), hop count, and time since last advert.
+Press **C** from the home screen to open the contacts list. All known mesh contacts are shown sorted by most recently seen, with their type (Chat, Repeater, Room, Sensor), hop count, and time since last advert.
 
 | Key | Action |
 |-----|--------|
 | W / S | Scroll up / down through contacts |
 | A / D | Cycle filter: All → Chat → Repeater → Room → Sensor |
 | Enter | Open DM compose (Chat contact) or repeater admin (Repeater contact) |
-| C | Open DM compose to selected chat contact |
 | Q | Back to home screen |
 
 ### Sending a Direct Message
 
-Select a **Chat** contact in the contacts list and press **Enter** or **C** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
+Select a **Chat** contact in the contacts list and press **Enter** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
 
 ### Repeater Admin Screen
 
@@ -91,10 +117,38 @@ After a successful login, you'll see a menu with the following remote administra
 |-----|--------|
 | W / S | Navigate menu items |
 | Enter | Execute selected command |
-| C | Enter compose mode (send raw CLI command) |
 | Q | Back to contacts (from menu) or cancel login |
 
 Command responses are displayed in a scrollable view. Use **W / S** to scroll long responses and **Q** to return to the menu.
+
+### Settings Screen
+
+Press **S** from the home screen to open settings. On first boot (when the device name is still the default hex ID), the settings screen launches automatically as an onboarding wizard to set your device name and radio preset.
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate up / down through settings |
+| Enter | Edit selected setting |
+| Q | Back to home screen |
+
+**Available settings:**
+
+| Setting | Edit Method |
+|---------|-------------|
+| Device Name | Text entry — type a name, Enter to confirm |
+| Radio Preset | A / D to cycle presets (MeshCore Default, Long Range, Fast/Short, EU Default), Enter to apply |
+| Frequency | W / S to adjust, Enter to confirm |
+| Bandwidth | W / S to cycle standard values (31.25 / 62.5 / 125 / 250 / 500 kHz), Enter to confirm |
+| Spreading Factor | W / S to adjust (5–12), Enter to confirm |
+| Coding Rate | W / S to adjust (5–8), Enter to confirm |
+| TX Power | W / S to adjust (1–20 dBm), Enter to confirm |
+| UTC Offset | W / S to adjust (-12 to +14), Enter to confirm |
+| Channels | View existing channels, add hashtag channels, or delete non-primary channels (X) |
+| Device Info | Public key and firmware version (read-only) |
+
+When adding a hashtag channel, type the channel name and press Enter. The channel secret is automatically derived from the name via SHA-256, matching the standard MeshCore hashtag convention.
+
+If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
 
 ### Compose Mode
 
@@ -235,6 +289,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Contacts list with filtering for Companion BLE firmware
 - [X] Standalone repeater admin access for Companion BLE firmware
 - [X] GPS time sync with on-device timezone setting
+- [X] Settings screen with radio presets, channel management, and first-boot onboarding
 - [ ] Companion radio: USB
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
