@@ -15,6 +15,8 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | S / D | Next page |
 | Enter | Select / Confirm |
 | M | Open channel messages |
+| N | Open contacts list |
+| R | Open e-book reader |
 | Q | Back to home screen |
 
 ### Channel Message Screen
@@ -26,11 +28,26 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | C | Compose new message |
 | Q | Back to home screen |
 
+### Contacts Screen
+
+Press **N** from the home screen to open the contacts list. All known mesh contacts are shown sorted by most recently seen, with their type (Chat, Repeater, Room, Sensor), hop count, and time since last advert.
+
+| Key | Action |
+|-----|--------|
+| W / S | Scroll up / down through contacts |
+| A / D | Cycle filter: All → Chat → Repeater → Room → Sensor |
+| Enter / C | Open DM compose to selected chat contact |
+| Q | Back to home screen |
+
+### Sending a Direct Message
+
+Select a **Chat** contact in the contacts list and press **Enter** or **C** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
+
 ### Compose Mode
 
 | Key | Action |
 |-----|--------|
-| A / D | Switch destination channel (when message is empty) |
+| A / D | Switch destination channel (when message is empty, channel compose only) |
 | Enter | Send message |
 | Backspace | Delete last character |
 | Shift + Backspace | Cancel and exit compose mode |
@@ -159,7 +176,9 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Companion radio: BLE
 - [X] Text entry for Public channel messages Companion BLE firmware
 - [X] View and compose all channel messages Companion BLE firmware
-- [ ] Standalone DM functionality for Companion BLE firmware
+- [X] Standalone DM functionality for Companion BLE firmware
+- [X] Contacts list with filtering for Companion BLE firmware
+- [ ] Standalone repeater admin access for Companion BLE firmware
 - [ ] Companion radio: USB
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
