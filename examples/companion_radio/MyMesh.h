@@ -108,6 +108,12 @@ public:
   // Send a direct message from the UI (no BLE dependency)
   bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
 
+  // Repeater admin - UI-initiated operations
+  bool uiLoginToRepeater(uint32_t contact_idx, const char* password);
+  bool uiSendCliCommand(uint32_t contact_idx, const char* command);
+  int  getAdminContactIdx() const { return _admin_contact_idx; }
+
+
 protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
@@ -247,6 +253,7 @@ private:
   };
   SentMsgTrack _sent_track[SENT_TRACK_SIZE];
   int _sent_track_idx;  // next slot in circular buffer
+  int _admin_contact_idx;  // contact index for active admin session (-1 if none)
 };
 
 extern MyMesh the_mesh;

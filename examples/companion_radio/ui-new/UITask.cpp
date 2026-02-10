@@ -2,6 +2,7 @@
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
 #include "target.h"
+#include "RepeaterAdminScreen.h"
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -608,6 +609,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
+  repeater_admin = new RepeaterAdminScreen(this, &rtc_clock);
   setCurrScreen(splash);
 }
 
@@ -1043,4 +1045,38 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+}
+
+void UITask::gotoRepeaterAdmin(int contactIdx) {
+  // Get contact name for the screen header
+  ContactInfo contact;
+  char name[32] = "Unknown";
+  if (the_mesh.getContactByIdx(contactIdx, contact)) {
+    strncpy(name, contact.name, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+  }
+
+  RepeaterAdminScreen* admin = (RepeaterAdminScreen*)repeater_admin;
+  admin->openForContact(contactIdx, name);
+  setCurrScreen(repeater_admin);
+
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
+  if (isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onLoginResult(success, permissions, server_time);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
+void UITask::onAdminCliResponse(const char* from_name, const char* text) {
+  if (isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onCliResponse(text);
+    _next_refresh = 100;  // trigger re-render
+  }
 }

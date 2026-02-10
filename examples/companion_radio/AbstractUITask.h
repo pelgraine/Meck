@@ -46,4 +46,8 @@ public:
   virtual void showAlert(const char* text, int duration_millis) {}
   virtual void forceRefresh() {}
   virtual void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {}
+
+  // Repeater admin callbacks (from MyMesh)
+  virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}
+  virtual void onAdminCliResponse(const char* from_name, const char* text) {}
 };
