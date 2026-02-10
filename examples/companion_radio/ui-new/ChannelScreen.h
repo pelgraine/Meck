@@ -12,7 +12,7 @@
 #endif
 
 // Maximum messages to store in history
-#define CHANNEL_MSG_HISTORY_SIZE 20
+#define CHANNEL_MSG_HISTORY_SIZE 300
 #define CHANNEL_MSG_TEXT_LEN 160
 
 #ifndef MAX_GROUP_CHANNELS
@@ -130,7 +130,7 @@ public:
   // -----------------------------------------------------------------------
 
   // Save the entire message buffer to SD card.
-  // File: /meshcore/messages.bin  (~3.4 KB for 20 messages)
+  // File: /meshcore/messages.bin  (~50 KB for 300 messages)
   void saveToSD() {
 #if defined(HAS_SDCARD) && defined(ESP32)
     if (!_sdReady) return;
