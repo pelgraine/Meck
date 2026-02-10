@@ -88,7 +88,7 @@ private:
       }
     }
     // Sort by last_advert_timestamp descending (most recently seen first)
-    // Simple insertion sort — fine for up to 400 entries on ESP32
+    // Simple insertion sort â€” fine for up to 400 entries on ESP32
     for (int i = 1; i < _filteredCount; i++) {
       uint16_t tmpIdx = _filteredIdx[i];
       uint32_t tmpTs  = _filteredTs[i];
@@ -180,8 +180,12 @@ public:
     snprintf(tmp, sizeof(tmp), "Contacts [%s]", filterLabel(_filter));
     display.print(tmp);
 
-    // Count on right
-    snprintf(tmp, sizeof(tmp), "%d/%d", _filteredCount, (int)the_mesh.getNumContacts());
+    // Count on right: All → total/max, filtered → matched/total
+    if (_filter == FILTER_ALL) {
+      snprintf(tmp, sizeof(tmp), "%d/%d", (int)the_mesh.getNumContacts(), MAX_CONTACTS);
+    } else {
+      snprintf(tmp, sizeof(tmp), "%d/%d", _filteredCount, (int)the_mesh.getNumContacts());
+    }
     display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
     display.print(tmp);
 
