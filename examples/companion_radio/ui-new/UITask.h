@@ -87,12 +87,14 @@ public:
   bool isOnChannelScreen() const { return curr == channel_screen; }
   bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
-  bool isEditingHomeScreen() const;  // UTC offset editing on GPS page
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
+
+  // Check if home screen is in an editing mode (e.g. UTC offset editor)
+  bool isEditingHomeScreen() const;
 
   // Inject a key press from external source (e.g., keyboard)
   void injectKey(char c);
@@ -105,6 +107,7 @@ public:
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
   UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
   UIScreen* getContactsScreen() const { return contacts_screen; }
+  UIScreen* getChannelScreen() const { return channel_screen; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

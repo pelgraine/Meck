@@ -10,6 +10,7 @@
   #include <SD.h>
   #include "TextReaderScreen.h"
   #include "ContactsScreen.h"
+  #include "ChannelScreen.h"
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -44,6 +45,105 @@
   void drawComposeScreen();
   void drawEmojiPicker();
   void sendComposedMessage();
+
+  // SD-backed persistence state
+  static bool sdCardReady = false;
+
+  // ---------------------------------------------------------------------------
+  // SD Settings Backup / Restore
+  // ---------------------------------------------------------------------------
+  // Copies a file byte-for-byte between two filesystem objects.
+  // Works across SPIFFS <-> SD because both use the Arduino File API.
+  static bool copyFile(fs::FS& srcFS, const char* srcPath,
+                       fs::FS& dstFS, const char* dstPath) {
+    File src = srcFS.open(srcPath, "r");
+    if (!src) return false;
+    File dst = dstFS.open(dstPath, "w", true);
+    if (!dst) { src.close(); return false; }
+
+    uint8_t buf[128];
+    while (src.available()) {
+      int n = src.read(buf, sizeof(buf));
+      if (n > 0) dst.write(buf, n);
+    }
+    src.close();
+    dst.close();
+    return true;
+  }
+
+  // Backup prefs, channels, and identity from SPIFFS to SD card.
+  // Called after any savePrefs() to keep the SD mirror current.
+  void backupSettingsToSD() {
+    if (!sdCardReady) return;
+
+    if (!SD.exists("/meshcore")) SD.mkdir("/meshcore");
+
+    if (SPIFFS.exists("/new_prefs")) {
+      copyFile(SPIFFS, "/new_prefs", SD, "/meshcore/prefs.bin");
+    }
+    // Channels may live on SPIFFS or ExtraFS - on ESP32 they are on SPIFFS
+    if (SPIFFS.exists("/channels2")) {
+      copyFile(SPIFFS, "/channels2", SD, "/meshcore/channels.bin");
+    }
+    // Identity
+    if (SPIFFS.exists("/identity/_main.id")) {
+      if (!SD.exists("/meshcore/identity")) SD.mkdir("/meshcore/identity");
+      copyFile(SPIFFS, "/identity/_main.id", SD, "/meshcore/identity/_main.id");
+    }
+    // Contacts
+    if (SPIFFS.exists("/contacts3")) {
+      copyFile(SPIFFS, "/contacts3", SD, "/meshcore/contacts.bin");
+    }
+
+    digitalWrite(SDCARD_CS, HIGH);  // Release SD CS
+    Serial.println("Settings backed up to SD");
+  }
+
+  // Restore prefs, channels, and identity from SD card to SPIFFS.
+  // Called at boot if SPIFFS prefs file is missing (e.g. after a fresh flash).
+  // Returns true if anything was restored.
+  bool restoreSettingsFromSD() {
+    if (!sdCardReady) return false;
+    
+    bool restored = false;
+
+    // Only restore if SPIFFS is missing the prefs file (fresh flash)
+    if (!SPIFFS.exists("/new_prefs") && SD.exists("/meshcore/prefs.bin")) {
+      if (copyFile(SD, "/meshcore/prefs.bin", SPIFFS, "/new_prefs")) {
+        Serial.println("Restored prefs from SD");
+        restored = true;
+      }
+    }
+
+    if (!SPIFFS.exists("/channels2") && SD.exists("/meshcore/channels.bin")) {
+      if (copyFile(SD, "/meshcore/channels.bin", SPIFFS, "/channels2")) {
+        Serial.println("Restored channels from SD");
+        restored = true;
+      }
+    }
+
+    // Identity - most critical; keeps the same device pub key across reflashes
+    if (!SPIFFS.exists("/identity/_main.id") && SD.exists("/meshcore/identity/_main.id")) {
+      SPIFFS.mkdir("/identity");
+      if (copyFile(SD, "/meshcore/identity/_main.id", SPIFFS, "/identity/_main.id")) {
+        Serial.println("Restored identity from SD");
+        restored = true;
+      }
+    }
+
+    if (!SPIFFS.exists("/contacts3") && SD.exists("/meshcore/contacts.bin")) {
+      if (copyFile(SD, "/meshcore/contacts.bin", SPIFFS, "/contacts3")) {
+        Serial.println("Restored contacts from SD");
+        restored = true;
+      }
+    }
+
+    if (restored) {
+      Serial.println("=== Settings restored from SD card backup ===");
+    }
+    digitalWrite(SDCARD_CS, HIGH);
+    return restored;
+  }
 #endif
 
 // Believe it or not, this std C function is busted on some platforms!
@@ -289,7 +389,31 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
   SPIFFS.begin(true);
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
-  
+
+  // ---------------------------------------------------------------------------
+  // Early SD card init — needed BEFORE the_mesh.begin() so we can restore
+  // settings from a previous firmware flash.  The display SPI bus is already
+  // up (display.begin() ran earlier), so SD can share it now.
+  // ---------------------------------------------------------------------------
+  #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+  {
+    pinMode(SDCARD_CS, OUTPUT);
+    digitalWrite(SDCARD_CS, HIGH);  // Deselect SD initially
+
+    if (SD.begin(SDCARD_CS, displaySpi, 4000000)) {
+      sdCardReady = true;
+      MESH_DEBUG_PRINTLN("setup() - SD card initialized (early)");
+
+      // If SPIFFS was wiped (fresh flash), restore settings from SD backup
+      if (restoreSettingsFromSD()) {
+        MESH_DEBUG_PRINTLN("setup() - Settings restored from SD backup");
+      }
+    } else {
+      MESH_DEBUG_PRINTLN("setup() - SD card not available");
+    }
+  }
+  #endif
+
   MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
   store.begin();
   MESH_DEBUG_PRINTLN("setup() - store.begin() done");
@@ -350,23 +474,32 @@ void setup() {
     initKeyboard();
   #endif
 
-  // Initialize SD card for text reader
+  // ---------------------------------------------------------------------------
+  // SD card is already initialized (early init above).
+  // Now set up SD-dependent features: message history + text reader.
+  // ---------------------------------------------------------------------------
   #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-  {
-    pinMode(SDCARD_CS, OUTPUT);
-    digitalWrite(SDCARD_CS, HIGH);  // Deselect SD initially
-    
-    if (SD.begin(SDCARD_CS, displaySpi, 4000000)) {
-      MESH_DEBUG_PRINTLN("setup() - SD card initialized");
-      // Tell the text reader that SD is ready, then pre-index books at boot
-      TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
-      if (reader) {
-        reader->setSDReady(true);
-        if (disp) {
-          reader->bootIndex(*disp);
-        }
+  if (sdCardReady) {
+    // Load persisted channel messages from SD
+    ChannelScreen* chanScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (chanScr) {
+      chanScr->setSDReady(true);
+      if (chanScr->loadFromSD()) {
+        MESH_DEBUG_PRINTLN("setup() - Message history loaded from SD");
       }
-  }
+    }
+
+    // Tell the text reader that SD is ready, then pre-index books at boot
+    TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+    if (reader) {
+      reader->setSDReady(true);
+      if (disp) {
+        reader->bootIndex(*disp);
+      }
+    }
+
+    // Do an initial settings backup to SD (captures any first-boot defaults)
+    backupSettingsToSD();
   }
   #endif
 
@@ -376,14 +509,10 @@ void setup() {
     sensors.setSettingValue("gps", "1");
     the_mesh.getNodePrefs()->gps_enabled = 1;
     the_mesh.savePrefs();
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
     MESH_DEBUG_PRINTLN("setup() - GPS enabled by default");
-  #endif
-
-  // T-Deck Pro: BLE starts disabled for standalone-first operation
-  // User can toggle it on from the Bluetooth home page (Enter or long-press)
-  #if defined(LilyGo_TDeck_Pro) && defined(BLE_PIN_CODE)
-    serial_interface.disable();
-    MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif
 
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
@@ -767,21 +896,9 @@ void handleKeyboardInput() {
     case 'q':
     case 'Q':
     case '\b':
-      // If editing UTC offset on GPS page, pass through to cancel
-      if (ui_task.isEditingHomeScreen()) {
-        ui_task.injectKey('q');
-      } else {
-        // Go back to home screen
-        Serial.println("Nav: Back to home");
-        ui_task.gotoHomeScreen();
-      }
-      break;
-      
-    case 'u':
-    case 'U':
-      // UTC offset editing (on GPS home page)
-      Serial.println("Nav: UTC offset");
-      ui_task.injectKey('u');
+      // Go back to home screen
+      Serial.println("Nav: Back to home");
+      ui_task.gotoHomeScreen();
       break;
       
     case ' ':

@@ -6,6 +6,11 @@
 #include <MeshCore.h>
 #include "EmojiSprites.h"
 
+// SD card message persistence
+#if defined(HAS_SDCARD) && defined(ESP32)
+  #include <SD.h>
+#endif
+
 // Maximum messages to store in history
 #define CHANNEL_MSG_HISTORY_SIZE 20
 #define CHANNEL_MSG_TEXT_LEN 160
@@ -13,6 +18,32 @@
 #ifndef MAX_GROUP_CHANNELS
   #define MAX_GROUP_CHANNELS 20
 #endif
+
+// ---------------------------------------------------------------------------
+// On-disk format for message persistence (SD card)
+// ---------------------------------------------------------------------------
+#define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
+#define MSG_FILE_VERSION 1
+#define MSG_FILE_PATH    "/meshcore/messages.bin"
+
+struct __attribute__((packed)) MsgFileHeader {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t capacity;
+  uint16_t count;
+  int16_t  newestIdx;
+  // 12 bytes total
+};
+
+struct __attribute__((packed)) MsgFileRecord {
+  uint32_t timestamp;
+  uint8_t  path_len;
+  uint8_t  channel_idx;
+  uint8_t  valid;
+  uint8_t  reserved;
+  char     text[CHANNEL_MSG_TEXT_LEN];
+  // 168 bytes total
+};
 
 class UITask;  // Forward declaration
 class MyMesh;  // Forward declaration
@@ -38,16 +69,19 @@ private:
   int _scrollPos;     // Current scroll position (0 = newest)
   int _msgsPerPage;   // Messages that fit on screen
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
+  bool _sdReady;      // SD card is available for persistence
   
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(3), _viewChannelIdx(0) {
+      _msgsPerPage(3), _viewChannelIdx(0), _sdReady(false) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
     }
   }
+
+  void setSDReady(bool ready) { _sdReady = ready; }
 
   // Add a new message to the history
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text) {
@@ -70,6 +104,9 @@ public:
     
     // Reset scroll to show newest message
     _scrollPos = 0;
+
+    // Persist to SD card
+    saveToSD();
   }
 
   // Get count of messages for the currently viewed channel
@@ -87,6 +124,135 @@ public:
   
   uint8_t getViewChannelIdx() const { return _viewChannelIdx; }
   void setViewChannelIdx(uint8_t idx) { _viewChannelIdx = idx; _scrollPos = 0; }
+
+  // -----------------------------------------------------------------------
+  // SD card persistence
+  // -----------------------------------------------------------------------
+
+  // Save the entire message buffer to SD card.
+  // File: /meshcore/messages.bin  (~3.4 KB for 20 messages)
+  void saveToSD() {
+#if defined(HAS_SDCARD) && defined(ESP32)
+    if (!_sdReady) return;
+
+    // Ensure directory exists
+    if (!SD.exists("/meshcore")) {
+      SD.mkdir("/meshcore");
+    }
+
+    File f = SD.open(MSG_FILE_PATH, "w", true);
+    if (!f) {
+      Serial.println("ChannelScreen: SD save failed - can't open file");
+      return;
+    }
+
+    // Write header
+    MsgFileHeader hdr;
+    hdr.magic    = MSG_FILE_MAGIC;
+    hdr.version  = MSG_FILE_VERSION;
+    hdr.capacity = CHANNEL_MSG_HISTORY_SIZE;
+    hdr.count    = (uint16_t)_msgCount;
+    hdr.newestIdx = (int16_t)_newestIdx;
+    f.write((uint8_t*)&hdr, sizeof(hdr));
+
+    // Write all message slots (including invalid ones - preserves circular buffer layout)
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      MsgFileRecord rec;
+      rec.timestamp   = _messages[i].timestamp;
+      rec.path_len    = _messages[i].path_len;
+      rec.channel_idx = _messages[i].channel_idx;
+      rec.valid       = _messages[i].valid ? 1 : 0;
+      rec.reserved    = 0;
+      memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
+      f.write((uint8_t*)&rec, sizeof(rec));
+    }
+
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);  // Release SD CS
+#endif
+  }
+
+  // Load message buffer from SD card.  Returns true if messages were loaded.
+  bool loadFromSD() {
+#if defined(HAS_SDCARD) && defined(ESP32)
+    if (!_sdReady) return false;
+
+    if (!SD.exists(MSG_FILE_PATH)) {
+      Serial.println("ChannelScreen: No saved messages on SD");
+      return false;
+    }
+
+    File f = SD.open(MSG_FILE_PATH, "r");
+    if (!f) {
+      Serial.println("ChannelScreen: SD load failed - can't open file");
+      return false;
+    }
+
+    // Read and validate header
+    MsgFileHeader hdr;
+    if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) {
+      Serial.println("ChannelScreen: SD load failed - short header");
+      f.close();
+      return false;
+    }
+
+    if (hdr.magic != MSG_FILE_MAGIC) {
+      Serial.printf("ChannelScreen: SD load failed - bad magic 0x%08X\n", hdr.magic);
+      f.close();
+      return false;
+    }
+
+    if (hdr.version != MSG_FILE_VERSION) {
+      Serial.printf("ChannelScreen: SD load failed - version %d (expected %d)\n",
+                    hdr.version, MSG_FILE_VERSION);
+      f.close();
+      return false;
+    }
+
+    if (hdr.capacity != CHANNEL_MSG_HISTORY_SIZE) {
+      Serial.printf("ChannelScreen: SD load failed - capacity %d (expected %d)\n",
+                    hdr.capacity, CHANNEL_MSG_HISTORY_SIZE);
+      f.close();
+      return false;
+    }
+
+    // Read message records
+    int loaded = 0;
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      MsgFileRecord rec;
+      if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) {
+        Serial.printf("ChannelScreen: SD load - short read at record %d\n", i);
+        break;
+      }
+      _messages[i].timestamp   = rec.timestamp;
+      _messages[i].path_len    = rec.path_len;
+      _messages[i].channel_idx = rec.channel_idx;
+      _messages[i].valid       = (rec.valid != 0);
+      memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
+      if (_messages[i].valid) loaded++;
+    }
+
+    _msgCount   = (int)hdr.count;
+    _newestIdx  = (int)hdr.newestIdx;
+    _scrollPos  = 0;
+
+    // Sanity-check restored state
+    if (_newestIdx < -1 || _newestIdx >= CHANNEL_MSG_HISTORY_SIZE) _newestIdx = -1;
+    if (_msgCount < 0 || _msgCount > CHANNEL_MSG_HISTORY_SIZE) _msgCount = loaded;
+
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);  // Release SD CS
+    Serial.printf("ChannelScreen: Loaded %d messages from SD (count=%d, newest=%d)\n",
+                  loaded, _msgCount, _newestIdx);
+    return loaded > 0;
+#else
+    return false;
+#endif
+  }
+
+  // -----------------------------------------------------------------------
+  // Rendering
+  // -----------------------------------------------------------------------
 
   int render(DisplayDriver& display) override {
     char tmp[40];
