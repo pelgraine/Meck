@@ -36,12 +36,37 @@ Press **N** from the home screen to open the contacts list. All known mesh conta
 |-----|--------|
 | W / S | Scroll up / down through contacts |
 | A / D | Cycle filter: All → Chat → Repeater → Room → Sensor |
-| Enter / C | Open DM compose to selected chat contact |
+| Enter | Open DM compose (Chat contact) or repeater admin (Repeater contact) |
+| C | Open DM compose to selected chat contact |
 | Q | Back to home screen |
 
 ### Sending a Direct Message
 
 Select a **Chat** contact in the contacts list and press **Enter** or **C** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
+
+### Repeater Admin Screen
+
+Select a **Repeater** contact in the contacts list and press **Enter** to open the repeater admin screen. You'll be prompted for the repeater's admin password. Characters briefly appear as you type them before being masked, making it easier to enter symbols and numbers on the T-Deck Pro keyboard.
+
+After a successful login, you'll see a menu with the following remote administration commands:
+
+| Menu Item | Description |
+|-----------|-------------|
+| Clock Sync | Push your device's clock time to the repeater |
+| Send Advert | Trigger the repeater to broadcast an advertisement |
+| Neighbors | View other repeaters heard via zero-hop adverts |
+| Get Clock | Read the repeater's current clock value |
+| Version | Query the repeater's firmware version |
+| Get Status | Retrieve repeater status information |
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate menu items |
+| Enter | Execute selected command |
+| C | Enter compose mode (send raw CLI command) |
+| Q | Back to contacts (from menu) or cancel login |
+
+Command responses are displayed in a scrollable view. Use **W / S** to scroll long responses and **Q** to return to the menu.
 
 ### Compose Mode
 
@@ -178,7 +203,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] View and compose all channel messages Companion BLE firmware
 - [X] Standalone DM functionality for Companion BLE firmware
 - [X] Contacts list with filtering for Companion BLE firmware
-- [ ] Standalone repeater admin access for Companion BLE firmware
+- [X] Standalone repeater admin access for Companion BLE firmware
 - [ ] Companion radio: USB
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1

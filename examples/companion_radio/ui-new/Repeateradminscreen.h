@@ -48,6 +48,7 @@ private:
   // Password entry
   char _password[ADMIN_PASSWORD_MAX];
   int _pwdLen;
+  unsigned long _lastCharAt;      // millis() when last char typed (for brief reveal)
 
   // Menu
   int _menuSel;                 // Currently selected menu item
@@ -101,7 +102,7 @@ public:
   RepeaterAdminScreen(UITask* task, mesh::RTCClock* rtc)
     : _task(task), _rtc(rtc), _state(STATE_PASSWORD_ENTRY),
       _contactIdx(-1), _permissions(0), _serverTime(0),
-      _pwdLen(0), _menuSel(0),
+      _pwdLen(0), _lastCharAt(0), _menuSel(0),
       _responseLen(0), _responseScroll(0),
       _cmdSentAt(0), _waitingForLogin(false) {
     _password[0] = '\0';
@@ -118,6 +119,7 @@ public:
     // Reset state
     _state = STATE_PASSWORD_ENTRY;
     _pwdLen = 0;
+    _lastCharAt = 0;
     _password[0] = '\0';
     _menuSel = 0;
     _permissions = 0;
@@ -257,7 +259,12 @@ public:
         break;
     }
 
-    return (_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) ? 1000 : 5000;
+    if (_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) return 1000;
+    // During password reveal, refresh when the reveal expires
+    if (_state == STATE_PASSWORD_ENTRY && _lastCharAt > 0 && (millis() - _lastCharAt) < 800) {
+      return _lastCharAt + 800 - millis() + 50;  // refresh shortly after reveal ends
+    }
+    return 5000;
   }
 
   bool handleInput(char c) override {
@@ -293,11 +300,13 @@ private:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, y);
 
-    // Show asterisks for password characters
+    // Show asterisks for password characters, with brief reveal of last char
     char masked[ADMIN_PASSWORD_MAX];
     int i;
+    bool revealing = (_pwdLen > 0 && (millis() - _lastCharAt) < 800);
+    int revealIdx = revealing ? _pwdLen - 1 : -1;
     for (i = 0; i < _pwdLen && i < ADMIN_PASSWORD_MAX - 1; i++) {
-      masked[i] = '*';
+      masked[i] = (i == revealIdx) ? _password[i] : '*';
     }
     masked[i] = '\0';
     display.print(masked);
@@ -325,6 +334,7 @@ private:
       if (_pwdLen > 0) {
         _pwdLen--;
         _password[_pwdLen] = '\0';
+        _lastCharAt = 0;  // no reveal after delete
       }
       return true;
     }
@@ -333,6 +343,7 @@ private:
     if (c >= 32 && c < 127 && _pwdLen < ADMIN_PASSWORD_MAX - 1) {
       _password[_pwdLen++] = c;
       _password[_pwdLen] = '\0';
+      _lastCharAt = millis();  // start brief reveal
       return true;
     }
 
