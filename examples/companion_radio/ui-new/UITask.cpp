@@ -651,8 +651,8 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0) {
-    gotoHomeScreen();
+  if (msgcount == 0 && curr == msg_preview) {
+    gotoHomeScreen();  // only leave msg_preview when queue is empty
   }
 }
 
