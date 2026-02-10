@@ -12,12 +12,11 @@ This adds a text reader accessible via the **R** key from the home screen.
 - Automatic reading position resume (persisted to SD card)
 - Index files cached to SD for instant re-opens
 - Bookmark indicator (`*`) on files with saved positions
-- Compose mode (`C`) still accessible from within reader
 
 **Key Mapping:**
 | Context | Key | Action |
 |---------|-----|--------|
-| Home screen | R | Open text reader |
+| Home screen | E | Open text reader |
 | File list | W/S | Navigate up/down |
 | File list | Enter | Open selected file |
 | File list | Q | Back to home screen |
