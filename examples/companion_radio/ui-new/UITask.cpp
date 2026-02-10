@@ -553,12 +553,6 @@ public:
 
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
-      #if ENV_INCLUDE_GPS == 1
-      if (_page == HomePage::GPS) {
-        extern GPSDutyCycle gpsDuty;
-        gpsDuty.forceWake();
-      }
-      #endif
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT) {
@@ -566,12 +560,6 @@ public:
       if (_page == HomePage::RECENT) {
         _task->showAlert("Recent adverts", 800);
       }
-      #if ENV_INCLUDE_GPS == 1
-      if (_page == HomePage::GPS) {
-        extern GPSDutyCycle gpsDuty;
-        gpsDuty.forceWake();
-      }
-      #endif
       return true;
     }
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {

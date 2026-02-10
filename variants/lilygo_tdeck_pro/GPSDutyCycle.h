@@ -17,7 +17,7 @@
 
 // How long to leave GPS powered on while acquiring a fix (ms)
 #ifndef GPS_ACQUIRE_TIMEOUT_MS
-#define GPS_ACQUIRE_TIMEOUT_MS    60000    // 60 seconds
+#define GPS_ACQUIRE_TIMEOUT_MS    180000   // 3 minutes
 #endif
 
 // How long to sleep between acquisition cycles (ms)

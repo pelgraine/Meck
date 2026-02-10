@@ -939,6 +939,12 @@ void handleKeyboardInput() {
       Serial.println("Nav: Back to home");
       ui_task.gotoHomeScreen();
       break;
+
+    case 'u':
+    case 'U':
+      // Forward to UI for UTC offset editor on GPS page
+      ui_task.injectKey('u');
+      break;
       
     case ' ':
       // Space - also acts as next/select
