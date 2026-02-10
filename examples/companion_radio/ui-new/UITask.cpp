@@ -2,7 +2,6 @@
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
 #include "target.h"
-#include "RepeaterAdminScreen.h"
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -103,6 +102,8 @@ class HomeScreen : public UIScreen {
   NodePrefs* _node_prefs;
   uint8_t _page;
   bool _shutdown_init;
+  bool _editing_utc;
+  int8_t _saved_utc_offset;  // for cancel/undo
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
@@ -184,7 +185,15 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
 public:
   HomeScreen(UITask* task, mesh::RTCClock* rtc, SensorManager* sensors, NodePrefs* node_prefs)
      : _task(task), _rtc(rtc), _sensors(sensors), _node_prefs(node_prefs), _page(0), 
-       _shutdown_init(false), sensors_lpp(200) {  }
+       _shutdown_init(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
+
+  bool isEditingUTC() const { return _editing_utc; }
+  void cancelEditUTC() { 
+    if (_editing_utc) {
+      _node_prefs->utc_offset_hours = _saved_utc_offset;
+      _editing_utc = false;
+    }
+  }
 
   void poll() override {
     if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
@@ -205,6 +214,29 @@ public:
     // battery voltage
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 
+    // centered clock (tinyfont) - only show when time is valid
+    {
+      uint32_t now = _rtc->getCurrentTime();
+      if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
+        // Apply UTC offset from prefs
+        int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
+        int hrs = (local / 3600) % 24;
+        if (hrs < 0) hrs += 24;
+        int mins = (local / 60) % 60;
+        if (mins < 0) mins += 60;
+
+        char timeBuf[6];
+        sprintf(timeBuf, "%02d:%02d", hrs, mins);
+
+        display.setTextSize(0);  // tinyfont
+        display.setColor(DisplayDriver::LIGHT);
+        uint16_t tw = display.getTextWidth(timeBuf);
+        int clockX = (display.width() - tw) / 2;
+        display.setCursor(clockX, -3);  // align with battery text Y
+        display.print(timeBuf);
+        display.setTextSize(1);  // restore
+      }
+    }
     // curr page indicator
     int y = 14;
     int x = display.width() / 2 - 5 * (HomePage::Count-1);
@@ -332,6 +364,42 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
       }
+      // Show RTC time and UTC offset on GPS page
+      {
+        uint32_t now = _rtc->getCurrentTime();
+        if (now > 1700000000) {
+          int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
+          int hrs = (local / 3600) % 24;
+          if (hrs < 0) hrs += 24;
+          int mins = (local / 60) % 60;
+          if (mins < 0) mins += 60;
+          display.drawTextLeftAlign(0, y, "time(U)");
+          sprintf(buf, "%02d:%02d UTC%+d", hrs, mins, _node_prefs->utc_offset_hours);
+          display.drawTextRightAlign(display.width()-1, y, buf);
+        } else {
+          display.drawTextLeftAlign(0, y, "time(U)");
+          display.drawTextRightAlign(display.width()-1, y, "no sync");
+        }
+      }
+      // UTC offset editor overlay
+      if (_editing_utc) {
+        // Draw background box
+        int bx = 4, by = 20, bw = display.width() - 8, bh = 40;
+        display.setColor(DisplayDriver::DARK);
+        display.fillRect(bx, by, bw, bh);
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawRect(bx, by, bw, bh);
+
+        // Show current offset value
+        display.setTextSize(2);
+        sprintf(buf, "UTC%+d", _node_prefs->utc_offset_hours);
+        display.drawTextCentered(display.width() / 2, by + 4, buf);
+
+        // Show controls hint
+        display.setTextSize(0);
+        display.drawTextCentered(display.width() / 2, by + bh - 10, "W/S:adj Enter:ok Q:cancel");
+        display.setTextSize(1);
+      }
 #endif
 #if UI_SENSORS_PAGE == 1
     } else if (_page == HomePage::SENSORS) {
@@ -415,10 +483,44 @@ public:
         display.drawTextCentered(display.width() / 2, 64 - 11, "hibernate:" PRESS_LABEL);
       }
     }
-    return 5000;   // next render after 5000 ms
+    return _editing_utc ? 700 : 5000;   // match e-ink refresh cycle while editing UTC
   }
 
   bool handleInput(char c) override {
+    // UTC offset editing mode - intercept all keys
+    if (_editing_utc) {
+      if (c == 'w' || c == KEY_PREV) {
+        // Increment offset
+        if (_node_prefs->utc_offset_hours < 14) {
+          _node_prefs->utc_offset_hours++;
+        }
+        return true;
+      }
+      if (c == 's' || c == KEY_NEXT) {
+        // Decrement offset
+        if (_node_prefs->utc_offset_hours > -12) {
+          _node_prefs->utc_offset_hours--;
+        }
+        return true;
+      }
+      if (c == KEY_ENTER) {
+        // Save and exit
+        Serial.printf("UTC offset saving: %d\n", _node_prefs->utc_offset_hours);
+        the_mesh.savePrefs();
+        _editing_utc = false;
+        _task->showAlert("UTC offset saved", 800);
+        Serial.println("UTC offset save complete");
+        return true;
+      }
+      if (c == 'q' || c == 'u') {
+        // Cancel - restore original value
+        _node_prefs->utc_offset_hours = _saved_utc_offset;
+        _editing_utc = false;
+        return true;
+      }
+      return true;  // Consume all other keys while editing
+    }
+
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
@@ -450,6 +552,11 @@ public:
 #if ENV_INCLUDE_GPS == 1
     if (c == KEY_ENTER && _page == HomePage::GPS) {
       _task->toggleGPS();
+      return true;
+    }
+    if (c == 'u' && _page == HomePage::GPS) {
+      _editing_utc = true;
+      _saved_utc_offset = _node_prefs->utc_offset_hours;
       return true;
     }
 #endif
@@ -609,7 +716,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
-  repeater_admin = new RepeaterAdminScreen(this, &rtc_clock);
   setCurrScreen(splash);
 }
 
@@ -651,8 +757,8 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0 && curr == msg_preview) {
-    gotoHomeScreen();  // only leave msg_preview when queue is empty
+  if (msgcount == 0) {
+    gotoHomeScreen();
   }
 }
 
@@ -988,17 +1094,32 @@ void UITask::injectKey(char c) {
     }
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
-    _next_refresh = 100;  // trigger refresh
+    // Debounce refresh when editing UTC offset - e-ink takes 644ms per refresh
+    // so don't queue another render until the current one could have finished
+    if (isEditingHomeScreen()) {
+      unsigned long earliest = millis() + 700;
+      if (_next_refresh < earliest) {
+        _next_refresh = earliest;
+      }
+    } else {
+      _next_refresh = 100;  // trigger refresh
+    }
   }
 }
 
 void UITask::gotoHomeScreen() {
+  // Cancel any active editing state when navigating to home
+  ((HomeScreen *) home)->cancelEditUTC();
   setCurrScreen(home);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+}
+
+bool UITask::isEditingHomeScreen() const {
+  return curr == home && ((HomeScreen *) home)->isEditingUTC();
 }
 
 void UITask::gotoChannelScreen() {
@@ -1045,38 +1166,4 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
-}
-
-void UITask::gotoRepeaterAdmin(int contactIdx) {
-  // Get contact name for the screen header
-  ContactInfo contact;
-  char name[32] = "Unknown";
-  if (the_mesh.getContactByIdx(contactIdx, contact)) {
-    strncpy(name, contact.name, sizeof(name) - 1);
-    name[sizeof(name) - 1] = '\0';
-  }
-
-  RepeaterAdminScreen* admin = (RepeaterAdminScreen*)repeater_admin;
-  admin->openForContact(contactIdx, name);
-  setCurrScreen(repeater_admin);
-
-  if (_display != NULL && !_display->isOn()) {
-    _display->turnOn();
-  }
-  _auto_off = millis() + AUTO_OFF_MILLIS;
-  _next_refresh = 100;
-}
-
-void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
-  if (isOnRepeaterAdmin()) {
-    ((RepeaterAdminScreen*)repeater_admin)->onLoginResult(success, permissions, server_time);
-    _next_refresh = 100;  // trigger re-render
-  }
-}
-
-void UITask::onAdminCliResponse(const char* from_name, const char* text) {
-  if (isOnRepeaterAdmin()) {
-    ((RepeaterAdminScreen*)repeater_admin)->onCliResponse(text);
-    _next_refresh = 100;  // trigger re-render
-  }
 }

@@ -523,13 +523,6 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
                                const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
-
-#ifdef DISPLAY_CLASS
-  // Route CLI responses to admin UI if active
-  if (_ui && _admin_contact_idx >= 0) {
-    _ui->onAdminCliResponse(from.name, text);
-  }
-#endif
 }
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -657,55 +650,6 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
   return true;
 }
 
-bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password) {
-  ContactInfo contact;
-  if (!getContactByIdx(contact_idx, contact)) return false;
-
-  ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
-  if (!recipient) return false;
-
-  uint32_t est_timeout;
-  int result = sendLogin(*recipient, password, est_timeout);
-
-  if (result == MSG_SEND_FAILED) {
-    MESH_DEBUG_PRINTLN("UI: Admin login send failed to %s", recipient->name);
-    return false;
-  }
-
-  clearPendingReqs();
-  memcpy(&pending_login, recipient->id.pub_key, 4);
-  _admin_contact_idx = contact_idx;
-
-  MESH_DEBUG_PRINTLN("UI: Admin login sent to %s (%s), timeout=%dms",
-                     recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
-                     est_timeout);
-  return true;
-}
-
-bool MyMesh::uiSendCliCommand(uint32_t contact_idx, const char* command) {
-  ContactInfo contact;
-  if (!getContactByIdx(contact_idx, contact)) return false;
-
-  ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
-  if (!recipient) return false;
-
-  uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
-  uint32_t est_timeout;
-  int result = sendCommandData(*recipient, timestamp, 0, command, est_timeout);
-
-  if (result == MSG_SEND_FAILED) {
-    MESH_DEBUG_PRINTLN("UI: CLI command send failed to %s: %s", recipient->name, command);
-    return false;
-  }
-
-  _admin_contact_idx = contact_idx;
-
-  MESH_DEBUG_PRINTLN("UI: CLI command sent to %s (%s): %s, timeout=%dms",
-                     recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
-                     command, est_timeout);
-  return true;
-}
-
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -764,11 +708,6 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       out_frame[i++] = 0; // legacy: is_admin = false
       memcpy(&out_frame[i], contact.id.pub_key, 6);
       i += 6;                                     // pub_key_prefix
-
-#ifdef DISPLAY_CLASS
-      // Notify UI of successful legacy login
-      if (_ui) _ui->onAdminLoginResult(true, 0, tag);
-#endif
     } else if (data[4] == RESP_SERVER_LOGIN_OK) { // new login response
       uint16_t keep_alive_secs = ((uint16_t)data[5]) * 16;
       if (keep_alive_secs > 0) {
@@ -782,21 +721,11 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       i += 4; // NEW: include server timestamp
       out_frame[i++] = data[7]; // NEW (v7): ACL permissions
       out_frame[i++] = data[12]; // FIRMWARE_VER_LEVEL
-
-#ifdef DISPLAY_CLASS
-      // Notify UI of successful login
-      if (_ui) _ui->onAdminLoginResult(true, data[6], tag);
-#endif
     } else {
       out_frame[i++] = PUSH_CODE_LOGIN_FAIL;
       out_frame[i++] = 0; // reserved
       memcpy(&out_frame[i], contact.id.pub_key, 6);
       i += 6; // pub_key_prefix
-
-#ifdef DISPLAY_CLASS
-      // Notify UI of login failure
-      if (_ui) _ui->onAdminLoginResult(false, 0, 0);
-#endif
     }
     _serial->writeFrame(out_frame, i);
   } else if (len > 4 && // check for status response
@@ -968,7 +897,6 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
-  _admin_contact_idx = -1;
 
   // defaults
   memset(&_prefs, 0, sizeof(_prefs));
@@ -1022,6 +950,7 @@ void MyMesh::begin(bool has_display) {
   _prefs.buzzer_quiet = constrain(_prefs.buzzer_quiet, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  _prefs.utc_offset_hours = constrain(_prefs.utc_offset_hours, -12, 14);  // Valid timezone range
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -1805,6 +1734,12 @@ void MyMesh::handleCmdFrame(size_t len) {
           savePrefs();
         }
         #endif
+        // UTC offset for local clock display (works regardless of GPS)
+        if (strcmp(sp, "utc_offset") == 0) {
+          int offset = atoi(np);
+          _prefs.utc_offset_hours = constrain(offset, -12, 14);
+          savePrefs();
+        }
         writeOKFrame();
       } else {
         writeErrFrame(ERR_CODE_ILLEGAL_ARG);

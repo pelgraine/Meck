@@ -54,7 +54,6 @@ class UITask : public AbstractUITask {
   UIScreen* channel_screen;  // Channel message history screen
   UIScreen* contacts_screen; // Contacts list screen
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
-  UIScreen* repeater_admin;  // Repeater admin screen
   UIScreen* curr;
 
   void userLedHandler();
@@ -80,7 +79,6 @@ public:
   void gotoChannelScreen();  // Navigate to channel message screen
   void gotoContactsScreen(); // Navigate to contacts list
   void gotoTextReader();     // *** NEW: Navigate to text reader ***
-  void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
   int  getMsgCount() const { return _msgcount; }
@@ -89,7 +87,7 @@ public:
   bool isOnChannelScreen() const { return curr == channel_screen; }
   bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
-  bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
+  bool isEditingHomeScreen() const;  // UTC offset editing on GPS page
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
@@ -101,17 +99,12 @@ public:
   
   // Add a sent message to the channel screen history
   void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
-
-  // Repeater admin callbacks
-  void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
-  void onAdminCliResponse(const char* from_name, const char* text) override;
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
   UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
   UIScreen* getContactsScreen() const { return contacts_screen; }
-  UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
