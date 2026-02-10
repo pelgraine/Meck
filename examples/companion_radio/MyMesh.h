@@ -12,7 +12,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v0.8.1"
+#define FIRMWARE_VERSION "Meck v0.8"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -104,6 +104,9 @@ public:
   
   // Queue a sent channel message for BLE app sync
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
+
+  // Send a direct message from the UI (no BLE dependency)
+  bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
 
 protected:
   float getAirtimeBudgetFactor() const override;

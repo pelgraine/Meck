@@ -75,7 +75,7 @@ public:
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
-  void gotoHomeScreen() { setCurrScreen(home); }
+  void gotoHomeScreen();
   void gotoChannelScreen();  // Navigate to channel message screen
   void gotoContactsScreen(); // Navigate to contacts list
   void gotoTextReader();     // *** NEW: Navigate to text reader ***

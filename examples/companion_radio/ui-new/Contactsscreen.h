@@ -148,6 +148,26 @@ public:
     return _filteredIdx[_scrollPos];
   }
 
+  // Get the adv_type of the currently highlighted contact
+  // Returns 0xFF if no valid selection
+  uint8_t getSelectedContactType() const {
+    if (_filteredCount == 0) return 0xFF;
+    ContactInfo contact;
+    if (!the_mesh.getContactByIdx(_filteredIdx[_scrollPos], contact)) return 0xFF;
+    return contact.type;
+  }
+
+  // Copy the name of the currently highlighted contact into buf
+  // Returns false if no valid selection
+  bool getSelectedContactName(char* buf, size_t bufLen) const {
+    if (_filteredCount == 0) return false;
+    ContactInfo contact;
+    if (!the_mesh.getContactByIdx(_filteredIdx[_scrollPos], contact)) return false;
+    strncpy(buf, contact.name, bufLen);
+    buf[bufLen - 1] = '\0';
+    return true;
+  }
+
   int render(DisplayDriver& display) override {
     if (!_cacheValid) rebuildCache();
 

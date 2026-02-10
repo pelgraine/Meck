@@ -22,6 +22,11 @@
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
   #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
+
+  // DM compose mode (direct message to a specific contact)
+  static bool composeDM = false;
+  static int composeDMContactIdx = -1;
+  static char composeDMName[32];
    // AGC reset - periodically re-assert RX boosted gain to prevent sensitivity drift
   #define AGC_RESET_INTERVAL_MS 500
   static unsigned long lastAGCReset = 0;
@@ -483,11 +488,18 @@ void handleKeyboardInput() {
       if (composePos > 0) {
         sendComposedMessage();
       }
+      bool wasDM = composeDM;
       composeMode = false;
       emojiPickerMode = false;
+      composeDM = false;
+      composeDMContactIdx = -1;
       composeBuffer[0] = '\0';
       composePos = 0;
-      ui_task.gotoHomeScreen();
+      if (wasDM) {
+        ui_task.gotoContactsScreen();
+      } else {
+        ui_task.gotoHomeScreen();
+      }
       return;
     }
     
@@ -496,11 +508,18 @@ void handleKeyboardInput() {
       if (keyboard.wasShiftRecentlyPressed(500)) {
         // Shift+Backspace = Cancel (works anytime)
         Serial.println("Compose: Shift+Backspace, cancelling...");
+        bool wasDM = composeDM;
         composeMode = false;
         emojiPickerMode = false;
+        composeDM = false;
+        composeDMContactIdx = -1;
         composeBuffer[0] = '\0';
         composePos = 0;
-        ui_task.gotoHomeScreen();
+        if (wasDM) {
+          ui_task.gotoContactsScreen();
+        } else {
+          ui_task.gotoHomeScreen();
+        }
         return;
       }
       // Regular backspace - delete last character (or entire emoji including pads)
@@ -520,8 +539,8 @@ void handleKeyboardInput() {
       return;
     }
     
-    // A/D keys switch channels (only when buffer is empty or as special function)
-    if ((key == 'a' || key == 'A') && composePos == 0) {
+    // A/D keys switch channels (only when buffer is empty, not in DM mode)
+    if ((key == 'a' || key == 'A') && composePos == 0 && !composeDM) {
       // Previous channel
       if (composeChannelIdx > 0) {
         composeChannelIdx--;
@@ -540,7 +559,7 @@ void handleKeyboardInput() {
       return;
     }
     
-    if ((key == 'd' || key == 'D') && composePos == 0) {
+    if ((key == 'd' || key == 'D') && composePos == 0 && !composeDM) {
       // Next channel
       ChannelDetails ch;
       uint8_t nextIdx = composeChannelIdx + 1;
@@ -595,6 +614,8 @@ void handleKeyboardInput() {
     
     // C key: allow entering compose mode from reader
     if (key == 'c' || key == 'C') {
+      composeDM = false;
+      composeDMContactIdx = -1;
       composeMode = true;
       composeBuffer[0] = '\0';
       composePos = 0;
@@ -613,17 +634,36 @@ void handleKeyboardInput() {
   switch (key) {
     case 'c':
     case 'C':
-      // Enter compose mode
-      composeMode = true;
-      composeBuffer[0] = '\0';
-      composePos = 0;
-      // If on channel screen, sync compose channel with viewed channel
-      if (ui_task.isOnChannelScreen()) {
-        composeChannelIdx = ui_task.getChannelScreenViewIdx();
+      // Enter compose mode - DM if on contacts screen, channel otherwise
+      if (ui_task.isOnContactsScreen()) {
+        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+        int idx = cs->getSelectedContactIdx();
+        uint8_t ctype = cs->getSelectedContactType();
+        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+          composeDM = true;
+          composeDMContactIdx = idx;
+          cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
+          composeMode = true;
+          composeBuffer[0] = '\0';
+          composePos = 0;
+          Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
+          drawComposeScreen();
+          lastComposeRefresh = millis();
+        }
+      } else {
+        composeDM = false;
+        composeDMContactIdx = -1;
+        composeMode = true;
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        // If on channel screen, sync compose channel with viewed channel
+        if (ui_task.isOnChannelScreen()) {
+          composeChannelIdx = ui_task.getChannelScreenViewIdx();
+        }
+        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
+        drawComposeScreen();
+        lastComposeRefresh = millis();
       }
-      Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
-      drawComposeScreen();
-      lastComposeRefresh = millis();
       break;
     
     case 'm':
@@ -692,9 +732,29 @@ void handleKeyboardInput() {
       break;
       
     case '\r':
-      // Select/Enter
-      Serial.println("Nav: Enter/Select");
-      ui_task.injectKey(13);  // KEY_ENTER
+      // Select/Enter - if on contacts screen, enter DM compose for chat contacts
+      if (ui_task.isOnContactsScreen()) {
+        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+        int idx = cs->getSelectedContactIdx();
+        uint8_t ctype = cs->getSelectedContactType();
+        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+          composeDM = true;
+          composeDMContactIdx = idx;
+          cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
+          composeMode = true;
+          composeBuffer[0] = '\0';
+          composePos = 0;
+          Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
+          drawComposeScreen();
+          lastComposeRefresh = millis();
+        } else if (idx >= 0) {
+          // Non-chat contact selected (repeater, room, etc.) - future use
+          Serial.printf("Selected non-chat contact type=%d idx=%d\n", ctype, idx);
+        }
+      } else {
+        Serial.println("Nav: Enter/Select");
+        ui_task.injectKey(13);  // KEY_ENTER
+      }
       break;
       
     case 'q':
@@ -725,12 +785,16 @@ void drawComposeScreen() {
   display.setCursor(0, 0);
   
   // Get the channel name for display
-  ChannelDetails channel;
   char headerBuf[40];
-  if (the_mesh.getChannel(composeChannelIdx, channel)) {
-    snprintf(headerBuf, sizeof(headerBuf), "To: %s", channel.name);
+  if (composeDM) {
+    snprintf(headerBuf, sizeof(headerBuf), "DM: %s", composeDMName);
   } else {
-    snprintf(headerBuf, sizeof(headerBuf), "To: Channel %d", composeChannelIdx);
+    ChannelDetails channel;
+    if (the_mesh.getChannel(composeChannelIdx, channel)) {
+      snprintf(headerBuf, sizeof(headerBuf), "To: %s", channel.name);
+    } else {
+      snprintf(headerBuf, sizeof(headerBuf), "To: Channel %d", composeChannelIdx);
+    }
   }
   display.print(headerBuf);
   
@@ -855,27 +919,37 @@ void drawEmojiPicker() {
 void sendComposedMessage() {
   if (composePos == 0) return;
   
-  // Get the selected channel
+  // Convert escape bytes back to UTF-8 for mesh transmission and BLE app
+  char utf8Buf[512];
+  emojiUnescape(composeBuffer, utf8Buf, sizeof(utf8Buf));
+
+  if (composeDM) {
+    // Direct message to a specific contact
+    if (composeDMContactIdx >= 0) {
+      if (the_mesh.uiSendDirectMessage((uint32_t)composeDMContactIdx, utf8Buf)) {
+        ui_task.showAlert("DM sent!", 1500);
+      } else {
+        ui_task.showAlert("DM failed!", 1500);
+      }
+    } else {
+      ui_task.showAlert("No contact!", 1500);
+    }
+    return;
+  }
+
+  // Channel (group) message
   ChannelDetails channel;
   if (the_mesh.getChannel(composeChannelIdx, channel)) {
     uint32_t timestamp = rtc_clock.getCurrentTime();
-    
-    // Convert escape bytes back to UTF-8 for mesh transmission and BLE app
-    // Worst case: each escape byte â†’ 8 bytes UTF-8 (flag emoji), plus ASCII chars
-    char utf8Buf[512];
-    emojiUnescape(composeBuffer, utf8Buf, sizeof(utf8Buf));
     int utf8Len = strlen(utf8Buf);
     
-    // Send UTF-8 version to mesh (so other devices/apps see real emoji)
     if (the_mesh.sendGroupMessage(timestamp, channel.channel, 
                                    the_mesh.getNodePrefs()->node_name, 
                                    utf8Buf, utf8Len)) {
-      // Add to local display (UTF-8 gets sanitized to escape bytes by addMessage)
       ui_task.addSentChannelMessage(composeChannelIdx, 
                                      the_mesh.getNodePrefs()->node_name, 
                                      utf8Buf);
       
-      // Queue UTF-8 version for BLE app sync (so companion app shows real emoji)
       the_mesh.queueSentChannelMessage(composeChannelIdx, timestamp,
                                         the_mesh.getNodePrefs()->node_name,
                                         utf8Buf);

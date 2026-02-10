@@ -620,6 +620,36 @@ void MyMesh::queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, co
   }
 }
 
+bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
+  ContactInfo contact;
+  if (!getContactByIdx(contact_idx, contact)) return false;
+
+  ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+  if (!recipient) return false;
+
+  uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
+  uint32_t expected_ack, est_timeout;
+  int result = sendMessage(*recipient, timestamp, 0, text, expected_ack, est_timeout);
+
+  if (result == MSG_SEND_FAILED) {
+    MESH_DEBUG_PRINTLN("UI: DM send failed to %s", recipient->name);
+    return false;
+  }
+
+  // Track expected ACK for delivery confirmation
+  if (expected_ack) {
+    expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis();
+    expected_ack_table[next_ack_idx].ack = expected_ack;
+    expected_ack_table[next_ack_idx].contact = recipient;
+    next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+  }
+
+  MESH_DEBUG_PRINTLN("UI: DM sent to %s (%s), ack=0x%08X timeout=%dms",
+                     recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
+                     expected_ack, est_timeout);
+  return true;
+}
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -1080,23 +1110,14 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&msg_timestamp, &cmd_frame[i], 4);
     i += 4;
     const char *text = (char *)&cmd_frame[i];
-    int text_len = len - i;
 
     if (txt_type != TXT_TYPE_PLAIN) {
       writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
     } else {
       ChannelDetails channel;
       bool success = getChannel(channel_idx, channel);
-      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, text_len)) {
+      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
-#ifdef DISPLAY_CLASS
-        // Show BLE-app-sent message on device channel screen
-        if (_ui) {
-          // Null-terminate text from BLE frame (frame buffer may have residual data)
-          cmd_frame[i + text_len] = 0;
-          _ui->addSentChannelMessage(channel_idx, _prefs.node_name, text);
-        }
-#endif
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
       }
