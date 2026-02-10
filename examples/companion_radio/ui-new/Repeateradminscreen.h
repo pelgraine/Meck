@@ -62,6 +62,50 @@ private:
   unsigned long _cmdSentAt;     // millis() when command was sent
   bool _waitingForLogin;
 
+  // Password cache - remembers passwords per repeater within session
+  static const int PWD_CACHE_SIZE = 8;
+  struct PwdCacheEntry {
+    int contactIdx;
+    char password[ADMIN_PASSWORD_MAX];
+  };
+  PwdCacheEntry _pwdCache[PWD_CACHE_SIZE];
+  int _pwdCacheCount;
+
+  // Look up cached password for a contact, returns nullptr if not found
+  const char* getCachedPassword(int contactIdx) {
+    for (int i = 0; i < _pwdCacheCount; i++) {
+      if (_pwdCache[i].contactIdx == contactIdx) return _pwdCache[i].password;
+    }
+    return nullptr;
+  }
+
+  // Save password to cache (update existing or add new, evict oldest if full)
+  void cachePassword(int contactIdx, const char* pwd) {
+    // Update existing entry
+    for (int i = 0; i < _pwdCacheCount; i++) {
+      if (_pwdCache[i].contactIdx == contactIdx) {
+        strncpy(_pwdCache[i].password, pwd, ADMIN_PASSWORD_MAX - 1);
+        _pwdCache[i].password[ADMIN_PASSWORD_MAX - 1] = '\0';
+        return;
+      }
+    }
+    // Add new entry, evict oldest if full
+    if (_pwdCacheCount < PWD_CACHE_SIZE) {
+      int slot = _pwdCacheCount++;
+      _pwdCache[slot].contactIdx = contactIdx;
+      strncpy(_pwdCache[slot].password, pwd, ADMIN_PASSWORD_MAX - 1);
+      _pwdCache[slot].password[ADMIN_PASSWORD_MAX - 1] = '\0';
+    } else {
+      // Shift entries down to evict oldest
+      for (int i = 0; i < PWD_CACHE_SIZE - 1; i++) {
+        _pwdCache[i] = _pwdCache[i + 1];
+      }
+      _pwdCache[PWD_CACHE_SIZE - 1].contactIdx = contactIdx;
+      strncpy(_pwdCache[PWD_CACHE_SIZE - 1].password, pwd, ADMIN_PASSWORD_MAX - 1);
+      _pwdCache[PWD_CACHE_SIZE - 1].password[ADMIN_PASSWORD_MAX - 1] = '\0';
+    }
+  }
+
   static const char* menuLabel(MenuItem m) {
     switch (m) {
       case MENU_CLOCK_SYNC:  return "Clock Sync";
@@ -104,7 +148,7 @@ public:
       _contactIdx(-1), _permissions(0), _serverTime(0),
       _pwdLen(0), _lastCharAt(0), _menuSel(0),
       _responseLen(0), _responseScroll(0),
-      _cmdSentAt(0), _waitingForLogin(false) {
+      _cmdSentAt(0), _waitingForLogin(false), _pwdCacheCount(0) {
     _password[0] = '\0';
     _repeaterName[0] = '\0';
     _response[0] = '\0';
@@ -118,9 +162,7 @@ public:
 
     // Reset state
     _state = STATE_PASSWORD_ENTRY;
-    _pwdLen = 0;
     _lastCharAt = 0;
-    _password[0] = '\0';
     _menuSel = 0;
     _permissions = 0;
     _serverTime = 0;
@@ -128,6 +170,17 @@ public:
     _responseScroll = 0;
     _response[0] = '\0';
     _waitingForLogin = false;
+
+    // Pre-fill from password cache if available
+    const char* cached = getCachedPassword(contactIdx);
+    if (cached) {
+      strncpy(_password, cached, ADMIN_PASSWORD_MAX - 1);
+      _password[ADMIN_PASSWORD_MAX - 1] = '\0';
+      _pwdLen = strlen(_password);
+    } else {
+      _pwdLen = 0;
+      _password[0] = '\0';
+    }
   }
 
   int getContactIdx() const { return _contactIdx; }
@@ -140,6 +193,7 @@ public:
       _permissions = permissions;
       _serverTime = server_time;
       _state = STATE_MENU;
+      cachePassword(_contactIdx, _password);  // remember for next time
     } else {
       snprintf(_response, sizeof(_response), "Login failed.\nCheck password.");
       _responseLen = strlen(_response);
