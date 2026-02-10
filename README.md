@@ -19,6 +19,34 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | R | Open e-book reader |
 | Q | Back to home screen |
 
+### Bluetooth (BLE)
+
+BLE is **disabled by default** at boot to support standalone-first operation. The device is fully functional without a phone — you can send and receive messages, browse contacts, read e-books, and set your timezone directly from the keyboard.
+
+To connect to the MeshCore companion app, navigate to the **Bluetooth** home page (use D to page through) and press **Enter** to toggle BLE on. The BLE PIN will be displayed on screen. Toggle it off again the same way when you're done.
+
+### Clock & Timezone
+
+The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of two methods:
+
+1. **GPS fix** (standalone) — Once the GPS acquires a satellite fix, the time is automatically synced from the NMEA data. No phone or BLE connection required. Typical time to first fix is 30–90 seconds outdoors with clear sky.
+2. **BLE companion app** — If BLE is enabled and connected to the MeshCore companion app, the app will push the current time to the device.
+
+**Setting your timezone:**
+
+Navigate to the **GPS** home page and press **U** to open the UTC offset editor.
+
+| Key | Action |
+|-----|--------|
+| W | Increase offset (+1 hour) |
+| S | Decrease offset (-1 hour) |
+| Enter | Save and exit |
+| Q | Cancel and exit |
+
+The UTC offset is persisted to flash and survives reboots — you only need to set it once. The valid range is UTC-12 to UTC+14. For example, AEST is UTC+10 and AEDT is UTC+11.
+
+The GPS page also shows the current time, satellite count, position, altitude, and your configured UTC offset for reference.
+
 ### Channel Message Screen
 
 | Key | Action |
@@ -171,6 +199,8 @@ Download a copy of the Meck firmware bin from https://github.com/pelgraine/Meck/
 
 The companion firmware can be connected to via BLE. USB is planned for a future update.
 
+> **Note:** On the T-Deck Pro, BLE is disabled by default at boot. Navigate to the Bluetooth home page and press Enter to enable BLE before connecting with a companion app.
+
 - Web: https://app.meshcore.nz
 - Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
 - iOS: https://apps.apple.com/us/app/meshcore/id6742354151?platform=iphone
@@ -204,6 +234,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Standalone DM functionality for Companion BLE firmware
 - [X] Contacts list with filtering for Companion BLE firmware
 - [X] Standalone repeater admin access for Companion BLE firmware
+- [X] GPS time sync with on-device timezone setting
 - [ ] Companion radio: USB
 - [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
