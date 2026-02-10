@@ -3,6 +3,8 @@
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
 #include "target.h"    // For sensors, board, etc.
+#include "GPSDutyCycle.h"
+#include "CPUPowerManager.h"
 
 // T-Deck Pro Keyboard support
 #if defined(LilyGo_TDeck_Pro)
@@ -11,7 +13,6 @@
   #include "TextReaderScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
-  #include "SettingsScreen.h"
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -40,6 +41,12 @@
   
   // Text reader mode state
   static bool readerMode = false;
+
+  // Power management
+  #if HAS_GPS
+    GPSDutyCycle gpsDuty;
+  #endif
+  CPUPowerManager cpuPower;
   
   void initKeyboard();
   void handleKeyboardInput();
@@ -392,7 +399,7 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
-  // Early SD card init — needed BEFORE the_mesh.begin() so we can restore
+  // Early SD card init â€” needed BEFORE the_mesh.begin() so we can restore
   // settings from a previous firmware flash.  The display SPI bus is already
   // up (display.begin() ran earlier), so SD can share it now.
   // ---------------------------------------------------------------------------
@@ -448,12 +455,6 @@ void setup() {
   the_mesh.startInterface(serial_interface);
   MESH_DEBUG_PRINTLN("setup() - the_mesh.startInterface() done");
 
-  // T-Deck Pro: default BLE to OFF on boot (user can toggle with Bluetooth page)
-  #if defined(LilyGo_TDeck_Pro)
-    serial_interface.disable();
-    MESH_DEBUG_PRINTLN("setup() - BLE disabled by default (toggle via home screen)");
-  #endif
-
 #else
   #error "need to define filesystem"
 #endif
@@ -501,6 +502,7 @@ void setup() {
     if (reader) {
       reader->setSDReady(true);
       if (disp) {
+        cpuPower.setBoost();  // Boost CPU for EPUB processing
         reader->bootIndex(*disp);
       }
     }
@@ -510,30 +512,29 @@ void setup() {
   }
   #endif
 
-  // ---------------------------------------------------------------------------
-  // First-boot onboarding detection
-  // Check if node name is still the default hex prefix (first 4 bytes of pub key)
-  // If so, launch onboarding wizard to set name and radio preset
-  // ---------------------------------------------------------------------------
-  #if defined(LilyGo_TDeck_Pro)
+  // GPS duty cycle — honour saved pref, default to enabled on first boot
+  #if HAS_GPS
   {
-    char defaultName[10];
-    mesh::Utils::toHex(defaultName, the_mesh.self_id.pub_key, 4);
-    NodePrefs* prefs = the_mesh.getNodePrefs();
-    if (strcmp(prefs->node_name, defaultName) == 0) {
-      MESH_DEBUG_PRINTLN("setup() - Default node name detected, launching onboarding");
-      ui_task.gotoOnboarding();
+    bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
+    gpsDuty.setStreamCounter(&gpsStream);
+    gpsDuty.begin(gps_wanted);
+    if (gps_wanted) {
+      sensors.setSettingValue("gps", "1");
+    } else {
+      sensors.setSettingValue("gps", "0");
     }
+    MESH_DEBUG_PRINTLN("setup() - GPS duty cycle started (enabled=%d)", gps_wanted);
   }
   #endif
 
-  // Enable GPS by default on T-Deck Pro
-  #if HAS_GPS
-    // Set GPS enabled in both sensor manager and node prefs
-    sensors.setSettingValue("gps", "1");
-    the_mesh.getNodePrefs()->gps_enabled = 1;
-    the_mesh.savePrefs();  // SD backup triggered automatically
-    MESH_DEBUG_PRINTLN("setup() - GPS enabled by default");
+  // CPU frequency scaling — drop to 80 MHz for idle mesh listening
+  cpuPower.begin();
+
+  // T-Deck Pro: BLE starts disabled for standalone-first operation
+  // User can toggle it on from the Bluetooth home page (Enter or long-press)
+  #if defined(LilyGo_TDeck_Pro) && defined(BLE_PIN_CODE)
+    serial_interface.disable();
+    MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif
 
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
@@ -541,7 +542,24 @@ void setup() {
 
 void loop() {
   the_mesh.loop();
+
+  // GPS duty cycle — check for fix and manage power state
+  #if HAS_GPS
+  {
+    bool gps_hw_on = gpsDuty.loop();
+    if (gps_hw_on) {
+      LocationProvider* lp = sensors.getLocationProvider();
+      if (lp != NULL && lp->isValid()) {
+        gpsDuty.notifyFix();
+      }
+    }
+  }
+  #endif
+
   sensors.loop();
+
+  // CPU frequency auto-timeout back to idle
+  cpuPower.loop();
 #ifdef DISPLAY_CLASS
   // Skip UITask rendering when in compose mode to prevent flickering
   #if defined(LilyGo_TDeck_Pro)
@@ -769,28 +787,20 @@ void handleKeyboardInput() {
       return;
     }
     
-    // All other keys pass through to the reader screen
-    ui_task.injectKey(key);
-    return;
-  }
-
-  // *** SETTINGS MODE ***
-  if (ui_task.isOnSettingsScreen()) {
-    SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
-
-    // Q key: exit settings (when not editing)
-    if (!settings->isEditing() && (key == 'q' || key == 'Q')) {
-      if (settings->hasRadioChanges()) {
-        // Let settings show "apply changes?" confirm dialog
-        ui_task.injectKey(key);
-      } else {
-        Serial.println("Exiting settings");
-        ui_task.gotoHomeScreen();
-      }
+    // C key: allow entering compose mode from reader
+    if (key == 'c' || key == 'C') {
+      composeDM = false;
+      composeDMContactIdx = -1;
+      composeMode = true;
+      composeBuffer[0] = '\0';
+      composePos = 0;
+      Serial.printf("Entering compose mode from reader, channel %d\n", composeChannelIdx);
+      drawComposeScreen();
+      lastComposeRefresh = millis();
       return;
     }
-
-    // All other keys → settings screen via injectKey (no forceRefresh)
+    
+    // All other keys pass through to the reader screen
     ui_task.injectKey(key);
     return;
   }
@@ -799,11 +809,38 @@ void handleKeyboardInput() {
   switch (key) {
     case 'c':
     case 'C':
-      // Open contacts list
-      Serial.println("Opening contacts");
-      ui_task.gotoContactsScreen();
+      // Enter compose mode - DM if on contacts screen, channel otherwise
+      if (ui_task.isOnContactsScreen()) {
+        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+        int idx = cs->getSelectedContactIdx();
+        uint8_t ctype = cs->getSelectedContactType();
+        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+          composeDM = true;
+          composeDMContactIdx = idx;
+          cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
+          composeMode = true;
+          composeBuffer[0] = '\0';
+          composePos = 0;
+          Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
+          drawComposeScreen();
+          lastComposeRefresh = millis();
+        }
+      } else {
+        composeDM = false;
+        composeDMContactIdx = -1;
+        composeMode = true;
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        // If on channel screen, sync compose channel with viewed channel
+        if (ui_task.isOnChannelScreen()) {
+          composeChannelIdx = ui_task.getChannelScreenViewIdx();
+        }
+        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
+        drawComposeScreen();
+        lastComposeRefresh = millis();
+      }
       break;
-
+    
     case 'm':
     case 'M':
       // Go to channel message screen
@@ -811,22 +848,18 @@ void handleKeyboardInput() {
       ui_task.gotoChannelScreen();
       break;
     
-    case 'e':
-    case 'E':
-      // Open text reader (ebooks)
+    case 'r':
+    case 'R':
+      // Open text reader
       Serial.println("Opening text reader");
       ui_task.gotoTextReader();
       break;
     
-    case 's':
-    case 'S':
-      // Open settings (from home), or navigate down on channel/contacts
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
-        ui_task.injectKey('s');  // Pass directly for channel/contacts scrolling
-      } else {
-        Serial.println("Opening settings");
-        ui_task.gotoSettingsScreen();
-      }
+    case 'n':
+    case 'N':
+      // Open contacts list
+      Serial.println("Opening contacts");
+      ui_task.gotoContactsScreen();
       break;
     
     case 'w':
@@ -840,6 +873,17 @@ void handleKeyboardInput() {
       }
       break;
     
+    case 's':
+    case 'S':
+      // Navigate down/next (scroll on channel screen)
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('s');  // Pass directly for channel/contacts switching
+      } else {
+        Serial.println("Nav: Next");
+        ui_task.injectKey(0xF1);  // KEY_NEXT
+      }
+      break;
+      
     case 'a':
     case 'A':
       // Navigate left or switch channel (on channel screen)
@@ -863,7 +907,7 @@ void handleKeyboardInput() {
       break;
       
     case '\r':
-      // Enter = compose (only from channel or contacts screen)
+      // Select/Enter - if on contacts screen, enter DM compose for chat contacts
       if (ui_task.isOnContactsScreen()) {
         ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
         int idx = cs->getSelectedContactIdx();
@@ -879,21 +923,12 @@ void handleKeyboardInput() {
           drawComposeScreen();
           lastComposeRefresh = millis();
         } else if (idx >= 0) {
+          // Non-chat contact selected (repeater, room, etc.) - future use
           Serial.printf("Selected non-chat contact type=%d idx=%d\n", ctype, idx);
         }
-      } else if (ui_task.isOnChannelScreen()) {
-        composeDM = false;
-        composeDMContactIdx = -1;
-        composeChannelIdx = ui_task.getChannelScreenViewIdx();
-        composeMode = true;
-        composeBuffer[0] = '\0';
-        composePos = 0;
-        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
-        drawComposeScreen();
-        lastComposeRefresh = millis();
       } else {
-        // Other screens: pass Enter as generic select
-        ui_task.injectKey(13);
+        Serial.println("Nav: Enter/Select");
+        ui_task.injectKey(13);  // KEY_ENTER
       }
       break;
       
@@ -1059,6 +1094,8 @@ void drawEmojiPicker() {
 void sendComposedMessage() {
   if (composePos == 0) return;
   
+  cpuPower.setBoost();  // Boost CPU for crypto + radio TX
+
   // Convert escape bytes back to UTF-8 for mesh transmission and BLE app
   char utf8Buf[512];
   emojiUnescape(composeBuffer, utf8Buf, sizeof(utf8Buf));

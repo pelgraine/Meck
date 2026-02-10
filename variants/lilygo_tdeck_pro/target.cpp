@@ -17,7 +17,10 @@ ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
 #if HAS_GPS
-  MicroNMEALocationProvider gps(Serial2, &rtc_clock);
+  // Wrap Serial2 with a sentence counter so the UI can show NMEA throughput.
+  // MicroNMEALocationProvider reads through this wrapper transparently.
+  GPSStreamCounter gpsStream(Serial2);
+  MicroNMEALocationProvider gps(gpsStream, &rtc_clock);
   EnvironmentSensorManager sensors(gps);
 #else
   SensorManager sensors;

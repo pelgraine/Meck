@@ -18,6 +18,7 @@
 #if HAS_GPS
   #include "helpers/sensors/EnvironmentSensorManager.h"
   #include "helpers/sensors/MicroNMEALocationProvider.h"
+  #include "GPSStreamCounter.h"
 #else
   #include <helpers/SensorManager.h>
 #endif
@@ -27,6 +28,7 @@ extern WRAPPER_CLASS radio_driver;
 extern AutoDiscoverRTCClock rtc_clock;
 
 #if HAS_GPS
+  extern GPSStreamCounter gpsStream;
   extern EnvironmentSensorManager sensors;
 #else
   extern SensorManager sensors;

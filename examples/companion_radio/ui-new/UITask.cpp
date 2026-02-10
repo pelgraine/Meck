@@ -2,6 +2,7 @@
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
 #include "target.h"
+#include "GPSDutyCycle.h"
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -33,7 +34,6 @@
 #include "ChannelScreen.h"
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
-#include "SettingsScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -329,21 +329,37 @@ public:
       display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
+      extern GPSDutyCycle gpsDuty;
+      extern GPSStreamCounter gpsStream;
       LocationProvider* nmea = sensors.getLocationProvider();
       char buf[50];
       int y = 18;
-      bool gps_state = _task->getGPSState();
-#ifdef PIN_GPS_SWITCH
-      bool hw_gps_state = digitalRead(PIN_GPS_SWITCH);
-      if (gps_state != hw_gps_state) {
-        strcpy(buf, gps_state ? "gps off(hw)" : "gps off(sw)");
+
+      // GPS state line with duty cycle info
+      if (!_node_prefs->gps_enabled) {
+        strcpy(buf, "gps off");
       } else {
-        strcpy(buf, gps_state ? "gps on" : "gps off");
+        switch (gpsDuty.getState()) {
+          case GPSDutyState::ACQUIRING: {
+            uint32_t elapsed = gpsDuty.acquireElapsedSecs();
+            sprintf(buf, "acquiring %us", (unsigned)elapsed);
+            break;
+          }
+          case GPSDutyState::SLEEPING: {
+            uint32_t remain = gpsDuty.sleepRemainingSecs();
+            if (remain >= 60) {
+              sprintf(buf, "sleep %um%02us", (unsigned)(remain / 60), (unsigned)(remain % 60));
+            } else {
+              sprintf(buf, "sleep %us", (unsigned)remain);
+            }
+            break;
+          }
+          default:
+            strcpy(buf, "gps off");
+        }
       }
-#else
-      strcpy(buf, gps_state ? "gps on" : "gps off");
-#endif
       display.drawTextLeftAlign(0, y, buf);
+
       if (nmea == NULL) {
         y = y + 12;
         display.drawTextLeftAlign(0, y, "Can't access GPS");
@@ -355,6 +371,19 @@ public:
         sprintf(buf, "%d", nmea->satellitesCount());
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
+
+        // NMEA sentence counter — confirms baud rate and data flow
+        display.drawTextLeftAlign(0, y, "sentences");
+        if (gpsDuty.isHardwareOn()) {
+          uint16_t sps = gpsStream.getSentencesPerSec();
+          uint32_t total = gpsStream.getSentenceCount();
+          sprintf(buf, "%u/s (%lu)", sps, (unsigned long)total);
+        } else {
+          strcpy(buf, "hw off");
+        }
+        display.drawTextRightAlign(display.width()-1, y, buf);
+        y = y + 12;
+
         display.drawTextLeftAlign(0, y, "pos");
         sprintf(buf, "%.4f %.4f", 
           nmea->getLatitude()/1000000., nmea->getLongitude()/1000000.);
@@ -524,6 +553,12 @@ public:
 
     if (c == KEY_LEFT || c == KEY_PREV) {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
+      #if ENV_INCLUDE_GPS == 1
+      if (_page == HomePage::GPS) {
+        extern GPSDutyCycle gpsDuty;
+        gpsDuty.forceWake();
+      }
+      #endif
       return true;
     }
     if (c == KEY_NEXT || c == KEY_RIGHT) {
@@ -531,6 +566,12 @@ public:
       if (_page == HomePage::RECENT) {
         _task->showAlert("Recent adverts", 800);
       }
+      #if ENV_INCLUDE_GPS == 1
+      if (_page == HomePage::GPS) {
+        extern GPSDutyCycle gpsDuty;
+        gpsDuty.forceWake();
+      }
+      #endif
       return true;
     }
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
@@ -717,7 +758,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
-  settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   setCurrScreen(splash);
 }
 
@@ -1037,39 +1077,36 @@ char UITask::handleTripleClick(char c) {
 }
 
 bool UITask::getGPSState() {
-  if (_sensors != NULL) {
-    int num = _sensors->getNumSettings();
-    for (int i = 0; i < num; i++) {
-      if (strcmp(_sensors->getSettingName(i), "gps") == 0) {
-        return !strcmp(_sensors->getSettingValue(i), "1");
-      }
-    }
-  } 
-  return false;
+  #if ENV_INCLUDE_GPS == 1
+    return _node_prefs != NULL && _node_prefs->gps_enabled;
+  #else
+    return false;
+  #endif
 }
 
 void UITask::toggleGPS() {
+  #if ENV_INCLUDE_GPS == 1
+    extern GPSDutyCycle gpsDuty;
+
     if (_sensors != NULL) {
-    // toggle GPS on/off
-    int num = _sensors->getNumSettings();
-    for (int i = 0; i < num; i++) {
-      if (strcmp(_sensors->getSettingName(i), "gps") == 0) {
-        if (strcmp(_sensors->getSettingValue(i), "1") == 0) {
-          _sensors->setSettingValue("gps", "0");
-          _node_prefs->gps_enabled = 0;
-          notify(UIEventType::ack);
-        } else {
-          _sensors->setSettingValue("gps", "1");
-          _node_prefs->gps_enabled = 1;
-          notify(UIEventType::ack);
-        }
-        the_mesh.savePrefs();
-        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
-        _next_refresh = 0;
-        break;
+      if (_node_prefs->gps_enabled) {
+        // Disable GPS — cut hardware power
+        _sensors->setSettingValue("gps", "0");
+        _node_prefs->gps_enabled = 0;
+        gpsDuty.disable();
+        notify(UIEventType::ack);
+      } else {
+        // Enable GPS — start duty cycle
+        _sensors->setSettingValue("gps", "1");
+        _node_prefs->gps_enabled = 1;
+        gpsDuty.enable();
+        notify(UIEventType::ack);
       }
+      the_mesh.savePrefs();
+      showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
+      _next_refresh = 0;
     }
-  }
+  #endif
 }
 
 void UITask::toggleBuzzer() {
@@ -1150,26 +1187,6 @@ void UITask::gotoTextReader() {
     reader->enter(*_display);
   }
   setCurrScreen(text_reader);
-  if (_display != NULL && !_display->isOn()) {
-    _display->turnOn();
-  }
-  _auto_off = millis() + AUTO_OFF_MILLIS;
-  _next_refresh = 100;
-}
-
-void UITask::gotoSettingsScreen() {
-  ((SettingsScreen*)settings_screen)->enter();
-  setCurrScreen(settings_screen);
-  if (_display != NULL && !_display->isOn()) {
-    _display->turnOn();
-  }
-  _auto_off = millis() + AUTO_OFF_MILLIS;
-  _next_refresh = 100;
-}
-
-void UITask::gotoOnboarding() {
-  ((SettingsScreen*)settings_screen)->enterOnboarding();
-  setCurrScreen(settings_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
