@@ -72,6 +72,11 @@
 
 /* -------------------------------------------------------------------------------------- */
 
+// SD-backed settings persistence (defined in main.cpp for T-Deck Pro)
+#if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+  extern void backupSettingsToSD();
+#endif
+
 #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
 #define REQ_TYPE_KEEP_ALIVE             0x02
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
@@ -169,7 +174,12 @@ protected:
   }
 
 public:
-  void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
+  void savePrefs() {
+    _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon);
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
+  }
 
 private:
   void writeOKFrame();
@@ -190,8 +200,18 @@ private:
   void checkSerialInterface();
 
   // helpers, short-cuts
-  void saveChannels() { _store->saveChannels(this); }
-  void saveContacts() { _store->saveContacts(this); }
+  void saveChannels() {
+    _store->saveChannels(this);
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
+  }
+  void saveContacts() {
+    _store->saveContacts(this);
+    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
+      backupSettingsToSD();
+    #endif
+  }
 
   DataStore* _store;
   NodePrefs _prefs;

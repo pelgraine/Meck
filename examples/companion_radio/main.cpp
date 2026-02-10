@@ -508,10 +508,7 @@ void setup() {
     // Set GPS enabled in both sensor manager and node prefs
     sensors.setSettingValue("gps", "1");
     the_mesh.getNodePrefs()->gps_enabled = 1;
-    the_mesh.savePrefs();
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
+    the_mesh.savePrefs();  // SD backup triggered automatically
     MESH_DEBUG_PRINTLN("setup() - GPS enabled by default");
   #endif
 
