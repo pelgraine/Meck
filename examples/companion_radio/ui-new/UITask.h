@@ -52,6 +52,7 @@ class UITask : public AbstractUITask {
   UIScreen* home;
   UIScreen* msg_preview;
   UIScreen* channel_screen;  // Channel message history screen
+  UIScreen* contacts_screen; // Contacts list screen
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
   UIScreen* curr;
 
@@ -76,6 +77,7 @@ public:
 
   void gotoHomeScreen() { setCurrScreen(home); }
   void gotoChannelScreen();  // Navigate to channel message screen
+  void gotoContactsScreen(); // Navigate to contacts list
   void gotoTextReader();     // *** NEW: Navigate to text reader ***
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
@@ -83,6 +85,7 @@ public:
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
   bool isOnChannelScreen() const { return curr == channel_screen; }
+  bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
   uint8_t getChannelScreenViewIdx() const;
 
@@ -100,6 +103,7 @@ public:
   UIScreen* getCurrentScreen() const { return curr; }
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
   UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
+  UIScreen* getContactsScreen() const { return contacts_screen; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

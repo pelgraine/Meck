@@ -9,6 +9,7 @@
   #include "TCA8418Keyboard.h"
   #include <SD.h>
   #include "TextReaderScreen.h"
+  #include "ContactsScreen.h"
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -639,11 +640,18 @@ void handleKeyboardInput() {
       ui_task.gotoTextReader();
       break;
     
+    case 'n':
+    case 'N':
+      // Open contacts list
+      Serial.println("Opening contacts");
+      ui_task.gotoContactsScreen();
+      break;
+    
     case 'w':
     case 'W':
       // Navigate up/previous (scroll on channel screen)
-      if (ui_task.isOnChannelScreen()) {
-        ui_task.injectKey('w');  // Pass directly for channel switching
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('w');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Previous");
         ui_task.injectKey(0xF2);  // KEY_PREV
@@ -653,8 +661,8 @@ void handleKeyboardInput() {
     case 's':
     case 'S':
       // Navigate down/next (scroll on channel screen)
-      if (ui_task.isOnChannelScreen()) {
-        ui_task.injectKey('s');  // Pass directly for channel switching
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('s');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Next");
         ui_task.injectKey(0xF1);  // KEY_NEXT
@@ -664,8 +672,8 @@ void handleKeyboardInput() {
     case 'a':
     case 'A':
       // Navigate left or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen()) {
-        ui_task.injectKey('a');  // Pass directly for channel switching
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('a');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Previous");
         ui_task.injectKey(0xF2);  // KEY_PREV
@@ -675,8 +683,8 @@ void handleKeyboardInput() {
     case 'd':
     case 'D':
       // Navigate right or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen()) {
-        ui_task.injectKey('d');  // Pass directly for channel switching
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+        ui_task.injectKey('d');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Next");
         ui_task.injectKey(0xF1);  // KEY_NEXT

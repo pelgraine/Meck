@@ -31,6 +31,7 @@
 
 #include "icons.h"
 #include "ChannelScreen.h"
+#include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 
 class SplashScreen : public UIScreen {
@@ -605,6 +606,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
+  contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
   setCurrScreen(splash);
 }
@@ -991,6 +993,16 @@ void UITask::injectKey(char c) {
 void UITask::gotoChannelScreen() {
   ((ChannelScreen *) channel_screen)->resetScroll();
   setCurrScreen(channel_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoContactsScreen() {
+  ((ContactsScreen *) contacts_screen)->resetScroll();
+  setCurrScreen(contacts_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
