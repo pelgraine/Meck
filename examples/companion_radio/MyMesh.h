@@ -172,15 +172,9 @@ public:
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
   void saveChannels() {
     _store->saveChannels(this);
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
   }
   void saveContacts() {
     _store->saveContacts(this);
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
   }
 
 private:
