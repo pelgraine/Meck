@@ -34,6 +34,7 @@
 #include "ChannelScreen.h"
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
+#include "SettingsScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -372,7 +373,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter — confirms baud rate and data flow
+        // NMEA sentence counter â€” confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -746,6 +747,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
+  settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   setCurrScreen(splash);
 }
 
@@ -1078,13 +1080,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS — cut hardware power
+        // Disable GPS â€” cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS — start duty cycle
+        // Enable GPS â€” start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
@@ -1175,6 +1177,26 @@ void UITask::gotoTextReader() {
     reader->enter(*_display);
   }
   setCurrScreen(text_reader);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoSettingsScreen() {
+  ((SettingsScreen *) settings_screen)->enter();
+  setCurrScreen(settings_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoOnboarding() {
+  ((SettingsScreen *) settings_screen)->enterOnboarding();
+  setCurrScreen(settings_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

@@ -72,11 +72,6 @@
 
 /* -------------------------------------------------------------------------------------- */
 
-// SD-backed settings persistence (defined in main.cpp for T-Deck Pro)
-#if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-  extern void backupSettingsToSD();
-#endif
-
 #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
 #define REQ_TYPE_KEEP_ALIVE             0x02
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
@@ -174,12 +169,7 @@ protected:
   }
 
 public:
-  void savePrefs() {
-    _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon);
-    #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
-      backupSettingsToSD();
-    #endif
-  }
+  void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
   void saveChannels() {
     _store->saveChannels(this);
     #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)

@@ -603,7 +603,7 @@ private:
         _currentPage = cache->lastReadPage;
       }
 
-      // Already fully indexed — open immediately
+      // Already fully indexed â€” open immediately
       if (cache->fullyIndexed) {
         _totalPages = _pagePositions.size();
         _mode = READING;
@@ -613,7 +613,7 @@ private:
         return;
       }
 
-      // Partially indexed — finish indexing with splash
+      // Partially indexed â€” finish indexing with splash
       Serial.printf("TextReader: Finishing index for %s (have %d pages so far)\n",
                     actualFilename.c_str(), (int)_pagePositions.size());
 
@@ -629,7 +629,7 @@ private:
       drawSplash("Indexing...", "Please wait", shortName);
 
       if (_pagePositions.empty()) {
-        // Cache had no pages (e.g. dummy entry) — full index from scratch
+        // Cache had no pages (e.g. dummy entry) â€” full index from scratch
         _pagePositions.push_back(0);
         indexPagesWordWrap(_file, 0, _pagePositions,
                            _linesPerPage, _charsPerLine, 0);
@@ -639,7 +639,7 @@ private:
                            _linesPerPage, _charsPerLine, 0);
       }
     } else {
-      // No cache — full index from scratch
+      // No cache â€” full index from scratch
       Serial.printf("TextReader: Full index for %s\n", actualFilename.c_str());
 
       char shortName[28];
@@ -878,9 +878,8 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    char status[30];
-    int pct = _totalPages > 1 ? (_currentPage * 100) / (_totalPages - 1) : 100;
-    sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
+    char status[20];
+    sprintf(status, "%d/%d", _currentPage + 1, _totalPages);
     display.setCursor(0, footerY);
     display.print(status);
 
@@ -997,7 +996,7 @@ public:
 
     // --- Pass 1: Fast cache load (no per-file splash screens) ---
     // Try to load existing .idx files from SD for every file.
-    // This is just SD reads — no indexing, no e-ink refreshes.
+    // This is just SD reads â€” no indexing, no e-ink refreshes.
     _fileCache.clear();
     _fileCache.resize(_fileList.size());  // Pre-allocate slots to maintain alignment with _fileList
 
@@ -1026,7 +1025,7 @@ public:
         // Skip files that loaded from cache
         if (_fileCache[i].filename.length() > 0) continue;
 
-        // Skip .epub files — they'll be converted on first open via openBook()
+        // Skip .epub files â€” they'll be converted on first open via openBook()
         if (_fileList[i].endsWith(".epub") || _fileList[i].endsWith(".EPUB")) {
           needsIndexCount--;  // Don't count epubs in progress display
           continue;
