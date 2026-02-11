@@ -4,6 +4,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <SD.h>
 #include <vector>
+#include "Utf8CP437.h"
 #include "EpubProcessor.h"
 
 // Forward declarations
@@ -14,7 +15,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     4
+#define INDEX_VERSION     5  // v5: UTF-8 aware word wrap (accented char support)
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -57,6 +58,10 @@ inline WrapResult findLineBreak(const char* buffer, int bufLen, int lineStart, i
     }
 
     if (c >= 32) {
+      // Skip UTF-8 continuation bytes (0x80-0xBF) - the lead byte already
+      // counted as one display character, so don't double-count these.
+      if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) continue;
+
       charCount++;
       if (c == ' ' || c == '\t') {
         if (inWord) {
@@ -855,12 +860,40 @@ private:
       if (wrap.nextStart <= oldPos && wrap.lineEnd >= _pageBufLen) break;
 
       display.setCursor(0, y);
-      // Print line character by character (only printable)
+      // Print line with UTF-8 decoding: multi-byte sequences are decoded
+      // to Unicode codepoints, then mapped to CP437 for the built-in font.
       char charStr[2] = {0, 0};
-      for (int j = pos; j < wrap.lineEnd && j < _pageBufLen; j++) {
-        if (_pageBuf[j] >= 32) {
-          charStr[0] = _pageBuf[j];
+      int j = pos;
+      while (j < wrap.lineEnd && j < _pageBufLen) {
+        uint8_t b = (uint8_t)_pageBuf[j];
+
+        if (b < 32) {
+          // Control character — skip
+          j++;
+          continue;
+        }
+
+        if (b < 0x80) {
+          // Plain ASCII — print directly
+          charStr[0] = (char)b;
           display.print(charStr);
+          j++;
+        } else if (b >= 0xC0) {
+          // UTF-8 lead byte — decode full sequence and map to CP437
+          int savedJ = j;
+          uint32_t cp = decodeUtf8Char(_pageBuf, wrap.lineEnd, &j);
+          uint8_t glyph = unicodeToCP437(cp);
+          if (glyph) {
+            charStr[0] = (char)glyph;
+            display.print(charStr);
+          }
+          // If unmappable (glyph==0), just skip the character
+        } else {
+          // Standalone byte 0x80-0xBF: not a valid UTF-8 lead byte.
+          // Treat as CP437 pass-through (e.g. from EPUB numeric entity decoding).
+          charStr[0] = (char)b;
+          display.print(charStr);
+          j++;
         }
       }
 
@@ -878,8 +911,9 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    char status[20];
-    sprintf(status, "%d/%d", _currentPage + 1, _totalPages);
+    char status[30];
+    int pct = _totalPages > 1 ? (_currentPage * 100) / (_totalPages - 1) : 100;
+    sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
     display.setCursor(0, footerY);
     display.print(status);
 

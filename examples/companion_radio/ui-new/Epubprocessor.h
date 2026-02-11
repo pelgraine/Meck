@@ -2,8 +2,8 @@
 // =============================================================================
 // EpubProcessor.h - Convert EPUB files to plain text for TextReaderScreen
 //
-// Pipeline: EPUB (ZIP) → container.xml → OPF spine → extract chapters →
-//           strip XHTML tags → concatenated plain text → cached .txt on SD
+// Pipeline: EPUB (ZIP) â†’ container.xml â†’ OPF spine â†’ extract chapters â†’
+//           strip XHTML tags â†’ concatenated plain text â†’ cached .txt on SD
 //
 // The resulting .txt file is placed in /books/ and picked up automatically
 // by TextReaderScreen's existing pagination, indexing, and bookmarking.
@@ -14,6 +14,7 @@
 #include <SD.h>
 #include <FS.h>
 #include "EpubZipReader.h"
+#include "Utf8CP437.h"
 
 // Maximum chapters in spine (most novels have 20-80)
 #define EPUB_MAX_CHAPTERS 200
@@ -426,7 +427,7 @@ private:
   //
   // Handles:
   //   - Tag removal (everything between < and >)
-  //   - <p>, <br>, <div>, <h1>-<h6> → newlines
+  //   - <p>, <br>, <div>, <h1>-<h6> â†’ newlines
   //   - HTML entity decoding (&amp; &lt; &gt; &quot; &apos; &#NNN; &#xHH;)
   //   - Collapse multiple whitespace/newlines
   //   - Skip <head>, <style>, <script> content entirely
@@ -547,9 +548,9 @@ private:
         }
       }
 
-      // Handle UTF-8 multi-byte sequences (smart quotes, em dashes, etc.)
-      // These appear as raw bytes in XHTML and must be mapped to ASCII
-      // since the e-ink font only supports ASCII characters.
+      // Handle UTF-8 multi-byte sequences (smart quotes, em dashes, accented chars, etc.)
+      // These appear as raw bytes in XHTML. Typographic chars are mapped to ASCII;
+      // accented Latin chars are preserved as UTF-8 for CP437 rendering on e-ink.
       if ((uint8_t)c >= 0xC0) {
         uint32_t codepoint = 0;
         int extraBytes = 0;
@@ -579,7 +580,8 @@ private:
         if (valid && extraBytes > 0) {
           p += extraBytes;  // Skip continuation bytes (loop increments past lead byte)
 
-          // Map Unicode codepoints to ASCII equivalents
+          // Map Unicode codepoints to displayable equivalents
+          // Typographic chars → ASCII, accented chars → preserved as UTF-8
           char mapped = 0;
           switch (codepoint) {
             case 0x2018: case 0x2019: mapped = '\''; break;  // Smart single quotes
@@ -598,6 +600,21 @@ private:
             default:
               if (codepoint >= 0x20 && codepoint < 0x7F) {
                 mapped = (char)codepoint;  // Basic ASCII range
+              } else if (unicodeToCP437(codepoint)) {
+                // Accented character that the e-ink font can render via CP437.
+                // Preserve as UTF-8 in the output; the text reader will decode
+                // and map to CP437 at render time.
+                if (codepoint <= 0x7FF) {
+                  output[outPos++] = 0xC0 | (codepoint >> 6);
+                  output[outPos++] = 0x80 | (codepoint & 0x3F);
+                } else if (codepoint <= 0xFFFF) {
+                  output[outPos++] = 0xE0 | (codepoint >> 12);
+                  output[outPos++] = 0x80 | ((codepoint >> 6) & 0x3F);
+                  output[outPos++] = 0x80 | (codepoint & 0x3F);
+                }
+                lastWasNewline = false;
+                lastWasSpace = false;
+                continue;  // Already wrote to output
               } else {
                 continue;  // Skip unmappable characters
               }
@@ -608,7 +625,7 @@ private:
           continue;  // Skip malformed UTF-8
         }
       } else if ((uint8_t)c >= 0x80) {
-        // Stray continuation byte (0x80-0xBF) — skip
+        // Stray continuation byte (0x80-0xBF) â€” skip
         continue;
       }
 
@@ -683,6 +700,37 @@ private:
     if (entityLen == 5 && strncmp(entity, "ldquo", 5) == 0) return '"';
     if (entityLen == 5 && strncmp(entity, "rdquo", 5) == 0) return '"';
 
+    // Common accented character entities → CP437 bytes for built-in font
+    if (entityLen == 6 && strncmp(entity, "eacute", 6) == 0) return (char)0x82;  // é
+    if (entityLen == 6 && strncmp(entity, "egrave", 6) == 0) return (char)0x8A;  // è
+    if (entityLen == 5 && strncmp(entity, "ecirc", 5) == 0) return (char)0x88;   // ê
+    if (entityLen == 4 && strncmp(entity, "euml", 4) == 0) return (char)0x89;    // ë
+    if (entityLen == 6 && strncmp(entity, "agrave", 6) == 0) return (char)0x85;  // à
+    if (entityLen == 6 && strncmp(entity, "aacute", 6) == 0) return (char)0xA0;  // á
+    if (entityLen == 5 && strncmp(entity, "acirc", 5) == 0) return (char)0x83;   // â
+    if (entityLen == 4 && strncmp(entity, "auml", 4) == 0) return (char)0x84;    // ä
+    if (entityLen == 6 && strncmp(entity, "ccedil", 6) == 0) return (char)0x87;  // ç
+    if (entityLen == 6 && strncmp(entity, "iacute", 6) == 0) return (char)0xA1;  // í
+    if (entityLen == 5 && strncmp(entity, "icirc", 5) == 0) return (char)0x8C;   // î
+    if (entityLen == 4 && strncmp(entity, "iuml", 4) == 0) return (char)0x8B;    // ï
+    if (entityLen == 6 && strncmp(entity, "igrave", 6) == 0) return (char)0x8D;  // ì
+    if (entityLen == 6 && strncmp(entity, "oacute", 6) == 0) return (char)0xA2;  // ó
+    if (entityLen == 5 && strncmp(entity, "ocirc", 5) == 0) return (char)0x93;   // ô
+    if (entityLen == 4 && strncmp(entity, "ouml", 4) == 0) return (char)0x94;    // ö
+    if (entityLen == 6 && strncmp(entity, "ograve", 6) == 0) return (char)0x95;  // ò
+    if (entityLen == 6 && strncmp(entity, "uacute", 6) == 0) return (char)0xA3;  // ú
+    if (entityLen == 5 && strncmp(entity, "ucirc", 5) == 0) return (char)0x96;   // û
+    if (entityLen == 4 && strncmp(entity, "uuml", 4) == 0) return (char)0x81;    // ü
+    if (entityLen == 6 && strncmp(entity, "ugrave", 6) == 0) return (char)0x97;  // ù
+    if (entityLen == 6 && strncmp(entity, "ntilde", 6) == 0) return (char)0xA4;  // ñ
+    if (entityLen == 6 && strncmp(entity, "Eacute", 6) == 0) return (char)0x90;  // É
+    if (entityLen == 6 && strncmp(entity, "Ccedil", 6) == 0) return (char)0x80;  // Ç
+    if (entityLen == 6 && strncmp(entity, "Ntilde", 6) == 0) return (char)0xA5;  // Ñ
+    if (entityLen == 4 && strncmp(entity, "Auml", 4) == 0) return (char)0x8E;    // Ä
+    if (entityLen == 4 && strncmp(entity, "Ouml", 4) == 0) return (char)0x99;    // Ö
+    if (entityLen == 4 && strncmp(entity, "Uuml", 4) == 0) return (char)0x9A;    // Ü
+    if (entityLen == 5 && strncmp(entity, "szlig", 5) == 0) return (char)0xE1;   // ß
+
     // Numeric entities: &#NNN; or &#xHH;
     if (entityLen >= 2 && entity[0] == '#') {
       int codepoint = 0;
@@ -701,14 +749,13 @@ private:
           if (ch >= '0' && ch <= '9') codepoint = codepoint * 10 + (ch - '0');
         }
       }
-      // Map to ASCII (best effort - e-ink font is ASCII only)
+      // Map to displayable character (best effort)
       if (codepoint >= 32 && codepoint < 127) return (char)codepoint;
       if (codepoint == 160) return ' ';   // non-breaking space
-      if (codepoint == 8211 || codepoint == 8212) return '-';  // en/em dash
-      if (codepoint == 8216 || codepoint == 8217) return '\''; // smart quotes
-      if (codepoint == 8220 || codepoint == 8221) return '"';  // smart quotes
-      if (codepoint == 8230) return '.';   // ellipsis
-      if (codepoint == 8226) return '*';   // bullet
+      // Try CP437 mapping for accented characters.
+      // The byte value will be passed through to the built-in font.
+      uint8_t cp437 = unicodeToCP437(codepoint);
+      if (cp437) return (char)cp437;
       // Unknown codepoint > 127: skip it
       return ' ';
     }
