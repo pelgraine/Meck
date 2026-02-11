@@ -733,7 +733,7 @@ void handleKeyboardInput() {
     }
     
     // A/D keys switch channels (only when buffer is empty, not in DM mode)
-    if ((key == 'a' || key == 'A') && composePos == 0 && !composeDM) {
+    if ((key == 'a') && composePos == 0 && !composeDM) {
       // Previous channel
       if (composeChannelIdx > 0) {
         composeChannelIdx--;
@@ -752,7 +752,7 @@ void handleKeyboardInput() {
       return;
     }
     
-    if ((key == 'd' || key == 'D') && composePos == 0 && !composeDM) {
+    if ((key == 'd') && composePos == 0 && !composeDM) {
       // Next channel
       ChannelDetails ch;
       uint8_t nextIdx = composeChannelIdx + 1;
@@ -792,7 +792,7 @@ void handleKeyboardInput() {
     
     // Q key: if reading, reader handles it (close book -> file list)
     //         if on file list, exit reader entirely
-    if (key == 'q' || key == 'Q') {
+    if (key == 'q') {
       if (reader->isReading()) {
         // Let the reader handle Q (close book, go to file list)
         ui_task.injectKey('q');
@@ -815,7 +815,7 @@ void handleKeyboardInput() {
     SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
 
     // Q key: exit settings (when not editing)
-    if (!settings->isEditing() && (key == 'q' || key == 'Q')) {
+    if (!settings->isEditing() && (key == 'q')) {
       if (settings->hasRadioChanges()) {
         // Let settings show "apply changes?" confirm dialog
         ui_task.injectKey(key);
@@ -834,28 +834,24 @@ void handleKeyboardInput() {
   // Normal mode - not composing
   switch (key) {
     case 'c':
-    case 'C':
       // Open contacts list
       Serial.println("Opening contacts");
       ui_task.gotoContactsScreen();
       break;
     
     case 'm':
-    case 'M':
       // Go to channel message screen
       Serial.println("Opening channel messages");
       ui_task.gotoChannelScreen();
       break;
     
     case 'e':
-    case 'E':
       // Open text reader (ebooks)
       Serial.println("Opening text reader");
       ui_task.gotoTextReader();
       break;
     
     case 's':
-    case 'S':
       // Open settings (from home), or navigate down on channel/contacts
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
         ui_task.injectKey('s');  // Pass directly for channel/contacts scrolling
@@ -866,7 +862,6 @@ void handleKeyboardInput() {
       break;
 
     case 'w':
-    case 'W':
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
         ui_task.injectKey('w');  // Pass directly for channel/contacts switching
@@ -877,7 +872,6 @@ void handleKeyboardInput() {
       break;
       
     case 'a':
-    case 'A':
       // Navigate left or switch channel (on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
         ui_task.injectKey('a');  // Pass directly for channel/contacts switching
@@ -888,7 +882,6 @@ void handleKeyboardInput() {
       break;
       
     case 'd':
-    case 'D':
       // Navigate right or switch channel (on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
         ui_task.injectKey('d');  // Pass directly for channel/contacts switching
@@ -934,7 +927,6 @@ void handleKeyboardInput() {
       break;
       
     case 'q':
-    case 'Q':
     case '\b':
       // Go back to home screen
       Serial.println("Nav: Back to home");
@@ -945,6 +937,11 @@ void handleKeyboardInput() {
       // Space - also acts as next/select
       Serial.println("Nav: Space (Next)");
       ui_task.injectKey(0xF1);  // KEY_NEXT
+      break;
+
+    case 'u':
+      // UTC offset edit (home screen GPS page handles this)
+      ui_task.injectKey('u');
       break;
       
     default:
