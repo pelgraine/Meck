@@ -491,8 +491,15 @@ private:
     display.setColor(DisplayDriver::GREEN);
     display.print("Notes");
 
+    // Show rename hint when a file (not "+ New Note") is selected
+    if (_selectedFile >= 1 && _selectedFile <= (int)_fileList.size()) {
+      display.setColor(DisplayDriver::YELLOW);
+      display.print(" R:Rename");
+    }
+
     snprintf(tmp, sizeof(tmp), "[%d]", (int)_fileList.size());
     display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
+    display.setColor(DisplayDriver::GREEN);
     display.print(tmp);
 
     display.drawRect(0, 11, display.width(), 1);
@@ -680,11 +687,11 @@ private:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, 11, display.width(), 1);
 
-    // Text area
+    // Text area - tiny font (same as read mode)
     int textAreaTop = 14;
     int textAreaBottom = display.height() - 16;
 
-    display.setTextSize(1);
+    display.setTextSize(0);
 
     // Find cursor line
     int cursorLine = lineForPos(_cursorPos);
@@ -733,6 +740,7 @@ private:
 
     // If buffer is empty, show cursor at top
     if (_bufLen == 0) {
+      display.setTextSize(0);
       display.setColor(DisplayDriver::GREEN);
       display.setCursor(0, textAreaTop);
       display.print("|");
@@ -748,7 +756,6 @@ private:
     display.setCursor(0, footerY);
 
     char status[20];
-    int cursorLine = lineForPos(_cursorPos);
     int curPage = (_editMaxLines > 0) ? (cursorLine / _editMaxLines) + 1 : 1;
     int totalPg = (_editMaxLines > 0) ? max(1, (_numEditorLines + _editMaxLines - 1) / _editMaxLines) : 1;
     snprintf(status, sizeof(status), "Pg %d/%d", curPage, totalPg);
@@ -877,6 +884,15 @@ private:
           }
           return true;
         }
+      }
+      return false;
+    }
+
+    // R - rename selected file
+    if (c == 'r') {
+      if (_selectedFile >= 1 && _selectedFile <= (int)_fileList.size()) {
+        startRename();
+        return true;
       }
       return false;
     }
@@ -1084,14 +1100,9 @@ public:
     _linesPerPage = textAreaHeight / _lineHeight;
     if (_linesPerPage < 5) _linesPerPage = 5;
 
-    // Size 1 font metrics (for edit mode)
-    display.setTextSize(1);
-    uint16_t charW = display.getTextWidth("M");
-    _editCharsPerLine = charW > 0 ? display.width() / charW : 20;
-    if (_editCharsPerLine < 10) _editCharsPerLine = 10;
-    if (_editCharsPerLine > 40) _editCharsPerLine = 40;
-
-    _editLineHeight = 12;
+    // Size 0 (tiny) font metrics for edit mode too (same font as read mode)
+    _editCharsPerLine = _charsPerLine;
+    _editLineHeight = _lineHeight;
     int editTextAreaH = display.height() - 14 - 16;  // Header + footer
     _editMaxLines = editTextAreaH / _editLineHeight;
     if (_editMaxLines < 3) _editMaxLines = 3;

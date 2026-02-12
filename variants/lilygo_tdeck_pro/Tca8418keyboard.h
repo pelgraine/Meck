@@ -31,6 +31,7 @@ private:
   bool _shiftActive;   // Sticky shift (one-shot or held)
   bool _shiftConsumed; // Was shift active for the last returned key
   bool _shiftHeld;     // Shift key physically held down
+  bool _shiftUsedWhileHeld; // Was shift consumed by any key while held
   bool _altActive;     // Sticky alt (one-shot)
   bool _symActive;     // Sticky sym (one-shot)
   unsigned long _lastShiftTime;  // For Shift+key combos
@@ -150,7 +151,7 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
+      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -208,9 +209,13 @@ public:
     // Track shift release (before the general release-ignore)
     if (!pressed && (keyCode == 35 || keyCode == 31)) {
       _shiftHeld = false;
-      // Don't clear _shiftActive here - it may be a one-shot tap
-      // where release arrives before the next key press.
-      // _shiftActive is cleared when consumed by a key (if !_shiftHeld).
+      // If shift was used while held (e.g. cursor nav), clear it completely
+      // so the next bare keypress isn't treated as shifted.
+      // If shift was NOT used (tap-then-release), keep _shiftActive for one-shot.
+      if (_shiftUsedWhileHeld) {
+        _shiftActive = false;
+      }
+      _shiftUsedWhileHeld = false;
       return 0;
     }
 
@@ -223,6 +228,7 @@ public:
     if (keyCode == 35 || keyCode == 31) {  // Shift keys
       _shiftActive = true;
       _shiftHeld = true;
+      _shiftUsedWhileHeld = false;
       _lastShiftTime = millis();
       Serial.println("KB: Shift activated");
       return 0;
@@ -287,6 +293,10 @@ public:
       // Apply shift - uppercase letters
       if (c >= 'a' && c <= 'z') {
         c = c - 'a' + 'A';
+      }
+      // Track that shift was used while physically held
+      if (_shiftHeld) {
+        _shiftUsedWhileHeld = true;
       }
       // Only clear shift if it's one-shot (tap), not held down
       if (!_shiftHeld) {

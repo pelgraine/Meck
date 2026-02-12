@@ -920,11 +920,11 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Shift+Enter on a file = rename
-      if ((key == '\r') && keyboard.wasShiftConsumed()) {
+      // R on a file = rename
+      if (key == 'r') {
         if (notes->startRename()) {
           composeNeedsRefresh = true;
-          lastComposeRefresh = 0;
+          lastComposeRefresh = millis();
         }
         return;
       }
@@ -934,7 +934,7 @@ void handleKeyboardInput() {
       // Check if we just entered editing mode (new note via Enter)
       if (notes->isEditing()) {
         composeNeedsRefresh = true;
-        lastComposeRefresh = 0;
+        lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
     }
@@ -958,7 +958,7 @@ void handleKeyboardInput() {
       ui_task.injectKey(key);
       if (notes->isEditing()) {
         composeNeedsRefresh = true;
-        lastComposeRefresh = 0;
+        lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
     }
