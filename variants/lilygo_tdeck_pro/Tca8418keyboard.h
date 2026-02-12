@@ -28,8 +28,9 @@ private:
   uint8_t _addr;
   TwoWire* _wire;
   bool _initialized;
-  bool _shiftActive;   // Sticky shift (one-shot)
+  bool _shiftActive;   // Sticky shift (one-shot or held)
   bool _shiftConsumed; // Was shift active for the last returned key
+  bool _shiftHeld;     // Shift key physically held down
   bool _altActive;     // Sticky alt (one-shot)
   bool _symActive;     // Sticky sym (one-shot)
   unsigned long _lastShiftTime;  // For Shift+key combos
@@ -149,7 +150,7 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _shiftConsumed(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
+      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -204,6 +205,15 @@ public:
     Serial.printf("KB raw: event=0x%02X code=%d pressed=%d count=%d\n", 
                   keyEvent, keyCode, pressed, keyCount);
 
+    // Track shift release (before the general release-ignore)
+    if (!pressed && (keyCode == 35 || keyCode == 31)) {
+      _shiftHeld = false;
+      // Don't clear _shiftActive here - it may be a one-shot tap
+      // where release arrives before the next key press.
+      // _shiftActive is cleared when consumed by a key (if !_shiftHeld).
+      return 0;
+    }
+
     // Only act on key press, not release
     if (!pressed || keyCode == 0) {
       return 0;
@@ -212,6 +222,7 @@ public:
     // Handle modifier keys - set sticky state and return 0
     if (keyCode == 35 || keyCode == 31) {  // Shift keys
       _shiftActive = true;
+      _shiftHeld = true;
       _lastShiftTime = millis();
       Serial.println("KB: Shift activated");
       return 0;
@@ -277,7 +288,10 @@ public:
       if (c >= 'a' && c <= 'z') {
         c = c - 'a' + 'A';
       }
-      _shiftActive = false;  // Reset sticky shift
+      // Only clear shift if it's one-shot (tap), not held down
+      if (!_shiftHeld) {
+        _shiftActive = false;
+      }
       _shiftConsumed = true; // Record that shift was active for this key
     } else {
       _shiftConsumed = false;

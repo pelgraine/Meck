@@ -747,8 +747,11 @@ private:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
 
-    char status[40];
-    snprintf(status, sizeof(status), "%d/%d", _bufLen, NOTES_BUF_SIZE - 1);
+    char status[20];
+    int cursorLine = lineForPos(_cursorPos);
+    int curPage = (_editMaxLines > 0) ? (cursorLine / _editMaxLines) + 1 : 1;
+    int totalPg = (_editMaxLines > 0) ? max(1, (_numEditorLines + _editMaxLines - 1) / _editMaxLines) : 1;
+    snprintf(status, sizeof(status), "Pg %d/%d", curPage, totalPg);
     display.print(status);
 
     const char* right;

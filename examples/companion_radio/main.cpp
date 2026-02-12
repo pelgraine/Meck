@@ -26,7 +26,7 @@
   static uint8_t composeChannelIdx = 0;
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 600  // ms between e-ink refreshes while typing (refresh takes ~650ms)
+  #define COMPOSE_REFRESH_INTERVAL 100  // ms before starting e-ink refresh after keypress (refresh itself takes ~644ms)
 
   // DM compose mode (direct message to a specific contact)
   static bool composeDM = false;
