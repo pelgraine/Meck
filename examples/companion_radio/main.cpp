@@ -924,7 +924,7 @@ void handleKeyboardInput() {
       if (key == 'r') {
         if (notes->startRename()) {
           composeNeedsRefresh = true;
-          lastComposeRefresh = millis();
+          lastComposeRefresh = millis() - COMPOSE_REFRESH_INTERVAL;  // Trigger on next loop iteration
         }
         return;
       }

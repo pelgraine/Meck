@@ -491,14 +491,19 @@ private:
     display.setColor(DisplayDriver::GREEN);
     display.print("Notes");
 
-    // Show rename hint when a file (not "+ New Note") is selected
+    // Right side of header: [R:Rename] [count]
+    snprintf(tmp, sizeof(tmp), "[%d]", (int)_fileList.size());
+    int rightX = display.width() - display.getTextWidth(tmp) - 2;
+
     if (_selectedFile >= 1 && _selectedFile <= (int)_fileList.size()) {
+      const char* hint = "[R:Rename]";
+      int hintX = rightX - display.getTextWidth(hint) - 4;
+      display.setCursor(hintX, 0);
       display.setColor(DisplayDriver::YELLOW);
-      display.print(" R:Rename");
+      display.print(hint);
     }
 
-    snprintf(tmp, sizeof(tmp), "[%d]", (int)_fileList.size());
-    display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
+    display.setCursor(rightX, 0);
     display.setColor(DisplayDriver::GREEN);
     display.print(tmp);
 
