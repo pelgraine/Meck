@@ -593,7 +593,9 @@ void loop() {
   #if defined(LilyGo_TDeck_Pro)
   // Also suppress during notes editing (same debounce pattern as compose)
   bool notesEditing = notesMode && ((NotesScreen*)ui_task.getNotesScreen())->isEditing();
-  if (!composeMode && !notesEditing) {
+  bool notesRenaming = notesMode && ((NotesScreen*)ui_task.getNotesScreen())->isRenaming();
+  bool notesSuppressLoop = notesEditing || notesRenaming;
+  if (!composeMode && !notesSuppressLoop) {
     ui_task.loop();
   } else {
     // Handle debounced screen refresh (compose, emoji picker, or notes editor)
@@ -604,8 +606,8 @@ void loop() {
         } else {
           drawComposeScreen();
         }
-      } else if (notesEditing) {
-        // Notes editor renders through UITask - force a refresh cycle
+      } else if (notesSuppressLoop) {
+        // Notes editor/rename renders through UITask - force a refresh cycle
         ui_task.forceRefresh();
         ui_task.loop();
       }
@@ -833,8 +835,9 @@ void handleKeyboardInput() {
   if (notesMode) {
     NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
 
+    // ---- EDITING MODE ----
     if (notes->isEditing()) {
-      // In editor: Shift+Backspace = save and exit
+      // Shift+Backspace = save and exit
       if (key == '\b') {
         if (keyboard.wasShiftConsumed()) {
           Serial.println("Notes: Shift+Backspace, saving...");
@@ -842,11 +845,17 @@ void handleKeyboardInput() {
           ui_task.forceRefresh();
           return;
         }
-        // Regular backspace - pass to editor with debounce
+        // Regular backspace - delete before cursor
         ui_task.injectKey(key);
         composeNeedsRefresh = true;
         return;
       }
+
+      // Cursor navigation via Shift+WASD (produces uppercase)
+      if (key == 'W') { notes->moveCursorUp();    composeNeedsRefresh = true; return; }
+      if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; return; }
+      if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; return; }
+      if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; return; }
 
       // Q when buffer is empty or unchanged = exit (nothing to lose)
       if (key == 'q' && (notes->isEmpty() || !notes->isDirty())) {
@@ -863,7 +872,7 @@ void handleKeyboardInput() {
         return;
       }
 
-      // All other printable chars
+      // All other printable chars (lowercase only - uppercase consumed by cursor nav)
       if (key >= 32 && key < 127) {
         ui_task.injectKey(key);
         composeNeedsRefresh = true;
@@ -872,37 +881,88 @@ void handleKeyboardInput() {
       return;
     }
 
-    // In file list or reading mode
-    if (key == 'q') {
-      if (notes->isReading()) {
-        ui_task.injectKey('q');  // Let screen handle back-to-list
-      } else {
-        // On file list - exit notes, go home
-        notes->exitNotes();
-        Serial.println("Exiting notes");
-        ui_task.gotoHomeScreen();
+    // ---- RENAMING MODE ----
+    if (notes->isRenaming()) {
+      // All input goes to rename handler (debounced like editing)
+      ui_task.injectKey(key);
+      composeNeedsRefresh = true;
+      if (!notes->isRenaming()) {
+        // Exited rename mode (confirmed or cancelled)
+        ui_task.forceRefresh();
       }
       return;
     }
 
-    // Shift+Backspace in reading mode = delete note
-    if (key == '\b' && notes->isReading()) {
-      if (keyboard.wasShiftConsumed()) {
+    // ---- DELETE CONFIRMATION MODE ----
+    if (notes->isConfirmingDelete()) {
+      ui_task.injectKey(key);
+      if (!notes->isConfirmingDelete()) {
+        // Exited confirm mode
+        ui_task.forceRefresh();
+      }
+      return;
+    }
+
+    // ---- FILE LIST MODE ----
+    if (notes->isInFileList()) {
+      if (key == 'q') {
+        notes->exitNotes();
+        Serial.println("Exiting notes");
+        ui_task.gotoHomeScreen();
+        return;
+      }
+
+      // Shift+Backspace on a file = delete with confirmation
+      if (key == '\b' && keyboard.wasShiftConsumed()) {
+        if (notes->startDeleteFromList()) {
+          ui_task.forceRefresh();
+        }
+        return;
+      }
+
+      // Shift+Enter on a file = rename
+      if ((key == '\r') && keyboard.wasShiftConsumed()) {
+        if (notes->startRename()) {
+          composeNeedsRefresh = true;
+          lastComposeRefresh = 0;
+        }
+        return;
+      }
+
+      // Normal keys pass through
+      ui_task.injectKey(key);
+      // Check if we just entered editing mode (new note via Enter)
+      if (notes->isEditing()) {
+        composeNeedsRefresh = true;
+        lastComposeRefresh = 0;
+      }
+      return;
+    }
+
+    // ---- READING MODE ----
+    if (notes->isReading()) {
+      if (key == 'q') {
+        ui_task.injectKey('q');
+        return;
+      }
+
+      // Shift+Backspace = delete note
+      if (key == '\b' && keyboard.wasShiftConsumed()) {
         Serial.println("Notes: Deleting current note");
         notes->deleteCurrentNote();
         ui_task.forceRefresh();
         return;
       }
+
+      // All other keys (Enter for edit, W/S for page nav)
+      ui_task.injectKey(key);
+      if (notes->isEditing()) {
+        composeNeedsRefresh = true;
+        lastComposeRefresh = 0;
+      }
+      return;
     }
 
-    // All other keys pass through to the notes screen
-    ui_task.injectKey(key);
-    // If we just entered editing mode (e.g. Enter on file list or reading),
-    // prime the initial draw since notesEditing suppresses ui_task.loop()
-    if (notes->isEditing()) {
-      composeNeedsRefresh = true;
-      lastComposeRefresh = 0;  // Allow immediate refresh on next loop
-    }
     return;
   }
 
@@ -950,6 +1010,14 @@ void handleKeyboardInput() {
     case 'n':
       // Open notes
       Serial.println("Opening notes");
+      {
+        NotesScreen* notesScr2 = (NotesScreen*)ui_task.getNotesScreen();
+        if (notesScr2) {
+          uint32_t ts = rtc_clock.getCurrentTime();
+          int8_t utcOff = the_mesh.getNodePrefs()->utc_offset_hours;
+          notesScr2->setTimestamp(ts, utcOff);
+        }
+      }
       ui_task.gotoNotesScreen();
       break;
     

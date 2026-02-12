@@ -12,32 +12,43 @@ class UITask;
 // ============================================================================
 // Configuration
 // ============================================================================
-#define NOTES_FOLDER      "/notes"
-#define NOTES_MAX_FILES   30
-#define NOTES_BUF_SIZE    4096   // Max note size in bytes (~4000 chars)
-#define NOTES_FILENAME_MAX 32
+#define NOTES_FOLDER        "/notes"
+#define NOTES_MAX_FILES     30
+#define NOTES_BUF_SIZE      16384   // 16KB buffer (PSRAM-backed)
+#define NOTES_FILENAME_MAX  40
+#define NOTES_RENAME_MAX    32      // Max rename buffer length
+#define NOTES_MAX_LINES     1024    // Max visual lines for cursor nav
 
 // ============================================================================
 // NotesScreen - Create, view, and edit .txt notes on SD card
 // ============================================================================
 // Modes:
-//   FILE_LIST  - Browse existing notes, create new ones
-//   READING    - Paginated read-only view of a note
-//   EDITING    - Append-only text editor (type at end, backspace to delete)
+//   FILE_LIST       - Browse existing notes, create new ones
+//   READING         - Paginated read-only view of a note
+//   EDITING         - Full text editor with cursor navigation
+//   RENAMING        - Rename a file (inline text input)
+//   CONFIRM_DELETE  - Delete confirmation dialog
 //
 // Key bindings:
-//   FILE_LIST:  W/S = scroll, Enter = open note (read), Q = exit notes
-//   READING:    W/S = page nav, Enter = switch to edit mode, Q = back to list
-//   EDITING:    Type = append, Backspace = delete last char, Enter = newline
-//               Shift+Backspace = save & exit to file list
+//   FILE_LIST:  W/S = scroll, Enter = open note (read), Q = exit
+//               Shift+Enter = rename selected file
+//               Shift+Backspace = delete selected file (with confirmation)
+//   READING:    W/S = page nav, Enter = switch to edit, Q = back to list
+//               Shift+Backspace = delete note
+//   EDITING:    Type = insert at cursor, Backspace = delete before cursor
+//               Enter = newline, Shift+WASD = cursor navigation
+//               Shift+Backspace = save & exit
+//   RENAMING:   Type = edit filename, Backspace = delete char
+//               Enter = confirm rename, Q = cancel
+//   CONFIRM_DELETE: Enter = confirm delete, Q = cancel
 //
-// New notes get auto-generated filenames: note_001.txt, note_002.txt, etc.
-// The "+ New Note" option is always at the top of the file list.
+// Filenames: RTC timestamp (note_YYYYMMDD_HHMM.txt) or sequential (note_001.txt)
+// Buffer: 16KB on PSRAM for longer notes
 // ============================================================================
 
 class NotesScreen : public UIScreen {
 public:
-  enum Mode { FILE_LIST, READING, EDITING };
+  enum Mode { FILE_LIST, READING, EDITING, RENAMING, CONFIRM_DELETE };
 
 private:
   UITask* _task;
@@ -52,20 +63,44 @@ private:
   int _lineHeight;
   int _footerHeight;
 
+  // Editor-specific layout
+  int _editCharsPerLine;
+  int _editLineHeight;
+  int _editMaxLines;      // Max visible lines in editor area
+
   // File list state
   std::vector<String> _fileList;
-  int _selectedFile;          // 0 = "+ New Note", 1..N = existing files
+  int _selectedFile;      // 0 = "+ New Note", 1..N = existing files
 
   // Current note state
-  String _currentFile;        // Filename (just name, not full path)
-  char _buf[NOTES_BUF_SIZE];  // Note content buffer
-  int _bufLen;                // Current content length
-  bool _dirty;                // Has unsaved changes
+  String _currentFile;    // Filename (just name, not full path)
+  char* _buf;             // Note content buffer (PSRAM-backed)
+  int _bufLen;            // Current content length
+  int _cursorPos;         // Cursor byte position in buffer
+  bool _dirty;            // Has unsaved changes
 
   // Reading state (paginated view)
   int _currentPage;
   int _totalPages;
-  std::vector<int> _pageOffsets;  // Byte offsets for each page start
+  std::vector<int> _pageOffsets;
+
+  // Editor visual lines (rebuilt on content/cursor change)
+  struct EditorLine { int start; int end; };
+  EditorLine* _editorLines;
+  int _numEditorLines;
+  int _editorScrollTop;   // First visible line index
+
+  // Rename state
+  char _renameBuf[NOTES_RENAME_MAX];
+  int _renameLen;
+  String _renameOriginal; // Original filename (for cancel)
+
+  // Delete confirmation state
+  String _deleteTarget;   // File to delete
+
+  // RTC timestamp support
+  uint32_t _rtcTime;      // Unix timestamp (0 = unavailable)
+  int8_t _utcOffset;      // UTC offset in hours
 
   // ---- Helpers ----
 
@@ -73,24 +108,43 @@ private:
     return String(NOTES_FOLDER) + "/" + filename;
   }
 
-  // Generate a sequential filename: note_001.txt, note_002.txt, etc.
+  // Generate filename using RTC timestamp or sequential fallback
   String generateFilename() {
-    int maxNum = 0;
+    // Try RTC-based name first
+    if (_rtcTime > 1700000000) {
+      time_t t = (time_t)_rtcTime + ((int32_t)_utcOffset * 3600);
+      struct tm* tm = gmtime(&t);
+      if (tm) {
+        char name[NOTES_FILENAME_MAX];
+        snprintf(name, sizeof(name), "note_%04d%02d%02d_%02d%02d.txt",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min);
 
-    // Scan existing files to find the highest note number
+        // Check for collision (two notes in same minute)
+        String fullPath = getFullPath(String(name));
+        if (!SD.exists(fullPath.c_str())) {
+          return String(name);
+        }
+        // Append seconds to disambiguate
+        snprintf(name, sizeof(name), "note_%04d%02d%02d_%02d%02d%02d.txt",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min, tm->tm_sec);
+        return String(name);
+      }
+    }
+
+    // Fallback: sequential numbering
+    int maxNum = 0;
     for (int i = 0; i < (int)_fileList.size(); i++) {
       const String& name = _fileList[i];
-      // Match pattern: note_NNN.txt
       if (name.startsWith("note_") && name.endsWith(".txt")) {
         String numPart = name.substring(5, name.length() - 4);
         int num = numPart.toInt();
         if (num > maxNum) maxNum = num;
       }
     }
-
-    int nextNum = maxNum + 1;
     char name[NOTES_FILENAME_MAX];
-    snprintf(name, sizeof(name), "note_%03d.txt", nextNum);
+    snprintf(name, sizeof(name), "note_%03d.txt", maxNum + 1);
     return String(name);
   }
 
@@ -122,7 +176,7 @@ private:
     }
     root.close();
 
-    // Sort alphabetically (newest timestamp names sort last)
+    // Sort alphabetically
     for (int i = 0; i < (int)_fileList.size() - 1; i++) {
       for (int j = i + 1; j < (int)_fileList.size(); j++) {
         if (_fileList[i] > _fileList[j]) {
@@ -151,11 +205,10 @@ private:
     _bufLen = file.readBytes(_buf, toRead);
     _buf[_bufLen] = '\0';
     file.close();
-
-    // Deselect SD to free SPI bus
     digitalWrite(SDCARD_CS, HIGH);
 
     _currentFile = filename;
+    _cursorPos = _bufLen;
     _dirty = false;
 
     if (size >= NOTES_BUF_SIZE) {
@@ -171,8 +224,6 @@ private:
     if (_currentFile.length() == 0) return false;
 
     String path = getFullPath(_currentFile);
-
-    // Remove existing file before writing (SD lib quirk)
     if (SD.exists(path.c_str())) {
       SD.remove(path.c_str());
     }
@@ -185,8 +236,6 @@ private:
 
     file.write((uint8_t*)_buf, _bufLen);
     file.close();
-
-    // Deselect SD to free SPI bus
     digitalWrite(SDCARD_CS, HIGH);
 
     _dirty = false;
@@ -204,9 +253,39 @@ private:
     return false;
   }
 
+  bool renameNote(const String& oldName, const String& newName) {
+    String oldPath = getFullPath(oldName);
+    String newPath = getFullPath(newName);
+
+    if (!SD.exists(oldPath.c_str())) return false;
+    if (SD.exists(newPath.c_str())) {
+      Serial.printf("Notes: Rename failed - %s already exists\n", newName.c_str());
+      return false;
+    }
+
+    // SD library doesn't have rename, so copy + delete
+    File src = SD.open(oldPath.c_str(), FILE_READ);
+    if (!src) return false;
+
+    File dst = SD.open(newPath.c_str(), FILE_WRITE);
+    if (!dst) { src.close(); return false; }
+
+    uint8_t copyBuf[512];
+    while (src.available()) {
+      int n = src.read(copyBuf, sizeof(copyBuf));
+      if (n > 0) dst.write(copyBuf, n);
+    }
+    dst.close();
+    src.close();
+
+    SD.remove(oldPath.c_str());
+    digitalWrite(SDCARD_CS, HIGH);
+
+    Serial.printf("Notes: Renamed %s -> %s\n", oldName.c_str(), newName.c_str());
+    return true;
+  }
+
   // ---- Pagination for Read Mode ----
-  // Reuses the same word-wrap logic as TextReaderScreen but operates
-  // on the in-memory buffer instead of streaming from SD.
 
   void buildPageIndex() {
     _pageOffsets.clear();
@@ -216,7 +295,6 @@ private:
     int lineCount = 0;
 
     while (pos < _bufLen) {
-      // Find end of this line using word wrap
       int lineEnd = pos;
       int nextStart = pos;
       int charCount = 0;
@@ -225,59 +303,37 @@ private:
 
       for (int i = pos; i < _bufLen; i++) {
         char c = _buf[i];
-
-        if (c == '\n') {
-          lineEnd = i;
-          nextStart = i + 1;
-          goto lineFound;
-        }
+        if (c == '\n') { lineEnd = i; nextStart = i + 1; goto pageLineFound; }
         if (c == '\r') {
-          lineEnd = i;
-          nextStart = i + 1;
+          lineEnd = i; nextStart = i + 1;
           if (nextStart < _bufLen && _buf[nextStart] == '\n') nextStart++;
-          goto lineFound;
+          goto pageLineFound;
         }
-
         if (c >= 32) {
-          // Skip UTF-8 continuation bytes
           if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) continue;
-
           charCount++;
-          if (c == ' ' || c == '\t') {
-            if (inWord) { lastBreak = i; inWord = false; }
-          } else if (c == '-') {
-            if (inWord) lastBreak = i + 1;
-          } else {
-            inWord = true;
-          }
-
+          if (c == ' ' || c == '\t') { if (inWord) { lastBreak = i; inWord = false; } }
+          else if (c == '-') { if (inWord) lastBreak = i + 1; }
+          else inWord = true;
           if (charCount >= _charsPerLine) {
             if (lastBreak > pos) {
-              lineEnd = lastBreak;
-              nextStart = lastBreak;
-              while (nextStart < _bufLen &&
-                     (_buf[nextStart] == ' ' || _buf[nextStart] == '\t'))
+              lineEnd = lastBreak; nextStart = lastBreak;
+              while (nextStart < _bufLen && (_buf[nextStart] == ' ' || _buf[nextStart] == '\t'))
                 nextStart++;
-            } else {
-              lineEnd = i;
-              nextStart = i;
-            }
-            goto lineFound;
+            } else { lineEnd = i; nextStart = i; }
+            goto pageLineFound;
           }
         }
       }
-      // Reached end of buffer
       break;
 
-    lineFound:
+    pageLineFound:
       lineCount++;
       pos = nextStart;
-
       if (lineCount >= _linesPerPage) {
         _pageOffsets.push_back(pos);
         lineCount = 0;
       }
-
       if (pos >= _bufLen) break;
     }
 
@@ -287,9 +343,134 @@ private:
     }
   }
 
+  // ---- Editor Line Building (for cursor navigation) ----
+
+  void buildEditorLines() {
+    _numEditorLines = 0;
+    int pos = 0;
+
+    while (pos < _bufLen && _numEditorLines < NOTES_MAX_LINES) {
+      _editorLines[_numEditorLines].start = pos;
+
+      int lineEnd = pos;
+      int nextStart = pos;
+      int charCount = 0;
+      int lastBreak = -1;
+      bool inWord = false;
+
+      for (int i = pos; i < _bufLen; i++) {
+        char c = _buf[i];
+        if (c == '\n') { lineEnd = i; nextStart = i + 1; goto edLineFound; }
+        if (c == '\r') {
+          lineEnd = i; nextStart = i + 1;
+          if (nextStart < _bufLen && _buf[nextStart] == '\n') nextStart++;
+          goto edLineFound;
+        }
+        if (c >= 32) {
+          if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) continue;
+          charCount++;
+          if (c == ' ' || c == '\t') { if (inWord) { lastBreak = i; inWord = false; } }
+          else if (c == '-') { if (inWord) lastBreak = i + 1; }
+          else inWord = true;
+          if (charCount >= _editCharsPerLine) {
+            if (lastBreak > pos) {
+              lineEnd = lastBreak; nextStart = lastBreak;
+              while (nextStart < _bufLen && (_buf[nextStart] == ' ' || _buf[nextStart] == '\t'))
+                nextStart++;
+            } else { lineEnd = i; nextStart = i; }
+            goto edLineFound;
+          }
+        }
+      }
+      lineEnd = _bufLen;
+      nextStart = _bufLen;
+
+    edLineFound:
+      _editorLines[_numEditorLines].end = lineEnd;
+      _numEditorLines++;
+      pos = nextStart;
+      if (pos >= _bufLen) break;
+    }
+
+    // Ensure at least one line (empty buffer)
+    if (_numEditorLines == 0) {
+      _editorLines[0] = {0, 0};
+      _numEditorLines = 1;
+    }
+  }
+
+  // Find which editor line contains a buffer position
+  int lineForPos(int bufPos) {
+    for (int i = 0; i < _numEditorLines; i++) {
+      int nextStart = (i + 1 < _numEditorLines) ? _editorLines[i + 1].start : _bufLen + 1;
+      if (bufPos >= _editorLines[i].start && bufPos < nextStart) return i;
+    }
+    return max(0, _numEditorLines - 1);
+  }
+
+  // Count visual columns from line start to a buffer position
+  int colForPos(int bufPos, int lineStart) {
+    int col = 0;
+    for (int i = lineStart; i < bufPos && i < _bufLen; i++) {
+      uint8_t b = (uint8_t)_buf[i];
+      if (b >= 0x80 && b < 0xC0) continue;
+      if (b == '\n' || b == '\r') break;
+      col++;
+    }
+    return col;
+  }
+
+  // Find buffer position for a target column on a given line
+  int posForCol(int targetCol, int lineIdx) {
+    if (lineIdx < 0 || lineIdx >= _numEditorLines) return _bufLen;
+    int start = _editorLines[lineIdx].start;
+    int end = _editorLines[lineIdx].end;
+    int col = 0;
+    for (int i = start; i < end && i < _bufLen; i++) {
+      uint8_t b = (uint8_t)_buf[i];
+      if (b >= 0x80 && b < 0xC0) continue;
+      if (b == '\n' || b == '\r') return i;
+      if (col >= targetCol) return i;
+      col++;
+    }
+    return end;
+  }
+
+  // Ensure the editor scroll position keeps cursor visible
+  void ensureCursorVisible() {
+    int cursorLine = lineForPos(_cursorPos);
+    if (cursorLine < _editorScrollTop) {
+      _editorScrollTop = cursorLine;
+    }
+    if (cursorLine >= _editorScrollTop + _editMaxLines) {
+      _editorScrollTop = cursorLine - _editMaxLines + 1;
+    }
+    if (_editorScrollTop < 0) _editorScrollTop = 0;
+  }
+
+  // ---- Cursor Operations ----
+
+  void insertAtCursor(char c) {
+    if (_bufLen >= NOTES_BUF_SIZE - 1) return;
+    memmove(&_buf[_cursorPos + 1], &_buf[_cursorPos], _bufLen - _cursorPos);
+    _buf[_cursorPos] = c;
+    _bufLen++;
+    _buf[_bufLen] = '\0';
+    _cursorPos++;
+    _dirty = true;
+  }
+
+  void deleteBeforeCursor() {
+    if (_cursorPos <= 0) return;
+    memmove(&_buf[_cursorPos - 1], &_buf[_cursorPos], _bufLen - _cursorPos);
+    _cursorPos--;
+    _bufLen--;
+    _buf[_bufLen] = '\0';
+    _dirty = true;
+  }
+
   // ---- Rendering ----
 
-  // Quick feedback splash (shown briefly during SD operations)
   void drawBriefSplash(const char* message) {
     if (!_display) return;
     _display->startFrame();
@@ -317,10 +498,10 @@ private:
     display.drawRect(0, 11, display.width(), 1);
 
     // File list with "+ New Note" at index 0
-    display.setTextSize(0);  // Tiny font
+    display.setTextSize(0);
     int listLineH = 8;
     int startY = 14;
-    int totalItems = 1 + (int)_fileList.size();  // +1 for "New Note"
+    int totalItems = 1 + (int)_fileList.size();
     int maxVisible = (display.height() - startY - _footerHeight) / listLineH;
     if (maxVisible < 3) maxVisible = 3;
     if (maxVisible > 15) maxVisible = 15;
@@ -344,15 +525,11 @@ private:
       display.setCursor(0, y);
 
       if (i == 0) {
-        // "+ New Note" option
         display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
         display.print(selected ? "> + New Note" : "  + New Note");
       } else {
-        // Existing file
         String line = selected ? "> " : "  ";
         String name = _fileList[i - 1];
-
-        // Truncate if needed
         int maxLen = _charsPerLine - 4;
         if ((int)name.length() > maxLen) {
           name = name.substring(0, maxLen - 3) + "...";
@@ -360,7 +537,6 @@ private:
         line += name;
         display.print(line.c_str());
       }
-
       y += listLineH;
     }
     display.setTextSize(1);
@@ -384,7 +560,6 @@ private:
       display.setColor(DisplayDriver::LIGHT);
       display.print("(empty note)");
 
-      // Still show footer
       int footerY = display.height() - 12;
       display.drawRect(0, footerY - 2, display.width(), 1);
       display.setColor(DisplayDriver::YELLOW);
@@ -412,7 +587,6 @@ private:
     int maxY = display.height() - _footerHeight - _lineHeight;
 
     while (pos < pageEnd && pos < _bufLen && lineCount < _linesPerPage && y <= maxY) {
-      // Find line end with word wrap
       int lineEnd = pos;
       int nextStart = pos;
       int charCount = 0;
@@ -443,24 +617,17 @@ private:
           }
         }
       }
-      // End of page data
-      lineEnd = min(pageEnd, _bufLen);
-      nextStart = lineEnd;
+      lineEnd = _bufLen;
+      nextStart = _bufLen;
 
     renderLine:
       display.setCursor(0, y);
-
-      // Print characters with UTF-8 -> CP437 mapping
       char charStr[2] = {0, 0};
-      int j = pos;
-      while (j < lineEnd && j < _bufLen) {
+
+      for (int j = pos; j < lineEnd && j < _bufLen;) {
         uint8_t b = (uint8_t)_buf[j];
         if (b < 32) { j++; continue; }
-        if (b < 0x80) {
-          charStr[0] = (char)b;
-          display.print(charStr);
-          j++;
-        } else if (b >= 0xC0) {
+        if (b >= 0x80) {
           uint32_t cp = decodeUtf8Char(_buf, lineEnd, &j);
           uint8_t glyph = unicodeToCP437(cp);
           if (glyph) { charStr[0] = (char)glyph; display.print(charStr); }
@@ -492,12 +659,15 @@ private:
   }
 
   void renderEditor(DisplayDriver& display) {
+    // Rebuild visual lines and ensure cursor is visible
+    buildEditorLines();
+    ensureCursorVisible();
+
     // Header
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, 0);
 
-    // Show filename (truncated) + editing indicator
     char header[40];
     String shortName = _currentFile;
     if (shortName.length() > 18) {
@@ -510,111 +680,65 @@ private:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, 11, display.width(), 1);
 
-    // Render the TAIL of the buffer (most recent text) with word wrap.
-    // We want the cursor (end of text) to be visible, so we render
-    // backwards from the end to fill available screen lines.
-
+    // Text area
     int textAreaTop = 14;
-    int textAreaBottom = display.height() - 16;  // Leave room for footer
-    int maxLines = (textAreaBottom - textAreaTop) / 12;  // ~12 virtual units per line at size 1
-    if (maxLines < 3) maxLines = 3;
+    int textAreaBottom = display.height() - 16;
 
-    // Simple approach: find how many characters fit on screen by working
-    // backwards from buffer end to find the screen start position.
-    // Use size 1 font for the editor (bigger than tiny, easier to read while typing).
     display.setTextSize(1);
 
-    // Measure char width for word wrap
-    uint16_t charW = display.getTextWidth("M");
-    int editCharsPerLine = charW > 0 ? display.width() / charW : 20;
-    if (editCharsPerLine < 10) editCharsPerLine = 10;
-    if (editCharsPerLine > 40) editCharsPerLine = 40;
-
-    // Build visible lines from the buffer (last N lines)
-    // We'll collect lines in reverse and then display them.
-    struct Line { int start; int end; };
-    Line lines[32];  // More than enough for any screen
-    int lineCount = 0;
-
-    // Forward pass to find all line breaks
-    int tmpLines = 0;
-    int pos = 0;
-    int allLineStarts[512];
-    int allLineEnds[512];
-
-    while (pos < _bufLen && tmpLines < 512) {
-      allLineStarts[tmpLines] = pos;
-
-      // Find line end
-      int lineEnd = pos;
-      int nextStart = pos;
-      int charCount = 0;
-      int lastBreak = -1;
-      bool inWord = false;
-
-      for (int i = pos; i < _bufLen; i++) {
-        char c = _buf[i];
-        if (c == '\n') { lineEnd = i; nextStart = i + 1; goto editorLineFound; }
-        if (c == '\r') {
-          lineEnd = i; nextStart = i + 1;
-          if (nextStart < _bufLen && _buf[nextStart] == '\n') nextStart++;
-          goto editorLineFound;
-        }
-        if (c >= 32) {
-          if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) continue;
-          charCount++;
-          if (c == ' ' || c == '\t') { if (inWord) { lastBreak = i; inWord = false; } }
-          else if (c == '-') { if (inWord) lastBreak = i + 1; }
-          else inWord = true;
-          if (charCount >= editCharsPerLine) {
-            if (lastBreak > pos) {
-              lineEnd = lastBreak; nextStart = lastBreak;
-              while (nextStart < _bufLen && (_buf[nextStart] == ' ' || _buf[nextStart] == '\t'))
-                nextStart++;
-            } else { lineEnd = i; nextStart = i; }
-            goto editorLineFound;
-          }
-        }
-      }
-      lineEnd = _bufLen;
-      nextStart = _bufLen;
-
-    editorLineFound:
-      allLineEnds[tmpLines] = lineEnd;
-      tmpLines++;
-      pos = nextStart;
-      if (pos >= _bufLen) break;
-    }
-
-    // If buffer is empty, we have 0 lines - that's fine, cursor still shows
-
-    // Take the last maxLines lines
-    int firstVisible = max(0, tmpLines - maxLines);
-    lineCount = tmpLines - firstVisible;
+    // Find cursor line
+    int cursorLine = lineForPos(_cursorPos);
 
     // Render visible lines
     int y = textAreaTop;
     display.setColor(DisplayDriver::LIGHT);
 
-    for (int li = firstVisible; li < tmpLines; li++) {
+    for (int li = _editorScrollTop;
+         li < _numEditorLines && y < textAreaBottom;
+         li++) {
+
       display.setCursor(0, y);
       char charStr[2] = {0, 0};
-      for (int j = allLineStarts[li]; j < allLineEnds[li] && j < _bufLen; j++) {
+
+      int lineStart = _editorLines[li].start;
+      int lineEnd = _editorLines[li].end;
+
+      // Render characters, inserting cursor at the right position
+      bool cursorDrawn = false;
+
+      for (int j = lineStart; j < lineEnd && j < _bufLen; j++) {
+        // Draw cursor before this character if cursor is here
+        if (li == cursorLine && j == _cursorPos && !cursorDrawn) {
+          display.setColor(DisplayDriver::GREEN);
+          display.print("|");
+          display.setColor(DisplayDriver::LIGHT);
+          cursorDrawn = true;
+        }
+
         uint8_t b = (uint8_t)_buf[j];
         if (b < 32) continue;
         charStr[0] = (char)b;
         display.print(charStr);
       }
-      y += 12;
+
+      // Cursor at end of this line
+      if (li == cursorLine && !cursorDrawn) {
+        display.setColor(DisplayDriver::GREEN);
+        display.print("|");
+        display.setColor(DisplayDriver::LIGHT);
+      }
+
+      y += _editLineHeight;
     }
 
-    // Show cursor at end of last line (or at start if empty)
-    if (tmpLines == 0 || lineCount == 0) {
+    // If buffer is empty, show cursor at top
+    if (_bufLen == 0) {
+      display.setColor(DisplayDriver::GREEN);
       display.setCursor(0, textAreaTop);
+      display.print("|");
     }
-    display.print("_");
 
-    // Footer / status bar
+    // Footer
     display.setTextSize(1);
     int footerY = display.height() - 12;
     display.setColor(DisplayDriver::LIGHT);
@@ -627,7 +751,6 @@ private:
     snprintf(status, sizeof(status), "%d/%d", _bufLen, NOTES_BUF_SIZE - 1);
     display.print(status);
 
-    // Show Q:Back when there's nothing to lose, Sh+Del:Save when there is
     const char* right;
     if (_bufLen == 0 || !_dirty) {
       right = "Q:Back";
@@ -638,18 +761,99 @@ private:
     display.print(right);
   }
 
+  void renderRenameDialog(DisplayDriver& display) {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print("Rename Note");
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    // Show original name
+    display.setCursor(0, 20);
+    display.setColor(DisplayDriver::LIGHT);
+    display.print("From: ");
+    display.setTextSize(0);
+    String origDisplay = _renameOriginal;
+    if (origDisplay.length() > 30) origDisplay = origDisplay.substring(0, 27) + "...";
+    display.print(origDisplay.c_str());
+
+    // Show editable name with cursor
+    display.setTextSize(1);
+    display.setCursor(0, 38);
+    display.setColor(DisplayDriver::LIGHT);
+    display.print("To:   ");
+
+    display.setTextSize(0);
+    display.setColor(DisplayDriver::GREEN);
+    char displayName[NOTES_RENAME_MAX + 2];
+    snprintf(displayName, sizeof(displayName), "%s|", _renameBuf);
+    display.print(displayName);
+
+    // Show .txt extension hint
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::LIGHT);
+    display.setCursor(0, 56);
+    display.print("(.txt added automatically)");
+
+    // Footer
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    display.print("Q:Cancel");
+
+    const char* right = "Ent:Confirm";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+  }
+
+  void renderDeleteConfirm(DisplayDriver& display) {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print("Delete Note?");
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    display.setCursor(0, 25);
+    display.print("File:");
+
+    display.setTextSize(0);
+    display.setCursor(0, 38);
+    String nameDisplay = _deleteTarget;
+    if (nameDisplay.length() > 35) nameDisplay = nameDisplay.substring(0, 32) + "...";
+    display.print(nameDisplay.c_str());
+
+    display.setTextSize(1);
+    display.setCursor(0, 58);
+    display.setColor(DisplayDriver::GREEN);
+    display.print("This cannot be undone.");
+
+    // Footer
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    display.print("Q:Cancel");
+
+    const char* right = "Ent:Delete";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+  }
+
   // ---- Input Handling ----
 
   bool handleFileListInput(char c) {
     int totalItems = 1 + (int)_fileList.size();
 
-    // W - scroll up
     if (c == 'w' || c == 'W' || c == 0xF2) {
       if (_selectedFile > 0) { _selectedFile--; return true; }
       return false;
     }
 
-    // S - scroll down
     if (c == 's' || c == 'S' || c == 0xF1) {
       if (_selectedFile < totalItems - 1) { _selectedFile++; return true; }
       return false;
@@ -658,11 +862,9 @@ private:
     // Enter - open selected item
     if (c == '\r' || c == 13) {
       if (_selectedFile == 0) {
-        // Create new note
         createNewNote();
         return true;
       } else {
-        // Open existing note
         int fileIdx = _selectedFile - 1;
         if (fileIdx >= 0 && fileIdx < (int)_fileList.size()) {
           if (loadNote(_fileList[fileIdx])) {
@@ -680,26 +882,25 @@ private:
   }
 
   bool handleReadInput(char c) {
-    // W/A - previous page
     if (c == 'w' || c == 'W' || c == 'a' || c == 'A' || c == 0xF2) {
       if (_currentPage > 0) { _currentPage--; return true; }
       return false;
     }
 
-    // S/D/Space - next page
     if (c == 's' || c == 'S' || c == 'd' || c == 'D' || c == ' ' || c == 0xF1) {
       if (_currentPage < _totalPages - 1) { _currentPage++; return true; }
       return false;
     }
 
-    // Enter - switch to edit mode (jump to end of buffer)
+    // Enter - switch to edit mode
     if (c == '\r' || c == 13) {
+      _cursorPos = _bufLen;
+      _editorScrollTop = 0;
       _mode = EDITING;
       Serial.printf("Notes: Editing %s (%d bytes)\n", _currentFile.c_str(), _bufLen);
       return true;
     }
 
-    // Q - back to file list
     if (c == 'q' || c == 'Q') {
       _mode = FILE_LIST;
       return true;
@@ -708,37 +909,97 @@ private:
     return false;
   }
 
-  // Returns: true if screen needs refresh, false otherwise.
-  // Special return via _mode change: if Shift+Backspace detected externally
-  // (in main.cpp notesMode handler), caller saves and exits.
   bool handleEditInput(char c) {
-    // Backspace
+    // Backspace - delete before cursor
     if (c == '\b') {
-      if (_bufLen > 0) {
-        _bufLen--;
-        _buf[_bufLen] = '\0';
-        _dirty = true;
-        return true;  // Will be debounced by caller
-      }
-      return false;
+      deleteBeforeCursor();
+      return _dirty;
     }
 
-    // Enter - insert newline
+    // Enter - insert newline at cursor
     if (c == '\r' || c == 13) {
       if (_bufLen < NOTES_BUF_SIZE - 2) {
-        _buf[_bufLen++] = '\n';
-        _buf[_bufLen] = '\0';
-        _dirty = true;
+        insertAtCursor('\n');
         return true;
       }
       return false;
     }
 
-    // Regular printable character
+    // Regular printable character - insert at cursor
     if (c >= 32 && c < 127 && _bufLen < NOTES_BUF_SIZE - 1) {
-      _buf[_bufLen++] = c;
-      _buf[_bufLen] = '\0';
-      _dirty = true;
+      insertAtCursor(c);
+      return true;
+    }
+
+    return false;
+  }
+
+  bool handleRenameInput(char c) {
+    // Q - cancel rename
+    if (c == 'q' || c == 'Q') {
+      _mode = FILE_LIST;
+      Serial.println("Notes: Rename cancelled");
+      return true;
+    }
+
+    // Enter - confirm rename
+    if (c == '\r' || c == 13) {
+      if (_renameLen > 0) {
+        String newName = String(_renameBuf) + ".txt";
+        if (newName != _renameOriginal) {
+          drawBriefSplash("Renaming...");
+          if (renameNote(_renameOriginal, newName)) {
+            if (_currentFile == _renameOriginal) {
+              _currentFile = newName;
+            }
+          }
+        }
+        scanFiles();
+      }
+      _mode = FILE_LIST;
+      return true;
+    }
+
+    // Backspace
+    if (c == '\b') {
+      if (_renameLen > 0) {
+        _renameLen--;
+        _renameBuf[_renameLen] = '\0';
+        return true;
+      }
+      return false;
+    }
+
+    // Printable characters (restrict to filename-safe chars)
+    if (c >= 32 && c < 127 && _renameLen < NOTES_RENAME_MAX - 2) {
+      if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+          c == '?' || c == '"' || c == '<' || c == '>' || c == '|') {
+        return false;
+      }
+      _renameBuf[_renameLen++] = c;
+      _renameBuf[_renameLen] = '\0';
+      return true;
+    }
+
+    return false;
+  }
+
+  bool handleDeleteConfirmInput(char c) {
+    // Enter - confirm delete
+    if (c == '\r' || c == 13) {
+      drawBriefSplash("Deleting...");
+      deleteNote(_deleteTarget);
+      _deleteTarget = "";
+      _selectedFile = 0;
+      _mode = FILE_LIST;
+      scanFiles();
+      return true;
+    }
+
+    // Q or backspace - cancel
+    if (c == 'q' || c == 'Q' || c == '\b') {
+      _deleteTarget = "";
+      _mode = FILE_LIST;
       return true;
     }
 
@@ -751,6 +1012,8 @@ private:
     _currentFile = generateFilename();
     _buf[0] = '\0';
     _bufLen = 0;
+    _cursorPos = 0;
+    _editorScrollTop = 0;
     _dirty = true;
     _mode = EDITING;
     Serial.printf("Notes: Created new note %s\n", _currentFile.c_str());
@@ -758,21 +1021,46 @@ private:
 
 public:
   NotesScreen(UITask* task)
-    : _task(task), _mode(FILE_LIST), _sdReady(false), _initialized(false),
-      _display(nullptr),
+    : _task(task), _mode(FILE_LIST),
+      _sdReady(false), _initialized(false), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5), _footerHeight(14),
-      _selectedFile(0), _bufLen(0), _dirty(false),
-      _currentPage(0), _totalPages(0) {
-    _buf[0] = '\0';
+      _editCharsPerLine(20), _editLineHeight(12), _editMaxLines(8),
+      _selectedFile(0), _buf(nullptr), _bufLen(0), _cursorPos(0),
+      _dirty(false), _currentPage(0), _totalPages(0),
+      _editorLines(nullptr), _numEditorLines(0), _editorScrollTop(0),
+      _renameLen(0), _rtcTime(0), _utcOffset(0) {
+
+    // Allocate main buffer on PSRAM if available
+    #ifdef BOARD_HAS_PSRAM
+      _buf = (char*)ps_malloc(NOTES_BUF_SIZE);
+    #else
+      _buf = (char*)malloc(NOTES_BUF_SIZE);
+    #endif
+    if (_buf) _buf[0] = '\0';
+    else Serial.println("Notes: FATAL - buffer allocation failed!");
+
+    // Allocate editor lines array
+    #ifdef BOARD_HAS_PSRAM
+      _editorLines = (EditorLine*)ps_malloc(sizeof(EditorLine) * NOTES_MAX_LINES);
+    #else
+      _editorLines = (EditorLine*)malloc(sizeof(EditorLine) * NOTES_MAX_LINES);
+    #endif
+
+    _renameBuf[0] = '\0';
   }
 
-  // ---- Layout Init (call once after display available) ----
+  ~NotesScreen() {
+    if (_buf) free(_buf);
+    if (_editorLines) free(_editorLines);
+  }
+
+  // ---- Layout Init ----
 
   void initLayout(DisplayDriver& display) {
     if (_initialized) return;
     _display = &display;
 
-    // Measure tiny font metrics (matches TextReaderScreen)
+    // Tiny font metrics (for read mode)
     display.setTextSize(0);
     uint16_t tenCharsW = display.getTextWidth("MMMMMMMMMM");
     if (tenCharsW > 0) {
@@ -793,17 +1081,35 @@ public:
     _linesPerPage = textAreaHeight / _lineHeight;
     if (_linesPerPage < 5) _linesPerPage = 5;
 
-    display.setTextSize(1);  // Restore
+    // Size 1 font metrics (for edit mode)
+    display.setTextSize(1);
+    uint16_t charW = display.getTextWidth("M");
+    _editCharsPerLine = charW > 0 ? display.width() / charW : 20;
+    if (_editCharsPerLine < 10) _editCharsPerLine = 10;
+    if (_editCharsPerLine > 40) _editCharsPerLine = 40;
+
+    _editLineHeight = 12;
+    int editTextAreaH = display.height() - 14 - 16;  // Header + footer
+    _editMaxLines = editTextAreaH / _editLineHeight;
+    if (_editMaxLines < 3) _editMaxLines = 3;
+
+    display.setTextSize(1);
     _initialized = true;
 
-    Serial.printf("Notes layout: %d chars/line, %d lines/page, lineH=%d\n",
-                  _charsPerLine, _linesPerPage, _lineHeight);
+    Serial.printf("Notes layout: %d chars/line, %d lines/page, lineH=%d (edit: %d cpl, %d lines)\n",
+                  _charsPerLine, _linesPerPage, _lineHeight,
+                  _editCharsPerLine, _editMaxLines);
   }
 
   // ---- Public Interface ----
 
   void setSDReady(bool ready) { _sdReady = ready; }
   bool isSDReady() const { return _sdReady; }
+
+  void setTimestamp(uint32_t rtcTime, int8_t utcOffset) {
+    _rtcTime = rtcTime;
+    _utcOffset = utcOffset;
+  }
 
   void enter(DisplayDriver& display) {
     initLayout(display);
@@ -818,34 +1124,102 @@ public:
   bool isEditing() const { return _mode == EDITING; }
   bool isReading() const { return _mode == READING; }
   bool isInFileList() const { return _mode == FILE_LIST; }
+  bool isRenaming() const { return _mode == RENAMING; }
+  bool isConfirmingDelete() const { return _mode == CONFIRM_DELETE; }
   bool isDirty() const { return _dirty; }
   bool isEmpty() const { return _bufLen == 0; }
 
-  // Save current note and return to file list
+  // ---- Cursor Navigation (called from main.cpp) ----
+
+  void moveCursorLeft() {
+    if (_cursorPos > 0) {
+      _cursorPos--;
+      while (_cursorPos > 0 && (uint8_t)_buf[_cursorPos] >= 0x80 &&
+             (uint8_t)_buf[_cursorPos] < 0xC0) {
+        _cursorPos--;
+      }
+    }
+  }
+
+  void moveCursorRight() {
+    if (_cursorPos < _bufLen) {
+      _cursorPos++;
+      while (_cursorPos < _bufLen && (uint8_t)_buf[_cursorPos] >= 0x80 &&
+             (uint8_t)_buf[_cursorPos] < 0xC0) {
+        _cursorPos++;
+      }
+    }
+  }
+
+  void moveCursorUp() {
+    buildEditorLines();
+    int curLine = lineForPos(_cursorPos);
+    if (curLine > 0) {
+      int col = colForPos(_cursorPos, _editorLines[curLine].start);
+      _cursorPos = posForCol(col, curLine - 1);
+    }
+  }
+
+  void moveCursorDown() {
+    buildEditorLines();
+    int curLine = lineForPos(_cursorPos);
+    if (curLine < _numEditorLines - 1) {
+      int col = colForPos(_cursorPos, _editorLines[curLine].start);
+      _cursorPos = posForCol(col, curLine + 1);
+    }
+  }
+
+  // ---- File List Actions (called from main.cpp) ----
+
+  bool startRename() {
+    if (_selectedFile < 1 || _selectedFile > (int)_fileList.size()) return false;
+
+    _renameOriginal = _fileList[_selectedFile - 1];
+
+    // Strip .txt extension for editing
+    String base = _renameOriginal;
+    if (base.endsWith(".txt") || base.endsWith(".TXT")) {
+      base = base.substring(0, base.length() - 4);
+    }
+
+    int len = min((int)base.length(), NOTES_RENAME_MAX - 2);
+    memcpy(_renameBuf, base.c_str(), len);
+    _renameBuf[len] = '\0';
+    _renameLen = len;
+
+    _mode = RENAMING;
+    Serial.printf("Notes: Renaming %s\n", _renameOriginal.c_str());
+    return true;
+  }
+
+  bool startDeleteFromList() {
+    if (_selectedFile < 1 || _selectedFile > (int)_fileList.size()) return false;
+    _deleteTarget = _fileList[_selectedFile - 1];
+    _mode = CONFIRM_DELETE;
+    Serial.printf("Notes: Confirm delete %s\n", _deleteTarget.c_str());
+    return true;
+  }
+
   void saveAndExit() {
     if (_dirty && _currentFile.length() > 0) {
-      // Don't save empty new notes (user created then immediately exited)
       if (_bufLen > 0) {
         drawBriefSplash("Saving...");
         saveNote();
       } else if (_dirty) {
-        // New note with no content - skip saving
         Serial.printf("Notes: Skipping empty note %s\n", _currentFile.c_str());
       }
     }
     _mode = FILE_LIST;
     _dirty = false;
-    scanFiles();  // Refresh list to show new/updated file
+    scanFiles();
   }
 
-  // Discard changes and return to file list
   void discardAndExit() {
     _dirty = false;
     _mode = FILE_LIST;
     scanFiles();
   }
 
-  // Delete the currently open note and return to file list
   void deleteCurrentNote() {
     if (_currentFile.length() > 0) {
       drawBriefSplash("Deleting...");
@@ -855,12 +1229,12 @@ public:
     _currentFile = "";
     _bufLen = 0;
     _buf[0] = '\0';
+    _cursorPos = 0;
     _mode = FILE_LIST;
     _selectedFile = 0;
     scanFiles();
   }
 
-  // Exit notes screen entirely
   void exitNotes() {
     if (_dirty && _bufLen > 0) {
       saveNote();
@@ -882,24 +1256,24 @@ public:
       return 5000;
     }
 
-    if (_mode == FILE_LIST) {
-      renderFileList(display);
-    } else if (_mode == READING) {
-      renderReadPage(display);
-    } else if (_mode == EDITING) {
-      renderEditor(display);
+    switch (_mode) {
+      case FILE_LIST:       renderFileList(display); break;
+      case READING:         renderReadPage(display); break;
+      case EDITING:         renderEditor(display); break;
+      case RENAMING:        renderRenameDialog(display); break;
+      case CONFIRM_DELETE:  renderDeleteConfirm(display); break;
     }
 
     return 5000;
   }
 
   bool handleInput(char c) override {
-    if (_mode == FILE_LIST) {
-      return handleFileListInput(c);
-    } else if (_mode == READING) {
-      return handleReadInput(c);
-    } else if (_mode == EDITING) {
-      return handleEditInput(c);
+    switch (_mode) {
+      case FILE_LIST:       return handleFileListInput(c);
+      case READING:         return handleReadInput(c);
+      case EDITING:         return handleEditInput(c);
+      case RENAMING:        return handleRenameInput(c);
+      case CONFIRM_DELETE:  return handleDeleteConfirmInput(c);
     }
     return false;
   }
