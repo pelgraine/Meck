@@ -54,6 +54,7 @@ class UITask : public AbstractUITask {
   UIScreen* channel_screen;  // Channel message history screen
   UIScreen* contacts_screen; // Contacts list screen
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
+  UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
   UIScreen* curr;
 
@@ -80,6 +81,7 @@ public:
   void gotoChannelScreen();  // Navigate to channel message screen
   void gotoContactsScreen(); // Navigate to contacts list
   void gotoTextReader();     // *** NEW: Navigate to text reader ***
+  void gotoNotesScreen();    // Navigate to notes editor
   void gotoSettingsScreen(); // Navigate to settings
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void showAlert(const char* text, int duration_millis) override;
@@ -90,6 +92,7 @@ public:
   bool isOnChannelScreen() const { return curr == channel_screen; }
   bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
+  bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   uint8_t getChannelScreenViewIdx() const;
 
@@ -110,6 +113,7 @@ public:
   UIScreen* getCurrentScreen() const { return curr; }
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
   UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
+  UIScreen* getNotesScreen() const { return notes_screen; }
   UIScreen* getContactsScreen() const { return contacts_screen; }
   UIScreen* getChannelScreen() const { return channel_screen; }
   UIScreen* getSettingsScreen() const { return settings_screen; }

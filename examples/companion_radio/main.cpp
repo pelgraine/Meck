@@ -11,6 +11,7 @@
   #include "TCA8418Keyboard.h"
   #include <SD.h>
   #include "TextReaderScreen.h"
+  #include "NotesScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
   #include "SettingsScreen.h"
@@ -42,6 +43,9 @@
   
   // Text reader mode state
   static bool readerMode = false;
+
+  // Notes mode state
+  static bool notesMode = false;
 
   // Power management
   #if HAS_GPS
@@ -400,7 +404,7 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
-  // Early SD card init â€” needed BEFORE the_mesh.begin() so we can restore
+  // Early SD card init Ã¢â‚¬â€ needed BEFORE the_mesh.begin() so we can restore
   // settings from a previous firmware flash.  The display SPI bus is already
   // up (display.begin() ran earlier), so SD can share it now.
   // ---------------------------------------------------------------------------
@@ -508,6 +512,12 @@ void setup() {
       }
     }
 
+    // Tell notes screen that SD is ready
+    NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
+    if (notesScr) {
+      notesScr->setSDReady(true);
+    }
+
     // Do an initial settings backup to SD (captures any first-boot defaults)
     backupSettingsToSD();
   }
@@ -530,7 +540,7 @@ void setup() {
   }
   #endif
 
-  // GPS duty cycle — honour saved pref, default to enabled on first boot
+  // GPS duty cycle â€” honour saved pref, default to enabled on first boot
   #if HAS_GPS
   {
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
@@ -545,7 +555,7 @@ void setup() {
   }
   #endif
 
-  // CPU frequency scaling — drop to 80 MHz for idle mesh listening
+  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
   cpuPower.begin();
 
   // T-Deck Pro: BLE starts disabled for standalone-first operation
@@ -561,7 +571,7 @@ void setup() {
 void loop() {
   the_mesh.loop();
 
-  // GPS duty cycle — check for fix and manage power state
+  // GPS duty cycle â€” check for fix and manage power state
   #if HAS_GPS
   {
     bool gps_hw_on = gpsDuty.loop();
@@ -581,22 +591,31 @@ void loop() {
 #ifdef DISPLAY_CLASS
   // Skip UITask rendering when in compose mode to prevent flickering
   #if defined(LilyGo_TDeck_Pro)
-  if (!composeMode) {
+  // Also suppress during notes editing (same debounce pattern as compose)
+  bool notesEditing = notesMode && ((NotesScreen*)ui_task.getNotesScreen())->isEditing();
+  if (!composeMode && !notesEditing) {
     ui_task.loop();
   } else {
-    // Handle debounced compose/emoji picker screen refresh
+    // Handle debounced screen refresh (compose, emoji picker, or notes editor)
     if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
-      if (emojiPickerMode) {
-        drawEmojiPicker();
-      } else {
-        drawComposeScreen();
+      if (composeMode) {
+        if (emojiPickerMode) {
+          drawEmojiPicker();
+        } else {
+          drawComposeScreen();
+        }
+      } else if (notesEditing) {
+        // Notes editor renders through UITask - force a refresh cycle
+        ui_task.forceRefresh();
+        ui_task.loop();
       }
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
     }
   }
-  // Track reader mode state for key routing
+  // Track reader/notes mode state for key routing
   readerMode = ui_task.isOnTextReader();
+  notesMode = ui_task.isOnNotesScreen();
   #else
   ui_task.loop();
   #endif
@@ -810,6 +829,83 @@ void handleKeyboardInput() {
     return;
   }
 
+  // *** NOTES MODE ***
+  if (notesMode) {
+    NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
+
+    if (notes->isEditing()) {
+      // In editor: Shift+Backspace = save and exit
+      if (key == '\b') {
+        if (keyboard.wasShiftConsumed()) {
+          Serial.println("Notes: Shift+Backspace, saving...");
+          notes->saveAndExit();
+          ui_task.forceRefresh();
+          return;
+        }
+        // Regular backspace - pass to editor with debounce
+        ui_task.injectKey(key);
+        composeNeedsRefresh = true;
+        return;
+      }
+
+      // Q when buffer is empty or unchanged = exit (nothing to lose)
+      if (key == 'q' && (notes->isEmpty() || !notes->isDirty())) {
+        Serial.println("Notes: Q exit (nothing to save)");
+        notes->discardAndExit();
+        ui_task.forceRefresh();
+        return;
+      }
+
+      // Enter = newline (pass through with debounce)
+      if (key == '\r') {
+        ui_task.injectKey(key);
+        composeNeedsRefresh = true;
+        return;
+      }
+
+      // All other printable chars
+      if (key >= 32 && key < 127) {
+        ui_task.injectKey(key);
+        composeNeedsRefresh = true;
+        return;
+      }
+      return;
+    }
+
+    // In file list or reading mode
+    if (key == 'q') {
+      if (notes->isReading()) {
+        ui_task.injectKey('q');  // Let screen handle back-to-list
+      } else {
+        // On file list - exit notes, go home
+        notes->exitNotes();
+        Serial.println("Exiting notes");
+        ui_task.gotoHomeScreen();
+      }
+      return;
+    }
+
+    // Shift+Backspace in reading mode = delete note
+    if (key == '\b' && notes->isReading()) {
+      if (keyboard.wasShiftConsumed()) {
+        Serial.println("Notes: Deleting current note");
+        notes->deleteCurrentNote();
+        ui_task.forceRefresh();
+        return;
+      }
+    }
+
+    // All other keys pass through to the notes screen
+    ui_task.injectKey(key);
+    // If we just entered editing mode (e.g. Enter on file list or reading),
+    // prime the initial draw since notesEditing suppresses ui_task.loop()
+    if (notes->isEditing()) {
+      composeNeedsRefresh = true;
+      lastComposeRefresh = 0;  // Allow immediate refresh on next loop
+    }
+    return;
+  }
+
   // *** SETTINGS MODE ***
   if (ui_task.isOnSettingsScreen()) {
     SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
@@ -826,7 +922,7 @@ void handleKeyboardInput() {
       return;
     }
 
-    // All other keys → settings screen via injectKey
+    // All other keys â†’ settings screen via injectKey
     ui_task.injectKey(key);
     return;
   }
@@ -849,6 +945,12 @@ void handleKeyboardInput() {
       // Open text reader (ebooks)
       Serial.println("Opening text reader");
       ui_task.gotoTextReader();
+      break;
+    
+    case 'n':
+      // Open notes
+      Serial.println("Opening notes");
+      ui_task.gotoNotesScreen();
       break;
     
     case 's':

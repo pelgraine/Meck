@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
+#include "NotesScreen.h"
 #include "target.h"
 #include "GPSDutyCycle.h"
 #ifdef WIFI_SSID
@@ -373,7 +374,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter â€” confirms baud rate and data flow
+        // NMEA sentence counter Ã¢â‚¬â€ confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -747,6 +748,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
+  notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   setCurrScreen(splash);
 }
@@ -1080,13 +1082,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS â€” cut hardware power
+        // Disable GPS Ã¢â‚¬â€ cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS â€” start duty cycle
+        // Enable GPS Ã¢â‚¬â€ start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
@@ -1177,6 +1179,19 @@ void UITask::gotoTextReader() {
     reader->enter(*_display);
   }
   setCurrScreen(text_reader);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoNotesScreen() {
+  NotesScreen* notes = (NotesScreen*)notes_screen;
+  if (_display != NULL) {
+    notes->enter(*_display);
+  }
+  setCurrScreen(notes_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

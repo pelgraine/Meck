@@ -29,6 +29,7 @@ private:
   TwoWire* _wire;
   bool _initialized;
   bool _shiftActive;   // Sticky shift (one-shot)
+  bool _shiftConsumed; // Was shift active for the last returned key
   bool _altActive;     // Sticky alt (one-shot)
   bool _symActive;     // Sticky sym (one-shot)
   unsigned long _lastShiftTime;  // For Shift+key combos
@@ -148,7 +149,7 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
+      _shiftActive(false), _shiftConsumed(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -277,6 +278,9 @@ public:
         c = c - 'a' + 'A';
       }
       _shiftActive = false;  // Reset sticky shift
+      _shiftConsumed = true; // Record that shift was active for this key
+    } else {
+      _shiftConsumed = false;
     }
     
     if (c != 0) {
@@ -293,5 +297,11 @@ public:
   // Check if shift was pressed within the last N milliseconds
   bool wasShiftRecentlyPressed(unsigned long withinMs = 500) const {
     return (millis() - _lastShiftTime) < withinMs;
+  }
+  
+  // Check if shift was active when the most recent key was produced
+  // (immune to e-ink refresh timing unlike wasShiftRecentlyPressed)
+  bool wasShiftConsumed() const {
+    return _shiftConsumed;
   }
 };
