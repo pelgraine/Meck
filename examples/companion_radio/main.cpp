@@ -320,6 +320,9 @@ void setup() {
   }
   MESH_DEBUG_PRINTLN("setup() - radio_init() done");
 
+  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
+  cpuPower.begin();
+
   MESH_DEBUG_PRINTLN("setup() - about to call fast_rng.begin()");
   fast_rng.begin(radio_get_rng_seed());
   MESH_DEBUG_PRINTLN("setup() - fast_rng.begin() done");
@@ -554,9 +557,6 @@ void setup() {
     MESH_DEBUG_PRINTLN("setup() - GPS duty cycle started (enabled=%d)", gps_wanted);
   }
   #endif
-
-  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
-  cpuPower.begin();
 
   // T-Deck Pro: BLE starts disabled for standalone-first operation
   // User can toggle it on from the Bluetooth home page (Enter or long-press)
