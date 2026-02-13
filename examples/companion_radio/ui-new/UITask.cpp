@@ -163,42 +163,19 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
   }
 
   // ---- Audio background playback indicator ----
-  // Draws a small music note (♪) to the left of the battery icon when an
-  // audiobook is playing or paused in the background.
+  // Shows a small play symbol to the left of the battery icon when an
+  // audiobook is actively playing in the background.
+  // Uses the font renderer (not manual pixel drawing) since it handles
+  // the e-ink coordinate scaling correctly.
   void renderAudioIndicator(DisplayDriver& display, int batteryLeftX) {
-    bool playing = _task->isAudioPlayingInBackground();
-    bool paused  = _task->isAudioPausedInBackground();
-    if (!playing && !paused) return;
+    if (!_task->isAudioPlayingInBackground()) return;
 
     display.setColor(DisplayDriver::GREEN);
-
-    // Position: just to the left of the battery icon with a 3px gap
-    // Note is 5px wide x 8px tall
-    int x = batteryLeftX - 8;
-    int y = -1;
-
-    if (playing) {
-      // Draw a ♪ eighth note:
-      //   Stem: vertical line on the right side
-      display.fillRect(x + 4, y + 0, 1, 7);  // stem
-      //   Flag: two pixels angling off the top of the stem
-      display.fillRect(x + 5, y + 1, 1, 1);
-      display.fillRect(x + 5, y + 2, 1, 1);
-      //   Note head: filled oval at bottom of stem
-      display.fillRect(x + 1, y + 5, 3, 2);  // head body
-      display.fillRect(x + 0, y + 6, 1, 1);  // head left
-    } else {
-      // Paused: draw the same note but with pause bars overlaid
-      // Note shape (same as above)
-      display.fillRect(x + 4, y + 0, 1, 7);
-      display.fillRect(x + 5, y + 1, 1, 1);
-      display.fillRect(x + 5, y + 2, 1, 1);
-      display.fillRect(x + 1, y + 5, 3, 2);
-      display.fillRect(x + 0, y + 6, 1, 1);
-      // Small pause indicator: two dots to the left of the note
-      display.fillRect(x - 2, y + 2, 1, 3);
-      display.fillRect(x - 4, y + 2, 1, 3);
-    }
+    display.setTextSize(0);  // tiny font (same as clock & battery %)
+    int x = batteryLeftX - display.getTextWidth(">>") - 2;
+    display.setCursor(x, -3);  // align vertically with battery text
+    display.print(">>");
+    display.setTextSize(1);  // restore
   }
 
   CayenneLPP sensors_lpp;
