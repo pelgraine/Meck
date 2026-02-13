@@ -178,6 +178,12 @@ private:
   uint32_t    _pendingSeekSec;    // 0 = no pending seek
   bool        _streamReady;       // Set true once library reports duration
 
+  // M4B rename workaround — the audio library only recognises .m4a,
+  // so we temporarily rename .m4b files on the SD card for playback.
+  bool        _m4bRenamed;        // true if file was renamed for playback
+  String      _m4bOrigPath;       // original path (with .m4b extension)
+  String      _m4bTempPath;       // temporary path (with .m4a extension)
+
   // UI state
   int  _transportSel;
   bool _showingInfo;
@@ -197,6 +203,21 @@ private:
   void disableDAC() {
     digitalWrite(41, LOW);
     _dacPowered = false;
+  }
+
+  // Restore an M4B file that was temporarily renamed to .m4a for playback.
+  void restoreM4bRename() {
+    if (!_m4bRenamed) return;
+    if (SD.rename(_m4bTempPath.c_str(), _m4bOrigPath.c_str())) {
+      Serial.printf("AB: Restored '%s' -> '%s'\n",
+                    _m4bTempPath.c_str(), _m4bOrigPath.c_str());
+    } else {
+      Serial.printf("AB: Warning - failed to restore '%s' to '%s'\n",
+                    _m4bTempPath.c_str(), _m4bOrigPath.c_str());
+    }
+    _m4bRenamed = false;
+    _m4bOrigPath = "";
+    _m4bTempPath = "";
   }
 
   void ensureI2SInit() {
@@ -246,21 +267,28 @@ private:
       return false;
     }
 
-    JPEGDEC jpeg;
+    JPEGDEC* jpeg = new JPEGDEC();
+    if (!jpeg) {
+      Serial.println("AB: Failed to allocate JPEGDEC");
+      free(jpegBuf);
+      freeCoverBitmap();
+      return false;
+    }
     CoverDecodeCtx ctx;
     ctx.bitmap  = _coverBitmap;
     ctx.bitmapW = _coverW;
     ctx.bitmapH = _coverH;
 
-    if (!jpeg.openRAM(jpegBuf, _metadata.coverSize, coverDrawCallback)) {
+    if (!jpeg->openRAM(jpegBuf, _metadata.coverSize, coverDrawCallback)) {
       Serial.println("AB: JPEGDEC failed to open cover image");
+      delete jpeg;
       free(jpegBuf);
       freeCoverBitmap();
       return false;
     }
 
-    int srcW = jpeg.getWidth();
-    int srcH = jpeg.getHeight();
+    int srcW = jpeg->getWidth();
+    int srcH = jpeg->getHeight();
     int scale = 0;
 
     if (srcW > _coverW * 6 || srcH > _coverH * 6) scale = 3;
@@ -276,17 +304,18 @@ private:
     ctx.offsetX = (scaledW > _coverW) ? (scaledW - _coverW) / 2 : 0;
     ctx.offsetY = (scaledH > _coverH) ? (scaledH - _coverH) / 2 : 0;
 
-    jpeg.setUserPointer(&ctx);
-    jpeg.setPixelType(RGB565_BIG_ENDIAN);
+    jpeg->setUserPointer(&ctx);
+    jpeg->setPixelType(RGB565_BIG_ENDIAN);
 
     int scaleFlags[] = { JPEG_SCALE_HALF, JPEG_SCALE_QUARTER, JPEG_SCALE_EIGHTH };
     if (scale > 0) {
-      jpeg.decode(0, 0, scaleFlags[scale - 1]);
+      jpeg->decode(0, 0, scaleFlags[scale - 1]);
     } else {
-      jpeg.decode(0, 0, 0);
+      jpeg->decode(0, 0, 0);
     }
 
-    jpeg.close();
+    jpeg->close();
+    delete jpeg;
     free(jpegBuf);
 
     _hasCover = true;
@@ -489,6 +518,7 @@ private:
     if (_isPlaying || _isPaused) {
       stopPlayback();
     }
+    restoreM4bRename();  // Safety: ensure rename is restored even if state was odd
     saveBookmark();
     freeCoverBitmap();
     _metadata.clear();
@@ -509,6 +539,28 @@ private:
     ensureI2SInit();
 
     String fullPath = String(AUDIOBOOKS_FOLDER) + "/" + _currentFile;
+
+    // M4B workaround: the ESP32-audioI2S library only recognises .m4a
+    // for MP4/AAC container parsing. M4B is identical but the extension
+    // isn't checked, so the library treats it as raw AAC and fails.
+    // Temporarily rename the file on the SD card (FAT32 rename is instant).
+    _m4bRenamed = false;
+    String lower = _currentFile;
+    lower.toLowerCase();
+    if (lower.endsWith(".m4b")) {
+      String m4aFile = _currentFile.substring(0, _currentFile.length() - 1) + "a";
+      _m4bOrigPath = fullPath;
+      _m4bTempPath = String(AUDIOBOOKS_FOLDER) + "/" + m4aFile;
+
+      if (SD.rename(_m4bOrigPath.c_str(), _m4bTempPath.c_str())) {
+        Serial.printf("AB: Renamed '%s' -> '%s' for playback\n",
+                      _m4bOrigPath.c_str(), _m4bTempPath.c_str());
+        fullPath = _m4bTempPath;
+        _m4bRenamed = true;
+      } else {
+        Serial.println("AB: Warning - failed to rename .m4b to .m4a");
+      }
+    }
 
     // Connect to file — library parses headers asynchronously via loop()
     _audio->connecttoFS(SD, fullPath.c_str());
@@ -541,6 +593,9 @@ private:
     _pendingSeekSec = 0;
     _streamReady = false;
     saveBookmark();
+
+    // Restore .m4b filename if we renamed it for playback
+    restoreM4bRename();
 
     // Power down the PCM5102A DAC to save battery
     disableDAC();
@@ -835,6 +890,7 @@ public:
       _currentPosSec(0), _durationSec(0), _currentChapter(-1),
       _lastPositionSave(0), _lastPosUpdate(0),
       _pendingSeekSec(0), _streamReady(false),
+      _m4bRenamed(false),
       _transportSel(2), _showingInfo(false) {}
 
   ~AudiobookPlayerScreen() {
