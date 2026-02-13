@@ -1,12 +1,4 @@
 #include "SerialBLEInterface.h"
-#include <SPIFFS.h>
-
-// FIRMWARE_VERSION is defined in MyMesh.h which may not be in our include
-// chain.  If missing, fall back to "unknown" which will safely force a
-// bond clear on every boot (conservative but harmless).
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "unknown"
-#endif
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -35,42 +27,11 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
   BLEDevice::setSecurityCallbacks(this);
   BLEDevice::setMTU(MAX_FRAME_SIZE);
 
-  // Clear stale BLE bonds when firmware version changes.
-  // After a flash, the phone still has old bonding keys cached which causes
-  // an authentication error on first connect.  By wiping bonds only when
-  // the version string changes, normal reboots keep their pairing intact.
-  {
-    bool clear_bonds = false;
-    File f = SPIFFS.open("/ble_ver", "r");
-    if (f) {
-      char stored[24] = {0};
-      f.readBytes(stored, sizeof(stored) - 1);
-      f.close();
-      clear_bonds = (strcmp(stored, FIRMWARE_VERSION) != 0);
-    } else {
-      clear_bonds = true;  // first boot after flash
-    }
-    if (clear_bonds) {
-      int n = esp_ble_get_bond_device_num();
-      if (n > 0) {
-        esp_ble_bond_dev_t *devs = (esp_ble_bond_dev_t *)malloc(sizeof(esp_ble_bond_dev_t) * n);
-        if (devs) {
-          esp_ble_get_bond_device_list(&n, devs);
-          for (int i = 0; i < n; i++) esp_ble_remove_bond_device(devs[i].bd_addr);
-          free(devs);
-          BLE_DEBUG_PRINTLN("Cleared %d stale BLE bond(s) (firmware changed)", n);
-        }
-      }
-      File fw = SPIFFS.open("/ble_ver", "w", true);
-      if (fw) { fw.print(FIRMWARE_VERSION); fw.close(); }
-    }
-  }
-
   BLESecurity  sec;
   sec.setStaticPIN(pin_code);
   sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
 
-  BLEDevice::setPower(ESP_PWR_LVL_N3);  // -3 dBm — saves power, plenty for nearby phone
+  //BLEDevice::setPower(ESP_PWR_LVL_N8);
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -133,18 +94,6 @@ void SerialBLEInterface::onConnect(BLEServer* pServer) {
 void SerialBLEInterface::onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) {
   BLE_DEBUG_PRINTLN("onConnect(), conn_id=%d, mtu=%d", param->connect.conn_id, pServer->getPeerMTU(param->connect.conn_id));
   last_conn_id = param->connect.conn_id;
-
-  // Request relaxed connection parameters to reduce BLE radio wake-ups.
-  // Slave latency of 4 lets the ESP32 skip up to 4 intervals when idle,
-  // effectively sleeping ~800ms between radio events.
-  esp_ble_conn_update_params_t conn_params;
-  memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-  conn_params.min_int  = 0x30;   // 48 * 1.25ms =  60ms
-  conn_params.max_int  = 0xA0;   // 160 * 1.25ms = 200ms
-  conn_params.latency  = 4;      // skip up to 4 intervals when idle
-  conn_params.timeout  = 400;    // 400 * 10ms = 4s supervision timeout
-  esp_ble_gap_update_conn_params(&conn_params);
-  BLE_DEBUG_PRINTLN("Requested conn params: interval=60-200ms, latency=4, timeout=4s");
 }
 
 void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
@@ -188,10 +137,10 @@ void SerialBLEInterface::enable() {
   // Start the service
   pService->start();
 
-  // Start advertising — relaxed interval saves power while waiting for
-  // a phone to connect, but stays responsive enough for quick pairing
-  pServer->getAdvertising()->setMinInterval(480);   // 480 * 0.625ms = 300ms
-  pServer->getAdvertising()->setMaxInterval(960);   // 960 * 0.625ms = 600ms
+  // Start advertising
+
+  //pServer->getAdvertising()->setMinInterval(500);
+  //pServer->getAdvertising()->setMaxInterval(1000);
 
   pServer->getAdvertising()->start();
   adv_restart_time = 0;
@@ -273,8 +222,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
 
       BLE_DEBUG_PRINTLN("SerialBLEInterface -> disconnecting...");
 
-      pServer->getAdvertising()->setMinInterval(480);
-      pServer->getAdvertising()->setMaxInterval(960);
+      //pServer->getAdvertising()->setMinInterval(500);
+      //pServer->getAdvertising()->setMaxInterval(1000);
 
       adv_restart_time = millis() + ADVERT_RESTART_DELAY;
     } else {
