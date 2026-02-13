@@ -545,6 +545,9 @@ private:
     // Power down the PCM5102A DAC to save battery
     disableDAC();
 
+    // Force I2S re-init for next file (sample rate may differ)
+    _i2sInitialized = false;
+
     Serial.println("AB: Playback stopped");
   }
 
@@ -801,36 +804,23 @@ private:
     }
     y += 10;
 
-    // ---- Transport Controls (text labels) ----
+    // ---- Hint Text (replaces visual transport controls) ----
     {
       display.setTextSize(1);
-      const char* labels[] = { "|<<", "-30", nullptr, "+30", ">>|" };
-      const char* playLabel = (_isPlaying && !_isPaused) ? "||" : ">";
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawTextCentered(display.width() / 2, y, "Enter: Play/Pause");
+      y += 10;
 
-      int spacing = 2;
-      int totalW = 0;
-      for (int i = 0; i < 5; i++) {
-        const char* lbl = (i == 2) ? playLabel : labels[i];
-        totalW += display.getTextWidth(lbl);
-        if (i < 4) totalW += spacing;
-      }
-
-      int x = (display.width() - totalW) / 2;
-      for (int i = 0; i < 5; i++) {
-        const char* lbl = (i == 2) ? playLabel : labels[i];
-        uint16_t lblW = display.getTextWidth(lbl);
-
-        if (i == _transportSel) {
-          display.setColor(DisplayDriver::LIGHT);
-          display.fillRect(x - 1, y - 1, lblW + 2, 9);
-          display.setColor(DisplayDriver::DARK);
-        } else {
-          display.setColor(DisplayDriver::LIGHT);
+      // Only show second hint when there's space (no cover art)
+      if (y < display.height() - 26) {
+        display.setColor(DisplayDriver::YELLOW);
+        if (_isPlaying && !_isPaused) {
+          display.drawTextCentered(display.width() / 2, y,
+                                   "Screen updates on keypress");
+        } else if (_metadata.chapterCount > 0) {
+          display.drawTextCentered(display.width() / 2, y,
+                                   "[/]: Prev/Next Chapter");
         }
-
-        display.setCursor(x, y);
-        display.print(lbl);
-        x += lblW + spacing;
       }
     }
     // Transport controls drawn — footer is at fixed position below
@@ -955,9 +945,14 @@ public:
       renderPlayer(display);
     }
 
-    // 3s refresh during playback for time/progress updates;
-    // key events trigger immediate refresh via handleInput returning true
-    return _isPlaying ? 3000 : 5000;
+    // E-ink refresh takes ~648ms during which audio.loop() can't run
+    // (SPI bus shared between display and SD card). This causes audible
+    // glitches during playback. Solution: during active playback, only
+    // auto-refresh once per minute (for time/progress updates). Key presses
+    // always trigger immediate refresh regardless of this interval.
+    // When paused or stopped, refresh every 5s as normal.
+    if (_isPlaying && !_isPaused) return 60000;  // 1 min between auto-refreshes
+    return 5000;
   }
 
   bool handleInput(char c) override {
