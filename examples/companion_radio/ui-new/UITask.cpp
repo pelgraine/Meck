@@ -111,9 +111,10 @@ class HomeScreen : public UIScreen {
 
 
 void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
-    // Use voltage-based estimation to match BLE app readings
-    uint8_t batteryPercentage = 0;
-    if (batteryMilliVolts > 0) {
+    // Use the BQ27220 fuel gauge SOC register for accurate percentage.
+    // Falls back to voltage estimation if the fuel gauge returns 0.
+    uint8_t batteryPercentage = board.getBatteryPercent();
+    if (batteryPercentage == 0 && batteryMilliVolts > 0) {
       const int minMilliVolts = 3000;
       const int maxMilliVolts = 4200;
       int pct = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
