@@ -36,6 +36,7 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#include "AudiobookPlayerScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -751,6 +752,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   text_reader = new TextReaderScreen(this);
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
+  audiobook_screen = nullptr;  // Created from main.cpp with Audio object
   setCurrScreen(splash);
 }
 
@@ -1213,6 +1215,20 @@ void UITask::gotoSettingsScreen() {
 void UITask::gotoOnboarding() {
   ((SettingsScreen *) settings_screen)->enterOnboarding();
   setCurrScreen(settings_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoAudiobookPlayer() {
+  if (audiobook_screen == nullptr) return;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  if (_display != NULL) {
+    player->enter(*_display);
+  }
+  setCurrScreen(audiobook_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

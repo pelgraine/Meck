@@ -47,6 +47,12 @@
   // Notes mode state
   static bool notesMode = false;
 
+  // Audiobook player
+  #include "AudiobookPlayerScreen.h"
+  #include "Audio.h"
+  Audio audio;
+  static bool audiobookMode = false;
+
   // Power management
   #if HAS_GPS
     GPSDutyCycle gpsDuty;
@@ -521,6 +527,14 @@ void setup() {
       notesScr->setSDReady(true);
     }
 
+    // Create audiobook player screen and register with UITask
+    {
+      AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, &audio);
+      abScreen->setSDReady(true);
+      ui_task.setAudiobookScreen(abScreen);
+      MESH_DEBUG_PRINTLN("setup() - Audiobook player screen created");
+    }
+
     // Do an initial settings backup to SD (captures any first-boot defaults)
     backupSettingsToSD();
   }
@@ -588,6 +602,19 @@ void loop() {
 
   // CPU frequency auto-timeout back to idle
   cpuPower.loop();
+
+  // Audiobook: service audio decode regardless of which screen is active
+  {
+    AudiobookPlayerScreen* abPlayer =
+      (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+    if (abPlayer) {
+      abPlayer->audioTick();
+      // Keep CPU at high freq during active audio decode
+      if (abPlayer->isAudioActive()) {
+        cpuPower.setBoost();
+      }
+    }
+  }
 #ifdef DISPLAY_CLASS
   // Skip UITask rendering when in compose mode to prevent flickering
   #if defined(LilyGo_TDeck_Pro)
@@ -615,9 +642,10 @@ void loop() {
       composeNeedsRefresh = false;
     }
   }
-  // Track reader/notes mode state for key routing
+  // Track reader/notes/audiobook mode state for key routing
   readerMode = ui_task.isOnTextReader();
   notesMode = ui_task.isOnNotesScreen();
+  audiobookMode = ui_task.isOnAudiobookPlayer();
   #else
   ui_task.loop();
   #endif
@@ -807,6 +835,29 @@ void handleKeyboardInput() {
     return;
   }
   
+  // *** AUDIOBOOK MODE ***
+  if (audiobookMode) {
+    AudiobookPlayerScreen* abPlayer =
+      (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+
+    // Q key: if book is open, player handles it (stop & go to file list)
+    //         if on file list, exit player entirely
+    if (key == 'q') {
+      if (abPlayer->isBookOpen()) {
+        ui_task.injectKey('q');
+      } else {
+        abPlayer->exitPlayer();
+        Serial.println("Exiting audiobook player");
+        ui_task.gotoHomeScreen();
+      }
+      return;
+    }
+
+    // All other keys pass through to the player screen
+    ui_task.injectKey(key);
+    return;
+  }
+
   // *** TEXT READER MODE ***
   if (readerMode) {
     TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
@@ -1005,6 +1056,12 @@ void handleKeyboardInput() {
       // Open text reader (ebooks)
       Serial.println("Opening text reader");
       ui_task.gotoTextReader();
+      break;
+    
+    case 'p':
+      // Open audiobook player
+      Serial.println("Opening audiobook player");
+      ui_task.gotoAudiobookPlayer();
       break;
     
     case 'n':
@@ -1306,6 +1363,21 @@ void sendComposedMessage() {
   } else {
     ui_task.showAlert("No channel!", 1500);
   }
+}
+
+// ============================================================================
+// ESP32-audioI2S CALLBACKS
+// ============================================================================
+// The audio library calls these global functions — must be defined at file scope.
+
+void audio_info(const char *info) {
+  Serial.printf("Audio: %s\n", info);
+}
+
+void audio_eof_mp3(const char *info) {
+  Serial.printf("Audio: End of file - %s\n", info);
+  // Playback finished — the player screen will detect this
+  // via audio.isRunning() returning false
 }
 
 #endif // LilyGo_TDeck_Pro
