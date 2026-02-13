@@ -110,17 +110,22 @@ class HomeScreen : public UIScreen {
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
-void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
+void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
     // Use the BQ27220 fuel gauge SOC register for accurate percentage.
-    // Falls back to voltage estimation if the fuel gauge returns 0.
+    // Falls back to voltage estimation if the fuel gauge is uncalibrated.
     uint8_t batteryPercentage = board.getBatteryPercent();
-    if (batteryPercentage == 0 && batteryMilliVolts > 0) {
-      const int minMilliVolts = 3000;
-      const int maxMilliVolts = 4200;
-      int pct = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
-      if (pct < 0) pct = 0;
-      if (pct > 100) pct = 100;
-      batteryPercentage = (uint8_t)pct;
+
+    // Sanity check: if voltage says full but gauge disagrees significantly,
+    // the gauge hasn't calibrated yet — fall back to voltage estimate
+    int voltagePct = 0;
+    if (batteryMilliVolts > 0) {
+        voltagePct = ((batteryMilliVolts - 3000) * 100) / (4200 - 3000);
+        if (voltagePct < 0) voltagePct = 0;
+        if (voltagePct > 100) voltagePct = 100;
+    }
+
+    if (batteryPercentage == 0 || abs((int)batteryPercentage - voltagePct) > 30) {
+        batteryPercentage = (uint8_t)voltagePct;
     }
 
     display.setColor(DisplayDriver::GREEN);
