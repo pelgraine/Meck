@@ -188,8 +188,7 @@ private:
     pinMode(41, OUTPUT);
     digitalWrite(41, HIGH);
     if (!_dacPowered) {
-      delay(50);  // Let DAC power rail stabilise on first enable
-      Serial.println("AB: GPIO 41 (DAC power) -> HIGH");
+      delay(50);
     }
     _dacPowered = true;
   }
@@ -197,23 +196,15 @@ private:
   void disableDAC() {
     digitalWrite(41, LOW);
     _dacPowered = false;
-    Serial.println("AB: GPIO 41 (DAC power) -> LOW");
   }
 
   void ensureI2SInit() {
     if (!_i2sInitialized && _audio) {
-      // Configure I2S output pins
-      // Try with MCLK=0 (ESP32-S3 may need explicit MCLK even if PCM5102A
-      // uses internal PLL — setting 0 lets the driver auto-assign or skip)
       bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
-      Serial.printf("AB: setPinout(BCLK=%d, LRC=%d, DOUT=%d, MCLK=0) -> %s\n",
-                    BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
-                    ok ? "OK" : "FAILED");
       if (!ok) {
-        // Retry without MCLK (original behavior)
         ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
-        Serial.printf("AB: setPinout retry without MCLK -> %s\n", ok ? "OK" : "FAILED");
       }
+      if (!ok) Serial.println("AB: setPinout FAILED");
       _i2sInitialized = true;
     }
   }
@@ -449,7 +440,20 @@ private:
         yield();  // Feed WDT after metadata parse
         decodeCoverArt(file);
         yield();  // Feed WDT after cover decode
+      } else if (lower.endsWith(".mp3")) {
+        _metadata.parseID3v2(file);
+        yield();  // Feed WDT after metadata parse
+        decodeCoverArt(file);
+        yield();  // Feed WDT after cover decode
+        // Fall back to filename for title if ID3 had none
+        if (_metadata.title[0] == '\0') {
+          String base = filename;
+          int dot = base.lastIndexOf('.');
+          if (dot > 0) base = base.substring(0, dot);
+          strncpy(_metadata.title, base.c_str(), M4B_MAX_TITLE - 1);
+        }
       } else {
+        // Other audio formats — use filename as title
         _metadata.clear();
         String base = filename;
         int dot = base.lastIndexOf('.');
@@ -509,16 +513,11 @@ private:
     _audio->connecttoFS(SD, fullPath.c_str());
     _audio->setVolume(_volume);
 
-    Serial.printf("AB: Volume=%d, isRunning=%d, getVolume=%d\n",
-                  _volume, _audio->isRunning(), _audio->getVolume());
-
     // DON'T seek immediately — the library hasn't parsed headers yet.
     // Store pending seek; apply once stream reports ready (has duration).
     _streamReady = false;
     if (_currentPosSec > 5) {
       _pendingSeekSec = (_currentPosSec > 3) ? _currentPosSec - 3 : 0;
-      Serial.printf("AB: Deferred seek to %us (bookmark was %us)\n",
-                    _pendingSeekSec, _currentPosSec);
     } else {
       _pendingSeekSec = 0;
     }
@@ -527,7 +526,7 @@ private:
     _isPaused = false;
     _lastPositionSave = millis();
 
-    Serial.println("AB: Playback started");
+    Serial.printf("AB: Playing '%s'\n", _currentFile.c_str());
   }
 
   void stopPlayback() {
@@ -548,7 +547,7 @@ private:
     // Force I2S re-init for next file (sample rate may differ)
     _i2sInitialized = false;
 
-    Serial.println("AB: Playback stopped");
+    Serial.println("AB: Stopped");
   }
 
   void togglePause() {
@@ -558,11 +557,9 @@ private:
       _audio->pauseResume();
       _isPaused = true;
       saveBookmark();
-      Serial.println("AB: Paused");
     } else if (_isPaused) {
       _audio->pauseResume();
       _isPaused = false;
-      Serial.println("AB: Resumed");
     } else {
       // Not playing yet — start from bookmark
       startPlayback();
@@ -581,7 +578,6 @@ private:
 
     _audio->setTimeOffset((uint32_t)target);
     _currentPosSec = (uint32_t)target;
-    Serial.printf("AB: Seek %+ds -> %us\n", seconds, (uint32_t)target);
   }
 
   void seekToChapter(int chapterIdx) {
@@ -595,8 +591,6 @@ private:
     }
     _currentPosSec = targetSec;
     _currentChapter = chapterIdx;
-    Serial.printf("AB: Jump to chapter %d '%s' at %us\n",
-                  chapterIdx, _metadata.chapters[chapterIdx].name, targetSec);
   }
 
   // ---- Rendering Helpers ----
@@ -863,23 +857,15 @@ public:
       uint32_t pos = _audio->getAudioCurrentTime();
       if (pos > 0) _currentPosSec = pos;
 
-      // Get duration from library once available
       if (_durationSec == 0) {
         uint32_t dur = _audio->getAudioFileDuration();
-        if (dur > 0) {
-          _durationSec = dur;
-          Serial.printf("AB: Duration from library: %us\n", dur);
-        }
+        if (dur > 0) _durationSec = dur;
       }
 
       // Apply deferred seek once stream is ready
-      // Stream is ready when the library reports a valid duration
       if (!_streamReady && _durationSec > 0) {
         _streamReady = true;
-        Serial.printf("AB: Stream ready! isRunning=%d, duration=%us\n",
-                      _audio->isRunning(), _durationSec);
         if (_pendingSeekSec > 0) {
-          Serial.printf("AB: Applying deferred seek to %us\n", _pendingSeekSec);
           _audio->setTimeOffset(_pendingSeekSec);
           _currentPosSec = _pendingSeekSec;
           _pendingSeekSec = 0;
@@ -1019,7 +1005,6 @@ public:
       if (_volume < 21) {
         _volume++;
         if (_audio) _audio->setVolume(_volume);
-        Serial.printf("AB: Volume -> %d\n", _volume);
       }
       return true;  // Always consume & refresh (show current volume)
     }
@@ -1029,7 +1014,6 @@ public:
       if (_volume > 0) {
         _volume--;
         if (_audio) _audio->setVolume(_volume);
-        Serial.printf("AB: Volume -> %d\n", _volume);
       }
       return true;  // Always consume & refresh
     }

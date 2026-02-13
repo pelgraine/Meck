@@ -371,6 +371,237 @@ private:
     }
   }
 
+  // =====================================================================
+  // ID3v2 Parser for MP3 files
+  // =====================================================================
+public:
+  // Parse ID3v2 tags from an MP3 file. Extracts title (TIT2), artist
+  // (TPE1), and cover art (APIC). Fills the same metadata fields as
+  // the M4B parser so decodeCoverArt() works unchanged.
+  bool parseID3v2(File& file) {
+    clear();
+    if (!file || file.size() < 10) return false;
+
+    file.seek(0);
+    uint8_t hdr[10];
+    if (file.read(hdr, 10) != 10) return false;
+
+    // Verify "ID3" magic
+    if (hdr[0] != 'I' || hdr[1] != 'D' || hdr[2] != '3') {
+      Serial.println("ID3: No ID3v2 header found");
+      return false;
+    }
+
+    uint8_t versionMajor = hdr[3];  // 3 = ID3v2.3, 4 = ID3v2.4
+    bool v24 = (versionMajor == 4);
+    bool hasExtHeader = (hdr[5] & 0x40) != 0;
+
+    // Tag size is syncsafe integer (4 x 7-bit bytes)
+    uint32_t tagSize = ((uint32_t)(hdr[6] & 0x7F) << 21) |
+                       ((uint32_t)(hdr[7] & 0x7F) << 14) |
+                       ((uint32_t)(hdr[8] & 0x7F) << 7)  |
+                       (hdr[9] & 0x7F);
+
+    uint32_t tagEnd = 10 + tagSize;
+    if (tagEnd > file.size()) tagEnd = file.size();
+
+    Serial.printf("ID3: v2.%d, %u bytes\n", versionMajor, tagSize);
+
+    // Skip extended header if present
+    uint32_t pos = 10;
+    if (hasExtHeader && pos + 4 < tagEnd) {
+      file.seek(pos);
+      uint32_t extSize;
+      if (v24) {
+        uint8_t eb[4];
+        file.read(eb, 4);
+        extSize = ((uint32_t)(eb[0] & 0x7F) << 21) |
+                  ((uint32_t)(eb[1] & 0x7F) << 14) |
+                  ((uint32_t)(eb[2] & 0x7F) << 7)  |
+                  (eb[3] & 0x7F);
+      } else {
+        extSize = readU32BE(file) + 4;
+      }
+      pos += extSize;
+    }
+
+    // Walk ID3v2 frames
+    bool foundTitle = false, foundArtist = false, foundCover = false;
+
+    while (pos + 10 < tagEnd) {
+      file.seek(pos);
+      uint8_t fhdr[10];
+      if (file.read(fhdr, 10) != 10) break;
+
+      if (fhdr[0] == 0) break;
+
+      char frameId[5] = { (char)fhdr[0], (char)fhdr[1],
+                          (char)fhdr[2], (char)fhdr[3], '\0' };
+
+      uint32_t frameSize;
+      if (v24) {
+        frameSize = ((uint32_t)(fhdr[4] & 0x7F) << 21) |
+                    ((uint32_t)(fhdr[5] & 0x7F) << 14) |
+                    ((uint32_t)(fhdr[6] & 0x7F) << 7)  |
+                    (fhdr[7] & 0x7F);
+      } else {
+        frameSize = ((uint32_t)fhdr[4] << 24) | ((uint32_t)fhdr[5] << 16) |
+                    ((uint32_t)fhdr[6] << 8)  | fhdr[7];
+      }
+
+      if (frameSize == 0 || pos + 10 + frameSize > tagEnd) break;
+      }
+
+      uint32_t dataStart = pos + 10;
+
+      // --- TIT2 (Title) ---
+      if (!foundTitle && strcmp(frameId, "TIT2") == 0 && frameSize > 1) {
+        id3ExtractText(file, dataStart, frameSize, title, M4B_MAX_TITLE);
+        foundTitle = (title[0] != '\0');
+      }
+      // --- TPE1 (Artist/Author) ---
+      if (!foundArtist && strcmp(frameId, "TPE1") == 0 && frameSize > 1) {
+        id3ExtractText(file, dataStart, frameSize, author, M4B_MAX_AUTHOR);
+        foundArtist = (author[0] != '\0');
+      }
+      // --- APIC (Attached Picture) ---
+      if (!foundCover && strcmp(frameId, "APIC") == 0 && frameSize > 20) {
+        id3ExtractAPIC(file, dataStart, frameSize);
+        foundCover = hasCoverArt;
+      }
+
+      pos = dataStart + frameSize;
+
+      // Early exit once we have everything
+      if (foundTitle && foundArtist && foundCover) break;
+    }
+
+    if (foundTitle) Serial.printf("ID3: Title: %s\n", title);
+    if (foundArtist) Serial.printf("ID3: Author: %s\n", author);
+    return (foundTitle || foundCover);
+  }
+
+private:
+  // Extract text from a TIT2/TPE1 frame.
+  // Format: encoding(1) + text data
+  void id3ExtractText(File& file, uint32_t offset, uint32_t size,
+                      char* dest, int maxLen) {
+    file.seek(offset);
+    uint8_t encoding = file.read();
+    uint32_t textLen = size - 1;
+    if (textLen == 0) return;
+
+    if (encoding == 0 || encoding == 3) {
+      // ISO-8859-1 or UTF-8 — read directly
+      uint32_t readLen = (textLen < (uint32_t)(maxLen - 1))
+                         ? textLen : (uint32_t)(maxLen - 1);
+      file.read((uint8_t*)dest, readLen);
+      dest[readLen] = '\0';
+      // Strip trailing nulls
+      while (readLen > 0 && dest[readLen - 1] == '\0') readLen--;
+      dest[readLen] = '\0';
+    }
+    else if (encoding == 1 || encoding == 2) {
+      // UTF-16 (with or without BOM) — crude ASCII extraction
+      // Static buffer to avoid stack overflow (loopTask has limited stack)
+      static uint8_t u16buf[128];
+      uint32_t readLen = (textLen > sizeof(u16buf)) ? sizeof(u16buf) : textLen;
+      file.read(u16buf, readLen);
+
+      uint32_t srcStart = 0;
+      // Skip BOM if present
+      if (readLen >= 2 && ((u16buf[0] == 0xFF && u16buf[1] == 0xFE) ||
+                           (u16buf[0] == 0xFE && u16buf[1] == 0xFF))) {
+        srcStart = 2;
+      }
+      bool littleEndian = (srcStart >= 2 && u16buf[0] == 0xFF);
+
+      int dstIdx = 0;
+      for (uint32_t i = srcStart; i + 1 < readLen && dstIdx < maxLen - 1; i += 2) {
+        uint8_t lo = littleEndian ? u16buf[i] : u16buf[i + 1];
+        uint8_t hi = littleEndian ? u16buf[i + 1] : u16buf[i];
+        if (lo == 0 && hi == 0) break;  // null terminator
+        if (hi == 0 && lo >= 0x20 && lo < 0x7F) {
+          dest[dstIdx++] = (char)lo;
+        } else {
+          dest[dstIdx++] = '?';
+        }
+      }
+      dest[dstIdx] = '\0';
+    }
+  }
+
+  // Extract APIC (cover art) frame.
+  // Format: encoding(1) + MIME(null-term) + picType(1) + desc(null-term) + imageData
+  void id3ExtractAPIC(File& file, uint32_t offset, uint32_t frameSize) {
+    file.seek(offset);
+    uint8_t encoding = file.read();
+
+    // Read MIME type (null-terminated ASCII)
+    char mime[32] = {0};
+    int mimeLen = 0;
+    while (mimeLen < 31) {
+      int b = file.read();
+      if (b < 0) return;   // Read error
+      if (b == 0) break;   // Null terminator = end of MIME string
+      mime[mimeLen++] = (char)b;
+    }
+    mime[mimeLen] = '\0';
+
+    // Picture type (1 byte)
+    uint8_t picType = file.read();
+    (void)picType;
+
+    // Skip description (null-terminated, encoding-dependent)
+    if (encoding == 0 || encoding == 3) {
+      // Single-byte null terminator
+      while (true) {
+        int b = file.read();
+        if (b < 0) return;   // Read error
+        if (b == 0) break;   // Null terminator
+      }
+    } else {
+      // UTF-16: double-null terminator
+      while (true) {
+        int b1 = file.read();
+        int b2 = file.read();
+        if (b1 < 0 || b2 < 0) return;  // Read error
+        if (b1 == 0 && b2 == 0) break;  // Double-null terminator
+      }
+    }
+
+    // Everything from here to end of frame is image data
+    uint32_t imgOffset = file.position();
+    uint32_t imgEnd = offset + frameSize;
+    if (imgOffset >= imgEnd) return;
+
+    uint32_t imgSize = imgEnd - imgOffset;
+
+    // Determine format from MIME type
+    bool isJpeg = (strstr(mime, "jpeg") || strstr(mime, "jpg"));
+    bool isPng  = (strstr(mime, "png") != nullptr);
+
+    // Also detect by magic bytes if MIME is generic
+    if (!isJpeg && !isPng && imgSize > 4) {
+      file.seek(imgOffset);
+      uint8_t magic[4];
+      file.read(magic, 4);
+      if (magic[0] == 0xFF && magic[1] == 0xD8) isJpeg = true;
+      else if (magic[0] == 0x89 && magic[1] == 'P' &&
+               magic[2] == 'N'  && magic[3] == 'G') isPng = true;
+    }
+
+    coverOffset = imgOffset;
+    coverSize = imgSize;
+    coverFormat = isJpeg ? 13 : (isPng ? 14 : 0);
+    hasCoverArt = (imgSize > 100 && (isJpeg || isPng));
+
+    if (hasCoverArt) {
+      Serial.printf("ID3: Cover %s, %u bytes\n",
+                    isJpeg ? "JPEG" : "PNG", imgSize);
+    }
+  }
+
   // Parse Nero-style chapter list (chpl atom).
   void parseChpl(File& file, uint32_t offset, uint32_t size) {
     if (size < 9) return;
