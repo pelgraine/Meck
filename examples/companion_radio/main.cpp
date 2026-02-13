@@ -840,11 +840,22 @@ void handleKeyboardInput() {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
 
-    // Q key: if book is open, player handles it (stop & go to file list)
-    //         if on file list, exit player entirely
+    // Q key: behavior depends on playback state
+    //   - Playing: navigate home, audio continues in background
+    //   - Paused/stopped: close book, return to file list
+    //   - File list: exit player entirely
     if (key == 'q') {
       if (abPlayer->isBookOpen()) {
-        ui_task.injectKey('q');
+        if (abPlayer->isAudioActive()) {
+          // Audio is playing — leave screen, audio continues via audioTick()
+          Serial.println("Leaving audiobook player (audio continues in background)");
+          ui_task.gotoHomeScreen();
+        } else {
+          // Paused or stopped — close book, show file list
+          abPlayer->closeCurrentBook();
+          Serial.println("Closed audiobook (was paused/stopped)");
+          // Stay on audiobook screen showing file list
+        }
       } else {
         abPlayer->exitPlayer();
         Serial.println("Exiting audiobook player");

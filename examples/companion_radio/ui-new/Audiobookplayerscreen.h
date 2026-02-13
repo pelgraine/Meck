@@ -17,7 +17,8 @@
 //   FILE_LIST mode:  W/S = scroll, Enter = open, Q = exit
 //   PLAYER mode:     Enter = play/pause, A = -30s, D = +30s,
 //                    W = volume up, S = volume down,
-//                    [ = prev chapter, ] = next chapter, Q = stop & exit
+//                    [ = prev chapter, ] = next chapter,
+//                    Q = leave (audio continues) / close book (if paused)
 //
 // Library dependencies (add to platformio.ini lib_deps):
 //   https://github.com/schreibfaul1/ESP32-audioI2S.git#2.0.6
@@ -820,7 +821,7 @@ private:
     // Transport controls drawn — footer is at fixed position below
 
     // ---- Footer Nav Bar ----
-    drawFooter(display, "A/D:Seek W/S:Vol", "Q:Back");
+    drawFooter(display, "A/D:Seek W/S:Vol", (_isPlaying && !_isPaused) ? "Q:Leave" : "Q:Close");
   }
 
 public:
@@ -889,6 +890,16 @@ public:
   }
 
   bool isAudioActive() const { return _isPlaying && !_isPaused; }
+  bool isPaused() const { return _isPaused; }
+  bool isBookOpenAndPaused() const { return _bookOpen && (_isPaused || !_isPlaying); }
+
+  // Public method to close the current book (stops playback, saves bookmark,
+  // returns to file list). Used by main.cpp when user presses Q while paused.
+  void closeCurrentBook() {
+    if (_bookOpen) {
+      closeBook();
+    }
+  }
 
   void enter(DisplayDriver& display) {
     if (!_bookOpen) {
@@ -1036,11 +1047,8 @@ public:
       return false;
     }
 
-    // Q - stop and exit to file list
-    if (c == 'q') {
-      closeBook();
-      return true;
-    }
+    // Q - handled by main.cpp (leave screen or close book depending on play state)
+    // Not handled here - main.cpp intercepts Q before it reaches the player
 
     return false;
   }

@@ -133,18 +133,6 @@ void SerialBLEInterface::onConnect(BLEServer* pServer) {
 void SerialBLEInterface::onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) {
   BLE_DEBUG_PRINTLN("onConnect(), conn_id=%d, mtu=%d", param->connect.conn_id, pServer->getPeerMTU(param->connect.conn_id));
   last_conn_id = param->connect.conn_id;
-
-  // Request relaxed connection parameters to reduce BLE radio wake-ups.
-  // Slave latency of 4 lets the ESP32 skip up to 4 intervals when idle,
-  // effectively sleeping ~800ms between radio events.
-  esp_ble_conn_update_params_t conn_params;
-  memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-  conn_params.min_int  = 0x30;   // 48 * 1.25ms =  60ms
-  conn_params.max_int  = 0xA0;   // 160 * 1.25ms = 200ms
-  conn_params.latency  = 4;      // skip up to 4 intervals when idle
-  conn_params.timeout  = 400;    // 400 * 10ms = 4s supervision timeout
-  esp_ble_gap_update_conn_params(&conn_params);
-  BLE_DEBUG_PRINTLN("Requested conn params: interval=60-200ms, latency=4, timeout=4s");
 }
 
 void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {

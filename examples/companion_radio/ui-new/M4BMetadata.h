@@ -450,7 +450,6 @@ public:
       }
 
       if (frameSize == 0 || pos + 10 + frameSize > tagEnd) break;
-      }
 
       uint32_t dataStart = pos + 10;
 

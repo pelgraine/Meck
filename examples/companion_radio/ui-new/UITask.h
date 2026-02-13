@@ -97,6 +97,10 @@ public:
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
+
+  // Check if audio is playing/paused in the background (for status indicators)
+  bool isAudioPlayingInBackground() const;
+  bool isAudioPausedInBackground() const;
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();

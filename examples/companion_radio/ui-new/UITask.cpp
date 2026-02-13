@@ -111,7 +111,7 @@ class HomeScreen : public UIScreen {
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
-void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
+void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
     // Use the BQ27220 fuel gauge SOC register for accurate percentage.
     // Falls back to voltage estimation if the fuel gauge returns 0.
     uint8_t batteryPercentage = board.getBatteryPercent();
@@ -141,6 +141,8 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     int iconX = display.width() - totalWidth;
     int iconY = 0;  // vertically align with node name text
 
+    if (outIconX) *outIconX = iconX;
+
     // battery outline
     display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
@@ -158,6 +160,45 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     display.setCursor(textX, textY);
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
+  }
+
+  // ---- Audio background playback indicator ----
+  // Draws a small music note (♪) to the left of the battery icon when an
+  // audiobook is playing or paused in the background.
+  void renderAudioIndicator(DisplayDriver& display, int batteryLeftX) {
+    bool playing = _task->isAudioPlayingInBackground();
+    bool paused  = _task->isAudioPausedInBackground();
+    if (!playing && !paused) return;
+
+    display.setColor(DisplayDriver::GREEN);
+
+    // Position: just to the left of the battery icon with a 3px gap
+    // Note is 5px wide x 8px tall
+    int x = batteryLeftX - 8;
+    int y = -1;
+
+    if (playing) {
+      // Draw a ♪ eighth note:
+      //   Stem: vertical line on the right side
+      display.fillRect(x + 4, y + 0, 1, 7);  // stem
+      //   Flag: two pixels angling off the top of the stem
+      display.fillRect(x + 5, y + 1, 1, 1);
+      display.fillRect(x + 5, y + 2, 1, 1);
+      //   Note head: filled oval at bottom of stem
+      display.fillRect(x + 1, y + 5, 3, 2);  // head body
+      display.fillRect(x + 0, y + 6, 1, 1);  // head left
+    } else {
+      // Paused: draw the same note but with pause bars overlaid
+      // Note shape (same as above)
+      display.fillRect(x + 4, y + 0, 1, 7);
+      display.fillRect(x + 5, y + 1, 1, 1);
+      display.fillRect(x + 5, y + 2, 1, 1);
+      display.fillRect(x + 1, y + 5, 3, 2);
+      display.fillRect(x + 0, y + 6, 1, 1);
+      // Small pause indicator: two dots to the left of the note
+      display.fillRect(x - 2, y + 2, 1, 3);
+      display.fillRect(x - 4, y + 2, 1, 3);
+    }
   }
 
   CayenneLPP sensors_lpp;
@@ -217,7 +258,11 @@ public:
     display.print(filtered_name);
 
     // battery voltage
-    renderBatteryIndicator(display, _task->getBattMilliVolts());
+    int battLeftX = display.width();  // default if battery doesn't render
+    renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
+
+    // audio background playback indicator (♪ icon next to battery)
+    renderAudioIndicator(display, battLeftX);
 
     // centered clock (tinyfont) - only show when time is valid
     {
@@ -1247,4 +1292,16 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+}
+
+bool UITask::isAudioPlayingInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isAudioActive();
+}
+
+bool UITask::isAudioPausedInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isBookOpen() && !player->isAudioActive();
 }
