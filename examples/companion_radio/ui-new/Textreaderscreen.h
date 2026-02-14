@@ -182,8 +182,10 @@ private:
 
   // File list state
   std::vector<String> _fileList;
+  std::vector<String> _dirList;    // Subdirectories at current path
   std::vector<FileCache> _fileCache;
   int _selectedFile;
+  String _currentPath;             // Current browsed directory
 
   // Reading state
   File _file;
@@ -391,8 +393,8 @@ private:
     idxFile.read(&fullyFlag, 1);
     idxFile.read((uint8_t*)&lastRead, 4);
 
-    // Verify file hasn't changed - try BOOKS_FOLDER first, then epub cache
-    String fullPath = String(BOOKS_FOLDER) + "/" + filename;
+    // Verify file hasn't changed - try current path first, then epub cache
+    String fullPath = _currentPath + "/" + filename;
     File txtFile = SD.open(fullPath.c_str(), FILE_READ);
     if (!txtFile) {
       // Fallback: check epub cache directory
@@ -482,33 +484,94 @@ private:
 
   // ---- File Scanning ----
 
+  // ---- Folder Navigation Helpers ----
+
+  bool isAtBooksRoot() const {
+    return _currentPath == String(BOOKS_FOLDER);
+  }
+
+  // Number of non-file entries at the start of the visual list
+  int dirEntryCount() const {
+    int count = _dirList.size();
+    if (!isAtBooksRoot()) count++;  // ".." entry
+    return count;
+  }
+
+  // Total items in the visual list (parent + dirs + files)
+  int totalListItems() const {
+    return dirEntryCount() + (int)_fileList.size();
+  }
+
+  // What type of entry is at visual list index idx?
+  // Returns: 0 = ".." parent, 1 = directory, 2 = file
+  int itemTypeAt(int idx) const {
+    bool hasParent = !isAtBooksRoot();
+    if (hasParent && idx == 0) return 0;  // ".."
+    int dirStart = hasParent ? 1 : 0;
+    if (idx < dirStart + (int)_dirList.size()) return 1;  // directory
+    return 2;  // file
+  }
+
+  // Get directory name for visual index (only valid when itemTypeAt == 1)
+  const String& dirNameAt(int idx) const {
+    int dirStart = isAtBooksRoot() ? 0 : 1;
+    return _dirList[idx - dirStart];
+  }
+
+  // Get file list index for visual index (only valid when itemTypeAt == 2)
+  int fileIndexAt(int idx) const {
+    return idx - dirEntryCount();
+  }
+
+  void navigateToParent() {
+    int lastSlash = _currentPath.lastIndexOf('/');
+    if (lastSlash > 0) {
+      _currentPath = _currentPath.substring(0, lastSlash);
+    } else {
+      _currentPath = BOOKS_FOLDER;
+    }
+  }
+
+  void navigateToChild(const String& dirName) {
+    _currentPath = _currentPath + "/" + dirName;
+  }
+
+  // ---- File Scanning ----
+
   void scanFiles() {
     _fileList.clear();
+    _dirList.clear();
     if (!SD.exists(BOOKS_FOLDER)) {
       SD.mkdir(BOOKS_FOLDER);
       Serial.printf("TextReader: Created %s\n", BOOKS_FOLDER);
     }
 
-    File root = SD.open(BOOKS_FOLDER);
+    File root = SD.open(_currentPath.c_str());
     if (!root || !root.isDirectory()) return;
 
     File f = root.openNextFile();
-    while (f && _fileList.size() < READER_MAX_FILES) {
-      if (!f.isDirectory()) {
-        String name = String(f.name());
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) name = name.substring(slash + 1);
+    while (f && (_fileList.size() + _dirList.size()) < READER_MAX_FILES) {
+      String name = String(f.name());
+      int slash = name.lastIndexOf('/');
+      if (slash >= 0) name = name.substring(slash + 1);
 
-        if (!name.startsWith(".") &&
-            (name.endsWith(".txt") || name.endsWith(".TXT") ||
-             name.endsWith(".epub") || name.endsWith(".EPUB"))) {
-          _fileList.push_back(name);
-        }
+      // Skip hidden files/dirs
+      if (name.startsWith(".")) {
+        f = root.openNextFile();
+        continue;
+      }
+
+      if (f.isDirectory()) {
+        _dirList.push_back(name);
+      } else if (name.endsWith(".txt") || name.endsWith(".TXT") ||
+                 name.endsWith(".epub") || name.endsWith(".EPUB")) {
+        _fileList.push_back(name);
       }
       f = root.openNextFile();
     }
     root.close();
-    Serial.printf("TextReader: Found %d files\n", _fileList.size());
+    Serial.printf("TextReader: %s — %d dirs, %d files\n",
+                  _currentPath.c_str(), (int)_dirList.size(), (int)_fileList.size());
   }
 
   // ---- Book Open/Close ----
@@ -518,7 +581,7 @@ private:
 
     // ---- EPUB auto-conversion ----
     String actualFilename = filename;
-    String actualFullPath = String(BOOKS_FOLDER) + "/" + filename;
+    String actualFullPath = _currentPath + "/" + filename;
     bool isEpub = filename.endsWith(".epub") || filename.endsWith(".EPUB");
 
     if (isEpub) {
@@ -755,15 +818,26 @@ private:
     display.setCursor(0, 0);
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
-    display.print("Text Reader");
+    if (isAtBooksRoot()) {
+      display.print("Text Reader");
+    } else {
+      // Show current subfolder name
+      int lastSlash = _currentPath.lastIndexOf('/');
+      String folderName = (lastSlash >= 0) ? _currentPath.substring(lastSlash + 1) : _currentPath;
+      char hdrBuf[20];
+      strncpy(hdrBuf, folderName.c_str(), 17);
+      hdrBuf[17] = '\0';
+      display.print(hdrBuf);
+    }
 
-    sprintf(tmp, "[%d]", (int)_fileList.size());
+    int totalItems = totalListItems();
+    sprintf(tmp, "[%d]", totalItems);
     display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
     display.print(tmp);
 
     display.drawRect(0, 11, display.width(), 1);
 
-    if (_fileList.size() == 0) {
+    if (totalItems == 0) {
       display.setCursor(0, 18);
       display.setColor(DisplayDriver::LIGHT);
       display.print("No files found");
@@ -780,8 +854,8 @@ private:
       if (maxVisible > 15) maxVisible = 15;
 
       int startIdx = max(0, min(_selectedFile - maxVisible / 2,
-                                (int)_fileList.size() - maxVisible));
-      int endIdx = min((int)_fileList.size(), startIdx + maxVisible);
+                                totalItems - maxVisible));
+      int endIdx = min(totalItems, startIdx + maxVisible);
 
       int y = startY;
       for (int i = startIdx; i < endIdx; i++) {
@@ -800,27 +874,41 @@ private:
         // Set cursor AFTER fillRect so text draws on top of highlight
         display.setCursor(0, y);
 
-        // Build display string: "> filename.txt *" (asterisk if has bookmark)
+        int type = itemTypeAt(i);
         String line = selected ? "> " : "  ";
-        String name = _fileList[i];
 
-        // Check for resume indicator
-        String suffix = "";
-        for (int j = 0; j < (int)_fileCache.size(); j++) {
-          if (_fileCache[j].filename == name && _fileCache[j].lastReadPage > 0) {
-            suffix = " *";
-            break;
+        if (type == 0) {
+          // ".." parent directory
+          line += ".. (up)";
+        } else if (type == 1) {
+          // Subdirectory
+          line += "/" + dirNameAt(i);
+          // Truncate if needed
+          if ((int)line.length() > _charsPerLine) {
+            line = line.substring(0, _charsPerLine - 3) + "...";
           }
+        } else {
+          // File
+          int fi = fileIndexAt(i);
+          String name = _fileList[fi];
+
+          // Check for resume indicator
+          String suffix = "";
+          if (fi < (int)_fileCache.size()) {
+            if (_fileCache[fi].filename == name && _fileCache[fi].lastReadPage > 0) {
+              suffix = " *";
+            }
+          }
+
+          // Truncate if needed
+          int maxLen = _charsPerLine - 4 - suffix.length();
+          if ((int)name.length() > maxLen) {
+            name = name.substring(0, maxLen - 3) + "...";
+          }
+          line += name + suffix;
         }
 
-        // Truncate if needed
-        int maxLen = _charsPerLine - 4 - suffix.length();
-        if ((int)name.length() > maxLen) {
-          name = name.substring(0, maxLen - 3) + "...";
-        }
-        line += name + suffix;
         display.print(line.c_str());
-
         y += listLineH;
       }
       display.setTextSize(1);  // Restore
@@ -928,7 +1016,8 @@ public:
       _bootIndexed(false), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5),
       _headerHeight(14), _footerHeight(14),
-      _selectedFile(0), _fileOpen(false), _currentPage(0), _totalPages(0),
+      _selectedFile(0), _currentPath(BOOKS_FOLDER),
+      _fileOpen(false), _currentPage(0), _totalPages(0),
       _pageBufLen(0), _contentDirty(true) {
   }
 
@@ -1068,8 +1157,8 @@ public:
         indexProgress++;
         drawBootSplash(indexProgress, needsIndexCount, _fileList[i]);
 
-        // Try BOOKS_FOLDER first, then epub cache fallback
-        String fullPath = String(BOOKS_FOLDER) + "/" + _fileList[i];
+        // Try current path first, then epub cache fallback
+        String fullPath = _currentPath + "/" + _fileList[i];
         File file = SD.open(fullPath.c_str(), FILE_READ);
         if (!file) {
           String cacheFallback = String("/books/.epub_cache/") + _fileList[i];
@@ -1166,6 +1255,8 @@ public:
   }
 
   bool handleFileListInput(char c) {
+    int total = totalListItems();
+
     // W - scroll up
     if (c == 'w' || c == 'W' || c == 0xF2) {
       if (_selectedFile > 0) {
@@ -1177,23 +1268,88 @@ public:
 
     // S - scroll down
     if (c == 's' || c == 'S' || c == 0xF1) {
-      if (_selectedFile < (int)_fileList.size() - 1) {
+      if (_selectedFile < total - 1) {
         _selectedFile++;
         return true;
       }
       return false;
     }
 
-    // Enter - open selected file
+    // Enter - open selected item (directory or file)
     if (c == '\r' || c == 13) {
-      if (_fileList.size() > 0 && _selectedFile < (int)_fileList.size()) {
-        openBook(_fileList[_selectedFile]);
+      if (total == 0 || _selectedFile >= total) return false;
+
+      int type = itemTypeAt(_selectedFile);
+
+      if (type == 0) {
+        // ".." — navigate to parent
+        navigateToParent();
+        rescanAndIndex();
         return true;
+      } else if (type == 1) {
+        // Subdirectory — navigate into it
+        navigateToChild(dirNameAt(_selectedFile));
+        rescanAndIndex();
+        return true;
+      } else {
+        // File — open it
+        int fi = fileIndexAt(_selectedFile);
+        if (fi >= 0 && fi < (int)_fileList.size()) {
+          openBook(_fileList[fi]);
+          return true;
+        }
       }
       return false;
     }
 
     return false;
+  }
+
+  // Rescan current directory and re-index its files.
+  // Called when navigating into or out of a subfolder.
+  void rescanAndIndex() {
+    scanFiles();
+    _selectedFile = 0;
+
+    // Rebuild file cache for the new directory's files
+    _fileCache.clear();
+    _fileCache.resize(_fileList.size());
+
+    for (int i = 0; i < (int)_fileList.size(); i++) {
+      if (!loadIndex(_fileList[i], _fileCache[i])) {
+        // Not cached — skip EPUB auto-indexing here (it happens on open)
+        // For .txt files, index now
+        if (!(_fileList[i].endsWith(".epub") || _fileList[i].endsWith(".EPUB"))) {
+          String fullPath = _currentPath + "/" + _fileList[i];
+          File file = SD.open(fullPath.c_str(), FILE_READ);
+          if (!file) {
+            // Try epub cache fallback
+            String cacheFallback = String("/books/.epub_cache/") + _fileList[i];
+            file = SD.open(cacheFallback.c_str(), FILE_READ);
+          }
+          if (file) {
+            FileCache& cache = _fileCache[i];
+            cache.filename = _fileList[i];
+            cache.fileSize = file.size();
+            cache.fullyIndexed = false;
+            cache.lastReadPage = 0;
+            cache.pagePositions.clear();
+            cache.pagePositions.push_back(0);
+            indexPagesWordWrap(file, 0, cache.pagePositions,
+                               _linesPerPage, _charsPerLine,
+                               PREINDEX_PAGES - 1);
+            cache.fullyIndexed = !file.available();
+            file.close();
+            saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
+                      cache.fullyIndexed, 0);
+          }
+        } else {
+          _fileCache[i].filename = "";
+        }
+      }
+      yield();  // Feed WDT between files
+    }
+    digitalWrite(SDCARD_CS, HIGH);
   }
 
   bool handleReadingInput(char c) {

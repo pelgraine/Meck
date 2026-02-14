@@ -1,23 +1,40 @@
 ## Audiobook Player (Audio variant only)
 
 Press **P** from the home screen to open the audiobook player.
-Place `.m4b`, `.m4a`, `.mp3`, or `.wav` files in `/audiobooks/` on the SD card.
+Place `.mp3`, `.m4b`, `.m4a`, or `.wav` files in `/audiobooks/` on the SD card.
+Files can be organised into subfolders (e.g. by author) — use **Enter** to
+browse into folders and **.. (up)** to go back.
 
 | Key | Action |
 |-----|--------|
 | W / S | Scroll file list / Volume up-down |
-| Enter | Select book / Play-Pause |
+| Enter | Select book or folder / Play-Pause |
 | A | Seek back 30 seconds |
 | D | Seek forward 30 seconds |
 | [ | Previous chapter (M4B only) |
 | ] | Next chapter (M4B only) |
 | Q | Leave player (audio continues) / Close book (when paused) / Exit (from file list) |
 
+### Recommended Format
+
+**MP3 is the recommended format.** M4B/M4A files are supported but currently
+have playback issues with the ESP32-audioI2S library — some files may fail to
+decode or produce silence. MP3 files play reliably and are the safest choice.
+
+MP3 files should be encoded at a **44100 Hz sample rate**. Lower sample rates
+(e.g. 22050 Hz) can cause distortion or playback failure due to ESP32-S3 I2S
+hardware limitations.
+
 **Bookmarks** are saved automatically every 30 seconds during playback and when
 you stop or exit. Reopening a book resumes from your last position.
 
 **Cover art** from M4B files is displayed as dithered monochrome on the e-ink
 screen, along with title, author, and chapter information.
+
+**Metadata caching** — the first time you open the audiobook player, it reads
+title and author tags from each file (which can take a few seconds with many
+files). This metadata is cached to the SD card so subsequent visits load
+near-instantly. If you add or remove files the cache updates automatically.
 
 ### Background Playback
 
@@ -37,8 +54,7 @@ T-Deck Pro (I2S pins: BCLK=7, DOUT=8, LRC=9). Audio is output via the 3.5mm
 headphone jack.
 
 > **Note:** The audiobook player is not available on the 4G modem variant
-> due to I2S pin conflicts. MP3 format is recommended over M4B for best
-> compatibility with the ESP32-audioI2S library.
+> due to I2S pin conflicts.
 
 ### SD Card Folder Structure
 
@@ -48,8 +64,13 @@ SD Card
 │   ├── .bookmarks/          (auto-created, stores resume positions)
 │   │   ├── mybook.bmk
 │   │   └── another.bmk
-│   ├── mybook.m4b
-│   ├── another.m4b
+│   ├── .metacache            (auto-created, speeds up file list loading)
+│   ├── Ann Leckie/
+│   │   ├── Ancillary Justice.mp3
+│   │   └── Ancillary Sword.mp3
+│   ├── Iain M. Banks/
+│   │   └── The Algebraist.mp3
+│   ├── mybook.mp3
 │   └── podcast.mp3
 ├── books/                   (existing — text reader)
 │   └── ...

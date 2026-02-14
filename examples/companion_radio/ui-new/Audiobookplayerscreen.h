@@ -55,6 +55,7 @@ class UITask;
 #define AB_DEFAULT_VOLUME    12     // 0-21 range for ESP32-audioI2S
 #define AB_SEEK_SECONDS      30     // Skip forward/back amount
 #define AB_POSITION_SAVE_INTERVAL  30000  // Auto-save bookmark every 30s
+#define AB_METACACHE_FILE    "/audiobooks/.metacache"
 
 // Supported file extensions
 static bool isAudiobookFile(const String& name) {
@@ -120,11 +121,16 @@ static int coverDrawCallback(JPEGDRAW* pDraw) {
 }
 
 // ============================================================================
-// File entry with cached bookmark state (avoid SD.exists during render)
+// File entry with cached metadata and bookmark state
 // ============================================================================
 struct AudiobookFileEntry {
-  String name;
+  String name;          // Original filename on SD (or directory name)
+  String displayTitle;  // Extracted title (or cleaned filename / folder name)
+  String displayAuthor; // Extracted author (or empty)
+  String fileType;      // "M4B" or "MP3" or "WAV" or "DIR"
+  uint32_t fileSize;    // File size in bytes (for MP3 duration estimation)
   bool   hasBookmark;
+  bool   isDir;         // true for subdirectory entries
 };
 
 // ============================================================================
@@ -147,11 +153,13 @@ private:
   bool     _sdReady;
   bool     _i2sInitialized;    // Track whether setPinout has been called
   bool     _dacPowered;        // Track GPIO 41 DAC power state
+  DisplayDriver* _displayRef;  // Stored for splash screens during scan
 
   // File browser state
   std::vector<AudiobookFileEntry> _fileList;
   int _selectedFile;
   int _scrollOffset;
+  String _currentPath;    // Current browsed directory (starts as AUDIOBOOKS_FOLDER)
 
   // Current book state
   String      _currentFile;
@@ -177,6 +185,9 @@ private:
   // Deferred seek — applied after audio library reports stream ready
   uint32_t    _pendingSeekSec;    // 0 = no pending seek
   bool        _streamReady;       // Set true once library reports duration
+
+  // File size for MP3 duration estimation (MP3 has no native duration header)
+  uint32_t    _currentFileSize;
 
   // M4B rename workaround — the audio library only recognises .m4a,
   // so we temporarily rename .m4b files on the SD card for playback.
@@ -389,6 +400,110 @@ private:
 
   // ---- File Scanning ----
 
+  // ---- Loading Splash ----
+
+  void drawLoadingSplash() {
+    if (!_displayRef) return;
+    _displayRef->startFrame();
+    _displayRef->setTextSize(2);
+    _displayRef->setColor(DisplayDriver::GREEN);
+    _displayRef->setCursor(10, 15);
+    _displayRef->print("Loading");
+    _displayRef->setCursor(10, 30);
+    _displayRef->print("Audiobooks");
+    _displayRef->setTextSize(1);
+    _displayRef->setColor(DisplayDriver::LIGHT);
+    _displayRef->setCursor(10, 55);
+    _displayRef->print("Please wait...");
+    _displayRef->endFrame();
+  }
+
+  // ---- Metadata Cache ----
+  // Simple tab-separated cache file per directory: filename\tsize\ttitle\tauthor\ttype\n
+  // Avoids re-parsing every file's ID3/M4B tags on each screen entry.
+
+  struct MetaCacheEntry {
+    String filename;
+    uint32_t fileSize;
+    String title;
+    String author;
+    String fileType;
+  };
+
+  String getMetaCachePath() {
+    return _currentPath + "/.metacache";
+  }
+
+  // Load metadata cache from SD. Returns entries in a vector.
+  std::vector<MetaCacheEntry> loadMetaCache() {
+    std::vector<MetaCacheEntry> cache;
+    String path = getMetaCachePath();
+    File f = SD.open(path.c_str(), FILE_READ);
+    if (!f) return cache;
+
+    char line[256];
+    while (f.available()) {
+      int len = 0;
+      while (f.available() && len < (int)sizeof(line) - 1) {
+        char c = f.read();
+        if (c == '\n') break;
+        if (c == '\r') continue;
+        line[len++] = c;
+      }
+      line[len] = '\0';
+      if (len == 0) continue;
+
+      // Parse: filename\tsize\ttitle\tauthor\ttype
+      MetaCacheEntry e;
+      char* tok = strtok(line, "\t");
+      if (!tok) continue;
+      e.filename = String(tok);
+
+      tok = strtok(nullptr, "\t");
+      if (!tok) continue;
+      e.fileSize = (uint32_t)atol(tok);
+
+      tok = strtok(nullptr, "\t");
+      if (!tok) continue;
+      e.title = String(tok);
+
+      tok = strtok(nullptr, "\t");
+      if (!tok) continue;
+      e.author = String(tok);
+
+      tok = strtok(nullptr, "\t");
+      if (!tok) continue;
+      e.fileType = String(tok);
+
+      cache.push_back(e);
+    }
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+    return cache;
+  }
+
+  // Save metadata cache to SD.
+  void saveMetaCache(const std::vector<AudiobookFileEntry>& entries) {
+    String path = getMetaCachePath();
+    if (SD.exists(path.c_str())) SD.remove(path.c_str());
+    File f = SD.open(path.c_str(), FILE_WRITE);
+    if (!f) return;
+
+    for (const auto& e : entries) {
+      if (e.isDir) continue;  // Don't cache directories
+      f.printf("%s\t%u\t%s\t%s\t%s\n",
+               e.name.c_str(), e.fileSize,
+               e.displayTitle.c_str(),
+               e.displayAuthor.length() > 0 ? e.displayAuthor.c_str() : "",
+               e.fileType.c_str());
+    }
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+    Serial.println("AB: Metadata cache saved");
+  }
+
+  // ---- File Scanning ----
+
   void scanFiles() {
     _fileList.clear();
     if (!SD.exists(AUDIOBOOKS_FOLDER)) {
@@ -396,30 +511,142 @@ private:
       Serial.printf("AB: Created %s\n", AUDIOBOOKS_FOLDER);
     }
 
-    File root = SD.open(AUDIOBOOKS_FOLDER);
+    File root = SD.open(_currentPath.c_str());
     if (!root || !root.isDirectory()) return;
 
+    // Add ".." entry if not at the audiobooks root
+    if (_currentPath != String(AUDIOBOOKS_FOLDER)) {
+      AudiobookFileEntry upEntry;
+      upEntry.name = "..";
+      upEntry.displayTitle = "..";
+      upEntry.fileType = "DIR";
+      upEntry.fileSize = 0;
+      upEntry.hasBookmark = false;
+      upEntry.isDir = true;
+      _fileList.push_back(upEntry);
+    }
+
+    // Load metadata cache for this directory
+    std::vector<MetaCacheEntry> metaCache = loadMetaCache();
+    bool cacheDirty = false;
+
+    // Collect directories and files separately, then combine (dirs first)
+    std::vector<AudiobookFileEntry> dirs;
+    std::vector<AudiobookFileEntry> files;
+
+    // Reusable metadata parser (only used for cache misses)
+    M4BMetadata scanMeta;
+
     File f = root.openNextFile();
-    while (f && _fileList.size() < AB_MAX_FILES) {
-      if (!f.isDirectory()) {
-        String name = String(f.name());
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) name = name.substring(slash + 1);
-        if (isAudiobookFile(name) && !name.startsWith("._")) {
-          AudiobookFileEntry entry;
-          entry.name = name;
-          // Cache bookmark existence NOW — avoid SD.exists() during render
-          String bmkPath = getBookmarkPath(name);
-          entry.hasBookmark = SD.exists(bmkPath.c_str());
-          _fileList.push_back(entry);
+    while (f && (dirs.size() + files.size()) < AB_MAX_FILES) {
+      String name = String(f.name());
+      int slash = name.lastIndexOf('/');
+      if (slash >= 0) name = name.substring(slash + 1);
+
+      // Skip hidden files/dirs
+      if (name.startsWith(".") || name.startsWith("._")) {
+        f = root.openNextFile();
+        continue;
+      }
+
+      if (f.isDirectory()) {
+        AudiobookFileEntry entry;
+        entry.name = name;
+        entry.displayTitle = name;
+        entry.fileType = "DIR";
+        entry.fileSize = 0;
+        entry.hasBookmark = false;
+        entry.isDir = true;
+        dirs.push_back(entry);
+      } else if (isAudiobookFile(name)) {
+        AudiobookFileEntry entry;
+        entry.name = name;
+        entry.fileSize = f.size();
+        entry.isDir = false;
+
+        // Determine file type
+        String nameLower = name;
+        nameLower.toLowerCase();
+        if (nameLower.endsWith(".m4b") || nameLower.endsWith(".m4a")) {
+          entry.fileType = "M4B";
+        } else if (nameLower.endsWith(".mp3")) {
+          entry.fileType = "MP3";
+        } else {
+          entry.fileType = "WAV";
         }
+
+        // Check metadata cache first (match by filename + size)
+        bool cacheHit = false;
+        for (const auto& mc : metaCache) {
+          if (mc.filename == name && mc.fileSize == entry.fileSize) {
+            entry.displayTitle = mc.title;
+            entry.displayAuthor = mc.author;
+            cacheHit = true;
+            break;
+          }
+        }
+
+        if (!cacheHit) {
+          // Cache miss — parse metadata from file (slow path)
+          String fullPath = _currentPath + "/" + name;
+          File metaFile = SD.open(fullPath.c_str(), FILE_READ);
+          if (metaFile) {
+            scanMeta.clear();
+            if (entry.fileType == "M4B") {
+              if (scanMeta.parse(metaFile)) {
+                if (scanMeta.title[0]) entry.displayTitle = String(scanMeta.title);
+                if (scanMeta.author[0]) entry.displayAuthor = String(scanMeta.author);
+              }
+            } else if (entry.fileType == "MP3") {
+              if (scanMeta.parseID3v2(metaFile)) {
+                if (scanMeta.title[0]) entry.displayTitle = String(scanMeta.title);
+                if (scanMeta.author[0]) entry.displayAuthor = String(scanMeta.author);
+              }
+            }
+            metaFile.close();
+            digitalWrite(SDCARD_CS, HIGH);
+            yield();  // Feed WDT between file parses
+          }
+          cacheDirty = true;
+        }
+
+        // Fallback: clean up filename if no metadata title found
+        if (entry.displayTitle.length() == 0) {
+          String cleaned = name;
+          int dot = cleaned.lastIndexOf('.');
+          if (dot > 0) cleaned = cleaned.substring(0, dot);
+          cleaned.replace("_", " ");
+          entry.displayTitle = cleaned;
+        }
+
+        // Cache bookmark existence
+        String bmkPath = getBookmarkPath(name);
+        entry.hasBookmark = SD.exists(bmkPath.c_str());
+
+        files.push_back(entry);
+        Serial.printf("AB: [%s] %s - %s (%s)%s\n",
+                      entry.fileType.c_str(),
+                      entry.displayTitle.c_str(),
+                      entry.displayAuthor.length() > 0 ? entry.displayAuthor.c_str() : "?",
+                      entry.name.c_str(),
+                      cacheHit ? " (cached)" : "");
       }
       f = root.openNextFile();
     }
     root.close();
     digitalWrite(SDCARD_CS, HIGH);
 
-    Serial.printf("AB: Found %d audiobook files\n", (int)_fileList.size());
+    // Append directories first, then files
+    for (auto& d : dirs) _fileList.push_back(d);
+    for (auto& fi : files) _fileList.push_back(fi);
+
+    // Save metadata cache if any new entries were parsed
+    if (cacheDirty && files.size() > 0) {
+      saveMetaCache(files);
+    }
+
+    Serial.printf("AB: %s — %d dirs, %d files\n",
+                  _currentPath.c_str(), (int)dirs.size(), (int)files.size());
   }
 
   // ---- Book Open / Close ----
@@ -457,10 +684,17 @@ private:
     _pendingSeekSec = 0;
     _streamReady = false;
 
+    // Cache file size for MP3 duration estimation
+    if (_selectedFile >= 0 && _selectedFile < (int)_fileList.size()) {
+      _currentFileSize = _fileList[_selectedFile].fileSize;
+    } else {
+      _currentFileSize = 0;
+    }
+
     yield();  // Feed WDT between heavy operations
 
     // Parse metadata
-    String fullPath = String(AUDIOBOOKS_FOLDER) + "/" + filename;
+    String fullPath = _currentPath + "/" + filename;
     File file = SD.open(fullPath.c_str(), FILE_READ);
     if (file) {
       String lower = filename;
@@ -538,7 +772,7 @@ private:
     // Ensure I2S is configured (once only, before first connecttoFS)
     ensureI2SInit();
 
-    String fullPath = String(AUDIOBOOKS_FOLDER) + "/" + _currentFile;
+    String fullPath = _currentPath + "/" + _currentFile;
 
     // M4B workaround: the ESP32-audioI2S library only recognises .m4a
     // for MP4/AAC container parsing. M4B is identical but the extension
@@ -550,7 +784,7 @@ private:
     if (lower.endsWith(".m4b")) {
       String m4aFile = _currentFile.substring(0, _currentFile.length() - 1) + "a";
       _m4bOrigPath = fullPath;
-      _m4bTempPath = String(AUDIOBOOKS_FOLDER) + "/" + m4aFile;
+      _m4bTempPath = _currentPath + "/" + m4aFile;
 
       if (SD.rename(_m4bOrigPath.c_str(), _m4bTempPath.c_str())) {
         Serial.printf("AB: Renamed '%s' -> '%s' for playback\n",
@@ -701,10 +935,13 @@ private:
       return;
     }
 
-    // Calculate visible items — reserve footerHeight=14 at bottom
-    int itemHeight = 10;
+    // Switch to tiny font for file list (6x8 built-in)
+    display.setTextSize(0);
+
+    // Calculate visible items — tiny font uses ~8 virtual units per line
+    int itemHeight = 8;
     int listTop = 13;
-    int listBottom = display.height() - 14;
+    int listBottom = display.height() - 14;  // Reserve footer space
     int visibleItems = (listBottom - listTop) / itemHeight;
 
     // Keep selection visible
@@ -714,6 +951,9 @@ private:
       _scrollOffset = _selectedFile - visibleItems + 1;
     }
 
+    // Approx chars that fit in tiny font (~36 on 128 virtual width)
+    const int charsPerLine = 36;
+
     // Draw file list
     for (int i = 0; i < visibleItems && (_scrollOffset + i) < (int)_fileList.size(); i++) {
       int fileIdx = _scrollOffset + i;
@@ -721,31 +961,76 @@ private:
 
       if (fileIdx == _selectedFile) {
         display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(0, y - 1, display.width(), itemHeight - 1);
+        // setCursor adds +5 to y internally, but fillRect does not.
+        // Offset fillRect by +5 to align highlight bar with text.
+        display.fillRect(0, y + 5, display.width(), itemHeight - 1);
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
       }
 
-      // Display filename without extension
-      String name = _fileList[fileIdx].name;
-      int dot = name.lastIndexOf('.');
-      if (dot > 0) name = name.substring(0, dot);
-      if (name.length() > 20) {
-        name = name.substring(0, 17) + "...";
+      // Build display string based on entry type
+      const AudiobookFileEntry& fe = _fileList[fileIdx];
+      char fullLine[96];
+
+      if (fe.isDir) {
+        // Directory entry: show as "/ FolderName" or just ".."
+        if (fe.name == "..") {
+          snprintf(fullLine, sizeof(fullLine), ".. (up)");
+        } else {
+          snprintf(fullLine, sizeof(fullLine), "/%s", fe.name.c_str());
+          // Truncate if needed
+          if ((int)strlen(fullLine) > charsPerLine - 1) {
+            fullLine[charsPerLine - 4] = '.';
+            fullLine[charsPerLine - 3] = '.';
+            fullLine[charsPerLine - 2] = '.';
+            fullLine[charsPerLine - 1] = '\0';
+          }
+        }
+      } else {
+        // Audio file: "Title - Author [TYPE]"
+        char lineBuf[80];
+
+        // Reserve space for type tag and bookmark indicator
+        int suffixLen = fe.fileType.length() + 3;  // " [M4B]" or " [MP3]"
+        int bmkLen = fe.hasBookmark ? 2 : 0;       // " >"
+        int availChars = charsPerLine - suffixLen - bmkLen;
+        if (availChars < 10) availChars = 10;
+
+        if (fe.displayAuthor.length() > 0) {
+          snprintf(lineBuf, sizeof(lineBuf), "%s - %s",
+                   fe.displayTitle.c_str(), fe.displayAuthor.c_str());
+        } else {
+          snprintf(lineBuf, sizeof(lineBuf), "%s", fe.displayTitle.c_str());
+        }
+
+        // Truncate with ellipsis if needed
+        if ((int)strlen(lineBuf) > availChars) {
+          if (availChars > 3) {
+            lineBuf[availChars - 3] = '.';
+            lineBuf[availChars - 2] = '.';
+            lineBuf[availChars - 1] = '.';
+            lineBuf[availChars] = '\0';
+          } else {
+            lineBuf[availChars] = '\0';
+          }
+        }
+
+        // Append file type tag
+        snprintf(fullLine, sizeof(fullLine), "%s [%s]", lineBuf, fe.fileType.c_str());
       }
 
       display.setCursor(2, y);
-      display.print(name.c_str());
+      display.print(fullLine);
 
-      // Bookmark indicator (cached from scanFiles — no SD access)
-      if (_fileList[fileIdx].hasBookmark) {
+      // Bookmark indicator (right-aligned, files only)
+      if (!fe.isDir && fe.hasBookmark) {
         display.setCursor(display.width() - 8, y);
         display.print(">");
       }
     }
 
-    // Scrollbar
+    // Scrollbar (if needed)
     if ((int)_fileList.size() > visibleItems) {
       int barH = listBottom - listTop;
       int thumbH = max(4, barH * visibleItems / (int)_fileList.size());
@@ -756,9 +1041,22 @@ private:
       display.fillRect(display.width() - 1, thumbY, 1, thumbH);
     }
 
-    // Footer
-    char leftBuf[20];
-    snprintf(leftBuf, sizeof(leftBuf), "%d files", (int)_fileList.size());
+    // Footer (stays at size 1 for readability)
+    char leftBuf[32];
+    if (_currentPath == String(AUDIOBOOKS_FOLDER)) {
+      snprintf(leftBuf, sizeof(leftBuf), "%d files", (int)_fileList.size());
+    } else {
+      // Show current subfolder name
+      int lastSlash = _currentPath.lastIndexOf('/');
+      String folderName = (lastSlash >= 0) ? _currentPath.substring(lastSlash + 1) : _currentPath;
+      snprintf(leftBuf, sizeof(leftBuf), "/%s", folderName.c_str());
+      if ((int)strlen(leftBuf) > 16) {
+        leftBuf[13] = '.';
+        leftBuf[14] = '.';
+        leftBuf[15] = '.';
+        leftBuf[16] = '\0';
+      }
+    }
     drawFooter(display, leftBuf, "W/S:Nav Enter:Open");
   }
 
@@ -883,13 +1181,16 @@ public:
   AudiobookPlayerScreen(UITask* task, Audio* audio)
     : _task(task), _audio(audio), _mode(FILE_LIST),
       _sdReady(false), _i2sInitialized(false), _dacPowered(false),
+      _displayRef(nullptr),
       _selectedFile(0), _scrollOffset(0),
+      _currentPath(AUDIOBOOKS_FOLDER),
       _bookOpen(false), _isPlaying(false), _isPaused(false),
       _volume(AB_DEFAULT_VOLUME),
       _coverBitmap(nullptr), _coverW(0), _coverH(0), _hasCover(false),
       _currentPosSec(0), _durationSec(0), _currentChapter(-1),
       _lastPositionSave(0), _lastPosUpdate(0),
       _pendingSeekSec(0), _streamReady(false),
+      _currentFileSize(0),
       _m4bRenamed(false),
       _transportSel(2), _showingInfo(false) {}
 
@@ -916,7 +1217,19 @@ public:
 
       if (_durationSec == 0) {
         uint32_t dur = _audio->getAudioFileDuration();
-        if (dur > 0) _durationSec = dur;
+        if (dur > 0) {
+          _durationSec = dur;
+          Serial.printf("AB: Duration from library: %us\n", dur);
+        } else {
+          // MP3 fallback: estimate from bitrate + file size
+          // getAudioFileDuration() returns 0 for MP3 (no native duration header)
+          uint32_t br = _audio->getBitRate();
+          if (br > 0 && _currentFileSize > 0) {
+            _durationSec = (uint32_t)((uint64_t)_currentFileSize * 8 / br);
+            Serial.printf("AB: Duration estimated from bitrate: %us (br=%u, sz=%u)\n",
+                          _durationSec, br, _currentFileSize);
+          }
+        }
       }
 
       // Apply deferred seek once stream is ready
@@ -958,7 +1271,9 @@ public:
   }
 
   void enter(DisplayDriver& display) {
+    _displayRef = &display;
     if (!_bookOpen) {
+      drawLoadingSplash();
       scanFiles();
       _selectedFile = 0;
       _scrollOffset = 0;
@@ -1036,11 +1351,34 @@ public:
       return false;
     }
 
-    // Enter - open selected audiobook
+    // Enter - open selected item (directory or audiobook)
     if (c == '\r' || c == 13) {
       if (_fileList.size() > 0 && _selectedFile < (int)_fileList.size()) {
-        openBook(_fileList[_selectedFile].name, nullptr);
-        return true;
+        const AudiobookFileEntry& entry = _fileList[_selectedFile];
+
+        if (entry.isDir) {
+          if (entry.name == "..") {
+            // Navigate up to parent
+            int lastSlash = _currentPath.lastIndexOf('/');
+            if (lastSlash > 0) {
+              _currentPath = _currentPath.substring(0, lastSlash);
+            } else {
+              _currentPath = AUDIOBOOKS_FOLDER;
+            }
+          } else {
+            // Navigate into subdirectory
+            _currentPath = _currentPath + "/" + entry.name;
+          }
+          // Rescan the new directory
+          scanFiles();
+          _selectedFile = 0;
+          _scrollOffset = 0;
+          return true;
+        } else {
+          // Open audiobook file
+          openBook(entry.name, nullptr);
+          return true;
+        }
       }
       return false;
     }
