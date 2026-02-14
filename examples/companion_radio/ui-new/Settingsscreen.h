@@ -24,10 +24,22 @@ struct RadioPreset {
 };
 
 static const RadioPreset RADIO_PRESETS[] = {
-  { "MeshCore Default", 915.0f, 250.0f, 10, 5, 20 },
-  { "Long Range",       915.0f, 125.0f, 12, 8, 20 },
-  { "Fast/Short",       915.0f, 500.0f,  7, 5, 20 },
-  { "EU Default",       869.4f, 250.0f, 10, 5, 14 },
+  { "Australia",              915.800f, 250.0f,  10, 5, 22 },
+  { "Australia (Narrow)",     916.575f,  62.5f,   7, 8, 22 },
+  { "Australia: SA, WA",      923.125f,  62.5f,   8, 8, 22 },
+  { "Australia: QLD",         923.125f,  62.5f,   8, 5, 22 },
+  { "EU/UK (Narrow)",         869.618f,  62.5f,   8, 8, 14 },
+  { "EU/UK (Long Range)",     869.525f, 250.0f,  11, 5, 14 },
+  { "EU/UK (Medium Range)",   869.525f, 250.0f,  10, 5, 14 },
+  { "Czech Republic (Narrow)",869.432f,  62.5f,   7, 5, 14 },
+  { "EU 433 (Long Range)",    433.650f, 250.0f,  11, 5, 14 },
+  { "New Zealand",            917.375f, 250.0f,  11, 5, 22 },
+  { "New Zealand (Narrow)",   917.375f,  62.5f,   7, 5, 22 },
+  { "Portugal 433",           433.375f,  62.5f,   9, 6, 14 },
+  { "Portugal 868",           869.618f,  62.5f,   7, 6, 14 },
+  { "Switzerland",            869.618f,  62.5f,   8, 8, 14 },
+  { "USA/Canada (Recommended)",910.525f, 62.5f,   7, 5, 22 },
+  { "Vietnam",                920.250f, 250.0f,  11, 5, 22 },
 };
 #define NUM_RADIO_PRESETS (sizeof(RADIO_PRESETS) / sizeof(RADIO_PRESETS[0]))
 
@@ -72,7 +84,7 @@ private:
   mesh::RTCClock* _rtc;
   NodePrefs* _prefs;
 
-  // Row table — rebuilt whenever channels change
+  // Row table â€” rebuilt whenever channels change
   struct Row {
     SettingsRowType type;
     uint8_t param;       // channel index for ROW_CHANNEL, preset index for ROW_RADIO_PRESET
@@ -96,7 +108,7 @@ private:
   // Onboarding mode
   bool _onboarding;
 
-  // Dirty flag for radio params — prompt to apply
+  // Dirty flag for radio params â€” prompt to apply
   bool _radioChanged;
 
   // ---------------------------------------------------------------------------
@@ -198,11 +210,11 @@ private:
     strncpy(newCh.name, chanName, sizeof(newCh.name));
     newCh.name[31] = '\0';
 
-    // SHA-256 the channel name → first 16 bytes become the secret
+    // SHA-256 the channel name â†’ first 16 bytes become the secret
     uint8_t hash[32];
     mesh::Utils::sha256(hash, 32, (const uint8_t*)chanName, strlen(chanName));
     memcpy(newCh.channel.secret, hash, 16);
-    // Upper 16 bytes left as zero → setChannel uses 128-bit mode
+    // Upper 16 bytes left as zero â†’ setChannel uses 128-bit mode
 
     // Find next empty slot
     for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -400,8 +412,8 @@ public:
         }
 
         case ROW_FREQ:
-          if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "Freq: %.3f <W/S>", _editFloat);
+          if (editing && _editMode == EDIT_TEXT) {
+            snprintf(tmp, sizeof(tmp), "Freq: %s_ MHz", _editBuf);
           } else {
             snprintf(tmp, sizeof(tmp), "Freq: %.3f MHz", _prefs->freq);
           }
@@ -611,6 +623,15 @@ public:
             _cursor = 1;  // ROW_RADIO_PRESET
             startEditPicker(max(0, detectCurrentPreset()));
           }
+        } else if (type == ROW_FREQ) {
+          if (_editPos > 0) {
+            float f = strtof(_editBuf, nullptr);
+            f = constrain(f, 400.0f, 2500.0f);
+            _prefs->freq = f;
+            _radioChanged = true;
+            Serial.printf("Settings: Freq typed to %.3f\n", f);
+          }
+          _editMode = EDIT_NONE;
         } else if (type == ROW_ADD_CHANNEL) {
           if (_editPos > 0) {
             createHashtagChannel(_editBuf);
@@ -684,7 +705,6 @@ public:
 
       if (c == 'w' || c == 'W') {
         switch (type) {
-          case ROW_FREQ:    _editFloat += 0.1f; break;
           case ROW_BW:
             // Cycle through common bandwidths
             if (_editFloat < 31.25f) _editFloat = 31.25f;
@@ -703,7 +723,6 @@ public:
       }
       if (c == 's' || c == 'S') {
         switch (type) {
-          case ROW_FREQ:    _editFloat -= 0.1f; break;
           case ROW_BW:
             if (_editFloat > 250.0f) _editFloat = 250.0f;
             else if (_editFloat > 125.0f) _editFloat = 125.0f;
@@ -721,10 +740,6 @@ public:
       if (c == '\r' || c == 13) {
         // Confirm number edit
         switch (type) {
-          case ROW_FREQ:
-            _prefs->freq = constrain(_editFloat, 400.0f, 2500.0f);
-            _radioChanged = true;
-            break;
           case ROW_BW:
             _prefs->bw = _editFloat;
             _radioChanged = true;
@@ -787,9 +802,13 @@ public:
         case ROW_RADIO_PRESET:
           startEditPicker(max(0, detectCurrentPreset()));
           break;
-        case ROW_FREQ:
-          startEditFloat(_prefs->freq);
+        case ROW_FREQ: {
+          // Use text input so user can type exact frequencies like 916.575
+          char freqStr[16];
+          snprintf(freqStr, sizeof(freqStr), "%.3f", _prefs->freq);
+          startEditText(freqStr);
           break;
+        }
         case ROW_BW:
           startEditFloat(_prefs->bw);
           break;
@@ -828,7 +847,7 @@ public:
       }
     }
 
-    // Q: back — if radio changed, prompt to apply first
+    // Q: back â€” if radio changed, prompt to apply first
     if (c == 'q' || c == 'Q') {
       if (_radioChanged) {
         _editMode = EDIT_CONFIRM;
