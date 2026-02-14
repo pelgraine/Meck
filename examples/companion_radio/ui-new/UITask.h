@@ -56,6 +56,7 @@ class UITask : public AbstractUITask {
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
   UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
+  UIScreen* repeater_admin;   // Repeater admin screen
   UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
   UIScreen* curr;
 
@@ -86,6 +87,7 @@ public:
   void gotoSettingsScreen(); // Navigate to settings
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
+  void gotoRepeaterAdmin(int contactIdx); // Navigate to repeater admin
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
   int  getMsgCount() const { return _msgcount; }
@@ -97,6 +99,7 @@ public:
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
+  bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
@@ -121,6 +124,7 @@ public:
   UIScreen* getChannelScreen() const { return channel_screen; }
   UIScreen* getSettingsScreen() const { return settings_screen; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
+  UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
 
   // from AbstractUITask
@@ -128,6 +132,10 @@ public:
   void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
   void notify(UIEventType t = UIEventType::none) override;
   void loop() override;
+
+  // Repeater admin callbacks (from MyMesh via AbstractUITask)
+  void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
+  void onAdminCliResponse(const char* from_name, const char* text) override;
 
   void shutdown(bool restart = false);
 };

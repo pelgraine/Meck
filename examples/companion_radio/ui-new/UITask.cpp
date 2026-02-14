@@ -36,6 +36,7 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#include "RepeaterAdminScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -772,6 +773,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   text_reader = new TextReaderScreen(this);
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
+  repeater_admin = new RepeaterAdminScreen(this, &rtc_clock);
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
   setCurrScreen(splash);
 }
@@ -1252,6 +1254,26 @@ void UITask::gotoAudiobookPlayer() {
   _next_refresh = 100;
 }
 
+void UITask::gotoRepeaterAdmin(int contactIdx) {
+  // Get contact name for the screen header
+  ContactInfo contact;
+  char name[32] = "Unknown";
+  if (the_mesh.getContactByIdx(contactIdx, contact)) {
+    strncpy(name, contact.name, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+  }
+
+  RepeaterAdminScreen* admin = (RepeaterAdminScreen*)repeater_admin;
+  admin->openForContact(contactIdx, name);
+  setCurrScreen(repeater_admin);
+
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
 }
@@ -1263,4 +1285,18 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+}
+
+void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
+  if (isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onLoginResult(success, permissions, server_time);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
+void UITask::onAdminCliResponse(const char* from_name, const char* text) {
+  if (isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onCliResponse(text);
+    _next_refresh = 100;  // trigger re-render
+  }
 }

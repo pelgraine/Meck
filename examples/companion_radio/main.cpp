@@ -15,6 +15,7 @@
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
   #include "SettingsScreen.h"
+  #include "RepeaterAdminScreen.h"
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -320,9 +321,6 @@ void setup() {
   }
   MESH_DEBUG_PRINTLN("setup() - radio_init() done");
 
-  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
-  cpuPower.begin();
-
   MESH_DEBUG_PRINTLN("setup() - about to call fast_rng.begin()");
   fast_rng.begin(radio_get_rng_seed());
   MESH_DEBUG_PRINTLN("setup() - fast_rng.begin() done");
@@ -407,7 +405,7 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
-  // Early SD card init Ã¢â‚¬â€ needed BEFORE the_mesh.begin() so we can restore
+  // Early SD card init ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needed BEFORE the_mesh.begin() so we can restore
   // settings from a previous firmware flash.  The display SPI bus is already
   // up (display.begin() ran earlier), so SD can share it now.
   // ---------------------------------------------------------------------------
@@ -543,7 +541,7 @@ void setup() {
   }
   #endif
 
-  // GPS duty cycle â€” honour saved pref, default to enabled on first boot
+  // GPS duty cycle Ã¢â‚¬â€ honour saved pref, default to enabled on first boot
   #if HAS_GPS
   {
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
@@ -558,6 +556,9 @@ void setup() {
   }
   #endif
 
+  // CPU frequency scaling Ã¢â‚¬â€ drop to 80 MHz for idle mesh listening
+  cpuPower.begin();
+
   // T-Deck Pro: BLE starts disabled for standalone-first operation
   // User can toggle it on from the Bluetooth home page (Enter or long-press)
   #if defined(LilyGo_TDeck_Pro) && defined(BLE_PIN_CODE)
@@ -571,7 +572,7 @@ void setup() {
 void loop() {
   the_mesh.loop();
 
-  // GPS duty cycle â€” check for fix and manage power state
+  // GPS duty cycle Ã¢â‚¬â€ check for fix and manage power state
   #if HAS_GPS
   {
     bool gps_hw_on = gpsDuty.loop();
@@ -982,8 +983,58 @@ void handleKeyboardInput() {
       return;
     }
 
-    // All other keys â†’ settings screen via injectKey
+    // All other keys Ã¢â€ â€™ settings screen via injectKey
     ui_task.injectKey(key);
+    return;
+  }
+
+  // *** REPEATER ADMIN MODE ***
+  if (ui_task.isOnRepeaterAdmin()) {
+    RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
+    RepeaterAdminScreen::AdminState astate = admin->getState();
+    bool shiftDel = (key == '\b' && keyboard.wasShiftConsumed());
+
+    // In password entry: Shift+Del exits, all other keys pass through normally
+    if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+      if (shiftDel) {
+        Serial.println("Nav: Back to contacts from admin login");
+        ui_task.gotoContactsScreen();
+      } else {
+        ui_task.injectKey(key);
+      }
+      return;
+    }
+
+    // In menu state: Shift+Del exits to contacts, C opens compose
+    if (astate == RepeaterAdminScreen::STATE_MENU) {
+      if (shiftDel) {
+        Serial.println("Nav: Back to contacts from admin menu");
+        ui_task.gotoContactsScreen();
+        return;
+      }
+      // C key: allow entering compose mode from admin menu
+      if (key == 'c' || key == 'C') {
+        composeDM = false;
+        composeDMContactIdx = -1;
+        composeMode = true;
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        drawComposeScreen();
+        lastComposeRefresh = millis();
+        return;
+      }
+      // All other keys pass to admin screen
+      ui_task.injectKey(key);
+      return;
+    }
+
+    // In waiting/response/error states: convert Shift+Del to exit signal,
+    // pass all other keys through
+    if (shiftDel) {
+      ui_task.injectKey(KEY_ADMIN_EXIT);
+    } else {
+      ui_task.injectKey(key);
+    }
     return;
   }
 
@@ -1022,8 +1073,8 @@ void handleKeyboardInput() {
       break;
     
     case 's':
-      // Open settings (from home), or navigate down on channel/contacts
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+      // Open settings (from home), or navigate down on channel/contacts/admin
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()) {
         ui_task.injectKey('s');  // Pass directly for channel/contacts scrolling
       } else {
         Serial.println("Opening settings");
@@ -1033,7 +1084,7 @@ void handleKeyboardInput() {
 
     case 'w':
       // Navigate up/previous (scroll on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()) {
         ui_task.injectKey('w');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Previous");
@@ -1062,7 +1113,8 @@ void handleKeyboardInput() {
       break;
       
     case '\r':
-      // Enter = compose (only from channel or contacts screen)
+      // Select/Enter - if on contacts screen, enter DM compose for chat contacts
+      // or repeater admin for repeater contacts
       if (ui_task.isOnContactsScreen()) {
         ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
         int idx = cs->getSelectedContactIdx();
@@ -1077,8 +1129,15 @@ void handleKeyboardInput() {
           Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
           drawComposeScreen();
           lastComposeRefresh = millis();
+        } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+          // Open repeater admin screen
+          char rname[32];
+          cs->getSelectedContactName(rname, sizeof(rname));
+          Serial.printf("Opening repeater admin for %s (idx %d)\n", rname, idx);
+          ui_task.gotoRepeaterAdmin(idx);
         } else if (idx >= 0) {
-          Serial.printf("Selected non-chat contact type=%d idx=%d\n", ctype, idx);
+          // Non-chat, non-repeater contact (room, sensor, etc.) - future use
+          Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
         }
       } else if (ui_task.isOnChannelScreen()) {
         composeDM = false;
@@ -1098,7 +1157,7 @@ void handleKeyboardInput() {
       
     case 'q':
     case '\b':
-      // Go back to home screen
+      // Go back to home screen (admin mode handled above)
       Serial.println("Nav: Back to home");
       ui_task.gotoHomeScreen();
       break;

@@ -12,6 +12,7 @@ extern MyMesh the_mesh;
 #define ADMIN_PASSWORD_MAX    32
 #define ADMIN_RESPONSE_MAX    512   // CLI responses can be multi-line
 #define ADMIN_TIMEOUT_MS      15000 // 15s timeout for login/commands
+#define KEY_ADMIN_EXIT        0xFE  // Special key: Shift+Backspace exit (injected by main.cpp)
 
 class RepeaterAdminScreen : public UIScreen {
 public:
@@ -280,31 +281,34 @@ public:
 
     switch (_state) {
       case STATE_PASSWORD_ENTRY:
-        display.print("Q:Back");
+        display.print("Sh+Del:Exit");
         {
-          const char* right = "Enter:Login";
+          const char* right = "Ent:Login";
           display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
           display.print(right);
         }
         break;
       case STATE_LOGGING_IN:
       case STATE_COMMAND_PENDING:
-        display.print("Q:Cancel");
+        display.print("Sh+Del:Cancel");
         break;
       case STATE_MENU:
-        display.print("Q:Back");
+        display.print("Sh+Del:Exit");
         {
           const char* mid = "W/S:Sel";
-          display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
-          display.print(mid);
           const char* right = "Ent:Run";
-          display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+          int leftEnd = display.getTextWidth("Sh+Del:Exit") + 2;
+          int rightStart = display.width() - display.getTextWidth(right) - 2;
+          int midX = leftEnd + (rightStart - leftEnd - display.getTextWidth(mid)) / 2;
+          display.setCursor(midX, footerY);
+          display.print(mid);
+          display.setCursor(rightStart, footerY);
           display.print(right);
         }
         break;
       case STATE_RESPONSE_VIEW:
       case STATE_ERROR:
-        display.print("Q:Menu");
+        display.print("Sh+Del:Menu");
         if (_responseLen > bodyHeight / 9) {  // if scrollable
           const char* right = "W/S:Scrll";
           display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
@@ -327,8 +331,8 @@ public:
         return handlePasswordInput(c);
       case STATE_LOGGING_IN:
       case STATE_COMMAND_PENDING:
-        // Q to cancel and go back
-        if (c == 'q' || c == 'Q') {
+        // Shift+Del to cancel and go back
+        if (c == KEY_ADMIN_EXIT) {
           _state = (_state == STATE_LOGGING_IN) ? STATE_PASSWORD_ENTRY : STATE_MENU;
           return true;
         }
@@ -370,9 +374,9 @@ private:
   }
 
   bool handlePasswordInput(char c) {
-    // Q without any password typed = go back (return false to signal "not handled")
-    if ((c == 'q' || c == 'Q') && _pwdLen == 0) {
-      return false;
+    // Shift+Del = exit (always, regardless of password content)
+    if (c == KEY_ADMIN_EXIT) {
+      return false;  // signal main.cpp to navigate back
     }
 
     // Enter to submit
@@ -472,8 +476,8 @@ private:
     if (c == '\r' || c == '\n' || c == KEY_ENTER) {
       return executeMenuCommand((MenuItem)_menuSel);
     }
-    // Q - back to contacts
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - back to contacts
+    if (c == KEY_ADMIN_EXIT) {
       return false;  // let UITask handle back navigation
     }
     // Number keys for quick selection
@@ -535,8 +539,8 @@ private:
       _responseScroll++;
       return true;
     }
-    // Q - back to menu (or back to password on error)
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - back to menu (or back to password on error)
+    if (c == KEY_ADMIN_EXIT) {
       if (_state == STATE_ERROR && _permissions == 0) {
         // Not yet logged in, go back to password
         _state = STATE_PASSWORD_ENTRY;
