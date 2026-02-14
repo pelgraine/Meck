@@ -100,6 +100,10 @@ public:
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
+
+  // Check if audio is playing/paused in the background (for status indicators)
+  bool isAudioPlayingInBackground() const;
+  bool isAudioPausedInBackground() const;
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();

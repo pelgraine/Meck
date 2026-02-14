@@ -37,6 +37,7 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#include "AudiobookPlayerScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -111,7 +112,7 @@ class HomeScreen : public UIScreen {
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
-void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
+void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
     // Use voltage-based estimation to match BLE app readings
     uint8_t batteryPercentage = 0;
     if (batteryMilliVolts > 0) {
@@ -140,6 +141,8 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     int iconX = display.width() - totalWidth;
     int iconY = 0;  // vertically align with node name text
 
+    if (outIconX) *outIconX = iconX;
+
     // battery outline
     display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
@@ -157,6 +160,22 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     display.setCursor(textX, textY);
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
+  }
+
+  // ---- Audio background playback indicator ----
+  // Shows a small play symbol to the left of the battery icon when an
+  // audiobook is actively playing in the background.
+  // Uses the font renderer (not manual pixel drawing) since it handles
+  // the e-ink coordinate scaling correctly.
+  void renderAudioIndicator(DisplayDriver& display, int batteryLeftX) {
+    if (!_task->isAudioPlayingInBackground()) return;
+
+    display.setColor(DisplayDriver::GREEN);
+    display.setTextSize(0); // tiny font (same as clock & battery %)
+    int x = batteryLeftX - display.getTextWidth(">>") - 2;
+    display.setCursor(x, -3); // align vertically with battery text
+    display.print(">>");
+    display.setTextSize(1); // restore
   }
 
   CayenneLPP sensors_lpp;
@@ -216,7 +235,11 @@ public:
     display.print(filtered_name);
 
     // battery voltage
-    renderBatteryIndicator(display, _task->getBattMilliVolts());
+    int battLeftX = display.width(); // default if battery doesn't render
+    renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
+
+    // audio background playback indicator (>> icon next to battery)
+    renderAudioIndicator(display, battLeftX);
 
     // centered clock (tinyfont) - only show when time is valid
     {
@@ -1246,6 +1269,10 @@ void UITask::gotoOnboarding() {
 
 void UITask::gotoAudiobookPlayer() {
   if (audiobook_screen == nullptr) return;  // No audio hardware
+  AudiobookPlayerScreen* abPlayer = (AudiobookPlayerScreen*)audiobook_screen;
+  if (_display != NULL) {
+    abPlayer->enter(*_display);
+  }
   setCurrScreen(audiobook_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -1304,4 +1331,16 @@ void UITask::onAdminCliResponse(const char* from_name, const char* text) {
     ((RepeaterAdminScreen*)repeater_admin)->onCliResponse(text);
     _next_refresh = 100;  // trigger re-render
   }
+}
+
+bool UITask::isAudioPlayingInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isAudioActive();
+}
+
+bool UITask::isAudioPausedInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isBookOpen() && !player->isAudioActive();
 }
