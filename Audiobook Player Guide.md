@@ -11,13 +11,24 @@ Place `.m4b`, `.m4a`, `.mp3`, or `.wav` files in `/audiobooks/` on the SD card.
 | D | Seek forward 30 seconds |
 | [ | Previous chapter (M4B only) |
 | ] | Next chapter (M4B only) |
-| Q | Stop & back to file list / Exit player |
+| Q | Leave player (audio continues) / Close book (when paused) / Exit (from file list) |
 
 **Bookmarks** are saved automatically every 30 seconds during playback and when
 you stop or exit. Reopening a book resumes from your last position.
 
 **Cover art** from M4B files is displayed as dithered monochrome on the e-ink
 screen, along with title, author, and chapter information.
+
+### Background Playback
+
+Audio continues playing when you leave the audiobook player screen. Press **Q**
+while audio is playing to return to the home screen — a **>>** indicator will
+appear in the status bar next to the battery icon to show that audio is active
+in the background. Press **P** at any time to return to the player screen and
+resume control.
+
+If you pause or stop playback first and then press **Q**, the book is closed
+and you're returned to the file list instead.
 
 ### Audio Hardware
 
