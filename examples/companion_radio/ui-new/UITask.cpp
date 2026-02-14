@@ -606,6 +606,20 @@ public:
       display.drawTextLeftAlign(0, y, "voltage");
       sprintf(buf, "%d.%03d V", mv / 1000, mv % 1000);
       display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Remaining capacity
+      uint16_t remCap = board.getRemainingCapacity();
+      display.drawTextLeftAlign(0, y, "remaining cap");
+      sprintf(buf, "%d mAh", remCap);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Full charge capacity (learned value)
+      uint16_t fullCap = board.getFullChargeCapacity();
+      display.drawTextLeftAlign(0, y, "full charge cap");
+      sprintf(buf, "%d mAh", fullCap);
+      display.drawTextRightAlign(display.width()-1, y, buf);
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
