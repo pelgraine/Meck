@@ -36,12 +36,11 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
-#include "AudiobookPlayerScreen.h"
 
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
-  char _version_info[24];
+  char _version_info[12];
 
 public:
   SplashScreen(UITask* task) : _task(task) {
@@ -111,22 +110,16 @@ class HomeScreen : public UIScreen {
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
-void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
-    // Use the BQ27220 fuel gauge SOC register for accurate percentage.
-    // Falls back to voltage estimation if the fuel gauge is uncalibrated.
-    uint8_t batteryPercentage = board.getBatteryPercent();
-
-    // Sanity check: if voltage says full but gauge disagrees significantly,
-    // the gauge hasn't calibrated yet — fall back to voltage estimate
-    int voltagePct = 0;
+void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
+    // Use voltage-based estimation to match BLE app readings
+    uint8_t batteryPercentage = 0;
     if (batteryMilliVolts > 0) {
-        voltagePct = ((batteryMilliVolts - 3000) * 100) / (4200 - 3000);
-        if (voltagePct < 0) voltagePct = 0;
-        if (voltagePct > 100) voltagePct = 100;
-    }
-
-    if (batteryPercentage == 0 || abs((int)batteryPercentage - voltagePct) > 30) {
-        batteryPercentage = (uint8_t)voltagePct;
+      const int minMilliVolts = 3000;
+      const int maxMilliVolts = 4200;
+      int pct = ((batteryMilliVolts - minMilliVolts) * 100) / (maxMilliVolts - minMilliVolts);
+      if (pct < 0) pct = 0;
+      if (pct > 100) pct = 100;
+      batteryPercentage = (uint8_t)pct;
     }
 
     display.setColor(DisplayDriver::GREEN);
@@ -146,8 +139,6 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     int iconX = display.width() - totalWidth;
     int iconY = 0;  // vertically align with node name text
 
-    if (outIconX) *outIconX = iconX;
-
     // battery outline
     display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
@@ -165,22 +156,6 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.setCursor(textX, textY);
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
-  }
-
-  // ---- Audio background playback indicator ----
-  // Shows a small play symbol to the left of the battery icon when an
-  // audiobook is actively playing in the background.
-  // Uses the font renderer (not manual pixel drawing) since it handles
-  // the e-ink coordinate scaling correctly.
-  void renderAudioIndicator(DisplayDriver& display, int batteryLeftX) {
-    if (!_task->isAudioPlayingInBackground()) return;
-
-    display.setColor(DisplayDriver::GREEN);
-    display.setTextSize(0);  // tiny font (same as clock & battery %)
-    int x = batteryLeftX - display.getTextWidth(">>") - 2;
-    display.setCursor(x, -3);  // align vertically with battery text
-    display.print(">>");
-    display.setTextSize(1);  // restore
   }
 
   CayenneLPP sensors_lpp;
@@ -240,11 +215,7 @@ public:
     display.print(filtered_name);
 
     // battery voltage
-    int battLeftX = display.width();  // default if battery doesn't render
-    renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
-
-    // audio background playback indicator (♪ icon next to battery)
-    renderAudioIndicator(display, battLeftX);
+    renderBatteryIndicator(display, _task->getBattMilliVolts());
 
     // centered clock (tinyfont) - only show when time is valid
     {
@@ -281,28 +252,50 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
+      int y = 20;
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getMsgCount());
-      display.drawTextCentered(display.width() / 2, 20, tmp);
+      display.drawTextCentered(display.width() / 2, y, tmp);
+      y += 18;
 
       #ifdef WIFI_SSID
         IPAddress ip = WiFi.localIP();
         snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, 54, tmp); 
+        display.drawTextCentered(display.width() / 2, y, tmp);
+        y += 12;
       #endif
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, 43, "< Connected >");
-
-      } else if (the_mesh.getBLEPin() != 0) { // BT pin
+        display.drawTextCentered(display.width() / 2, y, "< Connected >");
+        y += 12;
+      } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
-        display.drawTextCentered(display.width() / 2, 43, tmp);
+        display.drawTextCentered(display.width() / 2, y, tmp);
+        y += 18;
       }
+
+      // Menu shortcuts - tinyfont monospaced grid
+      y += 6;
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);  // tinyfont 6x8 monospaced
+      display.drawTextCentered(display.width() / 2, y, "Press:");
+      y += 12;
+      display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts");
+      y += 10;
+      display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings");
+      y += 10;
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
+      y += 14;
+
+      // Nav hint
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, y, "Press A/D to cycle home views");
+      display.setTextSize(1);  // restore
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);
@@ -403,7 +396,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter Ã¢â‚¬â€ confirms baud rate and data flow
+        // NMEA sentence counter ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -779,7 +772,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   text_reader = new TextReaderScreen(this);
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
-  audiobook_screen = nullptr;  // Created from main.cpp with Audio object
   setCurrScreen(splash);
 }
 
@@ -1112,13 +1104,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS Ã¢â‚¬â€ cut hardware power
+        // Disable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS Ã¢â‚¬â€ start duty cycle
+        // Enable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
@@ -1249,20 +1241,6 @@ void UITask::gotoOnboarding() {
   _next_refresh = 100;
 }
 
-void UITask::gotoAudiobookPlayer() {
-  if (audiobook_screen == nullptr) return;
-  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
-  if (_display != NULL) {
-    player->enter(*_display);
-  }
-  setCurrScreen(audiobook_screen);
-  if (_display != NULL && !_display->isOn()) {
-    _display->turnOn();
-  }
-  _auto_off = millis() + AUTO_OFF_MILLIS;
-  _next_refresh = 100;
-}
-
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
 }
@@ -1274,16 +1252,4 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
-}
-
-bool UITask::isAudioPlayingInBackground() const {
-  if (!audiobook_screen) return false;
-  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
-  return player->isAudioActive();
-}
-
-bool UITask::isAudioPausedInBackground() const {
-  if (!audiobook_screen) return false;
-  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
-  return player->isBookOpen() && !player->isAudioActive();
 }
