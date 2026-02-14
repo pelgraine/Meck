@@ -40,7 +40,7 @@
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
-  char _version_info[12];
+  char _version_info[24];
 
 public:
   SplashScreen(UITask* task) : _task(task) {
@@ -772,6 +772,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   text_reader = new TextReaderScreen(this);
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
+  audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
   setCurrScreen(splash);
 }
 
@@ -1234,6 +1235,16 @@ void UITask::gotoSettingsScreen() {
 void UITask::gotoOnboarding() {
   ((SettingsScreen *) settings_screen)->enterOnboarding();
   setCurrScreen(settings_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoAudiobookPlayer() {
+  if (audiobook_screen == nullptr) return;  // No audio hardware
+  setCurrScreen(audiobook_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

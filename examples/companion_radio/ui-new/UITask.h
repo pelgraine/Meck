@@ -56,7 +56,7 @@ class UITask : public AbstractUITask {
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
   UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
-  UIScreen* audiobook_screen; // Audiobook player screen
+  UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
   UIScreen* curr;
 
   void userLedHandler();
@@ -97,10 +97,6 @@ public:
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
-
-  // Check if audio is playing/paused in the background (for status indicators)
-  bool isAudioPlayingInBackground() const;
-  bool isAudioPausedInBackground() const;
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
@@ -125,7 +121,7 @@ public:
   UIScreen* getChannelScreen() const { return channel_screen; }
   UIScreen* getSettingsScreen() const { return settings_screen; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
-  void setAudiobookScreen(UIScreen* screen) { audiobook_screen = screen; }
+  void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
