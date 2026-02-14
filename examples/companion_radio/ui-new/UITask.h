@@ -57,6 +57,7 @@ class UITask : public AbstractUITask {
   UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
   UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
+  UIScreen* repeater_admin;   // Repeater admin screen
   UIScreen* curr;
 
   void userLedHandler();
@@ -86,6 +87,7 @@ public:
   void gotoSettingsScreen(); // Navigate to settings
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
+  void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
   int  getMsgCount() const { return _msgcount; }
@@ -97,6 +99,7 @@ public:
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
+  bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();
@@ -111,6 +114,10 @@ public:
   
   // Add a sent message to the channel screen history
   void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
+
+  // Repeater admin callbacks
+  void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
+  void onAdminCliResponse(const char* from_name, const char* text) override;
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
@@ -122,6 +129,7 @@ public:
   UIScreen* getSettingsScreen() const { return settings_screen; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
+  UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
 
   // from AbstractUITask
   void msgRead(int msgcount) override;
