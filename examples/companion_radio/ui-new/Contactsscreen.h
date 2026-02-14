@@ -30,7 +30,7 @@ private:
 
   // Cached filtered contact indices for efficient scrolling
   // We rebuild this on filter change or when entering the screen
-  static const int MAX_VISIBLE = 400;  // matches MAX_CONTACTS build flag
+  static const int MAX_VISIBLE = 700;  // must be >= MAX_CONTACTS build flag
   uint16_t _filteredIdx[MAX_VISIBLE];  // indices into contact table
   uint32_t _filteredTs[MAX_VISIBLE];   // cached last_advert_timestamp for sorting
   int _filteredCount;                  // how many contacts match current filter
@@ -88,7 +88,7 @@ private:
       }
     }
     // Sort by last_advert_timestamp descending (most recently seen first)
-    // Simple insertion sort â€” fine for up to 400 entries on ESP32
+    // Simple insertion sort - fine for up to 700 entries on ESP32
     for (int i = 1; i < _filteredCount; i++) {
       uint16_t tmpIdx = _filteredIdx[i];
       uint32_t tmpTs  = _filteredTs[i];
