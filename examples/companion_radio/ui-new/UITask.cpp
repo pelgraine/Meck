@@ -228,12 +228,12 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-    // node name
-    display.setTextSize(1);
+    // node name (tinyfont to avoid overlapping clock)
+    display.setTextSize(0);
     display.setColor(DisplayDriver::GREEN);
     char filtered_name[sizeof(_node_prefs->node_name)];
     display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, 0);
+    display.setCursor(0, -3);
     display.print(filtered_name);
 
     // battery voltage
@@ -292,6 +292,7 @@ public:
         display.drawTextCentered(display.width() / 2, y, tmp);
         y += 12;
       #endif
+#if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
@@ -306,6 +307,7 @@ public:
         y += 18;
 #endif
       }
+#endif
 
       // Menu shortcuts - tinyfont monospaced grid
       y += 6;
