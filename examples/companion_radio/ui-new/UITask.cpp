@@ -88,13 +88,18 @@ class HomeScreen : public UIScreen {
     FIRST,
     RECENT,
     RADIO,
+#ifdef BLE_PIN_CODE
     BLUETOOTH,
+#endif
     ADVERT,
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
 #if UI_SENSORS_PAGE == 1
     SENSORS,
+#endif
+#if HAS_BQ27220
+    BATTERY,
 #endif
     SHUTDOWN,
     Count    // keep as last
@@ -207,12 +212,12 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-    // node name
-    display.setTextSize(1);
+    // node name (tinyfont to avoid overlapping clock)
+    display.setTextSize(0);
     display.setColor(DisplayDriver::GREEN);
     char filtered_name[sizeof(_node_prefs->node_name)];
     display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, 0);
+    display.setCursor(0, -3);
     display.print(filtered_name);
 
     // battery voltage
@@ -267,18 +272,22 @@ public:
         display.drawTextCentered(display.width() / 2, y, tmp);
         y += 12;
       #endif
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, y, "< Connected >");
         y += 12;
+#ifdef BLE_PIN_CODE
       } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
         display.drawTextCentered(display.width() / 2, y, tmp);
         y += 18;
+#endif
       }
+      #endif
 
       // Menu shortcuts - tinyfont monospaced grid
       y += 6;
@@ -341,6 +350,7 @@ public:
       display.setCursor(0, 53);
       sprintf(tmp, "Noise floor: %d", radio_driver.getNoiseFloor());
       display.print(tmp);
+#ifdef BLE_PIN_CODE
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18,
@@ -348,6 +358,7 @@ public:
           32, 32);
       display.setTextSize(1);
       display.drawTextCentered(display.width() / 2, 64 - 11, "toggle: " PRESS_LABEL);
+#endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18, advert_icon, 32, 32);
@@ -528,6 +539,51 @@ public:
       if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
       else sensors_scroll_offset = 0;
 #endif
+#if HAS_BQ27220
+    } else if (_page == HomePage::BATTERY) {
+      char buf[30];
+      int y = 18;
+
+      // Title
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, y, "Battery Gauge");
+      y += 12;
+
+      display.setColor(DisplayDriver::LIGHT);
+
+      // Time to empty
+      uint16_t tte = board.getTimeToEmpty();
+      display.drawTextLeftAlign(0, y, "remaining");
+      if (tte == 0xFFFF || tte == 0) {
+        strcpy(buf, tte == 0 ? "depleted" : "charging");
+      } else if (tte >= 60) {
+        sprintf(buf, "%dh %dm", tte / 60, tte % 60);
+      } else {
+        sprintf(buf, "%d min", tte);
+      }
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average current
+      int16_t avgCur = board.getAvgCurrent();
+      display.drawTextLeftAlign(0, y, "avg current");
+      sprintf(buf, "%d mA", avgCur);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average power
+      int16_t avgPow = board.getAvgPower();
+      display.drawTextLeftAlign(0, y, "avg power");
+      sprintf(buf, "%d mW", avgPow);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Voltage (already available)
+      uint16_t mv = board.getBattMilliVolts();
+      display.drawTextLeftAlign(0, y, "voltage");
+      sprintf(buf, "%d.%03d V", mv / 1000, mv % 1000);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+#endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
@@ -587,6 +643,7 @@ public:
       }
       return true;
     }
+#ifdef BLE_PIN_CODE
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       if (_task->isSerialEnabled()) {  // toggle Bluetooth on/off
         _task->disableSerial();
@@ -595,6 +652,7 @@ public:
       }
       return true;
     }
+#endif
     if (c == KEY_ENTER && _page == HomePage::ADVERT) {
       _task->notify(UIEventType::ack);
       if (the_mesh.advert()) {
