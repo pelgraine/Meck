@@ -47,10 +47,11 @@
   // Notes mode state
   static bool notesMode = false;
 
-  // Audiobook player
+  // Audiobook player — Audio object is heap-allocated on first use to avoid
+  // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
   #include "AudiobookPlayerScreen.h"
   #include "Audio.h"
-  Audio audio;
+  Audio* audio = nullptr;
   static bool audiobookMode = false;
 
   // Power management
@@ -527,13 +528,10 @@ void setup() {
       notesScr->setSDReady(true);
     }
 
-    // Create audiobook player screen and register with UITask
-    {
-      AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, &audio);
-      abScreen->setSDReady(true);
-      ui_task.setAudiobookScreen(abScreen);
-      MESH_DEBUG_PRINTLN("setup() - Audiobook player screen created");
-    }
+    // Audiobook player screen creation is deferred to first use (case 'p' in
+    // handleKeyboardInput) to avoid allocating Audio I2S/DMA buffers at boot,
+    // which would starve BLE of heap memory.
+    MESH_DEBUG_PRINTLN("setup() - Audiobook player deferred (lazy init on first use)");
 
     // Do an initial settings backup to SD (captures any first-boot defaults)
     backupSettingsToSD();
@@ -579,6 +577,8 @@ void setup() {
     MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif
 
+  Serial.printf("setup() complete — free heap: %d, largest block: %d\n",
+                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
@@ -1070,8 +1070,17 @@ void handleKeyboardInput() {
       break;
     
     case 'p':
-      // Open audiobook player
+      // Open audiobook player — lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
+      if (!ui_task.getAudiobookScreen()) {
+        Serial.printf("Audiobook: lazy init — free heap: %d, largest block: %d\n",
+                       ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        audio = new Audio();
+        AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio);
+        abScreen->setSDReady(sdCardReady);
+        ui_task.setAudiobookScreen(abScreen);
+        Serial.printf("Audiobook: init complete — free heap: %d\n", ESP.getFreeHeap());
+      }
       ui_task.gotoAudiobookPlayer();
       break;
     
