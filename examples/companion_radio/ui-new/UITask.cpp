@@ -99,6 +99,9 @@ class HomeScreen : public UIScreen {
 #if UI_SENSORS_PAGE == 1
     SENSORS,
 #endif
+#if HAS_BQ27220
+    BATTERY,
+#endif
     SHUTDOWN,
     Count    // keep as last
   };
@@ -292,7 +295,7 @@ public:
         display.drawTextCentered(display.width() / 2, y, tmp);
         y += 12;
       #endif
-#if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
@@ -307,7 +310,7 @@ public:
         y += 18;
 #endif
       }
-#endif
+      #endif
 
       // Menu shortcuts - tinyfont monospaced grid
       y += 6;
@@ -428,7 +431,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â confirms baud rate and data flow
+        // NMEA sentence counter ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -558,6 +561,51 @@ public:
       }
       if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
       else sensors_scroll_offset = 0;
+#endif
+#if HAS_BQ27220
+    } else if (_page == HomePage::BATTERY) {
+      char buf[30];
+      int y = 18;
+
+      // Title
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, y, "Battery Gauge");
+      y += 12;
+
+      display.setColor(DisplayDriver::LIGHT);
+
+      // Time to empty
+      uint16_t tte = board.getTimeToEmpty();
+      display.drawTextLeftAlign(0, y, "remaining");
+      if (tte == 0xFFFF || tte == 0) {
+        strcpy(buf, tte == 0 ? "depleted" : "charging");
+      } else if (tte >= 60) {
+        sprintf(buf, "%dh %dm", tte / 60, tte % 60);
+      } else {
+        sprintf(buf, "%d min", tte);
+      }
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average current
+      int16_t avgCur = board.getAvgCurrent();
+      display.drawTextLeftAlign(0, y, "avg current");
+      sprintf(buf, "%d mA", avgCur);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average power
+      int16_t avgPow = board.getAvgPower();
+      display.drawTextLeftAlign(0, y, "avg power");
+      sprintf(buf, "%d mW", avgPow);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Voltage (already available)
+      uint16_t mv = board.getBattMilliVolts();
+      display.drawTextLeftAlign(0, y, "voltage");
+      sprintf(buf, "%d.%03d V", mv / 1000, mv % 1000);
+      display.drawTextRightAlign(display.width()-1, y, buf);
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
@@ -1140,13 +1188,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cut hardware power
+        // Disable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â start duty cycle
+        // Enable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
