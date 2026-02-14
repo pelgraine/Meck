@@ -285,9 +285,9 @@ public:
       display.setTextSize(0);  // tinyfont 6x8 monospaced
       display.drawTextCentered(display.width() / 2, y, "Press:");
       y += 12;
-      display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts");
+      display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts  ");
       y += 10;
-      display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings");
+      display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
       display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
       y += 14;
