@@ -89,7 +89,9 @@ class HomeScreen : public UIScreen {
     FIRST,
     RECENT,
     RADIO,
+#ifdef BLE_PIN_CODE
     BLUETOOTH,
+#endif
     ADVERT,
 #if ENV_INCLUDE_GPS == 1
     GPS,
@@ -295,12 +297,14 @@ public:
         display.setTextSize(1);
         display.drawTextCentered(display.width() / 2, y, "< Connected >");
         y += 12;
+#ifdef BLE_PIN_CODE
       } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
         display.drawTextCentered(display.width() / 2, y, tmp);
         y += 18;
+#endif
       }
 
       // Menu shortcuts - tinyfont monospaced grid
@@ -364,6 +368,7 @@ public:
       display.setCursor(0, 53);
       sprintf(tmp, "Noise floor: %d", radio_driver.getNoiseFloor());
       display.print(tmp);
+#ifdef BLE_PIN_CODE
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18,
@@ -371,6 +376,7 @@ public:
           32, 32);
       display.setTextSize(1);
       display.drawTextCentered(display.width() / 2, 64 - 11, "toggle: " PRESS_LABEL);
+#endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18, advert_icon, 32, 32);
@@ -610,6 +616,7 @@ public:
       }
       return true;
     }
+#ifdef BLE_PIN_CODE
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       if (_task->isSerialEnabled()) {  // toggle Bluetooth on/off
         _task->disableSerial();
@@ -618,6 +625,7 @@ public:
       }
       return true;
     }
+#endif
     if (c == KEY_ENTER && _page == HomePage::ADVERT) {
       _task->notify(UIEventType::ack);
       if (the_mesh.advert()) {
