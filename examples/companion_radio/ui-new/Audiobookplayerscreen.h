@@ -160,6 +160,7 @@ private:
   int _selectedFile;
   int _scrollOffset;
   String _currentPath;    // Current browsed directory (starts as AUDIOBOOKS_FOLDER)
+  String _lastScanPath;   // Path of last completed scan (skip rescan if unchanged)
 
   // Current book state
   String      _currentFile;
@@ -504,6 +505,35 @@ private:
 
   // ---- File Scanning ----
 
+  // Lightweight refresh: update only bookmark flags on existing file list.
+  // Used on re-entry when we skip the full rescan.
+  void refreshBookmarkFlags() {
+    std::vector<String> bookmarkNames;
+    File bmkDir = SD.open(AB_BOOKMARK_FOLDER);
+    if (bmkDir && bmkDir.isDirectory()) {
+      File bmkFile = bmkDir.openNextFile();
+      while (bmkFile) {
+        String bn = String(bmkFile.name());
+        int sl = bn.lastIndexOf('/');
+        if (sl >= 0) bn = bn.substring(sl + 1);
+        bookmarkNames.push_back(bn);
+        bmkFile = bmkDir.openNextFile();
+      }
+      bmkDir.close();
+    }
+    for (auto& fe : _fileList) {
+      if (fe.isDir) continue;
+      String base = fe.name;
+      int dot = base.lastIndexOf('.');
+      if (dot > 0) base = base.substring(0, dot);
+      String bmkName = base + ".bmk";
+      fe.hasBookmark = false;
+      for (const auto& bn : bookmarkNames) {
+        if (bn == bmkName) { fe.hasBookmark = true; break; }
+      }
+    }
+  }
+
   void scanFiles() {
     _fileList.clear();
     if (!SD.exists(AUDIOBOOKS_FOLDER)) {
@@ -526,6 +556,23 @@ private:
       _fileList.push_back(upEntry);
     }
 
+    // ---- Batch bookmark check ----
+    // Scan .bookmarks/ directory once to build a set, instead of
+    // calling SD.exists() individually for each of the ~50 files.
+    std::vector<String> bookmarkNames;
+    File bmkDir = SD.open(AB_BOOKMARK_FOLDER);
+    if (bmkDir && bmkDir.isDirectory()) {
+      File bmkFile = bmkDir.openNextFile();
+      while (bmkFile) {
+        String bn = String(bmkFile.name());
+        int sl = bn.lastIndexOf('/');
+        if (sl >= 0) bn = bn.substring(sl + 1);
+        bookmarkNames.push_back(bn);
+        bmkFile = bmkDir.openNextFile();
+      }
+      bmkDir.close();
+    }
+
     // Load metadata cache for this directory
     std::vector<MetaCacheEntry> metaCache = loadMetaCache();
     bool cacheDirty = false;
@@ -536,6 +583,7 @@ private:
 
     // Reusable metadata parser (only used for cache misses)
     M4BMetadata scanMeta;
+    int cacheHits = 0;
 
     File f = root.openNextFile();
     while (f && (dirs.size() + files.size()) < AB_MAX_FILES) {
@@ -582,6 +630,7 @@ private:
             entry.displayTitle = mc.title;
             entry.displayAuthor = mc.author;
             cacheHit = true;
+            cacheHits++;
             break;
           }
         }
@@ -608,6 +657,12 @@ private:
             yield();  // Feed WDT between file parses
           }
           cacheDirty = true;
+          // Only log cache misses (the slow path)
+          Serial.printf("AB: [%s] %s - %s (%s)\n",
+                        entry.fileType.c_str(),
+                        entry.displayTitle.c_str(),
+                        entry.displayAuthor.length() > 0 ? entry.displayAuthor.c_str() : "?",
+                        entry.name.c_str());
         }
 
         // Fallback: clean up filename if no metadata title found
@@ -619,17 +674,20 @@ private:
           entry.displayTitle = cleaned;
         }
 
-        // Cache bookmark existence
-        String bmkPath = getBookmarkPath(name);
-        entry.hasBookmark = SD.exists(bmkPath.c_str());
+        // Bookmark check against pre-scanned set (no SD.exists per file)
+        String base = name;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) base = base.substring(0, dot);
+        String bmkName = base + ".bmk";
+        entry.hasBookmark = false;
+        for (const auto& bn : bookmarkNames) {
+          if (bn == bmkName) {
+            entry.hasBookmark = true;
+            break;
+          }
+        }
 
         files.push_back(entry);
-        Serial.printf("AB: [%s] %s - %s (%s)%s\n",
-                      entry.fileType.c_str(),
-                      entry.displayTitle.c_str(),
-                      entry.displayAuthor.length() > 0 ? entry.displayAuthor.c_str() : "?",
-                      entry.name.c_str(),
-                      cacheHit ? " (cached)" : "");
       }
       f = root.openNextFile();
     }
@@ -645,8 +703,10 @@ private:
       saveMetaCache(files);
     }
 
-    Serial.printf("AB: %s — %d dirs, %d files\n",
-                  _currentPath.c_str(), (int)dirs.size(), (int)files.size());
+    _lastScanPath = _currentPath;
+
+    Serial.printf("AB: %s — %d dirs, %d files (%d cached)\n",
+                  _currentPath.c_str(), (int)dirs.size(), (int)files.size(), cacheHits);
   }
 
   // ---- Book Open / Close ----
@@ -1184,6 +1244,7 @@ public:
       _displayRef(nullptr),
       _selectedFile(0), _scrollOffset(0),
       _currentPath(AUDIOBOOKS_FOLDER),
+      _lastScanPath(""),
       _bookOpen(false), _isPlaying(false), _isPaused(false),
       _volume(AB_DEFAULT_VOLUME),
       _coverBitmap(nullptr), _coverW(0), _coverH(0), _hasCover(false),
@@ -1273,11 +1334,20 @@ public:
   void enter(DisplayDriver& display) {
     _displayRef = &display;
     if (!_bookOpen) {
-      drawLoadingSplash();
-      scanFiles();
-      _selectedFile = 0;
-      _scrollOffset = 0;
-      _mode = FILE_LIST;
+      // Skip full rescan if we already have files for this path
+      if (_fileList.size() > 0 && _lastScanPath == _currentPath) {
+        // Fast path: just refresh bookmark flags (user may have created new ones)
+        refreshBookmarkFlags();
+        Serial.printf("AB: Re-entered file list (skipped rescan, %d files)\n", (int)_fileList.size());
+        _mode = FILE_LIST;
+      } else {
+        // First load or path changed: full scan needed
+        drawLoadingSplash();
+        scanFiles();
+        _selectedFile = 0;
+        _scrollOffset = 0;
+        _mode = FILE_LIST;
+      }
     } else {
       _mode = PLAYER;
     }
