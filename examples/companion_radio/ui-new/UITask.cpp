@@ -119,7 +119,7 @@ class HomeScreen : public UIScreen {
 void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
     uint8_t batteryPercentage = 0;
 #if HAS_BQ27220
-    // Use fuel gauge SOC directly — accurate across the full discharge curve
+    // Use fuel gauge SOC directly â€” accurate across the full discharge curve
     batteryPercentage = board.getBatteryPercent();
 #else
     // Fallback: voltage-based linear estimation for boards without fuel gauge
@@ -413,7 +413,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â confirms baud rate and data flow
+        // NMEA sentence counter ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -879,7 +879,7 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0) {
+  if (msgcount == 0 && curr == msg_preview) {
     gotoHomeScreen();
   }
 }
@@ -908,9 +908,12 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #if defined(LilyGo_TDeck_Pro)
   // T-Deck Pro: Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via 'M' key
-  char alertBuf[40];
-  snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
-  showAlert(alertBuf, 2000);
+  // Suppress alert entirely on admin screen - it needs focused interaction
+  if (!isOnRepeaterAdmin()) {
+    char alertBuf[40];
+    snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
+    showAlert(alertBuf, 2000);
+  }
 #else
   // Other devices: Show full preview screen (legacy behavior)
   setCurrScreen(msg_preview);
@@ -1170,13 +1173,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â cut hardware power
+        // Disable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â start duty cycle
+        // Enable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
