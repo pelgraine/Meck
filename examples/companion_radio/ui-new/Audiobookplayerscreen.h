@@ -18,6 +18,8 @@
 //   PLAYER mode:     Enter = play/pause, A = -30s, D = +30s,
 //                    W = volume up, S = volume down,
 //                    [ = prev chapter, ] = next chapter,
+//                    N = next track in playlist,
+//                    Z = toggle 45-min sleep timer,
 //                    Q = leave (audio continues) / close book (if paused)
 //
 // Library dependencies (add to platformio.ini lib_deps):
@@ -29,6 +31,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <SD.h>
 #include <vector>
+#include <algorithm>
 #include "M4BMetadata.h"
 
 // Audio library — ESP32-audioI2S by schreibfaul1
@@ -199,6 +202,15 @@ private:
   // UI state
   int  _transportSel;
   bool _showingInfo;
+
+  // Sleep timer — press Z to start 45min countdown, Z again or pause to cancel
+  bool          _sleepTimerActive;
+  unsigned long _sleepTimerEnd;     // millis() when timer expires
+
+  // Playlist / track queue — all playable files in the current directory
+  std::vector<String> _playlist;    // Sorted filenames in _currentPath
+  int                 _playlistIdx; // Current track index (-1 = no playlist)
+  volatile bool       _eofFlag;     // Set by audio_eof_mp3 callback
 
   // Power on the PCM5102A DAC via GPIO 41 (BOARD_6609_EN).
   // On the audio variant, this pin supplies power to the DAC circuit.
@@ -671,6 +683,17 @@ private:
           int dot = cleaned.lastIndexOf('.');
           if (dot > 0) cleaned = cleaned.substring(0, dot);
           cleaned.replace("_", " ");
+
+          // In subdirectories, filenames often follow "Artist - Album - NN Track"
+          // pattern. The folder already provides context, so extract just the
+          // last segment after " - " to show the track-relevant part.
+          if (_currentPath != String(AUDIOBOOKS_FOLDER)) {
+            int lastSep = cleaned.lastIndexOf(" - ");
+            if (lastSep > 0 && lastSep < (int)cleaned.length() - 3) {
+              cleaned = cleaned.substring(lastSep + 3);
+            }
+          }
+
           entry.displayTitle = cleaned;
         }
 
@@ -694,6 +717,18 @@ private:
     root.close();
     digitalWrite(SDCARD_CS, HIGH);
 
+    // Sort directories and files alphabetically (case-insensitive)
+    std::sort(dirs.begin(), dirs.end(), [](const AudiobookFileEntry& a, const AudiobookFileEntry& b) {
+      String la = a.name; la.toLowerCase();
+      String lb = b.name; lb.toLowerCase();
+      return la < lb;
+    });
+    std::sort(files.begin(), files.end(), [](const AudiobookFileEntry& a, const AudiobookFileEntry& b) {
+      String la = a.name; la.toLowerCase();
+      String lb = b.name; lb.toLowerCase();
+      return la < lb;
+    });
+
     // Append directories first, then files
     for (auto& d : dirs) _fileList.push_back(d);
     for (auto& fi : files) _fileList.push_back(fi);
@@ -707,6 +742,154 @@ private:
 
     Serial.printf("AB: %s — %d dirs, %d files (%d cached)\n",
                   _currentPath.c_str(), (int)dirs.size(), (int)files.size(), cacheHits);
+  }
+
+  // ---- Playlist / Track Queue ----
+  // Builds a sorted list of all playable files in the current directory.
+  // Called when opening a file — enables auto-advance and skip.
+
+  void buildPlaylist(const String& startingFile) {
+    _playlist.clear();
+    _playlistIdx = -1;
+
+    File dir = SD.open(_currentPath.c_str());
+    if (!dir || !dir.isDirectory()) return;
+
+    File f = dir.openNextFile();
+    while (f) {
+      if (!f.isDirectory()) {
+        String name = String(f.name());
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        if (!name.startsWith(".") && !name.startsWith("._") && isAudiobookFile(name)) {
+          _playlist.push_back(name);
+        }
+      }
+      f = dir.openNextFile();
+    }
+    dir.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    // Sort alphabetically (case-insensitive)
+    std::sort(_playlist.begin(), _playlist.end(), [](const String& a, const String& b) {
+      String la = a; la.toLowerCase();
+      String lb = b; lb.toLowerCase();
+      return la < lb;
+    });
+
+    // Find the starting file's index
+    for (int i = 0; i < (int)_playlist.size(); i++) {
+      if (_playlist[i] == startingFile) {
+        _playlistIdx = i;
+        break;
+      }
+    }
+
+    Serial.printf("AB: Playlist built — %d tracks, current idx %d\n",
+                  (int)_playlist.size(), _playlistIdx);
+  }
+
+  // Advance to next/previous track in playlist.
+  // direction: +1 = next, -1 = previous
+  // Returns true if a new track was started.
+  bool advanceTrack(int direction) {
+    if (_playlist.size() <= 1 || _playlistIdx < 0) return false;
+
+    int newIdx = _playlistIdx + direction;
+    if (newIdx < 0 || newIdx >= (int)_playlist.size()) {
+      Serial.println("AB: End of playlist reached");
+      // End of playlist — stop playback
+      stopPlayback();
+      return false;
+    }
+
+    // Stop current track cleanly
+    if (_audio) {
+      _audio->stopSong();
+    }
+    _isPlaying = false;
+    _isPaused = false;
+    _pendingSeekSec = 0;
+    _streamReady = false;
+    restoreM4bRename();
+    // Power down DAC briefly (startPlayback will re-enable it)
+    disableDAC();
+    _i2sInitialized = false;
+
+    // Save bookmark for current track before switching
+    saveBookmark();
+
+    // Free old cover art and metadata
+    freeCoverBitmap();
+    _metadata.clear();
+
+    // Switch to new track
+    _playlistIdx = newIdx;
+    String nextFile = _playlist[_playlistIdx];
+    Serial.printf("AB: Advancing to track %d/%d: %s\n",
+                  _playlistIdx + 1, (int)_playlist.size(), nextFile.c_str());
+
+    // Reset state for new track
+    _currentFile = nextFile;
+    _currentPosSec = 0;
+    _durationSec = 0;
+    _currentChapter = -1;
+    _lastPosUpdate = 0;
+    _currentFileSize = 0;
+    _eofFlag = false;
+
+    // Find file size from the file list (if available)
+    for (const auto& fe : _fileList) {
+      if (fe.name == nextFile) {
+        _currentFileSize = fe.fileSize;
+        break;
+      }
+    }
+
+    // Parse metadata for new track
+    String fullPath = _currentPath + "/" + nextFile;
+    File file = SD.open(fullPath.c_str(), FILE_READ);
+    if (file) {
+      if (_currentFileSize == 0) _currentFileSize = file.size();
+      String lower = nextFile;
+      lower.toLowerCase();
+      if (lower.endsWith(".m4b") || lower.endsWith(".m4a")) {
+        _metadata.parse(file);
+        yield();
+        decodeCoverArt(file);
+        yield();
+      } else if (lower.endsWith(".mp3")) {
+        _metadata.parseID3v2(file);
+        yield();
+        decodeCoverArt(file);
+        yield();
+        if (_metadata.title[0] == '\0') {
+          String base = nextFile;
+          int dot = base.lastIndexOf('.');
+          if (dot > 0) base = base.substring(0, dot);
+          strncpy(_metadata.title, base.c_str(), M4B_MAX_TITLE - 1);
+        }
+      } else {
+        String base = nextFile;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) base = base.substring(0, dot);
+        strncpy(_metadata.title, base.c_str(), M4B_MAX_TITLE - 1);
+      }
+      file.close();
+    }
+    digitalWrite(SDCARD_CS, HIGH);
+
+    // Load bookmark for new track (may resume a previous position)
+    loadBookmark();
+
+    if (_audio) _audio->setVolume(_volume);
+    if (_metadata.durationMs > 0) _durationSec = _metadata.durationMs / 1000;
+
+    // Start playing the new track
+    _lastPositionSave = millis();
+    startPlayback();
+
+    return true;
   }
 
   // ---- Book Open / Close ----
@@ -803,6 +986,11 @@ private:
     }
 
     _mode = PLAYER;
+    _eofFlag = false;
+
+    // Build playlist from current directory for track queuing
+    buildPlaylist(filename);
+
     Serial.printf("AB: Opened '%s' -- %s by %s, %us, %d chapters\n",
                   filename.c_str(), _metadata.title, _metadata.author,
                   _durationSec, _metadata.chapterCount);
@@ -818,6 +1006,10 @@ private:
     _metadata.clear();
     _bookOpen = false;
     _currentFile = "";
+    _sleepTimerActive = false;
+    _playlist.clear();
+    _playlistIdx = -1;
+    _eofFlag = false;
     _mode = FILE_LIST;
   }
 
@@ -825,6 +1017,8 @@ private:
 
   void startPlayback() {
     if (!_audio || _currentFile.length() == 0) return;
+
+    _eofFlag = false;  // Clear any stale EOF from previous track
 
     // Ensure DAC has power (must be re-enabled after each stop)
     enableDAC();
@@ -886,6 +1080,8 @@ private:
     _isPaused = false;
     _pendingSeekSec = 0;
     _streamReady = false;
+    _sleepTimerActive = false;  // Cancel sleep timer on stop
+    _eofFlag = false;
     saveBookmark();
 
     // Restore .m4b filename if we renamed it for playback
@@ -906,6 +1102,7 @@ private:
     if (_isPlaying && !_isPaused) {
       _audio->pauseResume();
       _isPaused = true;
+      _sleepTimerActive = false;  // Cancel sleep timer on pause
       saveBookmark();
     } else if (_isPaused) {
       _audio->pauseResume();
@@ -1216,25 +1413,54 @@ private:
     {
       display.setTextSize(1);
       display.setColor(DisplayDriver::LIGHT);
+
+      // Show track position in playlist (if multiple tracks)
+      if (_playlist.size() > 1 && _playlistIdx >= 0) {
+        char trackBuf[24];
+        snprintf(trackBuf, sizeof(trackBuf), "Track %d/%d",
+                 _playlistIdx + 1, (int)_playlist.size());
+        display.drawTextCentered(display.width() / 2, y, trackBuf);
+        y += 10;
+      }
+
       display.drawTextCentered(display.width() / 2, y, "Enter: Play/Pause");
       y += 10;
 
-      // Only show second hint when there's space (no cover art)
+      // Sleep timer or additional hints
       if (y < display.height() - 26) {
         display.setColor(DisplayDriver::YELLOW);
-        if (_isPlaying && !_isPaused) {
+        if (_sleepTimerActive) {
+          // Show countdown
+          unsigned long remaining = 0;
+          if (millis() < _sleepTimerEnd) remaining = (_sleepTimerEnd - millis()) / 1000;
+          int mins = remaining / 60;
+          int secs = remaining % 60;
+          char sleepBuf[32];
+          snprintf(sleepBuf, sizeof(sleepBuf), "Sleep: %d:%02d (Z:Off)", mins, secs);
+          display.drawTextCentered(display.width() / 2, y, sleepBuf);
+        } else if (_isPlaying && !_isPaused) {
           display.drawTextCentered(display.width() / 2, y,
-                                   "Screen updates on keypress");
+                                   "Z: Start 45m sleep timer");
         } else if (_metadata.chapterCount > 0) {
           display.drawTextCentered(display.width() / 2, y,
                                    "[/]: Prev/Next Chapter");
+        } else if (_playlist.size() > 1) {
+          display.drawTextCentered(display.width() / 2, y,
+                                   "N: Next Track");
         }
       }
     }
     // Transport controls drawn — footer is at fixed position below
 
     // ---- Footer Nav Bar ----
-    drawFooter(display, "A/D:Seek W/S:Vol", (_isPlaying && !_isPaused) ? "Q:Leave" : "Q:Close");
+    {
+      const char* rightText = (_isPlaying && !_isPaused) ? "Q:Leave" : "Q:Close";
+      if (_playlist.size() > 1) {
+        drawFooter(display, "A/D:Seek N:Next", rightText);
+      } else {
+        drawFooter(display, "A/D:Seek W/S:Vol", rightText);
+      }
+    }
   }
 
 public:
@@ -1253,7 +1479,9 @@ public:
       _pendingSeekSec(0), _streamReady(false),
       _currentFileSize(0),
       _m4bRenamed(false),
-      _transportSel(2), _showingInfo(false) {}
+      _transportSel(2), _showingInfo(false),
+      _sleepTimerActive(false), _sleepTimerEnd(0),
+      _playlistIdx(-1), _eofFlag(false) {}
 
   ~AudiobookPlayerScreen() {
     freeCoverBitmap();
@@ -1317,11 +1545,40 @@ public:
       saveBookmark();
       _lastPositionSave = millis();
     }
+
+    // Sleep timer — auto-pause when countdown expires
+    if (_sleepTimerActive && millis() >= _sleepTimerEnd) {
+      _sleepTimerActive = false;
+      Serial.println("AB: Sleep timer expired — pausing playback");
+      togglePause();
+      return;  // Don't process further this tick
+    }
+
+    // EOF auto-advance — when a track finishes, play the next one
+    if (_eofFlag) {
+      _eofFlag = false;
+      Serial.println("AB: EOF detected");
+      if (_playlist.size() > 1 && _playlistIdx >= 0 &&
+          _playlistIdx < (int)_playlist.size() - 1) {
+        // More tracks in playlist — advance
+        advanceTrack(1);
+      } else {
+        // Last track or no playlist — just stop
+        stopPlayback();
+      }
+    }
   }
 
   bool isAudioActive() const { return _isPlaying && !_isPaused; }
   bool isPaused() const { return _isPaused; }
   bool isBookOpenAndPaused() const { return _bookOpen && (_isPaused || !_isPlaying); }
+
+  // Called from audio_eof_mp3 callback in main.cpp to signal end of file
+  void onEOF() { _eofFlag = true; }
+
+  // Playlist info for external queries
+  int getPlaylistSize() const { return (int)_playlist.size(); }
+  int getPlaylistIndex() const { return _playlistIdx; }
 
   // Public method to close the current book (stops playback, saves bookmark,
   // returns to file list). Used by main.cpp when user presses Q while paused.
@@ -1493,7 +1750,7 @@ public:
       return true;  // Always consume & refresh
     }
 
-    // [ - previous chapter
+    // [ - previous chapter (shift key required on T-Deck Pro)
     if (c == '[') {
       if (_metadata.chapterCount > 0 && _currentChapter > 0) {
         seekToChapter(_currentChapter - 1);
@@ -1502,13 +1759,35 @@ public:
       return false;
     }
 
-    // ] - next chapter
+    // ] - next chapter (shift key required on T-Deck Pro)
     if (c == ']') {
       if (_metadata.chapterCount > 0 && _currentChapter < _metadata.chapterCount - 1) {
         seekToChapter(_currentChapter + 1);
         return true;
       }
       return false;
+    }
+
+    // N - next track in playlist (always, regardless of chapters)
+    if (c == 'n') {
+      if (_playlist.size() > 1 && _playlistIdx < (int)_playlist.size() - 1) {
+        advanceTrack(1);
+        return true;
+      }
+      return false;
+    }
+
+    // Z - toggle 45-minute sleep timer
+    if (c == 'z') {
+      if (_sleepTimerActive) {
+        _sleepTimerActive = false;
+        Serial.println("AB: Sleep timer cancelled");
+      } else {
+        _sleepTimerActive = true;
+        _sleepTimerEnd = millis() + (45UL * 60UL * 1000UL);
+        Serial.println("AB: Sleep timer set for 45 minutes");
+      }
+      return true;
     }
 
     // Q - handled by main.cpp (leave screen or close book depending on play state)

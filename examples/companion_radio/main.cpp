@@ -1455,8 +1455,12 @@ void audio_info(const char *info) {
 
 void audio_eof_mp3(const char *info) {
   Serial.printf("Audio: End of file - %s\n", info);
-  // Playback finished — the player screen will detect this
-  // via audio.isRunning() returning false
+  // Signal the player screen for auto-advance to next track
+  AudiobookPlayerScreen* abPlayer =
+    (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+  if (abPlayer) {
+    abPlayer->onEOF();
+  }
 }
 
 #endif // LilyGo_TDeck_Pro
