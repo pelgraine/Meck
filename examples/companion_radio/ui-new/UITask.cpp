@@ -850,6 +850,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   vibration.begin();
 #endif
 
+  // Keyboard backlight for message flash notifications
+#ifdef KB_BL_PIN
+  pinMode(KB_BL_PIN, OUTPUT);
+  digitalWrite(KB_BL_PIN, LOW);
+#endif
+
   ui_started_at = millis();
   _alert_expiry = 0;
 
@@ -953,6 +959,14 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     _next_refresh = 100;  // trigger refresh
     }
   }
+
+  // Keyboard flash notification
+#ifdef KB_BL_PIN
+  if (_node_prefs->kb_flash_notify) {
+    digitalWrite(KB_BL_PIN, HIGH);
+    _kb_flash_off_at = millis() + 200;  // 200ms flash
+  }
+#endif
 }
 
 void UITask::userLedHandler() {
@@ -1087,6 +1101,14 @@ void UITask::loop() {
   }
 
   userLedHandler();
+
+  // Turn off keyboard flash after timeout
+#ifdef KB_BL_PIN
+  if (_kb_flash_off_at && millis() >= _kb_flash_off_at) {
+    digitalWrite(KB_BL_PIN, LOW);
+    _kb_flash_off_at = 0;
+  }
+#endif
 
 #ifdef PIN_BUZZER
   if (buzzer.isPlaying())  buzzer.loop();

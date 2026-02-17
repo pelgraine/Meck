@@ -32,6 +32,7 @@ class UITask : public AbstractUITask {
   GenericVibration vibration;
 #endif
   unsigned long _next_refresh, _auto_off;
+  unsigned long _kb_flash_off_at;          // Keyboard flash turn-off timer
   NodePrefs* _node_prefs;
   char _alert[80];
   unsigned long _alert_expiry;
@@ -74,6 +75,7 @@ public:
 
   UITask(mesh::MainBoard* board, BaseSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
     next_batt_chck = _next_refresh = 0;
+    _kb_flash_off_at = 0;
     ui_started_at = 0;
     curr = NULL;
   }
