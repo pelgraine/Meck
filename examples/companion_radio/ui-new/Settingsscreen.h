@@ -55,6 +55,7 @@ enum SettingsRowType : uint8_t {
   ROW_CR,             // Coding rate (5-8)
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
+  ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
@@ -126,6 +127,7 @@ private:
     addRow(ROW_CR);
     addRow(ROW_TX_POWER);
     addRow(ROW_UTC_OFFSET);
+    addRow(ROW_MSG_NOTIFY);
     addRow(ROW_CH_HEADER);
 
     // Enumerate current channels
@@ -462,6 +464,12 @@ public:
           } else {
             snprintf(tmp, sizeof(tmp), "UTC Offset: %+d", _prefs->utc_offset_hours);
           }
+          display.print(tmp);
+          break;
+
+        case ROW_MSG_NOTIFY:
+          snprintf(tmp, sizeof(tmp), "Msg Flash: %s",
+                   _prefs->kb_flash_notify ? "ON" : "OFF");
           display.print(tmp);
           break;
 
@@ -823,6 +831,12 @@ public:
           break;
         case ROW_UTC_OFFSET:
           startEditInt(_prefs->utc_offset_hours);
+          break;
+        case ROW_MSG_NOTIFY:
+          _prefs->kb_flash_notify = _prefs->kb_flash_notify ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Msg flash notify = %s\n",
+                        _prefs->kb_flash_notify ? "ON" : "OFF");
           break;
         case ROW_ADD_CHANNEL:
           startEditText("");
