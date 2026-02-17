@@ -118,12 +118,8 @@ class HomeScreen : public UIScreen {
 
 
 void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
+    // Use voltage-based estimation to match BLE app readings
     uint8_t batteryPercentage = 0;
-#if HAS_BQ27220
-    // Use fuel gauge SOC directly â€” accurate across the full discharge curve
-    batteryPercentage = board.getBatteryPercent();
-#else
-    // Fallback: voltage-based linear estimation for boards without fuel gauge
     if (batteryMilliVolts > 0) {
       const int minMilliVolts = 3000;
       const int maxMilliVolts = 4200;
@@ -132,7 +128,6 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
       if (pct > 100) pct = 100;
       batteryPercentage = (uint8_t)pct;
     }
-#endif
 
     display.setColor(DisplayDriver::GREEN);
 
@@ -617,13 +612,6 @@ public:
       uint16_t remCap = board.getRemainingCapacity();
       display.drawTextLeftAlign(0, y, "remaining cap");
       sprintf(buf, "%d mAh", remCap);
-      display.drawTextRightAlign(display.width()-1, y, buf);
-      y += 10;
-
-      // Full charge capacity (learned value)
-      uint16_t fullCap = board.getFullChargeCapacity();
-      display.drawTextLeftAlign(0, y, "full charge cap");
-      sprintf(buf, "%d mAh", fullCap);
       display.drawTextRightAlign(display.width()-1, y, buf);
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
