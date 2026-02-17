@@ -468,7 +468,7 @@ public:
           break;
 
         case ROW_MSG_NOTIFY:
-          snprintf(tmp, sizeof(tmp), "Msg Flash: %s",
+          snprintf(tmp, sizeof(tmp), "Msg Rcvd LED Light Pulse: %s",
                    _prefs->kb_flash_notify ? "ON" : "OFF");
           display.print(tmp);
           break;
