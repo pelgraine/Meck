@@ -74,7 +74,7 @@ private:
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(CHANNEL_MSG_HISTORY_SIZE), _viewChannelIdx(0), _sdReady(false) {
+      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -295,6 +295,7 @@ public:
       int lineHeight = 9;   // 8px font + 1px spacing
       int headerHeight = 14;
       int footerHeight = 14;
+      int scrollBarW = 4;   // Width of scroll indicator on right edge
       // Hard cutoff: no text may START at or beyond this y value
       // This ensures rendered glyphs (which extend lineHeight below y) stay above the footer
       int maxY = display.height() - footerHeight;
@@ -302,7 +303,8 @@ public:
       int y = headerHeight;
       
       // Build list of messages for this channel (newest first)
-      int channelMsgs[CHANNEL_MSG_HISTORY_SIZE];
+      // Static to avoid 1200-byte stack allocation every render cycle
+      static int channelMsgs[CHANNEL_MSG_HISTORY_SIZE];
       int numChannelMsgs = 0;
       
       for (int i = 0; i < _msgCount && numChannelMsgs < CHANNEL_MSG_HISTORY_SIZE; i++) {
@@ -319,6 +321,10 @@ public:
       for (int l = 0, r = numChannelMsgs - 1; l < r; l++, r--) {
         int tmp = channelMsgs[l]; channelMsgs[l] = channelMsgs[r]; channelMsgs[r] = tmp;
       }
+      
+      // Clamp scroll position to valid range
+      int maxScroll = numChannelMsgs > _msgsPerPage ? numChannelMsgs - _msgsPerPage : 0;
+      if (_scrollPos > maxScroll) _scrollPos = maxScroll;
       
       // Calculate start index so newest messages appear at the bottom
       // scrollPos=0 shows the most recent messages, scrollPos++ scrolls up to older
@@ -361,7 +367,7 @@ public:
         
         // Track position in pixels for emoji placement
         // Uses advance width (cursor movement) not bounding box for px tracking
-        int lineW = display.width();
+        int lineW = display.width() - scrollBarW - 1;  // Reserve space for scroll bar
         int px = display.getTextWidth(tmp);  // Pixel X after timestamp
         char dblStr[3] = {0, 0, 0};
         
@@ -460,11 +466,37 @@ public:
         if (y + lineHeight > maxY) screenFull = true;
       }
       
-      // Only update _msgsPerPage when the screen actually filled up.
-      // If we ran out of messages before filling the screen, keep the
-      // previous (higher) value so startIdx doesn't under-count.
-      if (screenFull && msgsDrawn > 0) {
+      // Only update _msgsPerPage when at the bottom (scrollPos==0) and the
+      // screen actually filled up.  While scrolled, freezing _msgsPerPage
+      // prevents a feedback loop where variable-height messages cause
+      // msgsPerPage to oscillate, shifting startIdx every render (flicker).
+      if (screenFull && msgsDrawn > 0 && _scrollPos == 0) {
         _msgsPerPage = msgsDrawn;
+      }
+      
+      // --- Scroll bar (emoji picker style) ---
+      int sbX = display.width() - scrollBarW;
+      int sbTop = headerHeight;
+      int sbHeight = maxY - headerHeight;
+      
+      // Draw track outline
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(sbX, sbTop, scrollBarW, sbHeight);
+      
+      if (channelMsgCount > _msgsPerPage) {
+        // Scrollable: draw proportional thumb
+        int maxScroll = channelMsgCount - _msgsPerPage;
+        if (maxScroll < 1) maxScroll = 1;
+        int thumbH = (_msgsPerPage * sbHeight) / channelMsgCount;
+        if (thumbH < 4) thumbH = 4;
+        // _scrollPos=0 is newest (bottom), so invert for thumb position
+        int thumbY = sbTop + ((maxScroll - _scrollPos) * (sbHeight - thumbH)) / maxScroll;
+        for (int ty = thumbY + 1; ty < thumbY + thumbH - 1; ty++)
+          display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
+      } else {
+        // All messages fit: fill entire track
+        for (int ty = sbTop + 1; ty < sbTop + sbHeight - 1; ty++)
+          display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
       }
       
       display.setTextSize(1);  // Restore for footer
