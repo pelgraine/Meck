@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 8
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "17 Feb 2026"
+#define FIRMWARE_BUILD_DATE "20 Feb 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v0.9.0A"
+#define FIRMWARE_VERSION "Meck v0.9.1A"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

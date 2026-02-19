@@ -439,7 +439,8 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   // we only want to show text messages on display, not cli data
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
   if (should_display && _ui) {
-    _ui->newMsg(path_len, from.name, text, offline_queue_len);
+    const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
+    _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path);
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::contactMessage); //buzz if enabled
   }
 #endif
@@ -525,11 +526,11 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 
   // Forward CLI response to UI admin screen if admin session is active
-  #ifdef DISPLAY_CLASS
+#ifdef DISPLAY_CLASS
   if (_admin_contact_idx >= 0 && _ui) {
     _ui->onAdminCliResponse(from.name, text);
   }
-  #endif
+#endif
 }
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -581,7 +582,8 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     channel_name = channel_details.name;
   }
   if (_ui) {
-    _ui->newMsg(path_len, channel_name, text, offline_queue_len);
+    const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
+    _ui->newMsg(path_len, channel_name, text, offline_queue_len, msg_path);
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::channelMessage); //buzz if enabled
   }
 #endif

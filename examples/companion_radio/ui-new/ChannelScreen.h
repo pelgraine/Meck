@@ -14,6 +14,7 @@
 // Maximum messages to store in history
 #define CHANNEL_MSG_HISTORY_SIZE 300
 #define CHANNEL_MSG_TEXT_LEN 160
+#define MSG_PATH_MAX 8  // Max repeater hops stored per message
 
 #ifndef MAX_GROUP_CHANNELS
   #define MAX_GROUP_CHANNELS 20
@@ -23,7 +24,7 @@
 // On-disk format for message persistence (SD card)
 // ---------------------------------------------------------------------------
 #define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
-#define MSG_FILE_VERSION 1
+#define MSG_FILE_VERSION 2
 #define MSG_FILE_PATH    "/meshcore/messages.bin"
 
 struct __attribute__((packed)) MsgFileHeader {
@@ -41,8 +42,9 @@ struct __attribute__((packed)) MsgFileRecord {
   uint8_t  channel_idx;
   uint8_t  valid;
   uint8_t  reserved;
+  uint8_t  path[MSG_PATH_MAX];  // Repeater hop hashes (first byte of pub key)
   char     text[CHANNEL_MSG_TEXT_LEN];
-  // 168 bytes total
+  // 176 bytes total
 };
 
 class UITask;  // Forward declaration
@@ -55,6 +57,7 @@ public:
     uint32_t timestamp;
     uint8_t path_len;
     uint8_t channel_idx;  // Which channel this message belongs to
+    uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
   };
@@ -70,21 +73,24 @@ private:
   int _msgsPerPage;   // Messages that fit on screen
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
   bool _sdReady;      // SD card is available for persistence
+  bool _showPathOverlay;  // Show path detail overlay for last received msg
   
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false) {
+      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
+      memset(_messages[i].path, 0, MSG_PATH_MAX);
     }
   }
 
   void setSDReady(bool ready) { _sdReady = ready; }
 
   // Add a new message to the history
-  void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text) {
+  void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
+                  const uint8_t* path_bytes = nullptr) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -93,6 +99,13 @@ public:
     msg->path_len = path_len;
     msg->channel_idx = channel_idx;
     msg->valid = true;
+    
+    // Store path hop hashes
+    memset(msg->path, 0, MSG_PATH_MAX);
+    if (path_bytes && path_len > 0 && path_len != 0xFF) {
+      int n = path_len < MSG_PATH_MAX ? path_len : MSG_PATH_MAX;
+      memcpy(msg->path, path_bytes, n);
+    }
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
     // The text already contains "Sender: message" format
@@ -104,6 +117,7 @@ public:
     
     // Reset scroll to show newest message
     _scrollPos = 0;
+    _showPathOverlay = false;  // Dismiss overlay on new message
 
     // Persist to SD card
     saveToSD();
@@ -123,7 +137,23 @@ public:
   int getMessageCount() const { return _msgCount; }
   
   uint8_t getViewChannelIdx() const { return _viewChannelIdx; }
-  void setViewChannelIdx(uint8_t idx) { _viewChannelIdx = idx; _scrollPos = 0; }
+  void setViewChannelIdx(uint8_t idx) { _viewChannelIdx = idx; _scrollPos = 0; _showPathOverlay = false; }
+  bool isShowingPathOverlay() const { return _showPathOverlay; }
+
+  // Find the newest RECEIVED message for the current channel
+  // (path_len != 0 means received, path_len 0 = locally sent)
+  ChannelMessage* getNewestReceivedMsg() {
+    for (int i = 0; i < _msgCount; i++) {
+      int idx = _newestIdx - i;
+      while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+      idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx
+          && _messages[idx].path_len != 0) {
+        return &_messages[idx];
+      }
+    }
+    return nullptr;
+  }
 
   // -----------------------------------------------------------------------
   // SD card persistence
@@ -163,6 +193,7 @@ public:
       rec.channel_idx = _messages[i].channel_idx;
       rec.valid       = _messages[i].valid ? 1 : 0;
       rec.reserved    = 0;
+      memcpy(rec.path, _messages[i].path, MSG_PATH_MAX);
       memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
       f.write((uint8_t*)&rec, sizeof(rec));
     }
@@ -228,6 +259,7 @@ public:
       _messages[i].path_len    = rec.path_len;
       _messages[i].channel_idx = rec.channel_idx;
       _messages[i].valid       = (rec.valid != 0);
+      memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
       if (_messages[i].valid) loaded++;
     }
@@ -279,6 +311,120 @@ public:
     
     // Divider line
     display.drawRect(0, 11, display.width(), 1);
+    
+    // --- Path detail overlay ---
+    if (_showPathOverlay) {
+      display.setTextSize(0);
+      int lineH = 9;
+      int y = 14;
+      
+      ChannelMessage* msg = getNewestReceivedMsg();
+      if (!msg) {
+        display.setCursor(0, y);
+        display.setColor(DisplayDriver::LIGHT);
+        display.print("No received messages");
+      } else {
+        // Message preview (first ~30 chars)
+        display.setCursor(0, y);
+        display.setColor(DisplayDriver::LIGHT);
+        char preview[32];
+        strncpy(preview, msg->text, 31);
+        preview[31] = '\0';
+        display.print(preview);
+        y += lineH;
+        
+        // Age
+        uint32_t age = _rtc->getCurrentTime() - msg->timestamp;
+        display.setCursor(0, y);
+        display.setColor(DisplayDriver::YELLOW);
+        if (age < 60) sprintf(tmp, "Age: %ds", age);
+        else if (age < 3600) sprintf(tmp, "Age: %dm", age / 60);
+        else if (age < 86400) sprintf(tmp, "Age: %dh", age / 3600);
+        else sprintf(tmp, "Age: %dd", age / 86400);
+        display.print(tmp);
+        y += lineH;
+        
+        // Route type
+        display.setCursor(0, y);
+        uint8_t plen = msg->path_len;
+        if (plen == 0xFF) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.print("Route: Direct");
+        } else if (plen == 0) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.print("Route: Local/Sent");
+        } else {
+          display.setColor(DisplayDriver::GREEN);
+          sprintf(tmp, "Route: %d hop%s", plen, plen == 1 ? "" : "s");
+          display.print(tmp);
+        }
+        y += lineH + 2;
+        
+        // Show each hop resolved against contacts
+        if (plen > 0 && plen != 0xFF) {
+          int displayHops = plen < MSG_PATH_MAX ? plen : MSG_PATH_MAX;
+          int maxY = display.height() - 26;
+          
+          for (int h = 0; h < displayHops && y + lineH <= maxY; h++) {
+            uint8_t hopHash = msg->path[h];
+            display.setCursor(0, y);
+            display.setColor(DisplayDriver::LIGHT);
+            sprintf(tmp, " %d: ", h + 1);
+            display.print(tmp);
+            
+            // Try to resolve: prefer repeaters, then any contact
+            bool resolved = false;
+            int numContacts = the_mesh.getNumContacts();
+            ContactInfo contact;
+            
+            // First pass: repeaters only
+            for (uint32_t ci = 0; ci < numContacts && !resolved; ci++) {
+              if (the_mesh.getContactByIdx(ci, contact)) {
+                if (contact.id.pub_key[0] == hopHash && contact.type == ADV_TYPE_REPEATER) {
+                  display.setColor(DisplayDriver::GREEN);
+                  display.print(contact.name);
+                  resolved = true;
+                }
+              }
+            }
+            // Second pass: any contact type
+            if (!resolved) {
+              for (uint32_t ci = 0; ci < numContacts; ci++) {
+                if (the_mesh.getContactByIdx(ci, contact)) {
+                  if (contact.id.pub_key[0] == hopHash) {
+                    display.setColor(DisplayDriver::YELLOW);
+                    display.print(contact.name);
+                    resolved = true;
+                    break;
+                  }
+                }
+              }
+            }
+            // Fallback: show hex hash
+            if (!resolved) {
+              display.setColor(DisplayDriver::LIGHT);
+              sprintf(tmp, "?%02X", hopHash);
+              display.print(tmp);
+            }
+            y += lineH;
+          }
+        }
+      }
+      
+      // Overlay footer
+      display.setTextSize(1);
+      int footerY = display.height() - 12;
+      display.drawRect(0, footerY - 2, display.width(), 1);
+      display.setCursor(0, footerY);
+      display.setColor(DisplayDriver::YELLOW);
+      display.print("Q:Back");
+
+#if AUTO_OFF_MILLIS == 0
+      return 5000;
+#else
+      return 1000;
+#endif
+    }
     
     if (channelMsgCount == 0) {
       display.setTextSize(0);  // Tiny font for body text
@@ -508,11 +654,11 @@ public:
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
     
-    // Left side: Q:Back A/D:Ch
-    display.print("Q:Back A/D:Ch");
+    // Left side: abbreviated controls
+    display.print("Q:Bck A/D:Ch V:Pth");
     
-    // Right side: Entr:New
-    const char* rightText = "Entr:New";
+    // Right side: Ent:New
+    const char* rightText = "Ent:New";
     display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
     display.print(rightText);
 
@@ -524,7 +670,25 @@ public:
   }
 
   bool handleInput(char c) override {
+    // If overlay is showing, only handle dismiss
+    if (_showPathOverlay) {
+      if (c == 'q' || c == 'Q' || c == '\b' || c == 'v' || c == 'V') {
+        _showPathOverlay = false;
+        return true;
+      }
+      return true;  // Consume all keys while overlay is up
+    }
+    
     int channelMsgCount = getMessageCountForChannel();
+    
+    // V - show path detail for last received message
+    if (c == 'v' || c == 'V') {
+      if (getNewestReceivedMsg() != nullptr) {
+        _showPathOverlay = true;
+        return true;
+      }
+      return false;  // No received messages to show
+    }
     
     // W or KEY_PREV - scroll up (older messages)
     if (c == 0xF2 || c == 'w' || c == 'W') {

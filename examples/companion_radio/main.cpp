@@ -1217,6 +1217,11 @@ void handleKeyboardInput() {
           Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
         }
       } else if (ui_task.isOnChannelScreen()) {
+        // Don't enter compose if path overlay is showing
+        ChannelScreen* chScr2 = (ChannelScreen*)ui_task.getChannelScreen();
+        if (chScr2 && chScr2->isShowingPathOverlay()) {
+          break;
+        }
         composeDM = false;
         composeDMContactIdx = -1;
         composeChannelIdx = ui_task.getChannelScreenViewIdx();
@@ -1234,6 +1239,14 @@ void handleKeyboardInput() {
       
     case 'q':
     case '\b':
+      // If channel screen path overlay is showing, dismiss it instead of going home
+      if (ui_task.isOnChannelScreen()) {
+        ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+        if (chScr && chScr->isShowingPathOverlay()) {
+          ui_task.injectKey('q');
+          break;
+        }
+      }
       // Go back to home screen (admin mode handled above)
       Serial.println("Nav: Back to home");
       ui_task.gotoHomeScreen();
@@ -1248,6 +1261,13 @@ void handleKeyboardInput() {
     case 'u':
       // UTC offset edit (home screen GPS page handles this)
       ui_task.injectKey('u');
+      break;
+
+    case 'v':
+      // View path overlay (channel screen only)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('v');
+      }
       break;
       
     default:

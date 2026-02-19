@@ -915,7 +915,8 @@ void UITask::msgRead(int msgcount) {
   }
 }
 
-void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
+void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
+                    const uint8_t* path) {
   _msgcount = msgcount;
 
   // Add to preview screen (for notifications on non-keyboard devices)
@@ -933,8 +934,8 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
   
-  // Add to channel history screen with channel index
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text);
+  // Add to channel history screen with channel index and path data
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path);
   
 #if defined(LilyGo_TDeck_Pro)
   // T-Deck Pro: Don't interrupt user with popup - just show brief notification
