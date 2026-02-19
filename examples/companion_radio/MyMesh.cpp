@@ -1189,6 +1189,11 @@ void MyMesh::handleCmdFrame(size_t len) {
       bool success = getChannel(channel_idx, channel);
       if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
         writeOKFrame();
+        #ifdef DISPLAY_CLASS
+        if (_ui) {
+          _ui->addSentChannelMessage(channel_idx, _prefs.node_name, text);
+        }
+#endif
       } else {
         writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
       }
