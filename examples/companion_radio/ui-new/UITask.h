@@ -103,9 +103,11 @@ public:
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
 
+#ifdef MECK_AUDIO_VARIANT
   // Check if audio is playing/paused in the background (for status indicators)
   bool isAudioPlayingInBackground() const;
   bool isAudioPausedInBackground() const;
+#endif
   uint8_t getChannelScreenViewIdx() const;
 
   void toggleBuzzer();

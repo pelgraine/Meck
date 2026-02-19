@@ -48,12 +48,14 @@
   // Notes mode state
   static bool notesMode = false;
 
-  // Audiobook player — Audio object is heap-allocated on first use to avoid
+  // Audiobook player â€” Audio object is heap-allocated on first use to avoid
   // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
+  #ifdef MECK_AUDIO_VARIANT
   #include "AudiobookPlayerScreen.h"
   #include "Audio.h"
   Audio* audio = nullptr;
   static bool audiobookMode = false;
+  #endif
 
   // Power management
   #if HAS_GPS
@@ -328,7 +330,7 @@ void setup() {
   }
   MESH_DEBUG_PRINTLN("setup() - radio_init() done");
 
-  // CPU frequency scaling — drop to 80 MHz for idle mesh listening
+  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
   cpuPower.begin();
 
   MESH_DEBUG_PRINTLN("setup() - about to call fast_rng.begin()");
@@ -415,7 +417,7 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
-  // Early SD card init Ã¢â‚¬â€ needed BEFORE the_mesh.begin() so we can restore
+  // Early SD card init ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needed BEFORE the_mesh.begin() so we can restore
   // settings from a previous firmware flash.  The display SPI bus is already
   // up (display.begin() ran earlier), so SD can share it now.
   // ---------------------------------------------------------------------------
@@ -556,7 +558,7 @@ void setup() {
   }
   #endif
 
-  // GPS duty cycle â€” honour saved pref, default to enabled on first boot
+  // GPS duty cycle Ã¢â‚¬â€ honour saved pref, default to enabled on first boot
   #if HAS_GPS
   {
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
@@ -578,7 +580,7 @@ void setup() {
     MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif
 
-  Serial.printf("setup() complete — free heap: %d, largest block: %d\n",
+  Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
@@ -586,7 +588,7 @@ void setup() {
 void loop() {
   the_mesh.loop();
 
-  // GPS duty cycle â€” check for fix and manage power state
+  // GPS duty cycle Ã¢â‚¬â€ check for fix and manage power state
   #if HAS_GPS
   {
     bool gps_hw_on = gpsDuty.loop();
@@ -605,6 +607,7 @@ void loop() {
   cpuPower.loop();
 
   // Audiobook: service audio decode regardless of which screen is active
+#ifdef MECK_AUDIO_VARIANT
   {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -616,6 +619,7 @@ void loop() {
       }
     }
   }
+#endif
 #ifdef DISPLAY_CLASS
   // Skip UITask rendering when in compose mode to prevent flickering
   #if defined(LilyGo_TDeck_Pro)
@@ -646,7 +650,9 @@ void loop() {
   // Track reader/notes/audiobook mode state for key routing
   readerMode = ui_task.isOnTextReader();
   notesMode = ui_task.isOnNotesScreen();
+  #ifdef MECK_AUDIO_VARIANT
   audiobookMode = ui_task.isOnAudiobookPlayer();
+  #endif
   #else
   ui_task.loop();
   #endif
@@ -837,6 +843,7 @@ void handleKeyboardInput() {
   }
   
   // *** AUDIOBOOK MODE ***
+#ifdef MECK_AUDIO_VARIANT
   if (audiobookMode) {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -848,11 +855,11 @@ void handleKeyboardInput() {
     if (key == 'q') {
       if (abPlayer->isBookOpen()) {
         if (abPlayer->isAudioActive()) {
-          // Audio is playing — leave screen, audio continues via audioTick()
+          // Audio is playing â€” leave screen, audio continues via audioTick()
           Serial.println("Leaving audiobook player (audio continues in background)");
           ui_task.gotoHomeScreen();
         } else {
-          // Paused or stopped — close book, show file list
+          // Paused or stopped â€” close book, show file list
           abPlayer->closeCurrentBook();
           Serial.println("Closed audiobook (was paused/stopped)");
           // Stay on audiobook screen showing file list
@@ -869,6 +876,7 @@ void handleKeyboardInput() {
     ui_task.injectKey(key);
     return;
   }
+#endif  // MECK_AUDIO_VARIANT
 
   // *** TEXT READER MODE ***
   if (readerMode) {
@@ -1045,7 +1053,7 @@ void handleKeyboardInput() {
       return;
     }
 
-    // All other keys â†’ settings screen via injectKey
+    // All other keys Ã¢â€ â€™ settings screen via injectKey
     ui_task.injectKey(key);
     return;
   }
@@ -1121,18 +1129,23 @@ void handleKeyboardInput() {
       break;
     
     case 'p':
-      // Open audiobook player — lazy-init Audio + screen on first use
+#ifdef MECK_AUDIO_VARIANT
+      // Open audiobook player -- lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
-        Serial.printf("Audiobook: lazy init — free heap: %d, largest block: %d\n",
+        Serial.printf("Audiobook: lazy init -- free heap: %d, largest block: %d\n",
                        ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         audio = new Audio();
         AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio);
         abScreen->setSDReady(sdCardReady);
         ui_task.setAudiobookScreen(abScreen);
-        Serial.printf("Audiobook: init complete — free heap: %d\n", ESP.getFreeHeap());
+        Serial.printf("Audiobook: init complete -- free heap: %d\n", ESP.getFreeHeap());
       }
       ui_task.gotoAudiobookPlayer();
+#else
+      Serial.println("Audio not available on this build variant");
+      ui_task.showAlert("No audio hardware", 1500);
+#endif
       break;
     
     case 'n':
@@ -1467,8 +1480,7 @@ void sendComposedMessage() {
 // ============================================================================
 // ESP32-audioI2S CALLBACKS
 // ============================================================================
-// The audio library calls these global functions — must be defined at file scope.
-
+#ifdef MECK_AUDIO_VARIANT
 void audio_info(const char *info) {
   Serial.printf("Audio: %s\n", info);
 }
@@ -1482,5 +1494,6 @@ void audio_eof_mp3(const char *info) {
     abPlayer->onEOF();
   }
 }
+#endif  // MECK_AUDIO_VARIANT
 
 #endif // LilyGo_TDeck_Pro

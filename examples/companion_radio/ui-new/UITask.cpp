@@ -37,7 +37,9 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
+#endif
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -167,6 +169,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.setTextSize(1);  // restore default text size
   }
 
+#ifdef MECK_AUDIO_VARIANT
   // ---- Audio background playback indicator ----
   // Shows a small play symbol to the left of the battery icon when an
   // audiobook is actively playing in the background.
@@ -182,6 +185,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.print(">>");
     display.setTextSize(1); // restore
   }
+#endif
 
   CayenneLPP sensors_lpp;
   int sensors_nb = 0;
@@ -240,11 +244,15 @@ public:
     display.print(filtered_name);
 
     // battery voltage
+#ifdef MECK_AUDIO_VARIANT
     int battLeftX = display.width(); // default if battery doesn't render
     renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
 
     // audio background playback indicator (>> icon next to battery)
     renderAudioIndicator(display, battLeftX);
+#else
+    renderBatteryIndicator(display, _task->getBattMilliVolts());
+#endif
 
     // centered clock (tinyfont) - only show when time is valid
     {
@@ -322,7 +330,11 @@ public:
       y += 10;
       display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
+#ifdef MECK_AUDIO_VARIANT
       display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
+#else
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
+#endif
       y += 14;
 
       // Nav hint
@@ -431,7 +443,7 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â confirms baud rate and data flow
+        // NMEA sentence counter ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
         if (gpsDuty.isHardwareOn()) {
           uint16_t sps = gpsStream.getSentencesPerSec();
@@ -1221,13 +1233,13 @@ void UITask::toggleGPS() {
 
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â cut hardware power
+        // Disable GPS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
         gpsDuty.disable();
         notify(UIEventType::ack);
       } else {
-        // Enable GPS ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â start duty cycle
+        // Enable GPS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â start duty cycle
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
         gpsDuty.enable();
@@ -1359,6 +1371,7 @@ void UITask::gotoOnboarding() {
 }
 
 void UITask::gotoAudiobookPlayer() {
+#ifdef MECK_AUDIO_VARIANT
   if (audiobook_screen == nullptr) return;  // No audio hardware
   AudiobookPlayerScreen* abPlayer = (AudiobookPlayerScreen*)audiobook_screen;
   if (_display != NULL) {
@@ -1370,6 +1383,7 @@ void UITask::gotoAudiobookPlayer() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 
 uint8_t UITask::getChannelScreenViewIdx() const {
@@ -1424,6 +1438,7 @@ void UITask::onAdminCliResponse(const char* from_name, const char* text) {
   }
 }
 
+#ifdef MECK_AUDIO_VARIANT
 bool UITask::isAudioPlayingInBackground() const {
   if (!audiobook_screen) return false;
   AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
@@ -1435,3 +1450,4 @@ bool UITask::isAudioPausedInBackground() const {
   AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
   return player->isBookOpen() && !player->isAudioActive();
 }
+#endif
