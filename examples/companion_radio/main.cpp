@@ -50,11 +50,21 @@
 
   // Audiobook player â€” Audio object is heap-allocated on first use to avoid
   // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
-  #ifdef MECK_AUDIO_VARIANT
-  #include "AudiobookPlayerScreen.h"
-  #include "Audio.h"
-  Audio* audio = nullptr;
+  // Audiobook player — Audio object is heap-allocated on first use to avoid
+  // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
+  // Not available on 4G variant (I2S pins conflict with modem control lines).
+  #ifndef HAS_4G_MODEM
+    #include "AudiobookPlayerScreen.h"
+    #include "Audio.h"
+    Audio* audio = nullptr;
+  #endif
   static bool audiobookMode = false;
+
+  #ifdef HAS_4G_MODEM
+    #include "ModemManager.h"
+    #include "SMSStore.h"
+    #include "SMSScreen.h"
+    static bool smsMode = false;
   #endif
 
   // Power management
@@ -538,6 +548,23 @@ void setup() {
 
     // Do an initial settings backup to SD (captures any first-boot defaults)
     backupSettingsToSD();
+
+    // SMS / 4G modem init (after SD is ready)
+    #ifdef HAS_4G_MODEM
+    {
+      smsStore.begin();
+
+      // Tell SMS screen that SD is ready
+      SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr) {
+        smsScr->setSDReady(true);
+      }
+
+      // Start modem background task (runs on Core 0)
+      modemManager.begin();
+      MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
+    }
+    #endif
   }
   #endif
 
@@ -607,7 +634,7 @@ void loop() {
   cpuPower.loop();
 
   // Audiobook: service audio decode regardless of which screen is active
-#ifdef MECK_AUDIO_VARIANT
+  #ifndef HAS_4G_MODEM
   {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -619,7 +646,29 @@ void loop() {
       }
     }
   }
-#endif
+  #endif
+
+  // SMS: poll for incoming messages from modem
+  #ifdef HAS_4G_MODEM
+  {
+    SMSIncoming incoming;
+    while (modemManager.recvSMS(incoming)) {
+      // Save to store and notify UI
+      SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr) {
+        smsScr->onIncomingSMS(incoming.phone, incoming.body, incoming.timestamp);
+      }
+
+      // Alert + buzzer
+      char alertBuf[48];
+      snprintf(alertBuf, sizeof(alertBuf), "SMS: %s", incoming.phone);
+      ui_task.showAlert(alertBuf, 2000);
+      ui_task.notify(UIEventType::contactMessage);
+
+      Serial.printf("[SMS] Received from %s: %.40s...\n", incoming.phone, incoming.body);
+    }
+  }
+  #endif
 #ifdef DISPLAY_CLASS
   // Skip UITask rendering when in compose mode to prevent flickering
   #if defined(LilyGo_TDeck_Pro)
@@ -627,7 +676,12 @@ void loop() {
   bool notesEditing = notesMode && ((NotesScreen*)ui_task.getNotesScreen())->isEditing();
   bool notesRenaming = notesMode && ((NotesScreen*)ui_task.getNotesScreen())->isRenaming();
   bool notesSuppressLoop = notesEditing || notesRenaming;
-  if (!composeMode && !notesSuppressLoop) {
+  #ifdef HAS_4G_MODEM
+    bool smsSuppressLoop = smsMode && ((SMSScreen*)ui_task.getSMSScreen())->isComposing();
+  #else
+    bool smsSuppressLoop = false;
+  #endif
+  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop) {
     ui_task.loop();
   } else {
     // Handle debounced screen refresh (compose, emoji picker, or notes editor)
@@ -642,6 +696,10 @@ void loop() {
         // Notes editor/rename renders through UITask - force a refresh cycle
         ui_task.forceRefresh();
         ui_task.loop();
+      } else if (smsSuppressLoop) {
+        // SMS compose renders through UITask - force a refresh cycle
+        ui_task.forceRefresh();
+        ui_task.loop();
       }
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
@@ -650,8 +708,9 @@ void loop() {
   // Track reader/notes/audiobook mode state for key routing
   readerMode = ui_task.isOnTextReader();
   notesMode = ui_task.isOnNotesScreen();
-  #ifdef MECK_AUDIO_VARIANT
   audiobookMode = ui_task.isOnAudiobookPlayer();
+  #ifdef HAS_4G_MODEM
+    smsMode = ui_task.isOnSMSScreen();
   #endif
   #else
   ui_task.loop();
@@ -843,7 +902,7 @@ void handleKeyboardInput() {
   }
   
   // *** AUDIOBOOK MODE ***
-#ifdef MECK_AUDIO_VARIANT
+  #ifndef HAS_4G_MODEM
   if (audiobookMode) {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -876,7 +935,7 @@ void handleKeyboardInput() {
     ui_task.injectKey(key);
     return;
   }
-#endif  // MECK_AUDIO_VARIANT
+  #endif // !HAS_4G_MODEM
 
   // *** TEXT READER MODE ***
   if (readerMode) {
@@ -1108,6 +1167,37 @@ void handleKeyboardInput() {
     return;
   }
 
+  // SMS mode key routing (when on SMS screen)
+  #ifdef HAS_4G_MODEM
+  if (smsMode) {
+    SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+    if (smsScr) {
+      // Q from inbox → go home; Q from inner views is handled by SMSScreen
+      if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::INBOX) {
+        Serial.println("Nav: SMS -> Home");
+        ui_task.gotoHomeScreen();
+        return;
+      }
+
+      // Shift+Backspace → cancel compose
+      if (key == 0x18 && smsScr->isComposing()) {
+        smsScr->handleInput(key);
+        composeNeedsRefresh = true;
+        lastComposeRefresh = millis();
+        return;
+      }
+
+      // All other keys → inject to SMS screen
+      ui_task.injectKey(key);
+      if (smsScr->isComposing()) {
+        composeNeedsRefresh = true;
+        lastComposeRefresh = millis();
+      }
+      return;
+    }
+  }
+  #endif
+
   // Normal mode - not composing
   switch (key) {
     case 'c':
@@ -1128,25 +1218,30 @@ void handleKeyboardInput() {
       ui_task.gotoTextReader();
       break;
     
+    #ifndef HAS_4G_MODEM
     case 'p':
-#ifdef MECK_AUDIO_VARIANT
-      // Open audiobook player -- lazy-init Audio + screen on first use
+      // Open audiobook player - lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
-        Serial.printf("Audiobook: lazy init -- free heap: %d, largest block: %d\n",
+        Serial.printf("Audiobook: lazy init - free heap: %d, largest block: %d\n",
                        ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         audio = new Audio();
         AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio);
         abScreen->setSDReady(sdCardReady);
         ui_task.setAudiobookScreen(abScreen);
-        Serial.printf("Audiobook: init complete -- free heap: %d\n", ESP.getFreeHeap());
+        Serial.printf("Audiobook: init complete - free heap: %d\n", ESP.getFreeHeap());
       }
       ui_task.gotoAudiobookPlayer();
-#else
-      Serial.println("Audio not available on this build variant");
-      ui_task.showAlert("No audio hardware", 1500);
-#endif
       break;
+    #endif
+
+    #ifdef HAS_4G_MODEM
+    case 't':
+      // Open SMS (4G variant only)
+      Serial.println("Opening SMS");
+      ui_task.gotoSMSScreen();
+      break;
+    #endif
     
     case 'n':
       // Open notes
@@ -1480,7 +1575,10 @@ void sendComposedMessage() {
 // ============================================================================
 // ESP32-audioI2S CALLBACKS
 // ============================================================================
-#ifdef MECK_AUDIO_VARIANT
+// The audio library calls these global functions - must be defined at file scope.
+// Not available on 4G variant (no audio hardware).
+
+#ifndef HAS_4G_MODEM
 void audio_info(const char *info) {
   Serial.printf("Audio: %s\n", info);
 }
@@ -1494,6 +1592,6 @@ void audio_eof_mp3(const char *info) {
     abPlayer->onEOF();
   }
 }
-#endif  // MECK_AUDIO_VARIANT
+#endif // !HAS_4G_MODEM
 
 #endif // LilyGo_TDeck_Pro

@@ -22,6 +22,10 @@
 #include "../AbstractUITask.h"
 #include "../NodePrefs.h"
 
+#ifdef HAS_4G_MODEM
+  #include "SMSScreen.h"
+#endif
+
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
   SensorManager* _sensors;
@@ -58,6 +62,9 @@ class UITask : public AbstractUITask {
   UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
   UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
+#ifdef HAS_4G_MODEM
+  UIScreen* sms_screen;      // SMS messaging screen (4G variant only)
+#endif
   UIScreen* repeater_admin;   // Repeater admin screen
   UIScreen* curr;
 
@@ -90,6 +97,11 @@ public:
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
+#ifdef HAS_4G_MODEM
+  void gotoSMSScreen();
+  bool isOnSMSScreen() const { return curr == sms_screen; }
+  SMSScreen* getSMSScreen() const { return (SMSScreen*)sms_screen; }
+#endif
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
   int  getMsgCount() const { return _msgcount; }

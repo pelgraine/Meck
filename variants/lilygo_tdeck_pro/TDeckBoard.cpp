@@ -46,9 +46,10 @@ void TDeckBoard::begin() {
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - GPS Serial2 initialized at %d baud", GPS_BAUDRATE);
   #endif
 
-  // Disable 4G modem power (only present on 4G version, not audio version)
-  // This turns off the red status LED on the modem module
-  #ifdef MODEM_POWER_EN
+  // 4G Modem power management
+  // On 4G builds, ModemManager::begin() handles power-on — don't kill it here.
+  // On non-4G builds, disable modem power to save current and turn off red LED.
+  #if defined(MODEM_POWER_EN) && !defined(HAS_4G_MODEM)
     pinMode(MODEM_POWER_EN, OUTPUT);
     digitalWrite(MODEM_POWER_EN, LOW);  // Cut power to modem
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - 4G modem power disabled");
@@ -167,8 +168,8 @@ static bool bq27220_writeControl(uint16_t subcmd) {
 // RAM, so this typically only writes once (or after a full battery disconnect).
 //
 // Procedure follows TI TRM SLUUBD4A Section 6.1:
-//   1. Unseal  →  2. Full Access  →  3. Enter CFG_UPDATE
-//   4. Write Design Capacity via MAC  →  5. Exit CFG_UPDATE  →  6. Seal
+//   1. Unseal  â†’  2. Full Access  â†’  3. Enter CFG_UPDATE
+//   4. Write Design Capacity via MAC  â†’  5. Exit CFG_UPDATE  â†’  6. Seal
 
 bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
 #if HAS_BQ27220

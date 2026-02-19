@@ -40,6 +40,10 @@
 #ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
 #endif
+#ifdef HAS_4G_MODEM
+  #include "SMSScreen.h"
+  #include "ModemManager.h"
+#endif
 
 class SplashScreen : public UIScreen {
   UITask* _task;
@@ -330,7 +334,9 @@ public:
       y += 10;
       display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
-#ifdef MECK_AUDIO_VARIANT
+#ifdef HAS_4G_MODEM
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [T] SMS       ");
+#elif defined(MECK_AUDIO_VARIANT)
       display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
 #else
       display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
@@ -881,6 +887,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
+#ifdef HAS_4G_MODEM
+  sms_screen = new SMSScreen(this);
+#endif
   setCurrScreen(splash);
 }
 
@@ -1385,6 +1394,19 @@ void UITask::gotoAudiobookPlayer() {
   _next_refresh = 100;
 #endif
 }
+
+#ifdef HAS_4G_MODEM
+void UITask::gotoSMSScreen() {
+  SMSScreen* smsScr = (SMSScreen*)sms_screen;
+  smsScr->activate();
+  setCurrScreen(sms_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
 
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
