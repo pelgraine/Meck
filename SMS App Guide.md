@@ -1,4 +1,4 @@
-## SMS App (4G variant only) - Meck v0.9.2
+## SMS App (4G variant only) - Meck v0.9.2 (Alpha)
 
 Press **T** from the home screen to open the SMS app.
 Requires a nano SIM card inserted in the T-Deck Pro V1.1 4G modem slot and an
@@ -106,10 +106,10 @@ SD Card
 
 | Symptom | Likely Cause |
 |---------|-------------|
-| Modem stays at REG / never reaches READY | SIM not inserted, no signal, or SIM requires PIN unlock (not currently supported) |
+| Modem icon stays at REG / never reaches READY | SIM not inserted, no signal, or SIM requires PIN unlock (not currently supported) |
 | Timestamps show `---` | Modem clock hasn't synced yet (wait ~15 seconds after modem startup), or messages were saved before clock sync was available |
 | Red LED stays on after disabling modem | Toggle the setting off, then reboot — the boot sequence ensures power is cut when disabled |
-| SMS sends but no delivery | Check signal strength; CSQ below 5 is marginal. Move to better coverage |
+| SMS sends but no delivery | Check signal strength; below 5 bars is marginal. Move to better coverage |
 
 > **Note:** The SMS app is only available on the 4G modem variant of the
 > T-Deck Pro. It is not present on the audio or standalone BLE builds due to
