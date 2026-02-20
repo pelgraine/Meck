@@ -89,6 +89,10 @@ public:
 
   static const char* stateToString(ModemState s);
 
+  // Persistent enable/disable config (SD file /sms/modem.cfg)
+  static bool loadEnabledConfig();               // returns true if enabled (default)
+  static void saveEnabledConfig(bool enabled);
+
 private:
   volatile ModemState _state = ModemState::OFF;
   volatile int _csq = 99;    // 99 = unknown

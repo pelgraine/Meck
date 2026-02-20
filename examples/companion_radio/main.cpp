@@ -63,6 +63,7 @@
   #ifdef HAS_4G_MODEM
     #include "ModemManager.h"
     #include "SMSStore.h"
+    #include "SMSContacts.h"
     #include "SMSScreen.h"
     static bool smsMode = false;
   #endif
@@ -553,6 +554,7 @@ void setup() {
     #ifdef HAS_4G_MODEM
     {
       smsStore.begin();
+      smsContacts.begin();
 
       // Tell SMS screen that SD is ready
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
@@ -560,9 +562,17 @@ void setup() {
         smsScr->setSDReady(true);
       }
 
-      // Start modem background task (runs on Core 0)
-      modemManager.begin();
-      MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
+      // Start modem if enabled in config (default = enabled)
+      bool modemEnabled = ModemManager::loadEnabledConfig();
+      if (modemEnabled) {
+        modemManager.begin();
+        MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
+      } else {
+        // Ensure modem power is off (kills red LED too)
+        pinMode(MODEM_POWER_EN, OUTPUT);
+        digitalWrite(MODEM_POWER_EN, LOW);
+        MESH_DEBUG_PRINTLN("setup() - 4G modem disabled by config");
+      }
     }
     #endif
   }

@@ -64,7 +64,7 @@ public:
   // Load conversation list (sorted by most recent)
   int loadConversations(SMSConversation* out, int maxCount);
 
-  // Load messages for a specific phone number (newest first)
+  // Load messages for a specific phone number (chronological, oldest first)
   int loadMessages(const char* phone, SMSMessage* out, int maxCount);
 
   // Delete all messages for a phone number

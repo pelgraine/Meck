@@ -6,6 +6,10 @@
 #include <MeshCore.h>
 #include "../NodePrefs.h"
 
+#ifdef HAS_4G_MODEM
+  #include "ModemManager.h"
+#endif
+
 // Forward declarations
 class UITask;
 class MyMesh;
@@ -56,6 +60,9 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
+  #ifdef HAS_4G_MODEM
+  ROW_MODEM_TOGGLE,   // 4G modem enable/disable toggle (4G builds only)
+  #endif
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
@@ -85,7 +92,7 @@ private:
   mesh::RTCClock* _rtc;
   NodePrefs* _prefs;
 
-  // Row table â€” rebuilt whenever channels change
+  // Row table Ã¢â‚¬â€ rebuilt whenever channels change
   struct Row {
     SettingsRowType type;
     uint8_t param;       // channel index for ROW_CHANNEL, preset index for ROW_RADIO_PRESET
@@ -109,8 +116,13 @@ private:
   // Onboarding mode
   bool _onboarding;
 
-  // Dirty flag for radio params â€” prompt to apply
+  // Dirty flag for radio params Ã¢â‚¬â€ prompt to apply
   bool _radioChanged;
+
+  // 4G modem state (runtime cache of config)
+  #ifdef HAS_4G_MODEM
+  bool _modemEnabled;
+  #endif
 
   // ---------------------------------------------------------------------------
   // Row table management
@@ -128,6 +140,9 @@ private:
     addRow(ROW_TX_POWER);
     addRow(ROW_UTC_OFFSET);
     addRow(ROW_MSG_NOTIFY);
+    #ifdef HAS_4G_MODEM
+    addRow(ROW_MODEM_TOGGLE);
+    #endif
     addRow(ROW_CH_HEADER);
 
     // Enumerate current channels
@@ -212,11 +227,11 @@ private:
     strncpy(newCh.name, chanName, sizeof(newCh.name));
     newCh.name[31] = '\0';
 
-    // SHA-256 the channel name â†’ first 16 bytes become the secret
+    // SHA-256 the channel name Ã¢â€ â€™ first 16 bytes become the secret
     uint8_t hash[32];
     mesh::Utils::sha256(hash, 32, (const uint8_t*)chanName, strlen(chanName));
     memcpy(newCh.channel.secret, hash, 16);
-    // Upper 16 bytes left as zero â†’ setChannel uses 128-bit mode
+    // Upper 16 bytes left as zero Ã¢â€ â€™ setChannel uses 128-bit mode
 
     // Find next empty slot
     for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -289,6 +304,9 @@ public:
     _cursor = 0;
     _scrollTop = 0;
     _radioChanged = false;
+    #ifdef HAS_4G_MODEM
+    _modemEnabled = ModemManager::loadEnabledConfig();
+    #endif
     rebuildRows();
   }
 
@@ -472,6 +490,14 @@ public:
                    _prefs->kb_flash_notify ? "ON" : "OFF");
           display.print(tmp);
           break;
+
+        #ifdef HAS_4G_MODEM
+        case ROW_MODEM_TOGGLE:
+          snprintf(tmp, sizeof(tmp), "4G Modem: %s",
+                   _modemEnabled ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+        #endif
 
         case ROW_CH_HEADER:
           display.setColor(DisplayDriver::YELLOW);
@@ -838,6 +864,19 @@ public:
           Serial.printf("Settings: Msg flash notify = %s\n",
                         _prefs->kb_flash_notify ? "ON" : "OFF");
           break;
+        #ifdef HAS_4G_MODEM
+        case ROW_MODEM_TOGGLE:
+          _modemEnabled = !_modemEnabled;
+          ModemManager::saveEnabledConfig(_modemEnabled);
+          if (_modemEnabled) {
+            modemManager.begin();
+            Serial.println("Settings: 4G modem ENABLED (started)");
+          } else {
+            modemManager.shutdown();
+            Serial.println("Settings: 4G modem DISABLED (shutdown)");
+          }
+          break;
+        #endif
         case ROW_ADD_CHANNEL:
           startEditText("");
           break;
@@ -861,7 +900,7 @@ public:
       }
     }
 
-    // Q: back â€” if radio changed, prompt to apply first
+    // Q: back Ã¢â‚¬â€ if radio changed, prompt to apply first
     if (c == 'q' || c == 'Q') {
       if (_radioChanged) {
         _editMode = EDIT_CONFIRM;

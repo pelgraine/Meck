@@ -2,6 +2,9 @@
 
 #include "ModemManager.h"
 #include <Mesh.h>   // For MESH_DEBUG_PRINTLN
+#include <SD.h>     // For modem config persistence
+#include <time.h>
+#include <sys/time.h>
 
 // Global singleton
 ModemManager modemManager;
@@ -101,6 +104,35 @@ const char* ModemManager::stateToString(ModemState s) {
 }
 
 // ---------------------------------------------------------------------------
+// Persistent modem enable/disable config
+// ---------------------------------------------------------------------------
+
+#define MODEM_CONFIG_FILE "/sms/modem.cfg"
+
+bool ModemManager::loadEnabledConfig() {
+  File f = SD.open(MODEM_CONFIG_FILE, FILE_READ);
+  if (!f) {
+    // No config file = enabled by default
+    return true;
+  }
+  char c = '1';
+  if (f.available()) c = f.read();
+  f.close();
+  return (c != '0');
+}
+
+void ModemManager::saveEnabledConfig(bool enabled) {
+  // Ensure /sms directory exists
+  if (!SD.exists("/sms")) SD.mkdir("/sms");
+  File f = SD.open(MODEM_CONFIG_FILE, FILE_WRITE);
+  if (f) {
+    f.print(enabled ? '1' : '0');
+    f.close();
+    Serial.printf("[Modem] Config saved: %s\n", enabled ? "ENABLED" : "DISABLED");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FreeRTOS Task
 // ---------------------------------------------------------------------------
 
@@ -153,6 +185,9 @@ restart:
   // Enable SMS notification via +CMTI URC (new message indication)
   sendAT("AT+CNMI=2,1,0,0,0", "OK");
 
+  // Enable automatic time zone update from network (needed for AT+CCLK)
+  sendAT("AT+CTZU=1", "OK");
+
   // ---- Phase 3: Wait for network registration ----
   _state = ModemState::REGISTERING;
   MESH_DEBUG_PRINTLN("[Modem] waiting for network registration...");
@@ -202,6 +237,51 @@ restart:
 
   // Initial signal query
   pollCSQ();
+
+  // Sync ESP32 system clock from modem network time
+  // Network time may take a few seconds to arrive after registration
+  bool clockSet = false;
+  for (int attempt = 0; attempt < 5 && !clockSet; attempt++) {
+    if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(2000));
+    if (sendAT("AT+CCLK?", "OK", 3000)) {
+      // Response: +CCLK: "YY/MM/DD,HH:MM:SS±TZ"  (TZ in quarter-hours)
+      char* p = strstr(_atBuf, "+CCLK:");
+      if (p) {
+        int yy = 0, mo = 0, dd = 0, hh = 0, mm = 0, ss = 0, tz = 0;
+        if (sscanf(p, "+CCLK: \"%d/%d/%d,%d:%d:%d", &yy, &mo, &dd, &hh, &mm, &ss) >= 6) {
+          // Skip if modem clock not synced (default is 1970 = yy 70, or yy 0)
+          if (yy < 24 || yy > 50) {
+            MESH_DEBUG_PRINTLN("[Modem] CCLK not synced yet (yy=%d), retrying...", yy);
+            continue;
+          }
+
+          // Parse timezone offset (e.g. "+40" = UTC+10 in quarter-hours)
+          char* tzp = p + 7; // skip "+CCLK: "
+          while (*tzp && *tzp != '+' && *tzp != '-') tzp++;
+          if (*tzp) tz = atoi(tzp);
+
+          struct tm t = {};
+          t.tm_year = yy + 100;  // years since 1900
+          t.tm_mon  = mo - 1;    // 0-based
+          t.tm_mday = dd;
+          t.tm_hour = hh;
+          t.tm_min  = mm;
+          t.tm_sec  = ss;
+          time_t epoch = mktime(&t);  // treats input as UTC (no TZ set on ESP32)
+          epoch -= (tz * 15 * 60);    // subtract local offset to get real UTC
+
+          struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+          settimeofday(&tv, nullptr);
+          clockSet = true;
+          MESH_DEBUG_PRINTLN("[Modem] System clock set: %04d-%02d-%02d %02d:%02d:%02d (tz=%+d qh, epoch=%lu)",
+                             yy + 2000, mo, dd, hh, mm, ss, tz, (unsigned long)epoch);
+        }
+      }
+    }
+  }
+  if (!clockSet) {
+    MESH_DEBUG_PRINTLN("[Modem] WARNING: Could not sync system clock from network");
+  }
 
   // Delete any stale SMS on SIM to free slots
   sendAT("AT+CMGD=1,4", "OK", 5000);  // Delete all read messages
@@ -417,7 +497,7 @@ void ModemManager::pollIncomingSMS() {
     if (bodyLen >= SMS_BODY_LEN) bodyLen = SMS_BODY_LEN - 1;
     memcpy(incoming.body, p, bodyLen);
     incoming.body[bodyLen] = '\0';
-    incoming.timestamp = millis() / 1000;  // Approximate; modem RTC could be used
+    incoming.timestamp = (uint32_t)time(nullptr);  // Real epoch from modem-synced clock
 
     // Queue for main loop
     xQueueSend(_recvQueue, &incoming, 0);

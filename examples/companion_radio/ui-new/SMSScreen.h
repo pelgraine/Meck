@@ -3,14 +3,18 @@
 // =============================================================================
 // SMSScreen - SMS messaging UI for T-Deck Pro (4G variant)
 //
-// Three sub-views:
-//   INBOX        — list of conversations, sorted by most recent
+// Sub-views:
+//   INBOX        — list of conversations (names resolved via SMSContacts)
 //   CONVERSATION — messages for a selected contact, scrollable
 //   COMPOSE      — text input for new SMS
+//   CONTACTS     — browsable contacts list, pick to compose
+//   EDIT_CONTACT — add or edit a contact name for a phone number
 //
 // Navigation mirrors ChannelScreen conventions:
 //   W/S: scroll     Enter: select/send    C: compose new/reply
 //   Q: back         Sh+Del: cancel compose
+//   D: contacts (from inbox)
+//   A: add/edit contact (from conversation)
 //
 // Guard: HAS_4G_MODEM
 // =============================================================================
@@ -22,8 +26,10 @@
 
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
+#include <time.h>
 #include "ModemManager.h"
 #include "SMSStore.h"
+#include "SMSContacts.h"
 
 // Limits
 #define SMS_INBOX_PAGE_SIZE     4
@@ -34,7 +40,7 @@ class UITask;   // forward declaration
 
 class SMSScreen : public UIScreen {
 public:
-  enum SubView { INBOX, CONVERSATION, COMPOSE };
+  enum SubView { INBOX, CONVERSATION, COMPOSE, CONTACTS, EDIT_CONTACT };
 
 private:
   UITask* _task;
@@ -63,6 +69,17 @@ private:
   int  _phoneInputPos;
   bool _enteringPhone;
 
+  // Contacts list state
+  int _contactsCursor;
+  int _contactsScrollTop;
+
+  // Edit contact state
+  char _editPhone[SMS_PHONE_LEN];
+  char _editNameBuf[SMS_CONTACT_NAME_LEN];
+  int  _editNamePos;
+  bool _editIsNew;              // true = adding new, false = editing existing
+  SubView _editReturnView;      // where to return after save/cancel
+
   // Refresh debounce
   bool _needsRefresh;
   unsigned long _lastRefresh;
@@ -78,7 +95,8 @@ private:
 
   void refreshConversation() {
     _msgCount = smsStore.loadMessages(_activePhone, _msgs, SMS_MSG_PAGE_SIZE);
-    _msgScrollPos = 0;
+    // Scroll to bottom (newest messages are at end now, chat-style)
+    _msgScrollPos = (_msgCount > 3) ? _msgCount - 3 : 0;
   }
 
 public:
@@ -88,6 +106,8 @@ public:
     , _msgCount(0), _msgScrollPos(0)
     , _composePos(0), _composeNewConversation(false)
     , _phoneInputPos(0), _enteringPhone(false)
+    , _contactsCursor(0), _contactsScrollTop(0)
+    , _editNamePos(0), _editIsNew(false), _editReturnView(INBOX)
     , _needsRefresh(false), _lastRefresh(0)
     , _sdReady(false)
   {
@@ -95,6 +115,8 @@ public:
     memset(_composePhone, 0, sizeof(_composePhone));
     memset(_phoneInputBuf, 0, sizeof(_phoneInputBuf));
     memset(_activePhone, 0, sizeof(_activePhone));
+    memset(_editPhone, 0, sizeof(_editPhone));
+    memset(_editNameBuf, 0, sizeof(_editNameBuf));
   }
 
   void setSDReady(bool ready) { _sdReady = ready; }
@@ -115,11 +137,9 @@ public:
     if (_sdReady) {
       smsStore.saveMessage(phone, body, false, timestamp);
     }
-    // If we're viewing this conversation, refresh it
     if (_view == CONVERSATION && strcmp(_activePhone, phone) == 0) {
       refreshConversation();
     }
-    // If on inbox, refresh the list
     if (_view == INBOX) {
       refreshInbox();
     }
@@ -129,26 +149,29 @@ public:
   // =========================================================================
   // Signal strength indicator (top-right corner)
   // =========================================================================
-  int renderSignalIndicator(DisplayDriver& display, int rightX, int topY) {
+
+  int renderSignalIndicator(DisplayDriver& display, int startX, int topY) {
     ModemState ms = modemManager.getState();
     int bars = modemManager.getSignalBars();
-    int iconWidth = 16;
 
     // Draw signal bars (4 bars, increasing height)
-    int barW = 3;
-    int gap = 1;
-    int startX = rightX - (4 * (barW + gap));
-    for (int i = 0; i < 4; i++) {
-      int barH = 2 + i * 2;  // 2, 4, 6, 8
-      int x = startX + i * (barW + gap);
-      int y = topY + (8 - barH);
-      if (i < bars) {
-        display.setColor(DisplayDriver::GREEN);
-        display.fillRect(x, y, barW, barH);
-      } else {
+    int barWidth = 3;
+    int barGap = 2;
+    int maxBarH = 10;
+    int totalWidth = 4 * barWidth + 3 * barGap;
+    int x = startX - totalWidth;
+    int iconWidth = totalWidth;
+
+    for (int b = 0; b < 4; b++) {
+      int barH = 3 + b * 2;
+      int barY = topY + (maxBarH - barH);
+      if (b < bars) {
         display.setColor(DisplayDriver::LIGHT);
-        display.drawRect(x, y, barW, barH);
+      } else {
+        display.setColor(DisplayDriver::DARK);
       }
+      display.fillRect(x, barY, barWidth, barH);
+      x += barWidth + barGap;
     }
 
     // Show modem state text if not ready
@@ -157,7 +180,7 @@ public:
       display.setColor(DisplayDriver::YELLOW);
       const char* label = ModemManager::stateToString(ms);
       uint16_t labelW = display.getTextWidth(label);
-      display.setCursor(startX - labelW - 2, topY - 3);
+      display.setCursor(startX - totalWidth - labelW - 2, topY - 3);
       display.print(label);
       display.setTextSize(1);
       return iconWidth + labelW + 2;
@@ -177,6 +200,8 @@ public:
       case INBOX:        return renderInbox(display);
       case CONVERSATION: return renderConversation(display);
       case COMPOSE:      return renderCompose(display);
+      case CONTACTS:     return renderContacts(display);
+      case EDIT_CONTACT: return renderEditContact(display);
     }
     return 1000;
   }
@@ -204,7 +229,7 @@ public:
       display.print("No conversations");
       display.setCursor(0, 32);
       display.print("Press C for new SMS");
-      
+
       if (ms != ModemState::READY) {
         display.setCursor(0, 48);
         display.setColor(DisplayDriver::YELLOW);
@@ -234,11 +259,14 @@ public:
 
         bool selected = (idx == _inboxCursor);
 
-        // Phone number (highlighted if selected)
+        // Resolve contact name (shows name if saved, phone otherwise)
+        char dispName[SMS_CONTACT_NAME_LEN];
+        smsContacts.displayName(c.phone, dispName, sizeof(dispName));
+
         display.setCursor(0, y);
         display.setColor(selected ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
         if (selected) display.print("> ");
-        display.print(c.phone);
+        display.print(dispName);
 
         // Message count at right
         char countStr[8];
@@ -261,31 +289,31 @@ public:
     }
 
     // Footer
-    display.setTextSize(0);  // Must be set before setCursor/getTextWidth
-    display.setColor(DisplayDriver::LIGHT);
-    int footerY = display.height() - 10;
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
-    const char* mid = "W/S:Scrll";
+    display.print("Q:Bk");
+    const char* mid = "D:Contacts";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
     const char* rt = "C:New";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
-    display.setTextSize(1);
 
     return 5000;
   }
 
   // ---- Conversation view ----
   int renderConversation(DisplayDriver& display) {
-    // Header
+    // Header - show contact name if available, phone otherwise
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, 0);
-    display.print(_activePhone);
+    char convTitle[SMS_CONTACT_NAME_LEN];
+    smsContacts.displayName(_activePhone, convTitle, sizeof(convTitle));
+    display.print(convTitle);
 
     // Signal icon
     renderSignalIndicator(display, display.width() - 2, 0);
@@ -322,14 +350,21 @@ public:
         display.setCursor(0, y);
         display.setColor(msg.isSent ? DisplayDriver::BLUE : DisplayDriver::YELLOW);
 
-        // Time formatting
-        uint32_t now = millis() / 1000;
-        uint32_t age = (now > msg.timestamp) ? (now - msg.timestamp) : 0;
+        // Time formatting (epoch-aware)
         char timeStr[16];
-        if (age < 60)         snprintf(timeStr, sizeof(timeStr), "%lus", (unsigned long)age);
-        else if (age < 3600)  snprintf(timeStr, sizeof(timeStr), "%lum", (unsigned long)(age / 60));
-        else if (age < 86400) snprintf(timeStr, sizeof(timeStr), "%luh", (unsigned long)(age / 3600));
-        else                  snprintf(timeStr, sizeof(timeStr), "%lud", (unsigned long)(age / 86400));
+        time_t now = time(nullptr);
+        bool haveEpoch = (now > 1700000000);        // system clock is set
+        bool msgIsEpoch = (msg.timestamp > 1700000000); // msg has real timestamp
+
+        if (haveEpoch && msgIsEpoch) {
+          uint32_t age = (uint32_t)(now - msg.timestamp);
+          if (age < 60)         snprintf(timeStr, sizeof(timeStr), "%lus", (unsigned long)age);
+          else if (age < 3600)  snprintf(timeStr, sizeof(timeStr), "%lum", (unsigned long)(age / 60));
+          else if (age < 86400) snprintf(timeStr, sizeof(timeStr), "%luh", (unsigned long)(age / 3600));
+          else                  snprintf(timeStr, sizeof(timeStr), "%lud", (unsigned long)(age / 86400));
+        } else {
+          strncpy(timeStr, "---", sizeof(timeStr));
+        }
 
         char header[32];
         snprintf(header, sizeof(header), "%s %s",
@@ -368,20 +403,15 @@ public:
     }
 
     // Footer
-    display.setTextSize(0);  // Must be set before setCursor/getTextWidth
-    display.setColor(DisplayDriver::LIGHT);
-    int footerY = display.height() - 10;
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
-    const char* mid = "W/S:Scrll";
-    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
-    display.print(mid);
+    display.print("Q:Bk A:Add");
     const char* rt = "C:Reply";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
-    display.setTextSize(1);
 
     return 5000;
   }
@@ -393,15 +423,17 @@ public:
     display.setCursor(0, 0);
 
     if (_enteringPhone) {
-      // Phone number input mode
       display.print("To: ");
       display.setColor(DisplayDriver::LIGHT);
       display.print(_phoneInputBuf);
       display.print("_");
     } else {
-      char header[40];
-      snprintf(header, sizeof(header), "To: %s", _composePhone);
-      display.print(header);
+      // Show contact name if available
+      char dispName[SMS_CONTACT_NAME_LEN];
+      smsContacts.displayName(_composePhone, dispName, sizeof(dispName));
+      char toLabel[40];
+      snprintf(toLabel, sizeof(toLabel), "To: %s", dispName);
+      display.print(toLabel);
     }
 
     display.setColor(DisplayDriver::LIGHT);
@@ -438,27 +470,141 @@ public:
     }
 
     // Status bar
-    display.setTextSize(0);  // Must be set before setCursor/getTextWidth
-    display.setColor(DisplayDriver::LIGHT);
-    int statusY = display.height() - 10;
+    display.setTextSize(1);
+    int statusY = display.height() - 12;
     display.drawRect(0, statusY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, statusY);
 
     if (_enteringPhone) {
-      display.print("Phone# then Ent");
-      const char* rt = "S+D:X";
+      display.print("Phone#");
+      const char* rt = "Ent S+D:X";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, statusY);
       display.print(rt);
     } else {
-      char status[30];
+      char status[16];
       snprintf(status, sizeof(status), "%d/%d", _composePos, SMS_COMPOSE_MAX);
       display.print(status);
-      const char* rt = "Ent:Snd S+D:X";
+      const char* rt = "Ent S+D:X";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, statusY);
       display.print(rt);
     }
+
+    return 2000;
+  }
+
+  // ---- Contacts list ----
+  int renderContacts(DisplayDriver& display) {
     display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print("SMS Contacts");
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    int cnt = smsContacts.count();
+
+    if (cnt == 0) {
+      display.setTextSize(0);
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, 25);
+      display.print("No contacts saved");
+      display.setCursor(0, 37);
+      display.print("Open a conversation");
+      display.setCursor(0, 49);
+      display.print("and press A to add");
+      display.setTextSize(1);
+    } else {
+      display.setTextSize(0);
+      int lineHeight = 10;
+      int y = 14;
+
+      int visibleCount = (display.height() - 14 - 14) / (lineHeight * 2 + 2);
+      if (visibleCount < 1) visibleCount = 1;
+
+      // Adjust scroll
+      if (_contactsCursor >= cnt) _contactsCursor = cnt - 1;
+      if (_contactsCursor < 0) _contactsCursor = 0;
+      if (_contactsCursor < _contactsScrollTop) _contactsScrollTop = _contactsCursor;
+      if (_contactsCursor >= _contactsScrollTop + visibleCount) {
+        _contactsScrollTop = _contactsCursor - visibleCount + 1;
+      }
+
+      for (int vi = 0; vi < visibleCount && (_contactsScrollTop + vi) < cnt; vi++) {
+        int idx = _contactsScrollTop + vi;
+        const SMSContact& ct = smsContacts.get(idx);
+        if (!ct.valid) continue;
+
+        bool selected = (idx == _contactsCursor);
+
+        // Name
+        display.setCursor(0, y);
+        display.setColor(selected ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+        if (selected) display.print("> ");
+        display.print(ct.name);
+        y += lineHeight;
+
+        // Phone (dimmer)
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(12, y);
+        display.print(ct.phone);
+        y += lineHeight + 2;
+      }
+      display.setTextSize(1);
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    display.print("Q:Back");
+    const char* rt = "Ent:SMS";
+    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    display.print(rt);
+
+    return 5000;
+  }
+
+  // ---- Edit contact ----
+  int renderEditContact(DisplayDriver& display) {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print(_editIsNew ? "Add Contact" : "Edit Contact");
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    // Phone number (read-only)
+    display.setTextSize(0);
+    display.setColor(DisplayDriver::LIGHT);
+    display.setCursor(0, 16);
+    display.print("Phone: ");
+    display.print(_editPhone);
+
+    // Name input
+    display.setCursor(0, 30);
+    display.setColor(DisplayDriver::YELLOW);
+    display.print("Name: ");
+    display.setColor(DisplayDriver::LIGHT);
+    display.print(_editNameBuf);
+    display.print("_");
+
+    display.setTextSize(1);
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    display.print("S+D:X");
+    const char* rt = "Ent:Save";
+    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    display.print(rt);
 
     return 2000;
   }
@@ -472,6 +618,8 @@ public:
       case INBOX:        return handleInboxInput(c);
       case CONVERSATION: return handleConversationInput(c);
       case COMPOSE:      return handleComposeInput(c);
+      case CONTACTS:     return handleContactsInput(c);
+      case EDIT_CONTACT: return handleEditContactInput(c);
     }
     return false;
   }
@@ -505,8 +653,14 @@ public:
         _view = COMPOSE;
         return true;
 
+      case 'd': case 'D':  // Open contacts list
+        _contactsCursor = 0;
+        _contactsScrollTop = 0;
+        _view = CONTACTS;
+        return true;
+
       case 'q': case 'Q':  // Back to home (handled by main.cpp)
-        return false;       // Let main.cpp handle navigation
+        return false;
 
       default:
         return false;
@@ -533,6 +687,26 @@ public:
         _view = COMPOSE;
         return true;
 
+      case 'a': case 'A': {  // Add/edit contact for this number
+        strncpy(_editPhone, _activePhone, SMS_PHONE_LEN - 1);
+        _editPhone[SMS_PHONE_LEN - 1] = '\0';
+        _editReturnView = CONVERSATION;
+
+        const char* existing = smsContacts.lookup(_activePhone);
+        if (existing) {
+          _editIsNew = false;
+          strncpy(_editNameBuf, existing, SMS_CONTACT_NAME_LEN - 1);
+          _editNameBuf[SMS_CONTACT_NAME_LEN - 1] = '\0';
+          _editNamePos = strlen(_editNameBuf);
+        } else {
+          _editIsNew = true;
+          _editNameBuf[0] = '\0';
+          _editNamePos = 0;
+        }
+        _view = EDIT_CONTACT;
+        return true;
+      }
+
       case 'q': case 'Q':  // Back to inbox
         refreshInbox();
         _view = INBOX;
@@ -549,26 +723,18 @@ public:
       return handlePhoneInput(c);
     }
 
-    // Message body input
     switch (c) {
       case '\r': {  // Enter - send SMS
         if (_composePos > 0) {
           _composeBuf[_composePos] = '\0';
-
-          // Queue for sending via modem
           bool queued = modemManager.sendSMS(_composePhone, _composeBuf);
-
-          // Save to store (as sent)
           if (_sdReady) {
-            uint32_t ts = millis() / 1000;
+            uint32_t ts = (uint32_t)time(nullptr);
             smsStore.saveMessage(_composePhone, _composeBuf, true, ts);
           }
-
           Serial.printf("[SMS] %s to %s: %s\n",
                         queued ? "Queued" : "Queue full", _composePhone, _composeBuf);
         }
-
-        // Return to inbox
         _composeBuf[0] = '\0';
         _composePos = 0;
         refreshInbox();
@@ -583,7 +749,7 @@ public:
         }
         return true;
 
-      case 0x18:  // Shift+Backspace (cancel) — same as mesh compose
+      case 0x18:  // Shift+Backspace (cancel)
         _composeBuf[0] = '\0';
         _composePos = 0;
         refreshInbox();
@@ -591,7 +757,6 @@ public:
         return true;
 
       default:
-        // Printable character
         if (c >= 32 && c < 127 && _composePos < SMS_COMPOSE_MAX) {
           _composeBuf[_composePos++] = c;
           _composeBuf[_composePos] = '\0';
@@ -603,7 +768,7 @@ public:
   // ---- Phone number input ----
   bool handlePhoneInput(char c) {
     switch (c) {
-      case '\r':  // Enter - done entering phone, move to body
+      case '\r':  // Done entering phone, move to body
         if (_phoneInputPos > 0) {
           _phoneInputBuf[_phoneInputPos] = '\0';
           strncpy(_composePhone, _phoneInputBuf, SMS_PHONE_LEN - 1);
@@ -613,7 +778,7 @@ public:
         }
         return true;
 
-      case '\b':  // Backspace
+      case '\b':
         if (_phoneInputPos > 0) {
           _phoneInputPos--;
           _phoneInputBuf[_phoneInputPos] = '\0';
@@ -629,11 +794,87 @@ public:
         return true;
 
       default:
-        // Accept digits, +, *, # for phone numbers
         if (_phoneInputPos < SMS_PHONE_LEN - 1 &&
             ((c >= '0' && c <= '9') || c == '+' || c == '*' || c == '#')) {
           _phoneInputBuf[_phoneInputPos++] = c;
           _phoneInputBuf[_phoneInputPos] = '\0';
+        }
+        return true;
+    }
+  }
+
+  // ---- Contacts list input ----
+  bool handleContactsInput(char c) {
+    int cnt = smsContacts.count();
+
+    switch (c) {
+      case 'w': case 'W':
+        if (_contactsCursor > 0) _contactsCursor--;
+        return true;
+
+      case 's': case 'S':
+        if (_contactsCursor < cnt - 1) _contactsCursor++;
+        return true;
+
+      case '\r':  // Enter - compose to selected contact
+        if (cnt > 0 && _contactsCursor < cnt) {
+          const SMSContact& ct = smsContacts.get(_contactsCursor);
+          _composeNewConversation = true;
+          _enteringPhone = false;
+          strncpy(_composePhone, ct.phone, SMS_PHONE_LEN - 1);
+          _composeBuf[0] = '\0';
+          _composePos = 0;
+          _view = COMPOSE;
+        }
+        return true;
+
+      case 'q': case 'Q':  // Back to inbox
+        refreshInbox();
+        _view = INBOX;
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  // ---- Edit contact input ----
+  bool handleEditContactInput(char c) {
+    switch (c) {
+      case '\r':  // Enter - save contact
+        if (_editNamePos > 0) {
+          _editNameBuf[_editNamePos] = '\0';
+          smsContacts.set(_editPhone, _editNameBuf);
+          Serial.printf("[SMSContacts] Saved: %s = %s\n", _editPhone, _editNameBuf);
+        }
+        if (_editReturnView == CONVERSATION) {
+          refreshConversation();
+        } else {
+          refreshInbox();
+        }
+        _view = _editReturnView;
+        return true;
+
+      case '\b':  // Backspace
+        if (_editNamePos > 0) {
+          _editNamePos--;
+          _editNameBuf[_editNamePos] = '\0';
+        }
+        return true;
+
+      case 0x18:  // Shift+Backspace (cancel without saving)
+        if (_editReturnView == CONVERSATION) {
+          refreshConversation();
+        } else {
+          refreshInbox();
+        }
+        _view = _editReturnView;
+        return true;
+
+      default:
+        if (c >= 32 && c < 127 && _editNamePos < SMS_CONTACT_NAME_LEN - 1) {
+          _editNameBuf[_editNamePos++] = c;
+          _editNameBuf[_editNamePos] = '\0';
         }
         return true;
     }

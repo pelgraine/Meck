@@ -138,14 +138,13 @@ int SMSStore::loadMessages(const char* phone, SMSMessage* out, int maxCount) {
   size_t fileSize = f.size();
   int numRecords = fileSize / sizeof(SMSRecord);
 
-  // Load from end (newest first), up to maxCount
+  // Load from end of file (most recent N messages), in chronological order
   int startIdx = numRecords > maxCount ? numRecords - maxCount : 0;
-  int loadCount = numRecords - startIdx;
 
-  // Read from startIdx and reverse order for display (newest first)
+  // Read chronologically (oldest first) for chat-style display
   SMSRecord rec;
   int outIdx = 0;
-  for (int i = numRecords - 1; i >= startIdx && outIdx < maxCount; i--) {
+  for (int i = startIdx; i < numRecords && outIdx < maxCount; i++) {
     f.seek(i * sizeof(SMSRecord));
     if (f.read((uint8_t*)&rec, sizeof(SMSRecord)) != sizeof(SMSRecord)) continue;
 
