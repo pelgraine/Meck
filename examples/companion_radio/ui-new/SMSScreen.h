@@ -294,7 +294,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Bk");
+    display.print("Q:Back");
     const char* mid = "D:Contacts";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
@@ -408,7 +408,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Bk A:Add");
+    display.print("Q:Bk A:Add Contact");
     const char* rt = "C:Reply";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);

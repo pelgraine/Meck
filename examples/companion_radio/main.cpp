@@ -707,9 +707,12 @@ void loop() {
         ui_task.forceRefresh();
         ui_task.loop();
       } else if (smsSuppressLoop) {
-        // SMS compose renders through UITask - force a refresh cycle
-        ui_task.forceRefresh();
-        ui_task.loop();
+        // SMS compose: render directly to display, same as mesh compose
+        #ifdef DISPLAY_CLASS
+        display.startFrame();
+        ((SMSScreen*)ui_task.getSMSScreen())->render(display);
+        display.endFrame();
+        #endif
       }
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
@@ -1189,19 +1192,22 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Shift+Backspace → cancel compose
-      if (key == 0x18 && smsScr->isComposing()) {
-        smsScr->handleInput(key);
-        composeNeedsRefresh = true;
-        lastComposeRefresh = millis();
-        return;
-      }
-
-      // All other keys → inject to SMS screen
-      ui_task.injectKey(key);
       if (smsScr->isComposing()) {
-        composeNeedsRefresh = true;
-        lastComposeRefresh = millis();
+        // Composing/text input: route directly to screen, bypass injectKey()
+        // to avoid UITask scheduling its own competing refresh
+        smsScr->handleInput(key);
+        if (smsScr->isComposing()) {
+          // Still composing — debounced refresh
+          composeNeedsRefresh = true;
+          lastComposeRefresh = millis();
+        } else {
+          // View changed (sent/cancelled) — immediate UITask refresh
+          composeNeedsRefresh = false;
+          ui_task.forceRefresh();
+        }
+      } else {
+        // Non-compose views (inbox, conversation, contacts): use normal inject
+        ui_task.injectKey(key);
       }
       return;
     }
