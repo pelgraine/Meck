@@ -26,6 +26,10 @@
   #include "SMSScreen.h"
 #endif
 
+#ifdef MECK_WEB_READER
+  #include "WebReaderScreen.h"
+#endif
+
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
   SensorManager* _sensors;
@@ -66,6 +70,9 @@ class UITask : public AbstractUITask {
   UIScreen* sms_screen;      // SMS messaging screen (4G variant only)
 #endif
   UIScreen* repeater_admin;   // Repeater admin screen
+#ifdef MECK_WEB_READER
+  UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
+#endif
   UIScreen* curr;
 
   void userLedHandler();
@@ -97,6 +104,9 @@ public:
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
+#ifdef MECK_WEB_READER
+  void gotoWebReader();         // Navigate to web reader (browser)
+#endif
 #ifdef HAS_4G_MODEM
   void gotoSMSScreen();
   bool isOnSMSScreen() const { return curr == sms_screen; }
@@ -114,6 +124,9 @@ public:
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
+#ifdef MECK_WEB_READER
+  bool isOnWebReader() const { return curr == web_reader; }
+#endif
 
 #ifdef MECK_AUDIO_VARIANT
   // Check if audio is playing/paused in the background (for status indicators)
@@ -150,6 +163,9 @@ public:
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
+#ifdef MECK_WEB_READER
+  UIScreen* getWebReaderScreen() const { return web_reader; }
+#endif
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

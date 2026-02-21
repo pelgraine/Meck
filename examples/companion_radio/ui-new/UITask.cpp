@@ -341,6 +341,10 @@ public:
 #else
       display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
 #endif
+#ifdef MECK_WEB_READER
+      y += 10;
+      display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
+#endif
       y += 14;
 
       // Nav hint
@@ -1445,6 +1449,28 @@ void UITask::gotoRepeaterAdmin(int contactIdx) {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
 }
+
+#ifdef MECK_WEB_READER
+void UITask::gotoWebReader() {
+  // Lazy-initialize on first use (same pattern as audiobook player)
+  if (web_reader == nullptr) {
+    Serial.printf("WebReader: lazy init - free heap: %d, largest block: %d\n",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    web_reader = new WebReaderScreen(this);
+    Serial.printf("WebReader: init complete - free heap: %d\n", ESP.getFreeHeap());
+  }
+  WebReaderScreen* wr = (WebReaderScreen*)web_reader;
+  if (_display != NULL) {
+    wr->enter(*_display);
+  }
+  setCurrScreen(web_reader);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
 
 void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
   if (repeater_admin && isOnRepeaterAdmin()) {

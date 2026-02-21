@@ -1,4 +1,5 @@
 #include <Arduino.h>   // needed for PlatformIO
+#include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
 #include <Mesh.h>
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
@@ -16,6 +17,9 @@
   #include "ChannelScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
+  #ifdef MECK_WEB_READER
+    #include "WebReaderScreen.h"
+  #endif
   extern SPIClass displaySpi;  // From GxEPDDisplay.cpp, shared SPI bus
 
   TCA8418Keyboard keyboard(I2C_ADDR_KEYBOARD, &Wire);
@@ -33,6 +37,11 @@
   static bool composeDM = false;
   static int composeDMContactIdx = -1;
   static char composeDMName[32];
+  #ifdef MECK_WEB_READER
+  static unsigned long lastWebReaderRefresh = 0;
+  static bool webReaderNeedsRefresh = false;
+  static bool webReaderTextEntry = false;  // True when URL/password entry active
+  #endif
    // AGC reset - periodically re-assert RX boosted gain to prevent sensitivity drift
   #define AGC_RESET_INTERVAL_MS 500
   static unsigned long lastAGCReset = 0;
@@ -691,10 +700,21 @@ void loop() {
   #else
     bool smsSuppressLoop = false;
   #endif
-  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop) {
+  #ifdef MECK_WEB_READER
+  // Safety: clear web reader text entry flag if we're no longer on the web reader
+  if (webReaderTextEntry && !ui_task.isOnWebReader()) {
+    webReaderTextEntry = false;
+    webReaderNeedsRefresh = false;
+  }
+  #endif
+  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop
+  #ifdef MECK_WEB_READER
+      && !webReaderTextEntry
+  #endif
+     ) {
     ui_task.loop();
   } else {
-    // Handle debounced screen refresh (compose, emoji picker, or notes editor)
+    // Handle debounced screen refresh (compose, emoji picker, notes, or web reader text entry)
     if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       if (composeMode) {
         if (emojiPickerMode) {
@@ -708,7 +728,7 @@ void loop() {
         ui_task.loop();
       } else if (smsSuppressLoop) {
         // SMS compose: render directly to display, same as mesh compose
-        #ifdef DISPLAY_CLASS
+        #if defined(DISPLAY_CLASS) && defined(HAS_4G_MODEM)
         display.startFrame();
         ((SMSScreen*)ui_task.getSMSScreen())->render(display);
         display.endFrame();
@@ -717,6 +737,28 @@ void loop() {
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
     }
+    #ifdef MECK_WEB_READER
+    if (webReaderNeedsRefresh && (millis() - lastWebReaderRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+      WebReaderScreen* wr2 = (WebReaderScreen*)ui_task.getWebReaderScreen();
+      if (wr2) {
+        display.startFrame();
+        wr2->render(display);
+        display.endFrame();
+      }
+      lastWebReaderRefresh = millis();
+      webReaderNeedsRefresh = false;
+    }
+    // Password reveal expiry: re-render to mask character after 800ms
+    if (webReaderTextEntry && !webReaderNeedsRefresh) {
+      WebReaderScreen* wr3 = (WebReaderScreen*)ui_task.getWebReaderScreen();
+      if (wr3 && wr3->needsRevealRefresh() && (millis() - lastWebReaderRefresh) >= 850) {
+        display.startFrame();
+        wr3->render(display);
+        display.endFrame();
+        lastWebReaderRefresh = millis();
+      }
+    }
+    #endif
   }
   // Track reader/notes/audiobook mode state for key routing
   readerMode = ui_task.isOnTextReader();
@@ -1214,6 +1256,51 @@ void handleKeyboardInput() {
   }
   #endif
 
+  // *** WEB READER TEXT INPUT MODE ***
+  // Match compose mode pattern: key handler sets a flag and returns instantly.
+  // Main loop renders with 100ms debounce (same as COMPOSE_REFRESH_INTERVAL).
+  // This way the key handler never blocks for 648ms during a render.
+#ifdef MECK_WEB_READER
+  if (ui_task.isOnWebReader()) {
+    WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
+    bool urlEdit = wr ? wr->isUrlEditing() : false;
+    bool passEdit = wr ? wr->isPasswordEntry() : false;
+    bool formEdit = wr ? wr->isFormFilling() : false;
+    if (wr && (urlEdit || passEdit || formEdit)) {
+      webReaderTextEntry = true;  // Suppress ui_task.loop() in main loop
+      wr->handleInput(key);       // Updates buffer instantly, no render
+      
+      // Check if text entry ended (submitted, cancelled, etc.)
+      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling()) {
+        // Text entry ended
+        webReaderTextEntry = false;
+        webReaderNeedsRefresh = false;
+        // fetchPage()/submitForm() handle their own rendering, or mode changed —
+        // let ui_task.loop() resume on next iteration
+      } else {
+        // Still typing — request debounced refresh
+        webReaderNeedsRefresh = true;
+        lastWebReaderRefresh = millis();
+      }
+      return;
+    } else {
+      // Not in text entry — clear flag so ui_task.loop() resumes
+      webReaderTextEntry = false;
+
+      // Q from HOME mode exits the web reader entirely (like text reader)
+      if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing()) {
+        Serial.println("Exiting web reader");
+        ui_task.gotoHomeScreen();
+        return;
+      }
+
+      // Route keys through normal UITask for navigation/scrolling
+      ui_task.injectKey(key);
+      return;
+    }
+  }
+#endif
+
   // Normal mode - not composing
   switch (key) {
     case 'c':
@@ -1258,6 +1345,50 @@ void handleKeyboardInput() {
       ui_task.gotoSMSScreen();
       break;
     #endif
+
+    #ifdef MECK_WEB_READER
+    case 'b':
+      // Open web reader (browser)
+      Serial.println("Opening web reader");
+      {
+        static bool webReaderWifiReady = false;
+        if (!webReaderWifiReady) {
+          // WiFi needs ~40KB contiguous heap. The BLE controller holds ~30KB,
+          // leaving only ~30KB largest block. We MUST release BLE memory first.
+          //
+          // This disables BLE for the duration of the session.
+          // BLE comes back on reboot.
+          Serial.printf("WebReader: heap BEFORE BT release: free=%d, largest=%d\n",
+                         ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+          // 1) Stop BLE controller (disable + deinit)
+          btStop();
+          delay(50);
+
+          // 2) Release the BT controller's reserved memory region back to heap
+          esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
+          delay(50);
+
+          Serial.printf("WebReader: heap AFTER BT release: free=%d, largest=%d\n",
+                         ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+          // 3) Now init WiFi while we have maximum contiguous heap
+          if (WiFi.mode(WIFI_STA)) {
+            Serial.println("WebReader: WiFi STA init OK");
+            webReaderWifiReady = true;
+          } else {
+            Serial.println("WebReader: WiFi STA init FAILED even after BT release");
+            // Clean up partial WiFi init to avoid memory leak
+            WiFi.mode(WIFI_OFF);
+          }
+
+          Serial.printf("WebReader: heap after WiFi init: free=%d, largest=%d\n",
+                         ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        }
+      }
+      ui_task.gotoWebReader();
+      break;
+    #endif
     
     case 'n':
       // Open notes
@@ -1274,9 +1405,13 @@ void handleKeyboardInput() {
       break;
     
     case 's':
-      // Open settings (from home), or navigate down on channel/contacts/admin
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()) {
-        ui_task.injectKey('s');  // Pass directly for channel/contacts scrolling
+      // Open settings (from home), or navigate down on channel/contacts/admin/web
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+         ) {
+        ui_task.injectKey('s');  // Pass directly for scrolling
       } else {
         Serial.println("Opening settings");
         ui_task.gotoSettingsScreen();
@@ -1285,8 +1420,12 @@ void handleKeyboardInput() {
 
     case 'w':
       // Navigate up/previous (scroll on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()) {
-        ui_task.injectKey('w');  // Pass directly for channel/contacts switching
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+         ) {
+        ui_task.injectKey('w');  // Pass directly for scrolling
       } else {
         Serial.println("Nav: Previous");
         ui_task.injectKey(0xF2);  // KEY_PREV
@@ -1371,6 +1510,17 @@ void handleKeyboardInput() {
           break;
         }
       }
+#ifdef MECK_WEB_READER
+      // If web reader is in reading/link/wifi mode, inject q for internal navigation
+      // (reading→home, wifi→home). Only exit to firmware home if already on web home.
+      if (ui_task.isOnWebReader()) {
+        WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
+        if (wr && !wr->isHome()) {
+          ui_task.injectKey('q');
+          break;
+        }
+      }
+#endif
       // Go back to home screen (admin mode handled above)
       Serial.println("Nav: Back to home");
       ui_task.gotoHomeScreen();
@@ -1395,6 +1545,13 @@ void handleKeyboardInput() {
       break;
       
     default:
+#ifdef MECK_WEB_READER
+      // Pass unhandled keys to web reader (l=link, g=go, k=bookmark, 0-9=link#)
+      if (ui_task.isOnWebReader()) {
+        ui_task.injectKey(key);
+        break;
+      }
+#endif
       Serial.printf("Unhandled key in normal mode: '%c' (0x%02X)\n", key, key);
       break;
   }
