@@ -118,6 +118,7 @@ class HomeScreen : public UIScreen {
   NodePrefs* _node_prefs;
   uint8_t _page;
   bool _shutdown_init;
+  unsigned long _shutdown_at;   // earliest time to proceed with shutdown (after e-ink refresh)
   bool _editing_utc;
   int8_t _saved_utc_offset;  // for cancel/undo
   AdvertPath recent[UI_RECENT_LIST_SIZE];
@@ -221,7 +222,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
 public:
   HomeScreen(UITask* task, mesh::RTCClock* rtc, SensorManager* sensors, NodePrefs* node_prefs)
      : _task(task), _rtc(rtc), _sensors(sensors), _node_prefs(node_prefs), _page(0), 
-       _shutdown_init(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
+       _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
   void cancelEditUTC() { 
@@ -232,7 +233,7 @@ public:
   }
 
   void poll() override {
-    if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
+    if (_shutdown_init && millis() >= _shutdown_at && !_task->isButtonPressed()) {
       _task->shutdown();
     }
   }
@@ -733,7 +734,8 @@ public:
     }
 #endif
     if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
-      _shutdown_init = true;  // need to wait for button to be released
+      _shutdown_init = true;
+      _shutdown_at = millis() + 900;  // allow e-ink refresh (644ms) before shutdown
       return true;
     }
     return false;
@@ -1042,8 +1044,31 @@ void UITask::shutdown(bool restart){
   if (restart) {
     _board->reboot();
   } else {
-    _display->turnOff();
+    // Disable BLE if active
+    if (_serial != NULL && _serial->isEnabled()) {
+      _serial->disable();
+    }
+
+    // Disable WiFi if active
+    #ifdef WIFI_SSID
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+    #endif
+
+    // Disable GPS if active
+    #if ENV_INCLUDE_GPS == 1
+    {
+      extern GPSDutyCycle gpsDuty;
+      if (_sensors != NULL && _node_prefs != NULL && _node_prefs->gps_enabled) {
+        _sensors->setSettingValue("gps", "0");
+        gpsDuty.disable();
+      }
+    }
+    #endif
+
+    // Power off LoRa radio, display, and board
     radio_driver.powerOff();
+    _display->turnOff();
     _board->powerOff();
   }
 }
