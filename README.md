@@ -288,7 +288,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Standalone repeater admin access for Companion BLE firmware
 - [X] GPS time sync with on-device timezone setting
 - [X] Settings screen with radio presets, channel management, and first-boot onboarding
-- [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Expand SMS app to enable phone calls
 - [ ] Better JPEG and PNG decoding
