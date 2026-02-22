@@ -1,8 +1,6 @@
 ## Meshcore + Fork = Meck 
 This fork was created specifically to focus on enabling BLE companion firmware for the LilyGo T-Deck Pro. Created with the assistance of Claude AI using Meshcore v1.11 code. 
 
-⭐ ***Please note as of 1 Feb 2026, the T-Deck Pro repeater & usb firmware has not been finalised nor confirmed as functioning.*** ⭐
-
 ### Contents
 - [T-Deck Pro Keyboard Controls](#t-deck-pro-keyboard-controls)
   - [Navigation (Home Screen)](#navigation-home-screen)
@@ -251,7 +249,7 @@ Download a copy of the Meck firmware bin from https://github.com/pelgraine/Meck/
 
 **Companion Firmware**
 
-The companion firmware can be connected to via BLE. USB is planned for a future update.
+The companion firmware can be connected to via BLE.
 
 > **Note:** On the T-Deck Pro, BLE is disabled by default at boot. Navigate to the Bluetooth home page and press Enter to enable BLE before connecting with a companion app.
 
@@ -290,10 +288,13 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Standalone repeater admin access for Companion BLE firmware
 - [X] GPS time sync with on-device timezone setting
 - [X] Settings screen with radio presets, channel management, and first-boot onboarding
-- [ ] Companion radio: USB
-- [ ] Simple Repeater firmware for the T-Deck Pro
 - [ ] Get pin 45 with the screen backlight functioning for the T-Deck Pro v1.1
-- [ ] Canned messages function for Companion BLE firmware
+- [ ] Fix M4B rendering to enable chaptered audiobook playback
+- [ ] Expand SMS app to enable phone calls
+- [ ] Better JPEG and PNG decoding
+- [ ] Improve EPUB rendering and EPUB format handling
+- [ ] Map support with GPS
+- [ ] Basic web reader app for text-centric websites
 
 ## 📞 Get Support
 
