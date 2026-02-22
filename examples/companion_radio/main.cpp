@@ -443,10 +443,38 @@ void setup() {
   // ---------------------------------------------------------------------------
   #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)
   {
+    // Deselect ALL SPI devices before SD init to prevent bus contention.
+    // E-ink, LoRa, and SD share the same SPI bus (SCK=36, MOSI=33, MISO=47).
+    // If LoRa CS is still asserted from board/radio init, it responds on the
+    // shared MISO line and corrupts SD card replies (CMD0 fails intermittently).
     pinMode(SDCARD_CS, OUTPUT);
-    digitalWrite(SDCARD_CS, HIGH);  // Deselect SD initially
+    digitalWrite(SDCARD_CS, HIGH);
 
-    if (SD.begin(SDCARD_CS, displaySpi, 4000000)) {
+    pinMode(PIN_EINK_CS, OUTPUT);
+    digitalWrite(PIN_EINK_CS, HIGH);
+
+    pinMode(LORA_CS, OUTPUT);
+    digitalWrite(LORA_CS, HIGH);
+
+    // SD cards need 74+ SPI clock cycles after power stabilization before
+    // accepting CMD0.  A brief delay avoids race conditions on cold boot
+    // or with slow-starting cards.
+    delay(100);
+
+    // Retry loop — some SD cards are slow to initialise, especially on
+    // cold boot or marginal USB power.  Three attempts with increasing
+    // settle time covers the vast majority of transient failures.
+    bool mounted = false;
+    for (int attempt = 0; attempt < 3 && !mounted; attempt++) {
+      if (attempt > 0) {
+        digitalWrite(SDCARD_CS, HIGH);   // Ensure CS released between retries
+        delay(250);
+        MESH_DEBUG_PRINTLN("setup() - SD card retry %d/3", attempt + 1);
+      }
+      mounted = SD.begin(SDCARD_CS, displaySpi, 4000000);
+    }
+
+    if (mounted) {
       sdCardReady = true;
       MESH_DEBUG_PRINTLN("setup() - SD card initialized (early)");
 
@@ -455,7 +483,7 @@ void setup() {
         MESH_DEBUG_PRINTLN("setup() - Settings restored from SD backup");
       }
     } else {
-      MESH_DEBUG_PRINTLN("setup() - SD card not available");
+      MESH_DEBUG_PRINTLN("setup() - SD card not available after 3 attempts");
     }
   }
   #endif
