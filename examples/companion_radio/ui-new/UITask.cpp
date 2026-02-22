@@ -402,8 +402,19 @@ public:
       display.drawXbm((display.width() - 32) / 2, 18,
           _task->isSerialEnabled() ? bluetooth_on : bluetooth_off,
           32, 32);
+      if (_task->hasConnection()) {
+        display.setColor(DisplayDriver::GREEN);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, 53, "< Connected >");
+      } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
+        display.setColor(DisplayDriver::RED);
+        display.setTextSize(2);
+        sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+        display.drawTextCentered(display.width() / 2, 53, tmp);
+      }
+      display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
-      display.drawTextCentered(display.width() / 2, 64 - 11, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
 #endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);

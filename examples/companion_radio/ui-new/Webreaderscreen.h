@@ -932,11 +932,11 @@ private:
   unsigned long _formLastCharAt; // millis() of last char typed (for brief password reveal)
 
   // Cookies (simple key=value store per domain)
-  #define WEB_MAX_COOKIES 32
+  #define WEB_MAX_COOKIES 16
   struct Cookie {
     char domain[64];
     char name[64];
-    char value[256];
+    char value[512]; // AO3 session cookies are 300+ chars of base64
   };
   Cookie _cookies[WEB_MAX_COOKIES];
   int _cookieCount;
@@ -980,7 +980,7 @@ private:
     const char* host = strstr(url, "://");
     if (host) host += 3; else host = url;
     int i = 0;
-    while (host[i] && host[i] != '/' && host[i] != ':' && i < domainMax - 1) {
+    while (host[i] && host[i] != '/' && host[i] != ':' && host[i] != '?' && host[i] != '#' && i < domainMax - 1) {
       domain[i] = host[i]; i++;
     }
     domain[i] = '\0';
@@ -1055,38 +1055,42 @@ private:
   // when multiple Set-Cookie headers exist. Iterating by index catches all.
   void captureResponseCookies(HTTPClient& http, const char* domain) {
     int hCount = http.headers();
+    Serial.printf("Cookie capture: %d header slots, domain=%s\n", hCount, domain);
     int found = 0;
     for (int h = 0; h < hCount; h++) {
-      if (http.headerName(h).equalsIgnoreCase("Set-Cookie")) {
-        String sc = http.header(h);
+      String name = http.headerName(h);
+      String val = http.header(h);
+      Serial.printf("  Slot[%d] '%s' (%d chars) = '%.200s%s'\n", h, name.c_str(),
+                    val.length(), val.c_str(), val.length() > 200 ? "..." : "");
+      if (name.equalsIgnoreCase("Set-Cookie")) {
         // A single header entry might still contain multiple cookies
         // concatenated by ESP32 with comma. Try to split them.
         int start = 0;
-        while (start < (int)sc.length()) {
-          int comma = sc.indexOf(", ", start);
+        while (start < (int)val.length()) {
+          int comma = val.indexOf(", ", start);
           String single;
           if (comma >= 0) {
             // Check if what follows looks like a new cookie (name=value before ;)
-            String rest = sc.substring(comma + 2);
+            String rest = val.substring(comma + 2);
             int eq = rest.indexOf('=');
             int semi = rest.indexOf(';');
             if (eq > 0 && (semi < 0 || eq < semi)) {
-              single = sc.substring(start, comma);
+              single = val.substring(start, comma);
               start = comma + 2;
             } else {
               // Comma is part of a cookie value (e.g. date), skip
-              comma = sc.indexOf(", ", comma + 2);
+              comma = val.indexOf(", ", comma + 2);
               if (comma >= 0) {
-                single = sc.substring(start, comma);
+                single = val.substring(start, comma);
                 start = comma + 2;
               } else {
-                single = sc.substring(start);
-                start = sc.length();
+                single = val.substring(start);
+                start = val.length();
               }
             }
           } else {
-            single = sc.substring(start);
-            start = sc.length();
+            single = val.substring(start);
+            start = val.length();
           }
           parseSetCookie(single, domain);
           found++;
@@ -1097,9 +1101,12 @@ private:
     if (found == 0 && http.hasHeader("Set-Cookie")) {
       String sc = http.header("Set-Cookie");
       if (sc.length() > 0) {
-        Serial.printf("Cookie: fallback name-based lookup found: %s\n", sc.c_str());
+        Serial.printf("Cookie: fallback name-based: %.80s\n", sc.c_str());
         parseSetCookie(sc, domain);
       }
+    }
+    if (found == 0 && !http.hasHeader("Set-Cookie")) {
+      Serial.println("Cookie capture: NO Set-Cookie headers in response at all");
     }
     Serial.printf("Cookie jar now has %d cookies for domain %s\n", _cookieCount, domain);
   }
@@ -1455,6 +1462,8 @@ private:
   bool fetchPage(const char* url, const char* postBody = nullptr,
                  const char* contentType = nullptr,
                  const char* referer = nullptr) {
+    Serial.printf("WebReader: fetchPage('%s', post=%s, ref=%s)\n",
+                  url, postBody ? "yes" : "no", referer ? referer : "(null)");
     if (!allocateBuffers()) {
       _fetchError = "Out of memory";
       _mode = HOME;
@@ -1561,6 +1570,10 @@ private:
       http.addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
       http.addHeader("Accept-Language", "en-US,en;q=0.9");
       http.addHeader("Upgrade-Insecure-Requests", "1");
+      // Cache-busting: tell Cloudflare to revalidate with origin.
+      // Using max-age=0 (browser standard) instead of no-cache to avoid
+      // Cloudflare 525 SSL errors on some origins.
+      http.addHeader("Cache-Control", "max-age=0");
 
       // Re-render splash before blocking call
       if (_display) {
@@ -1594,7 +1607,6 @@ private:
         http.addHeader("Sec-Fetch-Mode", "navigate");
         http.addHeader("Sec-Fetch-Site", "same-origin");
         http.addHeader("Sec-Fetch-User", "?1");
-        http.addHeader("Cache-Control", "max-age=0");
         httpCode = http.POST((uint8_t*)postBody, strlen(postBody));
         Serial.printf("WebReader: POST -> %d (Referer: %s)\n", httpCode, ref);
       } else {
@@ -1748,12 +1760,118 @@ private:
     }
 
     if (form.isPost) {
+      // Save user-entered field values before first POST attempt.
+      // After fetchPage(), the form structures get overwritten by the new page.
+      // We need these to retry if CSRF fails (stale token from cached page).
+      struct SavedField { char name[32]; char value[WEB_MAX_FIELD_VALUE]; };
+      SavedField savedFields[WEB_MAX_FORM_FIELDS];
+      int savedCount = form.fieldCount;
+      char savedAction[WEB_MAX_URL_LEN];
+      char savedReferer[WEB_MAX_URL_LEN];
+      strncpy(savedAction, form.action, WEB_MAX_URL_LEN - 1);
+      savedAction[WEB_MAX_URL_LEN - 1] = '\0';
+      strncpy(savedReferer, _currentUrl, WEB_MAX_URL_LEN - 1);
+      savedReferer[WEB_MAX_URL_LEN - 1] = '\0';
+      for (int f = 0; f < form.fieldCount && f < WEB_MAX_FORM_FIELDS; f++) {
+        strncpy(savedFields[f].name, form.fields[f].name, 31);
+        savedFields[f].name[31] = '\0';
+        strncpy(savedFields[f].value, form.fields[f].value, WEB_MAX_FIELD_VALUE - 1);
+        savedFields[f].value[WEB_MAX_FIELD_VALUE - 1] = '\0';
+      }
+
       String body = buildFormBody(form);
       Serial.printf("WebReader: POST body (%d bytes): %s\n",
                     body.length(), body.c_str());
       strncpy(_urlBuffer, form.action, WEB_MAX_URL_LEN - 1);
       _urlLen = strlen(_urlBuffer);
-      return fetchPage(form.action, body.c_str(), nullptr, _currentUrl);
+
+      // --- First POST attempt ---
+      // On Cloudflare-cached sites, this may fail because the CSRF token
+      // came from a cached page with no session. But the 302 response
+      // WILL set _otwarchive_session, creating the session we need.
+      bool result = fetchPage(form.action, body.c_str(), nullptr, _currentUrl);
+
+      // Check if we got redirected to an auth error page
+      if (strstr(_currentUrl, "auth_error") || strstr(_currentUrl, "session_expired")) {
+        Serial.println("WebReader: Auth error detected — CSRF token was stale (cached page)");
+        Serial.println("WebReader: Retrying with fresh session cookie...");
+
+        // Show retry status on display
+        if (_display) {
+          _display->startFrame();
+          _display->setColor(DisplayDriver::GREEN);
+          _display->setTextSize(2);
+          _display->setCursor(10, 20);
+          _display->print("Logging in...");
+          _display->setTextSize(0);
+          _display->setColor(DisplayDriver::LIGHT);
+          _display->setCursor(10, 45);
+          _display->print("Refreshing session...");
+          _display->endFrame();
+        }
+
+        // Re-fetch the original form page.
+        // Now that we have _otwarchive_session cookie, Cloudflare should
+        // bypass its cache and serve a fresh page from AO3's origin with
+        // a CSRF token that matches our session.
+        Serial.printf("WebReader: Re-fetching form page: %s\n", savedReferer);
+        result = fetchPage(savedReferer);
+
+        if (result && _formCount > 0) {
+          // Find the login form and update its fields with saved user data
+          int retryForm = -1;
+          for (int fi = 0; fi < _formCount; fi++) {
+            // Match by action URL
+            if (strstr(_forms[fi].action, "login") || strstr(_forms[fi].action, "session")) {
+              retryForm = fi;
+              break;
+            }
+          }
+          if (retryForm < 0) retryForm = 0; // fallback to first form
+
+          WebForm& newForm = _forms[retryForm];
+          Serial.printf("WebReader: Found retry form %d with %d fields, action: %s\n",
+                        retryForm, newForm.fieldCount, newForm.action);
+
+          // Copy saved user values into matching fields of new form.
+          // Skip CSRF tokens (they have fresh values from the re-fetch).
+          for (int sf = 0; sf < savedCount; sf++) {
+            // Skip CSRF-type fields — new form already has fresh token
+            if (strcmp(savedFields[sf].name, "authenticity_token") == 0 ||
+                strcmp(savedFields[sf].name, "csrf_token") == 0 ||
+                strcmp(savedFields[sf].name, "_token") == 0 ||
+                strcmp(savedFields[sf].name, "commit") == 0) {
+              continue;
+            }
+            // Find matching field in new form
+            for (int nf = 0; nf < newForm.fieldCount; nf++) {
+              if (strcmp(newForm.fields[nf].name, savedFields[sf].name) == 0) {
+                strncpy(newForm.fields[nf].value, savedFields[sf].value,
+                        WEB_MAX_FIELD_VALUE - 1);
+                Serial.printf("WebReader: Restored field '%s'\n", savedFields[sf].name);
+                break;
+              }
+            }
+          }
+
+          // Build new POST body with fresh CSRF token + saved user data
+          String retryBody = buildFormBody(newForm);
+          Serial.printf("WebReader: Retry POST body (%d bytes): %s\n",
+                        retryBody.length(), retryBody.c_str());
+          Serial.printf("WebReader: Cookie jar has %d cookies:\n", _cookieCount);
+          for (int c = 0; c < _cookieCount; c++) {
+            Serial.printf("  [%d] %s = %.30s... (domain=%s)\n",
+                          c, _cookies[c].name, _cookies[c].value, _cookies[c].domain);
+          }
+
+          strncpy(_urlBuffer, newForm.action, WEB_MAX_URL_LEN - 1);
+          _urlLen = strlen(_urlBuffer);
+          result = fetchPage(newForm.action, retryBody.c_str(), nullptr, savedReferer);
+        } else {
+          Serial.println("WebReader: Re-fetch failed or no forms found for retry");
+        }
+      }
+      return result;
     } else {
       // GET - append form data as query string
       String getUrl = form.action;
@@ -2111,7 +2229,12 @@ private:
     if (_urlEditing) {
       display.print("Type URL  Ent:Go");
     } else {
-      display.print("Q:Back W/S:Nav Ent:Go");
+      char footerBuf[48];
+      if (_cookieCount > 0)
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go X:Clr%dck", _cookieCount);
+      else
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Back W/S:Nav Ent:Go");
+      display.print(footerBuf);
     }
   }
 
@@ -2459,6 +2582,14 @@ private:
           fetchPage(_urlBuffer);
         }
       }
+      return true;
+    }
+
+    // X - clear all cookies
+    if (c == 'x' || c == 'X') {
+      _cookieCount = 0;
+      memset(_cookies, 0, sizeof(_cookies));
+      Serial.println("WebReader: Cookies cleared");
       return true;
     }
 
