@@ -7,6 +7,7 @@
 #include <driver/rtc_io.h>
 
 // BQ27220 Fuel Gauge Registers
+#define BQ27220_REG_TEMPERATURE    0x06  // Temperature (0.1°K)
 #define BQ27220_REG_VOLTAGE        0x08
 #define BQ27220_REG_CURRENT        0x0C  // Instantaneous current (mA, signed)
 #define BQ27220_REG_SOC            0x2C
@@ -81,6 +82,9 @@ public:
 
   // Read design capacity in mAh (the configured battery size)
   uint16_t getDesignCapacity();
+
+  // Read battery temperature in 0.1°C units (e.g., 256 = 25.6°C)
+  int16_t getBattTemperature();
 
   // Configure BQ27220 design capacity (checks on boot, writes only if wrong)
   bool configureFuelGauge(uint16_t designCapacity_mAh = BQ27220_DESIGN_CAPACITY_MAH);

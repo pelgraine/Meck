@@ -46,10 +46,9 @@ void TDeckBoard::begin() {
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - GPS Serial2 initialized at %d baud", GPS_BAUDRATE);
   #endif
 
-  // 4G Modem power management
-  // On 4G builds, ModemManager::begin() handles power-on — don't kill it here.
-  // On non-4G builds, disable modem power to save current and turn off red LED.
-  #if defined(MODEM_POWER_EN) && !defined(HAS_4G_MODEM)
+  // Disable 4G modem power (only present on 4G version, not audio version)
+  // This turns off the red status LED on the modem module
+  #ifdef MODEM_POWER_EN
     pinMode(MODEM_POWER_EN, OUTPUT);
     digitalWrite(MODEM_POWER_EN, LOW);  // Cut power to modem
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - 4G modem power disabled");
@@ -351,6 +350,16 @@ uint16_t TDeckBoard::getFullChargeCapacity() {
 uint16_t TDeckBoard::getDesignCapacity() {
   #if HAS_BQ27220
     return bq27220_read16(BQ27220_REG_DESIGN_CAP);
+  #else
+    return 0;
+  #endif
+}
+
+int16_t TDeckBoard::getBattTemperature() {
+  #if HAS_BQ27220
+    uint16_t raw = bq27220_read16(BQ27220_REG_TEMPERATURE);
+    // BQ27220 returns 0.1°K, convert to 0.1°C (273.1K = 0°C)
+    return (int16_t)(raw - 2731);
   #else
     return 0;
   #endif

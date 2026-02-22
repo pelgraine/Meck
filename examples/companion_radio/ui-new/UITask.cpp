@@ -647,6 +647,13 @@ public:
       display.drawTextLeftAlign(0, y, "remaining cap");
       sprintf(buf, "%d mAh", remCap);
       display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Battery temperature
+      int16_t battTemp = board.getBattTemperature();
+      display.drawTextLeftAlign(0, y, "temperature");
+      sprintf(buf, "%d.%d C", battTemp / 10, abs(battTemp % 10));
+      display.drawTextRightAlign(display.width()-1, y, buf);
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
