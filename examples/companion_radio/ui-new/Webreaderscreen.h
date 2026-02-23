@@ -154,9 +154,14 @@ static const char* HTML_SKIP_TAGS[] = {
 
 // Tags that produce a paragraph break
 static const char* HTML_BLOCK_TAGS[] = {
-  "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6",
-  "tr", "blockquote", "article", "section", "figcaption",
-  "dt", "dd", nullptr
+  "div", "br", "tr", "blockquote", "article", "section", "figcaption",
+  "ul", "ol", "dl",
+  nullptr
+};
+
+// Tags that get paragraph-style double breaks
+static const char* HTML_PARA_TAGS[] = {
+  "p", nullptr
 };
 
 inline bool tagNameEquals(const char* tag, int tagLen, const char* name) {
@@ -204,6 +209,18 @@ inline int decodeHtmlEntity(const char* src, int srcLen, int pos, char* outChar)
   if (entLen == 4 && memcmp(ent, "quot", 4) == 0) { *outChar = '"'; return end - pos + 1; }
   if (entLen == 4 && memcmp(ent, "apos", 4) == 0) { *outChar = '\''; return end - pos + 1; }
   if (entLen == 4 && memcmp(ent, "nbsp", 4) == 0) { *outChar = ' '; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "mdash", 5) == 0) { *outChar = '-'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "ndash", 5) == 0) { *outChar = '-'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "lsquo", 5) == 0) { *outChar = '\''; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "rsquo", 5) == 0) { *outChar = '\''; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "ldquo", 5) == 0) { *outChar = '"'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "rdquo", 5) == 0) { *outChar = '"'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "laquo", 5) == 0) { *outChar = '<'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "raquo", 5) == 0) { *outChar = '>'; return end - pos + 1; }
+  if (entLen == 5 && memcmp(ent, "trade", 5) == 0) { *outChar = ' '; return end - pos + 1; }
+  if (entLen == 4 && memcmp(ent, "copy", 4) == 0) { *outChar = 'c'; return end - pos + 1; }
+  if (entLen == 4 && memcmp(ent, "bull", 4) == 0) { *outChar = '*'; return end - pos + 1; }
+  // hellip handled specially in caller (outputs "..." multi-char)
 
   // Numeric: &#NNN; or &#xHH;
   if (entLen >= 2 && ent[0] == '#') {
@@ -493,8 +510,12 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         continue;
       }
 
-      // Handle block tags - emit paragraph break
-      if (isBlockTag(tagName, tagNameLen)) {
+      // Handle paragraph tags - emit double break
+      bool isPara = false;
+      for (int pt = 0; HTML_PARA_TAGS[pt]; pt++) {
+        if (tagNameEquals(tagName, tagNameLen, HTML_PARA_TAGS[pt])) { isPara = true; break; }
+      }
+      if (isPara) {
         if (!lastWasBreak && ti > 0) {
           textOut[ti++] = '\n';
           if (ti < textMax - 2) textOut[ti++] = '\n';
@@ -503,31 +524,35 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         }
       }
 
-      // Handle <h1>-<h6> opening: add a visual marker
-      if (!isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
-          tagName[1] >= '1' && tagName[1] <= '6') {
-        // Emit section header marker
-        if (ti < textMax - 6) {
-          if (!lastWasBreak) {
-            textOut[ti++] = '\n';
-            textOut[ti++] = '\n';
-          }
-          textOut[ti++] = '=';
-          textOut[ti++] = '=';
-          textOut[ti++] = ' ';
-          lastWasBreak = false;
+      // Handle block tags - emit single break
+      if (!isPara && isBlockTag(tagName, tagNameLen)) {
+        if (!lastWasBreak && ti > 0) {
+          textOut[ti++] = '\n';
+          lastWasBreak = true;
           lastWasSpace = false;
         }
       }
 
-      // Handle closing </h1>-</h6>: add trailing marker
+      // Handle <h1>-<h6> opening: ensure line break before heading
+      if (!isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
+          tagName[1] >= '1' && tagName[1] <= '6') {
+        if (ti < textMax - 2) {
+          if (!lastWasBreak && ti > 0) {
+            textOut[ti++] = '\n';
+          }
+          // Double break before h1/h2 for visual separation
+          if (tagName[1] <= '2' && ti > 0 && ti < textMax - 1) {
+            textOut[ti++] = '\n';
+          }
+          lastWasBreak = true;
+          lastWasSpace = false;
+        }
+      }
+
+      // Handle closing </h1>-</h6>: line break after heading
       if (isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
           tagName[1] >= '1' && tagName[1] <= '6') {
-        if (ti < textMax - 6) {
-          textOut[ti++] = ' ';
-          textOut[ti++] = '=';
-          textOut[ti++] = '=';
-          textOut[ti++] = '\n';
+        if (ti < textMax - 1) {
           textOut[ti++] = '\n';
           lastWasBreak = true;
           lastWasSpace = false;
@@ -582,19 +607,40 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         currentHref[0] = '\0';
       }
 
-      // Handle <li> - single newline + bullet marker
+      // Handle <li> - comma-separated inline flow (compact for tag lists, pagination)
       if (!isClosing && tagNameLen == 2 && tagName[0] == 'l' && tagName[1] == 'i') {
-        if (ti < textMax - 5) {
-          if (!lastWasBreak && ti > 0) {
-            textOut[ti++] = '\n';
-            lastWasBreak = true;
+        if (ti < textMax - 3) {
+          // Trim trailing whitespace from buffer (between </li> and <li>)
+          while (ti > 0 && textOut[ti-1] == ' ') ti--;
+          // Add comma separator if continuing from a previous item
+          if (ti > 0 && textOut[ti-1] != '\n' && textOut[ti-1] != ',') {
+            textOut[ti++] = ',';
+            textOut[ti++] = ' ';
+            lastWasSpace = true;
+          } else if (ti > 0 && textOut[ti-1] == ',') {
+            // Previous item was empty — comma exists, just add space
+            textOut[ti++] = ' ';
+            lastWasSpace = true;
           }
-          textOut[ti++] = ' ';
-          textOut[ti++] = '*';
-          textOut[ti++] = ' ';
-          lastWasSpace = false;
-          lastWasBreak = false;
+          lastWasBreak = (ti == 0 || textOut[ti-1] == '\n');
         }
+      }
+
+      // Handle <dt> - inline flow with space separator (matches browser's inline stats)
+      if (!isClosing && tagNameLen == 2 && tagName[0] == 'd' && tagName[1] == 't') {
+        if (ti > 0 && !lastWasSpace && !lastWasBreak) {
+          textOut[ti++] = ' ';
+          lastWasSpace = true;
+        }
+      }
+
+      // Handle <dd> - just a space after the term (keeps "Label: Value" on one line)
+      if (!isClosing && tagNameLen == 2 && tagName[0] == 'd' && tagName[1] == 'd') {
+        if (ti > 0 && !lastWasSpace && !lastWasBreak) {
+          textOut[ti++] = ' ';
+          lastWasSpace = true;
+        }
+        lastWasBreak = false;
       }
 
       // ---- Form handling ----
@@ -767,6 +813,18 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
 
     // HTML entity
     if (c == '&') {
+      // Special multi-char entity: &hellip; → ...
+      if (hi + 7 <= htmlLen && memcmp(html + hi, "&hellip;", 8) == 0) {
+        if (ti < textMax - 3) {
+          textOut[ti++] = '.';
+          textOut[ti++] = '.';
+          textOut[ti++] = '.';
+          lastWasSpace = false;
+          lastWasBreak = false;
+        }
+        hi += 8;
+        continue;
+      }
       char decoded;
       int consumed = decodeHtmlEntity(html, htmlLen, hi, &decoded);
       if (consumed > 0) {
@@ -803,6 +861,44 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
   }
 
   textOut[ti] = '\0';
+  
+  // Post-processing: clean up stray commas from empty list items
+  // (e.g. <li> containing only images produce ", " with no content)
+  int wi = 0;
+  for (int ri = 0; ri < ti; ri++) {
+    // Skip ", " that follows a newline (first empty items)
+    if (textOut[ri] == ',' && ri + 1 < ti && textOut[ri+1] == ' ') {
+      // Check if preceded by newline or start of string
+      if (wi == 0 || textOut[wi-1] == '\n') {
+        ri++; // skip the space too
+        continue;
+      }
+      // Check if followed by another comma (consecutive empty items)
+      if (ri + 2 < ti && textOut[ri+2] == ',') {
+        ri++; // skip ", " — next iteration handles the next comma
+        continue;
+      }
+    }
+    textOut[wi++] = textOut[ri];
+  }
+  textOut[wi] = '\0';
+  ti = wi;
+  
+  // Also collapse multiple consecutive newlines (max 2)
+  wi = 0;
+  int nlCount = 0;
+  for (int ri = 0; ri < ti; ri++) {
+    if (textOut[ri] == '\n') {
+      nlCount++;
+      if (nlCount <= 2) textOut[wi++] = textOut[ri];
+    } else {
+      nlCount = 0;
+      textOut[wi++] = textOut[ri];
+    }
+  }
+  textOut[wi] = '\0';
+  ti = wi;
+
   result.textLen = ti;
   return result;
 }
