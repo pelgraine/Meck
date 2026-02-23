@@ -2504,9 +2504,9 @@ private:
       if (pos >= pageEnd) break;
     }
 
-    // Footer (tiny font to fit link/form hints)
-    display.setTextSize(0);
-    int footerY = display.height() - 10;
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
@@ -2516,20 +2516,20 @@ private:
     display.setCursor(0, footerY);
     display.print(pageBuf);
 
-    // Navigation hint on right
+    // Navigation hint on right (compact to fit setTextSize 1)
     const char* hint;
     char linkBuf[32];
     if (_linkInputActive) {
-      snprintf(linkBuf, sizeof(linkBuf), "Link#:%d_ Ent:Go", _linkInput);
+      snprintf(linkBuf, sizeof(linkBuf), "#%d_ Ent:Go", _linkInput);
       hint = linkBuf;
     } else if (_formCount > 0 && _linkCount > 0) {
-      hint = "W/S:Pg L:Lnk F:Form Q:Bk";
+      hint = "L:Lnk F:Frm Q:Bk";
     } else if (_formCount > 0) {
-      hint = "W/S:Pg F:Form Q:Back";
+      hint = "W/S F:Frm Q:Bk";
     } else if (_linkCount > 0) {
-      hint = "W/S:Pg L:Link Q:Back";
+      hint = "W/S L:Lnk Q:Bk";
     } else {
-      hint = "W/S:Pg Q:Back";
+      hint = "W/S:Pg Q:Bk";
     }
     display.setCursor(display.width() - display.getTextWidth(hint) - 2, footerY);
     display.print(hint);
