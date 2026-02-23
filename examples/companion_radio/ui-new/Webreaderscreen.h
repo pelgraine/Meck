@@ -442,6 +442,7 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
   char pendingLabel[48] = {0};
   bool inLabel = false;
   int labelTextStart = 0;
+  int listDepth = 0;  // Nesting depth of <ul>/<ol>/<dl> (for smart <li> formatting)
 
   // Find <body> tag to skip <head> section
   for (int i = 0; i < htmlLen - 6; i++) {
@@ -533,26 +534,50 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         }
       }
 
+      // Track <ul>/<ol>/<dl> nesting depth for smart <li> formatting
+      if (tagNameLen == 2) {
+        bool isList = (tagName[0] == 'u' && tagName[1] == 'l') ||
+                      (tagName[0] == 'o' && tagName[1] == 'l') ||
+                      (tagName[0] == 'd' && tagName[1] == 'l');
+        if (isList) {
+          if (isClosing) { if (listDepth > 0) listDepth--; }
+          else listDepth++;
+        }
+      }
+
       // Handle <h1>-<h6> opening: ensure line break before heading
       if (!isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
           tagName[1] >= '1' && tagName[1] <= '6') {
-        if (ti < textMax - 2) {
+        if (ti < textMax - 12) {
           if (!lastWasBreak && ti > 0) {
+            textOut[ti++] = '\n';
+          }
+          // Separator line before h4 headings (work titles on listing pages)
+          if (tagName[1] == '4' && ti > 1) {
+            const char* sep = "--------";
+            for (int s = 0; sep[s]; s++) textOut[ti++] = sep[s];
             textOut[ti++] = '\n';
           }
           // Double break before h1/h2 for visual separation
           if (tagName[1] <= '2' && ti > 0 && ti < textMax - 1) {
             textOut[ti++] = '\n';
           }
+          // Heading markers for h1-h4 (renderer draws underline)
+          if (tagName[1] <= '4') {
+            textOut[ti++] = '\x01';
+          }
           lastWasBreak = true;
           lastWasSpace = false;
         }
       }
 
-      // Handle closing </h1>-</h6>: line break after heading
+      // Handle closing </h1>-</h6>: heading end marker + line break
       if (isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
           tagName[1] >= '1' && tagName[1] <= '6') {
-        if (ti < textMax - 1) {
+        if (ti < textMax - 2) {
+          if (tagName[1] <= '4') {
+            textOut[ti++] = '\x02';  // Heading end marker
+          }
           textOut[ti++] = '\n';
           lastWasBreak = true;
           lastWasSpace = false;
@@ -607,18 +632,15 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         currentHref[0] = '\0';
       }
 
-      // Handle <li> - comma-separated inline flow (compact for tag lists, pagination)
+      // Handle <li> - always comma-separated inline flow
       if (!isClosing && tagNameLen == 2 && tagName[0] == 'l' && tagName[1] == 'i') {
         if (ti < textMax - 3) {
-          // Trim trailing whitespace from buffer (between </li> and <li>)
           while (ti > 0 && textOut[ti-1] == ' ') ti--;
-          // Add comma separator if continuing from a previous item
           if (ti > 0 && textOut[ti-1] != '\n' && textOut[ti-1] != ',') {
             textOut[ti++] = ',';
             textOut[ti++] = ' ';
             lastWasSpace = true;
           } else if (ti > 0 && textOut[ti-1] == ',') {
-            // Previous item was empty — comma exists, just add space
             textOut[ti++] = ' ';
             lastWasSpace = true;
           }
@@ -1066,7 +1088,7 @@ private:
   unsigned long _toastTime;  // millis() when toast was set
 
   // Forms
-  WebForm _forms[WEB_MAX_FORMS];
+  WebForm* _forms;  // PSRAM allocated
   int _formCount;
   int _activeForm;      // Which form is being filled (-1 = none)
   int _activeField;     // Which field in the active form (index into visible fields)
@@ -1082,7 +1104,7 @@ private:
     char name[64];
     char value[512]; // AO3 session cookies are 300+ chars of base64
   };
-  Cookie _cookies[WEB_MAX_COOKIES];
+  Cookie* _cookies;  // PSRAM allocated
   int _cookieCount;
 
   // Fetch state
@@ -1841,12 +1863,10 @@ private:
       // Connection-level failure (timeout, TLS error, etc) — retry once
       if (httpCode < 0 && connRetries < 1) {
         http.end();
-        // Destroy and recreate TLS client — old connection state is broken
-        delete tlsClient;
-        tlsClient = new WiFiClientSecure();
-        tlsClient->setInsecure();
-        tlsClient->setHandshakeTimeout(30);
-        lastHost = "";  // Force fresh connection
+        // Reset TLS client — stop connection but keep the object alive
+        // (HTTPClient destructor will access it when 'http' goes out of scope)
+        tlsClient->stop();
+        lastHost = "";  // Force fresh connection on next begin()
         connRetries++;
         redirectCount++;
         Serial.printf("WebReader: Connection error %d, retrying...\n", httpCode);
@@ -2610,6 +2630,13 @@ private:
     int pos = pageStart;
     int maxY = display.height() - _footerHeight - _lineHeight;
 
+    // Check if page starts inside a heading (marker from previous page)
+    bool inHeading = false;
+    for (int scan = 0; scan < pageStart && scan < _textLen; scan++) {
+      if (_textBuffer[scan] == '\x01') inHeading = true;
+      if (_textBuffer[scan] == '\x02') inHeading = false;
+    }
+
     while (pos < pageEnd && lineCount < _linesPerPage && y <= maxY) {
       int oldPos = pos;
       WebWrapResult wrap = webFindLineBreak(_textBuffer, pageEnd, pos, _charsPerLine);
@@ -2618,11 +2645,24 @@ private:
 
       display.setCursor(0, y);
 
+      // Check if this line contains heading text (for underline)
+      bool lineHasHeading = inHeading;
+      if (!lineHasHeading) {
+        for (int scan = pos; scan < wrap.lineEnd && scan < pageEnd; scan++) {
+          if (_textBuffer[scan] == '\x01') { lineHasHeading = true; break; }
+        }
+      }
+
       // Render characters with UTF-8/CP437 handling
       char charStr[2] = {0, 0};
+      
       int j = pos;
       while (j < wrap.lineEnd && j < pageEnd) {
         uint8_t b = (uint8_t)_textBuffer[j];
+
+        // Heading markers: \x01 = start, \x02 = end
+        if (b == 0x01) { inHeading = true; j++; continue; }
+        if (b == 0x02) { inHeading = false; j++; continue; }
 
         if (b < 32) { j++; continue; }
 
@@ -2686,6 +2726,22 @@ private:
           display.print(charStr);
           j++;
         }
+      }
+
+      // Draw underline below the last line of a heading
+      // (the line where \x02 marker ends the heading, or heading continues to next line)
+      bool headingEndsHere = false;
+      if (lineHasHeading) {
+        // Check if heading ends on this line
+        for (int scan = pos; scan < wrap.lineEnd && scan < pageEnd; scan++) {
+          if (_textBuffer[scan] == '\x02') { headingEndsHere = true; break; }
+        }
+        // Also underline if this is the last line of the page and still in heading
+        if (!headingEndsHere && wrap.nextStart >= pageEnd) headingEndsHere = true;
+      }
+      if (headingEndsHere) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawRect(0, y + _lineHeight - 1, display.width(), 1);
       }
 
       y += _lineHeight;
@@ -2954,7 +3010,7 @@ private:
     if (c == 'x' || c == 'X') {
       bool hadData = (_cookieCount > 0 || !_history.empty());
       _cookieCount = 0;
-      memset(_cookies, 0, sizeof(_cookies));
+      memset(_cookies, 0, sizeof(Cookie) * WEB_MAX_COOKIES);
       _history.clear();
       saveHistory();
       Serial.println("WebReader: Cookies and history cleared");
@@ -4238,8 +4294,9 @@ public:
       _currentPage(0), _totalPages(0),
       _homeSelected(0), _urlEditing(false),
       _linkInput(0), _linkInputActive(false),
-      _formCount(0), _activeForm(-1), _activeField(0),
-      _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0), _cookieCount(0),
+      _formCount(0), _forms(nullptr), _activeForm(-1), _activeField(0),
+      _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0),
+      _cookies(nullptr), _cookieCount(0),
       _fetchStartTime(0), _fetchProgress(0),
       _ircClient(nullptr), _ircUseTLS(false), _ircConnected(false), _ircRegistered(false),
       _ircJoined(false), _ircPort(6697), _ircMessages(nullptr),
@@ -4259,13 +4316,18 @@ public:
     _ircCompose[0] = '\0';
     _ircSetupBuf[0] = '\0';
     _ircLineBuf[0] = '\0';
-    memset(_forms, 0, sizeof(_forms));
-    memset(_cookies, 0, sizeof(_cookies));
+    _toastMsg[0] = '\0';
+    _toastTime = 0;
+    // Allocate forms and cookies in PSRAM to free internal heap for TLS
+    _forms = (WebForm*)ps_calloc(WEB_MAX_FORMS, sizeof(WebForm));
+    _cookies = (Cookie*)ps_calloc(WEB_MAX_COOKIES, sizeof(Cookie));
     loadIRCConfig();
   }
 
   ~WebReaderScreen() {
     freeBuffers();
+    if (_forms) { free(_forms); _forms = nullptr; }
+    if (_cookies) { free(_cookies); _cookies = nullptr; }
     if (_ircClient) {
       if (_ircClient->connected()) _ircClient->stop();
       delete _ircClient;

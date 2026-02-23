@@ -1400,11 +1400,18 @@ void handleKeyboardInput() {
           Serial.printf("WebReader: heap BEFORE BT release: free=%d, largest=%d\n",
                          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-          // 1) Stop BLE controller (disable + deinit)
+          // 1) Gracefully disable BLE interface (stop advertising, disconnect, clear queues)
+          //    Must happen BEFORE btStop() while BLE objects are still valid
+          #ifdef BLE_PIN_CODE
+            serial_interface.disable();
+            delay(50);
+          #endif
+
+          // 2) Stop BLE controller (disable + deinit)
           btStop();
           delay(50);
 
-          // 2) Release the BT controller's reserved memory region back to heap
+          // 3) Release the BT controller's reserved memory region back to heap
           esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
           delay(50);
 

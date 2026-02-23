@@ -147,15 +147,21 @@ void SerialBLEInterface::enable() {
 }
 
 void SerialBLEInterface::disable() {
+  bool wasEnabled = _isEnabled;
   _isEnabled = false;
 
   BLE_DEBUG_PRINTLN("SerialBLEInterface::disable");
 
-  pServer->getAdvertising()->stop();
-  pServer->disconnect(last_conn_id);
-  pService->stop();
+  // Only try BLE operations if we were previously enabled
+  // (avoids accessing dead BLE objects after btStop/mem_release)
+  if (wasEnabled && pServer) {
+    pServer->getAdvertising()->stop();
+    pServer->disconnect(last_conn_id);
+    pService->stop();
+  }
   oldDeviceConnected = deviceConnected = false;
   adv_restart_time = 0;
+  clearBuffers();
 }
 
 size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
@@ -186,6 +192,8 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  if (!_isEnabled) return 0;  // BLE disabled — skip all BLE operations
+
   if (send_queue_len > 0   // first, check send queue
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
