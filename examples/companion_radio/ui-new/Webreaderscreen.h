@@ -2277,20 +2277,33 @@ private:
 
       for (int i = 0; i < (int)_bookmarks.size() && y < display.height() - 35; i++) {
         bool selected = (_homeSelected == itemIdx);
+        const char* url = _bookmarks[i].c_str();
+        int urlLen = strlen(url);
+        int maxChars = _charsPerLine - 2;
+
+        int numLines = (urlLen + maxChars - 1) / maxChars;
+        if (numLines < 1) numLines = 1;
+
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
-          display.fillRect(0, y + 5, display.width(), listLineH);
+          display.fillRect(0, y + 5, display.width(), listLineH * numLines);
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
         }
-        display.setCursor(0, y);
-        String line = selected ? "> " : "  ";
-        line += _bookmarks[i];
-        if ((int)line.length() > _charsPerLine)
-          line = line.substring(0, _charsPerLine - 3) + "...";
-        display.print(line.c_str());
-        y += listLineH;
+
+        int off = 0;
+        for (int ln = 0; ln < numLines && y < display.height() - 35; ln++) {
+          display.setCursor(0, y);
+          char lineBuf[128];
+          const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
+          int charsThisLine = maxChars;
+          if (urlLen - off < charsThisLine) charsThisLine = urlLen - off;
+          snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, charsThisLine, url + off);
+          display.print(lineBuf);
+          off += charsThisLine;
+          y += listLineH;
+        }
         itemIdx++;
       }
     }
@@ -2304,20 +2317,36 @@ private:
 
       for (int i = 0; i < (int)_history.size() && y < display.height() - 24; i++) {
         bool selected = (_homeSelected == itemIdx);
+        const char* url = _history[i].c_str();
+        int urlLen = strlen(url);
+        int maxChars = _charsPerLine - 2;  // Account for "> " prefix
+
+        // Calculate how many lines this URL needs
+        int numLines = (urlLen + maxChars - 1) / maxChars;
+        if (numLines < 1) numLines = 1;
+
         if (selected) {
+          // Multi-line highlight
           display.setColor(DisplayDriver::LIGHT);
-          display.fillRect(0, y + 5, display.width(), listLineH);
+          display.fillRect(0, y + 5, display.width(), listLineH * numLines);
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
         }
-        display.setCursor(0, y);
-        String line = selected ? "> " : "  ";
-        line += _history[i];
-        if ((int)line.length() > _charsPerLine)
-          line = line.substring(0, _charsPerLine - 3) + "...";
-        display.print(line.c_str());
-        y += listLineH;
+
+        // Render URL across multiple lines
+        int off = 0;
+        for (int ln = 0; ln < numLines && y < display.height() - 24; ln++) {
+          display.setCursor(0, y);
+          char lineBuf[128];
+          const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
+          int charsThisLine = maxChars;
+          if (urlLen - off < charsThisLine) charsThisLine = urlLen - off;
+          snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, charsThisLine, url + off);
+          display.print(lineBuf);
+          off += charsThisLine;
+          y += listLineH;
+        }
         itemIdx++;
       }
     }
@@ -2475,9 +2504,9 @@ private:
       if (pos >= pageEnd) break;
     }
 
-    // Footer
-    display.setTextSize(1);
-    int footerY = display.height() - 12;
+    // Footer (tiny font to fit link/form hints)
+    display.setTextSize(0);
+    int footerY = display.height() - 10;
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
@@ -2489,8 +2518,10 @@ private:
 
     // Navigation hint on right
     const char* hint;
+    char linkBuf[32];
     if (_linkInputActive) {
-      hint = "Link#:Go Esc:Cancel";
+      snprintf(linkBuf, sizeof(linkBuf), "Link#:%d_ Ent:Go", _linkInput);
+      hint = linkBuf;
     } else if (_formCount > 0 && _linkCount > 0) {
       hint = "W/S:Pg L:Lnk F:Form Q:Bk";
     } else if (_formCount > 0) {
@@ -2717,25 +2748,38 @@ private:
   }
 
   bool handleReadingInput(char c) {
-    // Link number input mode
+    // Link number input mode - accumulate digits, Enter to follow
     if (_linkInputActive) {
       if (c >= '0' && c <= '9') {
-        _linkInput = _linkInput * 10 + (c - '0');
+        int newVal = _linkInput * 10 + (c - '0');
+        if (newVal <= 999) {
+          _linkInput = newVal;
+        }
+        return true;
+      }
+      if (c == '\r' || c == 13) {
+        // Enter confirms the link
         if (_linkInput > 0 && _linkInput <= _linkCount) {
-          // Valid link - follow it
           _linkInputActive = false;
           WebLink& link = _links[_linkInput - 1];
           strncpy(_urlBuffer, link.url, WEB_MAX_URL_LEN - 1);
           _urlLen = strlen(_urlBuffer);
           fetchPage(_urlBuffer);
-        } else if (_linkInput > _linkCount) {
-          // Number too high - cancel
+        } else {
           _linkInputActive = false;
           _linkInput = 0;
         }
         return true;
       }
-      // Any non-digit cancels link input
+      if (c == '\b' || c == 127) {
+        // Backspace removes last digit
+        _linkInput /= 10;
+        if (_linkInput == 0) {
+          _linkInputActive = false;
+        }
+        return true;
+      }
+      // Any other key cancels link input
       _linkInputActive = false;
       _linkInput = 0;
       return true;
