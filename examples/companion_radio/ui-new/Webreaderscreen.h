@@ -442,7 +442,6 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
   char pendingLabel[48] = {0};
   bool inLabel = false;
   int labelTextStart = 0;
-  int listDepth = 0;  // Nesting depth of <ul>/<ol>/<dl> (for smart <li> formatting)
 
   // Find <body> tag to skip <head> section
   for (int i = 0; i < htmlLen - 6; i++) {
@@ -534,17 +533,6 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         }
       }
 
-      // Track <ul>/<ol>/<dl> nesting depth for smart <li> formatting
-      if (tagNameLen == 2) {
-        bool isList = (tagName[0] == 'u' && tagName[1] == 'l') ||
-                      (tagName[0] == 'o' && tagName[1] == 'l') ||
-                      (tagName[0] == 'd' && tagName[1] == 'l');
-        if (isList) {
-          if (isClosing) { if (listDepth > 0) listDepth--; }
-          else listDepth++;
-        }
-      }
-
       // Handle <h1>-<h6> opening: ensure line break before heading
       if (!isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
           tagName[1] >= '1' && tagName[1] <= '6') {
@@ -562,21 +550,25 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
           if (tagName[1] <= '2' && ti > 0 && ti < textMax - 1) {
             textOut[ti++] = '\n';
           }
-          // Heading markers for h1-h4 (renderer draws underline)
-          if (tagName[1] <= '4') {
-            textOut[ti++] = '\x01';
+          // Wrap h1-h4 headings with * markers to make them stand out
+          if (tagName[1] <= '4' && ti < textMax - 2) {
+            textOut[ti++] = '*';
+            textOut[ti++] = ' ';
           }
-          lastWasBreak = true;
-          lastWasSpace = false;
+          lastWasBreak = false;
+          lastWasSpace = true;
         }
       }
 
-      // Handle closing </h1>-</h6>: heading end marker + line break
+      // Handle closing </h1>-</h6>: closing marker + line break
       if (isClosing && tagNameLen == 2 && tagName[0] == 'h' &&
           tagName[1] >= '1' && tagName[1] <= '6') {
         if (ti < textMax - 2) {
+          // Trim trailing space before closing marker
+          if (ti > 0 && textOut[ti-1] == ' ') ti--;
           if (tagName[1] <= '4') {
-            textOut[ti++] = '\x02';  // Heading end marker
+            textOut[ti++] = ' ';
+            textOut[ti++] = '*';
           }
           textOut[ti++] = '\n';
           lastWasBreak = true;
@@ -2630,13 +2622,6 @@ private:
     int pos = pageStart;
     int maxY = display.height() - _footerHeight - _lineHeight;
 
-    // Check if page starts inside a heading (marker from previous page)
-    bool inHeading = false;
-    for (int scan = 0; scan < pageStart && scan < _textLen; scan++) {
-      if (_textBuffer[scan] == '\x01') inHeading = true;
-      if (_textBuffer[scan] == '\x02') inHeading = false;
-    }
-
     while (pos < pageEnd && lineCount < _linesPerPage && y <= maxY) {
       int oldPos = pos;
       WebWrapResult wrap = webFindLineBreak(_textBuffer, pageEnd, pos, _charsPerLine);
@@ -2645,24 +2630,12 @@ private:
 
       display.setCursor(0, y);
 
-      // Check if this line contains heading text (for underline)
-      bool lineHasHeading = inHeading;
-      if (!lineHasHeading) {
-        for (int scan = pos; scan < wrap.lineEnd && scan < pageEnd; scan++) {
-          if (_textBuffer[scan] == '\x01') { lineHasHeading = true; break; }
-        }
-      }
-
       // Render characters with UTF-8/CP437 handling
       char charStr[2] = {0, 0};
       
       int j = pos;
       while (j < wrap.lineEnd && j < pageEnd) {
         uint8_t b = (uint8_t)_textBuffer[j];
-
-        // Heading markers: \x01 = start, \x02 = end
-        if (b == 0x01) { inHeading = true; j++; continue; }
-        if (b == 0x02) { inHeading = false; j++; continue; }
 
         if (b < 32) { j++; continue; }
 
@@ -2726,22 +2699,6 @@ private:
           display.print(charStr);
           j++;
         }
-      }
-
-      // Draw underline below the last line of a heading
-      // (the line where \x02 marker ends the heading, or heading continues to next line)
-      bool headingEndsHere = false;
-      if (lineHasHeading) {
-        // Check if heading ends on this line
-        for (int scan = pos; scan < wrap.lineEnd && scan < pageEnd; scan++) {
-          if (_textBuffer[scan] == '\x02') { headingEndsHere = true; break; }
-        }
-        // Also underline if this is the last line of the page and still in heading
-        if (!headingEndsHere && wrap.nextStart >= pageEnd) headingEndsHere = true;
-      }
-      if (headingEndsHere) {
-        display.setColor(DisplayDriver::LIGHT);
-        display.drawRect(0, y + _lineHeight - 1, display.width(), 1);
       }
 
       y += _lineHeight;
