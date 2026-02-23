@@ -22,10 +22,11 @@ This fork was created specifically to focus on enabling BLE companion firmware f
 - [MeshCore Flasher](#meshcore-flasher)
 - [MeshCore Clients](#meshcore-clients)
 - [Hardware Compatibility](#-hardware-compatibility)
-- [License](#-license)
 - [Contributing](#contributing)
 - [Road-Map / To-Do](#road-map--to-do)
 - [Get Support](#-get-support)
+- [License](#-license)
+  - [Third-Party Libraries](#third-party-libraries)
 
 ## T-Deck Pro Keyboard Controls
 
@@ -263,10 +264,6 @@ The companion firmware can be connected to via BLE.
 
 MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk)
 
-## 📜 License
-
-MeshCore is open-source software released under the MIT License. You are free to use, modify, and distribute it for personal and commercial projects.
-
 ## Contributing
 
 Please submit PR's using 'dev' as the base branch!
@@ -298,3 +295,25 @@ There are a number of fairly major features in the pipeline, with no particular 
 ## 📞 Get Support
 
 - Join [MeshCore Discord](https://discord.gg/BMwCtwHj5V) to chat with the developers and get help from the community.
+
+## 📜 License
+
+The upstream [MeshCore](https://github.com/meshcore-dev/MeshCore) library is released under the **MIT License** (Copyright © 2025 Scott Powell / rippleradios.com). Meck-specific code (UI screens, display helpers, device integration) is also provided under the MIT License.
+
+However, this firmware links against libraries with different license terms. Because two dependencies use the **GPL-3.0** copyleft license, the combined firmware binary is effectively subject to GPL-3.0 obligations when distributed. Please review the individual licenses below if you intend to redistribute or modify this firmware.
+
+### Third-Party Libraries
+
+| Library | License | Author / Source |
+|---------|---------|-----------------|
+| [MeshCore](https://github.com/meshcore-dev/MeshCore) | MIT | Scott Powell / rippleradios.com |
+| [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg |
+| [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 (Wolle) |
+| [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
+| [RadioLib](https://github.com/jgromes/RadioLib) | MIT | Jan Gromeš |
+| [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank (bitbank2) |
+| [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
+| [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
+| [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
+
+Full license texts for each dependency are available in their respective repositories linked above.
