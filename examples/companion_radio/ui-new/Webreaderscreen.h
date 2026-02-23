@@ -80,6 +80,24 @@ static void ensureTlsUsesPsram() {
 #define WEB_CACHE_DIR       "/web"
 #define WEB_BOOKMARKS_FILE  "/web/bookmarks.txt"
 #define WEB_HISTORY_FILE    "/web/history.txt"
+
+// IRC configuration
+#define IRC_CONFIG_FILE     "/web/irc.cfg"
+#define IRC_MAX_MESSAGES    64       // Circular buffer size
+#define IRC_MAX_MSG_LEN     200      // Max display length per message
+#define IRC_MAX_NICK_LEN    16
+#define IRC_MAX_CHANNEL_LEN 64
+#define IRC_MAX_HOST_LEN    128
+#define IRC_LINE_BUF_SIZE   512      // Raw IRC protocol line buffer
+#define IRC_COMPOSE_MAX     180      // Max compose message length
+#define IRC_RECONNECT_MS    10000    // Auto-reconnect delay
+#define IRC_PING_TIMEOUT_MS 300000   // 5 min no data = connection dead
+
+struct IRCMessage {
+  char nick[IRC_MAX_NICK_LEN];
+  char text[IRC_MAX_MSG_LEN];
+  bool isSystem;  // true for join/part/server notices
+};
 #define WEB_MAX_PAGE_SIZE   32768   // Max HTML download size (32KB)
 #define WEB_MAX_TEXT_SIZE   24576   // Max extracted text size (24KB)
 #define WEB_MAX_LINKS       64      // Max links per page
@@ -858,7 +876,9 @@ public:
     FETCHING,      // Loading page
     READING,       // Viewing extracted text
     LINK_SELECT,   // Choosing a link number
-    FORM_FILL      // Filling in a form
+    FORM_FILL,     // Filling in a form
+    IRC_SETUP,     // IRC server/nick/channel configuration
+    IRC_CHAT       // Live IRC chat view
   };
 
   enum WifiState {
@@ -945,6 +965,48 @@ private:
   unsigned long _fetchStartTime;
   int _fetchProgress;    // Bytes received so far
   String _fetchError;
+
+  // ---- IRC State ----
+  WiFiClient* _ircClient;       // WiFiClient (plain) or WiFiClientSecure (TLS)
+  bool _ircUseTLS;              // true when connected via TLS
+  bool _ircConnected;
+  bool _ircRegistered;       // Received 001 RPL_WELCOME
+  bool _ircJoined;           // Successfully joined channel
+
+  char _ircHost[IRC_MAX_HOST_LEN];
+  uint16_t _ircPort;
+  char _ircNick[IRC_MAX_NICK_LEN];
+  char _ircChannel[IRC_MAX_CHANNEL_LEN];
+
+  // Message circular buffer
+  IRCMessage* _ircMessages;  // PSRAM allocated
+  int _ircMsgHead;           // Next write position
+  int _ircMsgCount;          // Total messages stored
+
+  // Protocol line buffer (partial line accumulation)
+  char _ircLineBuf[IRC_LINE_BUF_SIZE];
+  int _ircLineLen;
+
+  // Compose buffer
+  char _ircCompose[IRC_COMPOSE_MAX];
+  int _ircComposeLen;
+  bool _ircComposing;        // true when typing a message
+
+  // Display state
+  int _ircScrollPos;         // Scroll offset from bottom (0 = newest)
+  int _ircLinesPerPage;
+
+  // Setup screen state
+  int _ircSetupField;        // 0=host, 1=port, 2=nick, 3=channel, 4=connect button
+  char _ircSetupBuf[IRC_MAX_HOST_LEN]; // Edit buffer for setup fields
+  int _ircSetupBufLen;
+  bool _ircSetupEditing;     // true when typing into a field
+
+  // Connection management
+  unsigned long _ircLastDataTime;
+  unsigned long _ircReconnectAt;  // 0 = no reconnect pending
+  bool _ircDirty;                 // New messages need rendering
+  unsigned long _ircLastRender;   // Throttle directRedraw from poll()
 
   // ---- Memory Management ----
 
@@ -2054,9 +2116,16 @@ private:
       display.print("Password:");
       y += 10;
       display.setCursor(0, y);
-      // Show password with cursor
+      // Show masked password with brief reveal of last char
       char passBuf[WEB_WIFI_PASS_LEN + 2];
-      strncpy(passBuf, _wifiPass, _wifiPassLen);
+      for (int pi = 0; pi < _wifiPassLen; pi++) {
+        passBuf[pi] = '*';
+      }
+      // Brief reveal: show last char for ~800ms after typing
+      if (_wifiPassLen > 0 && _formLastCharAt > 0 &&
+          (millis() - _formLastCharAt) < 800) {
+        passBuf[_wifiPassLen - 1] = _wifiPass[_wifiPassLen - 1];
+      }
       passBuf[_wifiPassLen] = '_'; // Cursor
       passBuf[_wifiPassLen + 1] = '\0';
       display.print(passBuf);
@@ -2134,10 +2203,42 @@ private:
     display.setTextSize(0);
     int y = 14;
     int listLineH = 8;
+    int itemIdx = 0;
 
-    // URL bar (item 0)
+    // IRC Chat (item 0)
     {
-      bool selected = (_homeSelected == 0);
+      bool selected = (_homeSelected == itemIdx);
+      if (selected) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.fillRect(0, y + 5, display.width(), listLineH);
+        display.setColor(DisplayDriver::DARK);
+      } else {
+        display.setColor(DisplayDriver::GREEN);
+      }
+      display.setCursor(0, y);
+      if (_ircConnected && _ircJoined) {
+        char ircLabel[80];
+        snprintf(ircLabel, sizeof(ircLabel), "IRC: %s [connected]", _ircChannel);
+        display.print(ircLabel);
+      } else if (_ircConnected) {
+        display.print("IRC: connecting...");
+      } else {
+        char ircLabel[80];
+        snprintf(ircLabel, sizeof(ircLabel), "IRC: %s:%d", _ircHost, _ircPort);
+        display.print(ircLabel);
+      }
+      y += listLineH + 2;
+      itemIdx++;
+    }
+
+    // Separator between IRC and Web sections
+    display.setColor(DisplayDriver::GREEN);
+    display.drawRect(0, y + 5, display.width(), 1);
+    y += 8;
+
+    // URL bar (item 1)
+    {
+      bool selected = (_homeSelected == itemIdx);
       if (selected) {
         display.setColor(DisplayDriver::LIGHT);
         display.fillRect(0, y + 5, display.width(), listLineH);
@@ -2149,21 +2250,22 @@ private:
       if (_urlEditing) {
         // Show URL with cursor
         char urlDisp[WEB_MAX_URL_LEN + 2];
-        int maxShow = _charsPerLine - 4;
+        int maxShow = _charsPerLine - 5;
         int start = 0;
         if (_urlLen > maxShow) start = _urlLen - maxShow;
-        snprintf(urlDisp, sizeof(urlDisp), "Go: %s_", _urlBuffer + start);
+        snprintf(urlDisp, sizeof(urlDisp), "Web: %s_", _urlBuffer + start);
         display.print(urlDisp);
       } else if (_urlLen > 0) {
         char urlDisp[80];
-        snprintf(urlDisp, sizeof(urlDisp), "Go: %s",
-                 _urlLen > _charsPerLine - 4 ?
-                   (_urlBuffer + _urlLen - _charsPerLine + 4) : _urlBuffer);
+        snprintf(urlDisp, sizeof(urlDisp), "Web: %s",
+                 _urlLen > _charsPerLine - 5 ?
+                   (_urlBuffer + _urlLen - _charsPerLine + 5) : _urlBuffer);
         display.print(urlDisp);
       } else {
-        display.print("Go: [Enter URL]");
+        display.print("Web: [Enter URL]");
       }
       y += listLineH + 2;
+      itemIdx++;
     }
 
     // Bookmarks section
@@ -2174,7 +2276,6 @@ private:
       y += listLineH;
 
       for (int i = 0; i < (int)_bookmarks.size() && y < display.height() - 35; i++) {
-        int itemIdx = i + 1;
         bool selected = (_homeSelected == itemIdx);
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
@@ -2190,6 +2291,7 @@ private:
           line = line.substring(0, _charsPerLine - 3) + "...";
         display.print(line.c_str());
         y += listLineH;
+        itemIdx++;
       }
     }
 
@@ -2201,7 +2303,6 @@ private:
       y += listLineH;
 
       for (int i = 0; i < (int)_history.size() && y < display.height() - 24; i++) {
-        int itemIdx = i + 1 + _bookmarks.size();
         bool selected = (_homeSelected == itemIdx);
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
@@ -2217,6 +2318,7 @@ private:
           line = line.substring(0, _charsPerLine - 3) + "...";
         display.print(line.c_str());
         y += listLineH;
+        itemIdx++;
       }
     }
 
@@ -2458,12 +2560,14 @@ private:
       if (c == '\b' || c == 127) {
         if (_wifiPassLen > 0) {
           _wifiPass[--_wifiPassLen] = '\0';
+          _formLastCharAt = 0;  // Clear reveal on delete
         }
         return true;
       }
       if (c >= 32 && c < 127 && _wifiPassLen < WEB_WIFI_PASS_LEN - 1) {
         _wifiPass[_wifiPassLen++] = c;
         _wifiPass[_wifiPassLen] = '\0';
+        _formLastCharAt = millis();  // Brief reveal timer
         return true;
       }
     } else if (_wifiState == WIFI_FAILED) {
@@ -2491,7 +2595,7 @@ private:
   }
 
   bool handleHomeInput(char c) {
-    int totalItems = 1 + _bookmarks.size() + _history.size();
+    int totalItems = 2 + _bookmarks.size() + _history.size(); // IRC + URL + bookmarks + history
 
     if (_urlEditing) {
       // URL text entry mode
@@ -2554,16 +2658,32 @@ private:
     }
     if (c == '\r' || c == 13) {
       if (_homeSelected == 0) {
+        // IRC Chat selected
+        if (_ircConnected) {
+          // Already connected — go straight to chat
+          _mode = IRC_CHAT;
+          _ircComposing = false;
+          _ircScrollPos = 0;
+        } else {
+          // Open IRC setup
+          _mode = IRC_SETUP;
+          _ircSetupField = 0;
+          _ircSetupEditing = false;
+        }
+        return true;
+      }
+      if (_homeSelected == 1) {
         // Activate URL editing
         _urlEditing = true;
         return true;
       }
-      // Bookmark or history item selected
+      // Bookmark or history item selected (offset by 2 for IRC + URL)
       const char* selectedUrl = nullptr;
-      if (_homeSelected <= (int)_bookmarks.size()) {
-        selectedUrl = _bookmarks[_homeSelected - 1].c_str();
+      int bmIdx = _homeSelected - 2;
+      if (bmIdx < (int)_bookmarks.size()) {
+        selectedUrl = _bookmarks[bmIdx].c_str();
       } else {
-        int histIdx = _homeSelected - 1 - _bookmarks.size();
+        int histIdx = bmIdx - _bookmarks.size();
         if (histIdx < (int)_history.size()) {
           selectedUrl = _history[histIdx].c_str();
         }
@@ -2963,6 +3083,871 @@ private:
     return false;
   }
 
+  // ==========================================================================
+  // IRC Client Implementation
+  // ==========================================================================
+
+  void loadIRCConfig() {
+    // Default values
+    strncpy(_ircHost, "irc.eastmesh.au", IRC_MAX_HOST_LEN);
+    _ircPort = 6697;
+    strncpy(_ircNick, "meck-user", IRC_MAX_NICK_LEN);
+    _ircChannel[0] = '\0';  // No default channel — user must configure
+
+    File f = SD.open(IRC_CONFIG_FILE, FILE_READ);
+    if (!f) { digitalWrite(SDCARD_CS, HIGH); return; }
+
+    String host = f.readStringUntil('\n'); host.trim();
+    String port = f.readStringUntil('\n'); port.trim();
+    String nick = f.readStringUntil('\n'); nick.trim();
+    String chan = f.readStringUntil('\n'); chan.trim();
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    if (host.length() > 0) strncpy(_ircHost, host.c_str(), IRC_MAX_HOST_LEN - 1);
+    if (port.length() > 0) _ircPort = port.toInt();
+    if (nick.length() > 0) strncpy(_ircNick, nick.c_str(), IRC_MAX_NICK_LEN - 1);
+    if (chan.length() > 0) strncpy(_ircChannel, chan.c_str(), IRC_MAX_CHANNEL_LEN - 1);
+
+    Serial.printf("IRC: Config loaded - %s:%d nick=%s chan=%s\n",
+                  _ircHost, _ircPort, _ircNick, _ircChannel);
+  }
+
+  void saveIRCConfig() {
+    if (!SD.exists(WEB_CACHE_DIR)) SD.mkdir(WEB_CACHE_DIR);
+    File f = SD.open(IRC_CONFIG_FILE, FILE_WRITE);
+    if (f) {
+      f.println(_ircHost);
+      f.println(_ircPort);
+      f.println(_ircNick);
+      f.println(_ircChannel);
+      f.close();
+    }
+    digitalWrite(SDCARD_CS, HIGH);
+  }
+
+  bool allocateIRCBuffers() {
+    if (!_ircMessages) {
+      _ircMessages = (IRCMessage*)ps_calloc(IRC_MAX_MESSAGES, sizeof(IRCMessage));
+      if (!_ircMessages) {
+        Serial.println("IRC: Failed to allocate message buffer");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void addIRCMessage(const char* nick, const char* text, bool isSystem = false) {
+    if (!_ircMessages) return;
+    IRCMessage& msg = _ircMessages[_ircMsgHead];
+    strncpy(msg.nick, nick, IRC_MAX_NICK_LEN - 1);
+    msg.nick[IRC_MAX_NICK_LEN - 1] = '\0';
+
+    // Convert UTF-8 text to CP437 for proper e-ink rendering
+    int srcLen = strlen(text);
+    int dstIdx = 0;
+    int srcPos = 0;
+    while (srcPos < srcLen && dstIdx < IRC_MAX_MSG_LEN - 1) {
+      uint32_t cp = decodeUtf8Char(text, srcLen, &srcPos);
+      if (cp == 0 || cp == 0xFFFD) continue;  // Skip invalid
+      if (cp < 128) {
+        msg.text[dstIdx++] = (char)cp;
+      } else {
+        uint8_t glyph = unicodeToCP437(cp);
+        msg.text[dstIdx++] = glyph ? (char)glyph : '?';
+      }
+    }
+    msg.text[dstIdx] = '\0';
+
+    msg.isSystem = isSystem;
+    _ircMsgHead = (_ircMsgHead + 1) % IRC_MAX_MESSAGES;
+    if (_ircMsgCount < IRC_MAX_MESSAGES) _ircMsgCount++;
+    _ircDirty = true;
+  }
+
+  // Get message by index from oldest (0) to newest (count-1)
+  IRCMessage* getIRCMessage(int idx) {
+    if (!_ircMessages || idx < 0 || idx >= _ircMsgCount) return nullptr;
+    int start = (_ircMsgHead - _ircMsgCount + IRC_MAX_MESSAGES) % IRC_MAX_MESSAGES;
+    int actual = (start + idx) % IRC_MAX_MESSAGES;
+    return &_ircMessages[actual];
+  }
+
+  void ircSendRaw(const char* line) {
+    if (!_ircClient || !_ircClient->connected()) return;
+    _ircClient->print(line);
+    _ircClient->print("\r\n");
+    Serial.printf("IRC TX: %s\n", line);
+  }
+
+  bool connectIRC() {
+    if (!allocateIRCBuffers()) return false;
+
+    addIRCMessage("*", "Connecting...", true);
+
+    if (_ircClient) {
+      _ircClient->stop();
+      delete _ircClient;
+    }
+
+    _ircUseTLS = (_ircPort == 6697);
+
+    if (_ircUseTLS) {
+      // Redirect mbedTLS allocations to PSRAM — internal heap doesn't have
+      // enough contiguous space (~32-48KB) for TLS handshake buffers.
+      ensureTlsUsesPsram();
+      auto* secClient = new WiFiClientSecure();
+      secClient->setInsecure();  // Accept any cert (for self-signed IRC servers)
+      _ircClient = secClient;
+      Serial.printf("IRC: Connecting to %s:%d (TLS)...\n", _ircHost, _ircPort);
+    } else {
+      _ircClient = new WiFiClient();
+      Serial.printf("IRC: Connecting to %s:%d (plain)...\n", _ircHost, _ircPort);
+    }
+
+    if (!_ircClient->connect(_ircHost, _ircPort, 10000)) {
+      Serial.println("IRC: Connection failed");
+      addIRCMessage("*", "Connection failed!", true);
+      delete _ircClient;
+      _ircClient = nullptr;
+      _ircConnected = false;
+      return false;
+    }
+
+    _ircConnected = true;
+    _ircRegistered = false;
+    _ircJoined = false;
+    _ircLineLen = 0;
+    _ircLastDataTime = millis();
+
+    // Send registration
+    char buf[256];
+    snprintf(buf, sizeof(buf), "NICK %s", _ircNick);
+    ircSendRaw(buf);
+    snprintf(buf, sizeof(buf), "USER %s 0 * :Meck T-Deck Pro", _ircNick);
+    ircSendRaw(buf);
+
+    addIRCMessage("*", "Registering...", true);
+    return true;
+  }
+
+  void disconnectIRC() {
+    if (_ircClient) {
+      if (_ircClient->connected()) {
+        ircSendRaw("QUIT :Meck signing off");
+      }
+      _ircClient->stop();
+      delete _ircClient;
+      _ircClient = nullptr;
+    }
+    _ircConnected = false;
+    _ircRegistered = false;
+    _ircJoined = false;
+    addIRCMessage("*", "Disconnected", true);
+  }
+
+  void parseIRCLine(const char* line) {
+    Serial.printf("IRC RX: %s\n", line);
+    _ircLastDataTime = millis();
+
+    // PING :xxx → respond with PONG :xxx
+    if (strncmp(line, "PING ", 5) == 0) {
+      char pong[IRC_LINE_BUF_SIZE];
+      snprintf(pong, sizeof(pong), "PONG %s", line + 5);
+      ircSendRaw(pong);
+      return;
+    }
+
+    // Lines starting with : are server/user messages
+    if (line[0] != ':') return;
+
+    // Parse prefix and command
+    const char* p = line + 1;
+    const char* prefixEnd = strchr(p, ' ');
+    if (!prefixEnd) return;
+
+    // Extract nick from prefix (nick!user@host)
+    char senderNick[IRC_MAX_NICK_LEN] = {0};
+    {
+      int nLen = 0;
+      const char* excl = strchr(p, '!');
+      const char* end = excl ? excl : prefixEnd;
+      int maxLen = end - p;
+      if (maxLen > IRC_MAX_NICK_LEN - 1) maxLen = IRC_MAX_NICK_LEN - 1;
+      memcpy(senderNick, p, maxLen);
+      senderNick[maxLen] = '\0';
+    }
+
+    // Skip to command
+    const char* cmd = prefixEnd + 1;
+    while (*cmd == ' ') cmd++;
+
+    // Check numeric replies
+    if (cmd[0] >= '0' && cmd[0] <= '9' && cmd[1] >= '0' && cmd[1] <= '9') {
+      int numeric = atoi(cmd);
+
+      if (numeric == 1) {
+        // RPL_WELCOME - registration complete
+        _ircRegistered = true;
+
+        // Only join if a channel is configured
+        if (_ircChannel[0] == '\0') {
+          addIRCMessage("*", "Registered! Use /join #channel", true);
+          return;
+        }
+        // Auto-prefix with # if missing
+        if (_ircChannel[0] != '#' && _ircChannel[0] != '&' && _ircChannel[0] != '+') {
+          char tmp[IRC_MAX_CHANNEL_LEN];
+          snprintf(tmp, sizeof(tmp), "#%s", _ircChannel);
+          strncpy(_ircChannel, tmp, IRC_MAX_CHANNEL_LEN - 1);
+        }
+
+        char statusBuf[128];
+        snprintf(statusBuf, sizeof(statusBuf), "Registered! Joining %s...", _ircChannel);
+        addIRCMessage("*", statusBuf, true);
+
+        char join[128];
+        snprintf(join, sizeof(join), "JOIN %s", _ircChannel);
+        ircSendRaw(join);
+        return;
+      }
+
+      if (numeric == 433) {
+        // Nick already in use — cycle last character (respects server NICKLEN)
+        int nLen = strlen(_ircNick);
+        if (nLen > 0) {
+          char last = _ircNick[nLen - 1];
+          if (last >= '0' && last < '9') {
+            _ircNick[nLen - 1] = last + 1;  // meck-user1 -> meck-user2
+          } else if (last == '9') {
+            _ircNick[nLen - 1] = '0';        // wrap around
+          } else {
+            _ircNick[nLen - 1] = '1';         // meck-user -> meck-use1
+          }
+          char buf[128];
+          snprintf(buf, sizeof(buf), "NICK %s", _ircNick);
+          ircSendRaw(buf);
+          char msgBuf[64];
+          snprintf(msgBuf, sizeof(msgBuf), "Nick taken, trying %s", _ircNick);
+          addIRCMessage("*", msgBuf, true);
+        }
+        return;
+      }
+
+      // MOTD and other informational numerics - show select ones
+      if (numeric == 372 || numeric == 375 || numeric == 376) {
+        // MOTD lines - extract text after the last :
+        const char* text = strrchr(cmd, ':');
+        if (text) {
+          addIRCMessage("*", text + 1, true);
+        }
+        return;
+      }
+
+      // Topic (332) and names (353) - show as system messages
+      if (numeric == 332 || numeric == 353) {
+        const char* text = strrchr(cmd, ':');
+        if (text) {
+          addIRCMessage("*", text + 1, true);
+        }
+        return;
+      }
+
+      // Error numerics (400-599) - show as system messages
+      if (numeric >= 400 && numeric < 600) {
+        const char* text = strrchr(cmd, ':');
+        if (text) {
+          char errBuf[IRC_MAX_MSG_LEN];
+          snprintf(errBuf, sizeof(errBuf), "Error %d: %s", numeric, text + 1);
+          addIRCMessage("*", errBuf, true);
+        }
+        return;
+      }
+
+      return; // Skip other numerics
+    }
+
+    // PRIVMSG #channel :message
+    if (strncmp(cmd, "PRIVMSG ", 8) == 0) {
+      const char* target = cmd + 8;
+      const char* msgText = strchr(target, ':');
+      if (msgText) {
+        msgText++; // skip the :
+
+        // Check for CTCP ACTION (\001ACTION text\001)
+        if (strncmp(msgText, "\001ACTION ", 8) == 0) {
+          char actionBuf[IRC_MAX_MSG_LEN];
+          const char* actionEnd = strchr(msgText + 8, '\001');
+          int aLen = actionEnd ? (actionEnd - msgText - 8) : strlen(msgText + 8);
+          if (aLen > IRC_MAX_MSG_LEN - 4) aLen = IRC_MAX_MSG_LEN - 4;
+          snprintf(actionBuf, sizeof(actionBuf), "* %.*s", aLen, msgText + 8);
+          addIRCMessage(senderNick, actionBuf);
+        } else {
+          addIRCMessage(senderNick, msgText);
+        }
+      }
+      return;
+    }
+
+    // JOIN
+    if (strncmp(cmd, "JOIN", 4) == 0) {
+      if (strcmp(senderNick, _ircNick) == 0) {
+        _ircJoined = true;
+        char buf[128];
+        snprintf(buf, sizeof(buf), "Joined %s", _ircChannel);
+        addIRCMessage("*", buf, true);
+      } else {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s joined", senderNick);
+        addIRCMessage("*", buf, true);
+      }
+      return;
+    }
+
+    // PART
+    if (strncmp(cmd, "PART", 4) == 0) {
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%s left", senderNick);
+      addIRCMessage("*", buf, true);
+      return;
+    }
+
+    // QUIT
+    if (strncmp(cmd, "QUIT", 4) == 0) {
+      char buf[128];
+      const char* reason = strchr(cmd + 5, ':');
+      if (reason) {
+        snprintf(buf, sizeof(buf), "%s quit (%s)", senderNick, reason + 1);
+      } else {
+        snprintf(buf, sizeof(buf), "%s quit", senderNick);
+      }
+      addIRCMessage("*", buf, true);
+      return;
+    }
+
+    // NICK change
+    if (strncmp(cmd, "NICK", 4) == 0) {
+      const char* newNick = strchr(cmd + 5, ':');
+      if (!newNick) newNick = cmd + 5;
+      else newNick++;
+      char buf[128];
+      snprintf(buf, sizeof(buf), "%s is now %s", senderNick, newNick);
+      addIRCMessage("*", buf, true);
+
+      // Update our own nick if it was us
+      if (strcmp(senderNick, _ircNick) == 0) {
+        strncpy(_ircNick, newNick, IRC_MAX_NICK_LEN - 1);
+      }
+      return;
+    }
+  }
+
+  void pollIRC() {
+    if (!_ircClient || !_ircConnected) {
+      // Check for reconnect
+      if (_ircReconnectAt > 0 && millis() > _ircReconnectAt) {
+        _ircReconnectAt = 0;
+        connectIRC();
+      }
+      return;
+    }
+
+    if (!_ircClient->connected()) {
+      Serial.println("IRC: Connection lost");
+      addIRCMessage("*", "Connection lost. Reconnecting...", true);
+      _ircConnected = false;
+      _ircRegistered = false;
+      _ircJoined = false;
+      delete _ircClient;
+      _ircClient = nullptr;
+      _ircReconnectAt = millis() + IRC_RECONNECT_MS;
+      return;
+    }
+
+    // Check for ping timeout
+    if (millis() - _ircLastDataTime > IRC_PING_TIMEOUT_MS) {
+      Serial.println("IRC: Ping timeout");
+      addIRCMessage("*", "Ping timeout. Reconnecting...", true);
+      disconnectIRC();
+      _ircReconnectAt = millis() + IRC_RECONNECT_MS;
+      return;
+    }
+
+    // Read available data and accumulate lines
+    while (_ircClient->available()) {
+      char c = _ircClient->read();
+      if (c == '\r') continue;  // skip CR
+      if (c == '\n') {
+        // Complete line received
+        _ircLineBuf[_ircLineLen] = '\0';
+        if (_ircLineLen > 0) {
+          parseIRCLine(_ircLineBuf);
+        }
+        _ircLineLen = 0;
+        continue;
+      }
+      if (_ircLineLen < IRC_LINE_BUF_SIZE - 1) {
+        _ircLineBuf[_ircLineLen++] = c;
+      }
+    }
+  }
+
+  void sendIRCMessage() {
+    if (!_ircConnected || _ircComposeLen == 0) return;
+
+    _ircCompose[_ircComposeLen] = '\0';
+
+    // Check for /commands (allowed even before joining a channel)
+    if (_ircCompose[0] == '/') {
+      if (strncmp(_ircCompose, "/me ", 4) == 0) {
+        if (!_ircJoined) { addIRCMessage("*", "Not in a channel", true); }
+        else {
+          char buf[IRC_LINE_BUF_SIZE];
+          snprintf(buf, sizeof(buf), "PRIVMSG %s :\001ACTION %s\001",
+                   _ircChannel, _ircCompose + 4);
+          ircSendRaw(buf);
+          char dispBuf[IRC_MAX_MSG_LEN];
+          snprintf(dispBuf, sizeof(dispBuf), "* %s", _ircCompose + 4);
+          addIRCMessage(_ircNick, dispBuf);
+        }
+      } else if (strncmp(_ircCompose, "/nick ", 6) == 0) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "NICK %s", _ircCompose + 6);
+        ircSendRaw(buf);
+      } else if (strncmp(_ircCompose, "/join ", 6) == 0) {
+        const char* chan = _ircCompose + 6;
+        // Auto-prefix with # if missing
+        if (chan[0] != '#' && chan[0] != '&' && chan[0] != '+') {
+          char tmp[IRC_MAX_CHANNEL_LEN];
+          snprintf(tmp, sizeof(tmp), "#%s", chan);
+          strncpy(_ircChannel, tmp, IRC_MAX_CHANNEL_LEN - 1);
+        } else {
+          strncpy(_ircChannel, chan, IRC_MAX_CHANNEL_LEN - 1);
+        }
+        char buf[128];
+        snprintf(buf, sizeof(buf), "JOIN %s", _ircChannel);
+        ircSendRaw(buf);
+        _ircJoined = false;
+      } else if (strcmp(_ircCompose, "/quit") == 0) {
+        disconnectIRC();
+        _mode = HOME;
+        _homeSelected = 0;
+      } else {
+        // Send as raw IRC command (strip the /)
+        ircSendRaw(_ircCompose + 1);
+      }
+    } else {
+      // Normal message - requires being in a channel
+      if (!_ircJoined) {
+        addIRCMessage("*", "Not in a channel. Use /join #channel", true);
+      } else {
+        char buf[IRC_LINE_BUF_SIZE];
+        snprintf(buf, sizeof(buf), "PRIVMSG %s :%s", _ircChannel, _ircCompose);
+        ircSendRaw(buf);
+        addIRCMessage(_ircNick, _ircCompose);
+      }
+    }
+
+    _ircComposeLen = 0;
+    _ircCompose[0] = '\0';
+    _ircScrollPos = 0;  // Snap to bottom on send
+  }
+
+  // ---- IRC Setup Screen ----
+
+  void renderIRCSetup(DisplayDriver& display) {
+    display.setColor(DisplayDriver::GREEN);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.print("IRC Setup");
+    display.drawRect(0, 11, display.width(), 1);
+
+    display.setTextSize(0);
+    int y = 16;
+    int lineH = 10;
+
+    const char* labels[] = {"Server:", "Port:", "Nick:", "Channel:", "[ Connect ]"};
+    const char* chanDisp = (_ircChannel[0] != '\0') ? _ircChannel : "(none)";
+    const char* values[] = {_ircHost, nullptr, _ircNick, chanDisp, nullptr};
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%d", _ircPort);
+
+    for (int i = 0; i < 5; i++) {
+      bool sel = (_ircSetupField == i);
+      if (sel) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.fillRect(0, y + 4, display.width(), lineH);
+        display.setColor(DisplayDriver::DARK);
+      } else {
+        display.setColor(DisplayDriver::LIGHT);
+      }
+      display.setCursor(2, y);
+
+      if (i == 4) {
+        // Connect button
+        display.setCursor(display.width() / 2 - 30, y);
+        display.print(sel ? "> Connect <" : "[ Connect ]");
+      } else if (i == 1) {
+        // Port
+        char buf[64];
+        if (_ircSetupEditing && sel) {
+          snprintf(buf, sizeof(buf), "%s %s_", labels[i], _ircSetupBuf);
+        } else {
+          snprintf(buf, sizeof(buf), "%s %s", labels[i], portStr);
+        }
+        display.print(buf);
+      } else {
+        char buf[128];
+        if (_ircSetupEditing && sel) {
+          snprintf(buf, sizeof(buf), "%s %s_", labels[i], _ircSetupBuf);
+        } else {
+          snprintf(buf, sizeof(buf), "%s %s", labels[i], values[i]);
+        }
+        display.print(buf);
+      }
+      y += lineH;
+    }
+
+    // Status
+    y += 6;
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(2, y);
+    if (_ircConnected) {
+      display.print(_ircJoined ? "Connected & joined" : "Connected...");
+    } else {
+      display.print("Not connected");
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setCursor(0, footerY);
+    display.setColor(DisplayDriver::YELLOW);
+    display.print("W/S:Nav Ent:Edit/Go Q:Back");
+  }
+
+  bool handleIRCSetupInput(char c) {
+    if (_ircSetupEditing) {
+      if (c == '\r' || c == 13) {
+        // Save the field
+        _ircSetupBuf[_ircSetupBufLen] = '\0';
+        switch (_ircSetupField) {
+          case 0: strncpy(_ircHost, _ircSetupBuf, IRC_MAX_HOST_LEN - 1); break;
+          case 1: _ircPort = atoi(_ircSetupBuf); if (_ircPort == 0) _ircPort = 6697; break;
+          case 2: strncpy(_ircNick, _ircSetupBuf, IRC_MAX_NICK_LEN - 1); break;
+          case 3: strncpy(_ircChannel, _ircSetupBuf, IRC_MAX_CHANNEL_LEN - 1); break;
+        }
+        _ircSetupEditing = false;
+        return true;
+      }
+      if (c == '\b' || c == 127) {
+        if (_ircSetupBufLen > 0) _ircSetupBuf[--_ircSetupBufLen] = '\0';
+        return true;
+      }
+      if (c == 0x1B) { _ircSetupEditing = false; return true; }
+      if (c >= 32 && c < 127 && _ircSetupBufLen < (int)sizeof(_ircSetupBuf) - 1) {
+        _ircSetupBuf[_ircSetupBufLen++] = c;
+        _ircSetupBuf[_ircSetupBufLen] = '\0';
+        return true;
+      }
+      return true;
+    }
+
+    // Navigation
+    if (c == 'w' || c == 'W' || c == 0xF2) {
+      if (_ircSetupField > 0) _ircSetupField--;
+      return true;
+    }
+    if (c == 's' || c == 'S' || c == 0xF1) {
+      if (_ircSetupField < 4) _ircSetupField++;
+      return true;
+    }
+    if (c == '\r' || c == 13) {
+      if (_ircSetupField == 4) {
+        // Connect button
+        saveIRCConfig();
+        if (!isNetworkAvailable()) {
+          addIRCMessage("*", "No network! Connect WiFi first.", true);
+          _mode = WIFI_SETUP;
+          startWifiScan();
+          return true;
+        }
+        if (connectIRC()) {
+          _mode = IRC_CHAT;
+          _ircComposing = false;
+          _ircComposeLen = 0;
+          _ircCompose[0] = '\0';
+          _ircScrollPos = 0;
+        }
+        return true;
+      }
+      // Start editing the selected field
+      _ircSetupEditing = true;
+      switch (_ircSetupField) {
+        case 0: strncpy(_ircSetupBuf, _ircHost, sizeof(_ircSetupBuf)); break;
+        case 1: snprintf(_ircSetupBuf, sizeof(_ircSetupBuf), "%d", _ircPort); break;
+        case 2: strncpy(_ircSetupBuf, _ircNick, sizeof(_ircSetupBuf)); break;
+        case 3: strncpy(_ircSetupBuf, _ircChannel, sizeof(_ircSetupBuf)); break;
+      }
+      _ircSetupBufLen = strlen(_ircSetupBuf);
+      return true;
+    }
+    if (c == 'q' || c == 'Q') {
+      _mode = HOME;
+      _homeSelected = 0;
+      return true;
+    }
+    return false;
+  }
+
+  // ---- IRC Chat Screen ----
+
+  void renderIRCChat(DisplayDriver& display) {
+    display.setColor(DisplayDriver::GREEN);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+
+    // Header: channel name + connection status
+    char header[64];
+    snprintf(header, sizeof(header), "%s", _ircChannel);
+    display.print(header);
+
+    // Connection indicator on right
+    display.setTextSize(0);
+    if (!_ircConnected) {
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(display.width() - 42, -3);
+      display.print("DISCONN");
+    } else if (!_ircJoined) {
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(display.width() - 36, -3);
+      display.print("joining");
+    } else {
+      display.setColor(DisplayDriver::GREEN);
+      const char* nickDisp = _ircNick;
+      display.setCursor(display.width() - display.getTextWidth(nickDisp) - 2, -3);
+      display.print(nickDisp);
+    }
+
+    display.setTextSize(1);
+    display.drawRect(0, 11, display.width(), 1);
+
+    // Footer area
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setTextSize(1);
+
+    if (_ircComposing) {
+      // Compose text just above separator (tiny font to match messages)
+      display.setTextSize(0);
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, footerY - 12);
+      char compDisp[IRC_COMPOSE_MAX + 4];
+      int maxShow = _charsPerLine - 2;
+      int start = 0;
+      if (_ircComposeLen > maxShow) start = _ircComposeLen - maxShow;
+      snprintf(compDisp, sizeof(compDisp), "> %s_", _ircCompose + start);
+      display.print(compDisp);
+
+      // Hint on footer line (large font)
+      display.setTextSize(1);
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(0, footerY);
+      display.print("Ent:Send Del:Exit");
+    } else {
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(0, footerY);
+      display.print("Ent:Msg W/S:Scrl Q:Bk");
+    }
+
+    // Message area
+    display.setTextSize(0);
+    int msgAreaTop = 14;
+    int msgAreaBottom = _ircComposing ? footerY - 16 : footerY - 4;
+    int lineH = 8;
+    int scrollBarW = 4;
+    int lineW = _charsPerLine - 1;  // Reserve space for scroll bar
+    _ircLinesPerPage = (msgAreaBottom - msgAreaTop) / lineH;
+
+    if (_ircMsgCount == 0) {
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(4, msgAreaTop + 10);
+      display.print("No messages yet...");
+
+      // Draw empty scrollbar track
+      int sbX = display.width() - scrollBarW;
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(sbX, msgAreaTop, scrollBarW, msgAreaBottom - msgAreaTop);
+      return;
+    }
+
+    // Calculate which messages to show (from bottom, with scroll offset)
+    int startMsg = _ircMsgCount - _ircLinesPerPage - _ircScrollPos;
+    if (startMsg < 0) startMsg = 0;
+    int endMsg = startMsg + _ircLinesPerPage;
+    if (endMsg > _ircMsgCount) endMsg = _ircMsgCount;
+
+    int y = msgAreaTop;
+    for (int i = startMsg; i < endMsg && y < msgAreaBottom; i++) {
+      IRCMessage* msg = getIRCMessage(i);
+      if (!msg) continue;
+
+      display.setCursor(0, y);
+      if (msg->isSystem) {
+        display.setColor(DisplayDriver::YELLOW);
+        char line[IRC_MAX_MSG_LEN + IRC_MAX_NICK_LEN + 4];
+        snprintf(line, sizeof(line), "-- %s", msg->text);
+        // Truncate to screen width (minus scrollbar)
+        if ((int)strlen(line) > lineW)
+          line[lineW] = '\0';
+        display.print(line);
+      } else {
+        // Nick in green, message in light
+        display.setColor(DisplayDriver::GREEN);
+        char nickBuf[IRC_MAX_NICK_LEN + 2];
+        snprintf(nickBuf, sizeof(nickBuf), "%s: ", msg->nick);
+        display.print(nickBuf);
+
+        display.setColor(DisplayDriver::LIGHT);
+        int nickW = display.getTextWidth(nickBuf);
+        int remainChars = lineW - strlen(nickBuf);
+        if (remainChars > 0) {
+          char textBuf[IRC_MAX_MSG_LEN];
+          strncpy(textBuf, msg->text, remainChars);
+          textBuf[remainChars] = '\0';
+          display.print(textBuf);
+
+          // If message is longer, wrap to next line
+          int msgLen = strlen(msg->text);
+          if (msgLen > remainChars && y + lineH < msgAreaBottom) {
+            y += lineH;
+            display.setCursor(0, y);
+            int off = remainChars;
+            while (off < msgLen && y < msgAreaBottom) {
+              char wrapBuf[256];
+              int wrapLen = lineW;
+              if (msgLen - off < wrapLen) wrapLen = msgLen - off;
+              memcpy(wrapBuf, msg->text + off, wrapLen);
+              wrapBuf[wrapLen] = '\0';
+              display.print(wrapBuf);
+              off += wrapLen;
+              if (off < msgLen) {
+                y += lineH;
+                display.setCursor(0, y);
+              }
+            }
+          }
+        }
+      }
+      y += lineH;
+    }
+
+    // --- Scroll bar (channel screen style) ---
+    int sbX = display.width() - scrollBarW;
+    int sbTop = msgAreaTop;
+    int sbHeight = msgAreaBottom - msgAreaTop;
+
+    // Draw track outline
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(sbX, sbTop, scrollBarW, sbHeight);
+
+    if (_ircMsgCount > _ircLinesPerPage) {
+      // Scrollable: draw proportional thumb
+      int maxScroll = _ircMsgCount - _ircLinesPerPage;
+      if (maxScroll < 1) maxScroll = 1;
+      int thumbH = (_ircLinesPerPage * sbHeight) / _ircMsgCount;
+      if (thumbH < 4) thumbH = 4;
+      // _ircScrollPos=0 is newest (bottom), so invert for thumb position
+      int thumbY = sbTop + ((maxScroll - _ircScrollPos) * (sbHeight - thumbH)) / maxScroll;
+      for (int ty = thumbY + 1; ty < thumbY + thumbH - 1; ty++)
+        display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
+    } else {
+      // All messages fit: fill entire track
+      for (int ty = sbTop + 1; ty < sbTop + sbHeight - 1; ty++)
+        display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
+    }
+  }
+
+  bool handleIRCChatInput(char c) {
+    if (_ircComposing) {
+      if (c == '\r' || c == 13) {
+        if (_ircComposeLen > 0) {
+          sendIRCMessage();
+        }
+        // Always exit compose on Enter (after send or when empty)
+        _ircComposing = false;
+        return true;
+      }
+      if (c == '\b' || c == 127) {
+        if (_ircComposeLen > 0) {
+          _ircCompose[--_ircComposeLen] = '\0';
+        } else {
+          // Backspace on empty compose exits compose mode
+          _ircComposing = false;
+        }
+        return true;
+      }
+      if (c == 0x1B) { // ESC exits compose
+        _ircComposing = false;
+        return true;
+      }
+      if (c >= 32 && c < 127 && _ircComposeLen < IRC_COMPOSE_MAX - 1) {
+        _ircCompose[_ircComposeLen++] = c;
+        _ircCompose[_ircComposeLen] = '\0';
+        return true;
+      }
+      return true; // Consume all keys while composing
+    }
+
+    // Non-composing mode
+    if (c == '\r' || c == 13) {
+      _ircComposing = true;
+      _ircComposeLen = 0;
+      _ircCompose[0] = '\0';
+      return true;
+    }
+
+    // W - scroll up (older messages)
+    if (c == 'w' || c == 'W' || c == 0xF2) {
+      int maxScroll = _ircMsgCount - _ircLinesPerPage;
+      if (maxScroll < 0) maxScroll = 0;
+      if (_ircScrollPos < maxScroll) _ircScrollPos++;
+      return true;
+    }
+
+    // S - scroll down (newer messages)
+    if (c == 's' || c == 'S' || c == 0xF1) {
+      if (_ircScrollPos > 0) _ircScrollPos--;
+      return true;
+    }
+
+    // Q - back to home (keep connection alive)
+    if (c == 'q' || c == 'Q') {
+      _mode = HOME;
+      _homeSelected = 0;
+      return true;
+    }
+
+    // X - disconnect
+    if (c == 'x' || c == 'X') {
+      disconnectIRC();
+      _mode = HOME;
+      _homeSelected = 0;
+      return true;
+    }
+
+    return false;
+  }
+
+  bool isIRCSetupEditing() const {
+    return _mode == IRC_SETUP && _ircSetupEditing;
+  }
+
+  bool isIRCComposing() const {
+    return _mode == IRC_CHAT && _ircComposing;
+  }
+
 public:
   WebReaderScreen(UITask* task)
     : _task(task), _mode(HOME), _initialized(false), _display(nullptr),
@@ -2975,18 +3960,38 @@ public:
       _linkInput(0), _linkInputActive(false),
       _formCount(0), _activeForm(-1), _activeField(0),
       _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0), _cookieCount(0),
-      _fetchStartTime(0), _fetchProgress(0) {
+      _fetchStartTime(0), _fetchProgress(0),
+      _ircClient(nullptr), _ircUseTLS(false), _ircConnected(false), _ircRegistered(false),
+      _ircJoined(false), _ircPort(6697), _ircMessages(nullptr),
+      _ircMsgHead(0), _ircMsgCount(0), _ircLineLen(0),
+      _ircComposeLen(0), _ircComposing(false), _ircScrollPos(0), _ircLinesPerPage(12),
+      _ircSetupField(0), _ircSetupBufLen(0), _ircSetupEditing(false),
+      _ircLastDataTime(0), _ircReconnectAt(0),
+      _ircDirty(false), _ircLastRender(0) {
     _urlBuffer[0] = '\0';
     _wifiPass[0] = '\0';
     _pageTitle[0] = '\0';
     _currentUrl[0] = '\0';
     _formEditBuf[0] = '\0';
+    _ircHost[0] = '\0';
+    _ircNick[0] = '\0';
+    _ircChannel[0] = '\0';
+    _ircCompose[0] = '\0';
+    _ircSetupBuf[0] = '\0';
+    _ircLineBuf[0] = '\0';
     memset(_forms, 0, sizeof(_forms));
     memset(_cookies, 0, sizeof(_cookies));
+    loadIRCConfig();
   }
 
   ~WebReaderScreen() {
     freeBuffers();
+    if (_ircClient) {
+      if (_ircClient->connected()) _ircClient->stop();
+      delete _ircClient;
+      _ircClient = nullptr;
+    }
+    if (_ircMessages) { free(_ircMessages); _ircMessages = nullptr; }
   }
 
   // Called when entering the web reader screen
@@ -3053,10 +4058,18 @@ public:
   bool isFormFilling() const {
     return _mode == FORM_FILL && _formFieldEditing;
   }
+  bool isIRCMode() const { return _mode == IRC_CHAT || _mode == IRC_SETUP; }
+  bool isIRCTextEntry() const {
+    return (_mode == IRC_CHAT && _ircComposing) ||
+           (_mode == IRC_SETUP && _ircSetupEditing);
+  }
   // Returns true if a password reveal is active and needs a refresh after expiry
   bool needsRevealRefresh() const {
-    return _mode == FORM_FILL && _formFieldEditing && _formLastCharAt > 0
-           && (millis() - _formLastCharAt) < 900;
+    if (_formLastCharAt > 0 && (millis() - _formLastCharAt) < 900) {
+      if (_mode == FORM_FILL && _formFieldEditing) return true;
+      if (_mode == WIFI_SETUP && _wifiState == WIFI_ENTERING_PASS) return true;
+    }
+    return false;
   }
 
   // Direct render — bypasses UITask's render scheduling.
@@ -3066,6 +4079,8 @@ public:
     _display->startFrame();
     render(*_display);
     _display->endFrame();
+    _ircDirty = false;
+    _ircLastRender = millis();
   }
 
   int render(DisplayDriver& display) override {
@@ -3088,12 +4103,35 @@ public:
       case FORM_FILL:
         renderFormFill(display);
         return 1000;
+      case IRC_SETUP:
+        renderIRCSetup(display);
+        return 1000;
+      case IRC_CHAT:
+        renderIRCChat(display);
+        return 500;  // Fast refresh for live chat
       default:
         return 5000;
     }
   }
 
   void poll() override {
+    // Poll IRC connection (regardless of current mode, to keep connection alive)
+    if (_ircConnected || _ircReconnectAt > 0) {
+      pollIRC();
+    }
+
+    // Auto-render when new IRC messages arrive (e-ink throttled to ~1s)
+    if (_ircDirty && _mode == IRC_CHAT && _display) {
+      unsigned long now = millis();
+      if (now - _ircLastRender >= 900) {
+        _display->startFrame();
+        render(*_display);
+        _display->endFrame();
+        _ircLastRender = now;
+        _ircDirty = false;
+      }
+    }
+
     // Handle async WiFi operations
     if (_mode == WIFI_SETUP) {
       if (_wifiState == WIFI_SCANNING) {
@@ -3124,6 +4162,10 @@ public:
         return handleReadingInput(c);
       case FORM_FILL:
         return handleFormFillInput(c);
+      case IRC_SETUP:
+        return handleIRCSetupInput(c);
+      case IRC_CHAT:
+        return handleIRCChatInput(c);
       case FETCHING:
         // Q to cancel fetch (can't actually cancel HTTP mid-stream, but
         // go back to home)

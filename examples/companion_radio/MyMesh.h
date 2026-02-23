@@ -12,7 +12,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v0.9.2"
+#define FIRMWARE_VERSION "Meck v0.9.3"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

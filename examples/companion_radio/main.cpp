@@ -1294,12 +1294,13 @@ void handleKeyboardInput() {
     bool urlEdit = wr ? wr->isUrlEditing() : false;
     bool passEdit = wr ? wr->isPasswordEntry() : false;
     bool formEdit = wr ? wr->isFormFilling() : false;
-    if (wr && (urlEdit || passEdit || formEdit)) {
+    bool ircEdit = wr ? wr->isIRCTextEntry() : false;
+    if (wr && (urlEdit || passEdit || formEdit || ircEdit)) {
       webReaderTextEntry = true;  // Suppress ui_task.loop() in main loop
       wr->handleInput(key);       // Updates buffer instantly, no render
       
       // Check if text entry ended (submitted, cancelled, etc.)
-      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling()) {
+      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling() && !wr->isIRCTextEntry()) {
         // Text entry ended
         webReaderTextEntry = false;
         webReaderNeedsRefresh = false;
@@ -1319,6 +1320,16 @@ void handleKeyboardInput() {
       if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing()) {
         Serial.println("Exiting web reader");
         ui_task.gotoHomeScreen();
+        return;
+      }
+
+      // IRC modes: route keys directly through handleInput and render
+      // immediately. Using webReaderNeedsRefresh doesn't work here because
+      // that check only runs when webReaderTextEntry is true (else branch),
+      // but in IRC non-compose mode webReaderTextEntry is false.
+      if (wr && wr->isIRCMode()) {
+        wr->handleInput(key);
+        wr->directRedraw();
         return;
       }
 
