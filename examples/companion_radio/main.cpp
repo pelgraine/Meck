@@ -1319,6 +1319,7 @@ void handleKeyboardInput() {
       // Q from HOME mode exits the web reader entirely (like text reader)
       if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing()) {
         Serial.println("Exiting web reader");
+        wr->exitReader();  // Shut down WiFi, free buffers
         ui_task.gotoHomeScreen();
         return;
       }
@@ -1335,6 +1336,12 @@ void handleKeyboardInput() {
 
       // Route keys through normal UITask for navigation/scrolling
       ui_task.injectKey(key);
+
+      // Check if web reader wants to switch to text reader (EPUB download)
+      if (wr && wr->wantsTextReader()) {
+        wr->clearTextReaderRequest();
+        ui_task.gotoTextReader();
+      }
       return;
     }
   }

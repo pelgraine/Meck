@@ -1011,7 +1011,8 @@ public:
     LINK_SELECT,   // Choosing a link number
     FORM_FILL,     // Filling in a form
     IRC_SETUP,     // IRC server/nick/channel configuration
-    IRC_CHAT       // Live IRC chat view
+    IRC_CHAT,      // Live IRC chat view
+    DOWNLOAD_DONE  // File download completed (EPUB, etc.)
   };
 
   enum WifiState {
@@ -1069,6 +1070,7 @@ private:
   std::vector<String> _bookmarks;
   std::vector<String> _history;
   int _homeSelected;  // Selected item in home view (0=URL bar, then bookmarks, then history)
+  int _homeScrollY;   // Pixel scroll offset for home view
   bool _urlEditing;   // True when URL bar is active for text entry
 
   // Link selection
@@ -1103,6 +1105,11 @@ private:
   unsigned long _fetchStartTime;
   int _fetchProgress;    // Bytes received so far
   String _fetchError;
+
+  // Download state (for EPUB/file downloads to SD)
+  char _downloadedFile[64];   // Filename of last downloaded file
+  bool _downloadOk;           // true if download succeeded
+  bool _requestTextReader;    // true when user wants to open downloaded file in reader
 
   // ---- IRC State ----
   WiFiClient* _ircClient;       // WiFiClient (plain) or WiFiClientSecure (TLS)
@@ -1635,6 +1642,233 @@ private:
     return totalRead;
   }
 
+  // ---- EPUB/File Download to SD ----
+  // Streams HTTP response body directly to SD card without buffering in RAM.
+  // Used for EPUB downloads from sites like AO3.
+
+  bool downloadToSD(HTTPClient& http, const char* url, const String& contentDisposition) {
+    // Extract filename from Content-Disposition or URL
+    char filename[64] = {0};
+
+    // Try Content-Disposition: attachment; filename="Title.epub"
+    if (contentDisposition.length() > 0) {
+      int fnIdx = contentDisposition.indexOf("filename=");
+      if (fnIdx >= 0) {
+        int start = fnIdx + 9;
+        if (contentDisposition[start] == '"') start++;
+        int end = start;
+        while (end < (int)contentDisposition.length() &&
+               contentDisposition[end] != '"' && contentDisposition[end] != ';')
+          end++;
+        int len = end - start;
+        if (len > 60) len = 60;
+        memcpy(filename, contentDisposition.c_str() + start, len);
+        filename[len] = '\0';
+      }
+    }
+
+    // Fallback: extract from URL path
+    if (filename[0] == '\0') {
+      const char* lastSlash = strrchr(url, '/');
+      if (lastSlash) {
+        const char* start = lastSlash + 1;
+        // Strip query params
+        const char* qmark = strchr(start, '?');
+        int len = qmark ? (qmark - start) : strlen(start);
+        if (len > 60) len = 60;
+        memcpy(filename, start, len);
+        filename[len] = '\0';
+      }
+    }
+
+    // Ensure .epub extension
+    if (filename[0] == '\0') {
+      snprintf(filename, sizeof(filename), "download_%lu.epub", millis());
+    }
+
+    // URL-decode the filename (%20 -> space, etc.)
+    char decoded[64];
+    int di = 0;
+    for (int i = 0; filename[i] && di < 62; i++) {
+      if (filename[i] == '%' && filename[i+1] && filename[i+2]) {
+        char hex[3] = {filename[i+1], filename[i+2], 0};
+        decoded[di++] = (char)strtol(hex, nullptr, 16);
+        i += 2;
+      } else {
+        decoded[di++] = filename[i];
+      }
+    }
+    decoded[di] = '\0';
+    strncpy(filename, decoded, sizeof(filename) - 1);
+
+    // Replace underscores with spaces for friendlier names
+    // (AO3 uses underscores in download filenames)
+    // Actually, keep as-is — filesystem is happier without spaces
+
+    Serial.printf("WebReader: Downloading to /books/%s\n", filename);
+
+    // Ensure /books/ directory exists
+    digitalWrite(SDCARD_CS, LOW);
+    if (!SD.exists("/books")) {
+      SD.mkdir("/books");
+    }
+
+    // Build full path
+    char filepath[128];
+    snprintf(filepath, sizeof(filepath), "/books/%s", filename);
+
+    // Check if file already exists
+    if (SD.exists(filepath)) {
+      Serial.printf("WebReader: File already exists: %s\n", filepath);
+      // Overwrite — user explicitly navigated to download
+    }
+
+    File outFile = SD.open(filepath, FILE_WRITE);
+    if (!outFile) {
+      digitalWrite(SDCARD_CS, HIGH);
+      http.end();
+      _fetchError = "SD write failed";
+      _mode = HOME;
+      Serial.println("WebReader: Failed to open SD file for writing");
+      return false;
+    }
+
+    // Stream from HTTP to SD in 4KB chunks (heap allocated to avoid stack overflow)
+    WiFiClient* stream = http.getStreamPtr();
+    int contentLen = http.getSize();
+    int totalWritten = 0;
+    unsigned long lastSplash = 0;
+    const int DL_BUF_SIZE = 4096;
+    uint8_t* buf = (uint8_t*)ps_malloc(DL_BUF_SIZE);
+    if (!buf) {
+      buf = (uint8_t*)malloc(DL_BUF_SIZE);  // Fallback to internal
+    }
+    if (!buf) {
+      outFile.close();
+      digitalWrite(SDCARD_CS, HIGH);
+      http.end();
+      _fetchError = "Out of memory";
+      _mode = HOME;
+      return false;
+    }
+    bool writeError = false;
+
+    _fetchProgress = 0;
+
+    // Show initial download screen
+    if (_display) {
+      _display->startFrame();
+      _display->setColor(DisplayDriver::GREEN);
+      _display->setTextSize(2);
+      _display->setCursor(10, 10);
+      _display->print("Downloading");
+      _display->setTextSize(1);
+      _display->setColor(DisplayDriver::LIGHT);
+      _display->setCursor(10, 35);
+      char fnDisp[40];
+      strncpy(fnDisp, filename, 38);
+      fnDisp[38] = '\0';
+      _display->print(fnDisp);
+      _display->setCursor(10, 50);
+      _display->print("to /books/");
+      _display->endFrame();
+      lastSplash = millis();
+    }
+
+    while (true) {
+      if (!stream->available()) {
+        unsigned long waitStart = millis();
+        while (!stream->available() && (millis() - waitStart) < 10000) {
+          delay(10);
+          yield();
+        }
+        if (!stream->available()) break;  // Timeout or done
+      }
+
+      int toRead = DL_BUF_SIZE;
+      if (contentLen > 0) {
+        int remaining = contentLen - totalWritten;
+        if (remaining <= 0) break;
+        if (toRead > remaining) toRead = remaining;
+      }
+
+      int got = stream->readBytes(buf, toRead);
+      if (got <= 0) break;
+
+      size_t written = outFile.write(buf, got);
+      if ((int)written != got) {
+        writeError = true;
+        Serial.printf("WebReader: SD write error: wrote %d of %d bytes\n",
+                      (int)written, got);
+        break;
+      }
+
+      totalWritten += got;
+      _fetchProgress = totalWritten;
+
+      // Update progress display every 2 seconds
+      if (_display && (millis() - lastSplash) >= 2000) {
+        _display->startFrame();
+        _display->setColor(DisplayDriver::GREEN);
+        _display->setTextSize(2);
+        _display->setCursor(10, 10);
+        _display->print("Downloading");
+        _display->setTextSize(1);
+        _display->setColor(DisplayDriver::LIGHT);
+        _display->setCursor(10, 35);
+        char progBuf[48];
+        if (contentLen > 0) {
+          int pct = (totalWritten * 100) / contentLen;
+          snprintf(progBuf, sizeof(progBuf), "%d / %d KB (%d%%)",
+                   totalWritten / 1024, contentLen / 1024, pct);
+        } else {
+          snprintf(progBuf, sizeof(progBuf), "%d KB downloaded",
+                   totalWritten / 1024);
+        }
+        _display->print(progBuf);
+        _display->setCursor(10, 50);
+        char fnDisp2[40];
+        strncpy(fnDisp2, filename, 38);
+        fnDisp2[38] = '\0';
+        _display->print(fnDisp2);
+        _display->endFrame();
+        lastSplash = millis();
+      }
+
+      yield();
+    }
+
+    outFile.close();
+    free(buf);
+    digitalWrite(SDCARD_CS, HIGH);
+    http.end();
+
+    if (writeError || totalWritten == 0) {
+      // Clean up partial download
+      digitalWrite(SDCARD_CS, LOW);
+      SD.remove(filepath);
+      digitalWrite(SDCARD_CS, HIGH);
+      _fetchError = writeError ? "SD write error" : "Empty download";
+      _downloadOk = false;
+    } else {
+      _downloadOk = true;
+      Serial.printf("WebReader: Downloaded %d bytes to %s\n", totalWritten, filepath);
+    }
+
+    strncpy(_downloadedFile, filename, sizeof(_downloadedFile) - 1);
+    _downloadedFile[sizeof(_downloadedFile) - 1] = '\0';
+    _mode = DOWNLOAD_DONE;
+
+    // Show result screen
+    if (_display) {
+      _display->startFrame();
+      renderDownloadDone(*_display);
+      _display->endFrame();
+    }
+
+    return _downloadOk;
+  }
+
   // ---- HTTP Fetch ----
   // Uses ESP32 HTTPClient which works over any active network interface
   // (WiFi STA, PPP via 4G modem, etc). The caller is responsible for
@@ -1726,7 +1960,7 @@ private:
     String cookieHeader = buildCookieHeader(domain);
 
     // Headers we want to capture from response
-    const char* collectHeaderNames[] = {"Set-Cookie", "Location"};
+    const char* collectHeaderNames[] = {"Set-Cookie", "Location", "Content-Type", "Content-Disposition"};
 
     // Manual redirect loop — we handle redirects ourselves to capture
     // Set-Cookie headers at each hop. We reuse the TLS client for
@@ -1790,7 +2024,7 @@ private:
       }
 
       // MUST be after begin() — begin() resets collected headers
-      http.collectHeaders(collectHeaderNames, 2);
+      http.collectHeaders(collectHeaderNames, 4);
 
       if (cookieHeader.length() > 0) {
         http.addHeader("Cookie", cookieHeader);
@@ -1891,6 +2125,23 @@ private:
       }
 
       if (httpCode == HTTP_CODE_OK) {
+        // Check if this is a file download (EPUB, etc.) rather than HTML
+        String ctype = http.header("Content-Type");
+        String cdisp = http.header("Content-Disposition");
+        ctype.toLowerCase();
+        bool isEpubUrl = currentUrl.endsWith(".epub");
+        bool isEpubContent = ctype.indexOf("epub") >= 0 ||
+                             (ctype.indexOf("octet-stream") >= 0 && isEpubUrl);
+        bool isDownload = cdisp.indexOf("attachment") >= 0;
+
+        if (isEpubUrl || isEpubContent || (isDownload && isEpubUrl)) {
+          Serial.println("WebReader: EPUB detected, downloading to SD");
+          free(htmlBuffer);
+          bool dlOk = downloadToSD(http, currentUrl.c_str(), cdisp);
+          delete tlsClient;
+          return dlOk;
+        }
+
         htmlLen = readResponseBody(http, htmlBuffer, WEB_MAX_PAGE_SIZE);
         success = (htmlLen > 0);
         http.end();
@@ -2373,13 +2624,13 @@ private:
   }
 
   void renderHome(DisplayDriver& display) {
+    // ---- Fixed header (not scrolled) ----
     display.setColor(DisplayDriver::GREEN);
     display.setTextSize(1);
     display.setCursor(0, 0);
 
     if (isNetworkAvailable()) {
       display.print("Web Reader");
-      // Show connection indicator on right
       display.setTextSize(0);
       display.setColor(DisplayDriver::GREEN);
       if (isWiFiConnected()) {
@@ -2389,7 +2640,6 @@ private:
         display.setCursor(display.width() - display.getTextWidth(ipStr) - 2, -3);
         display.print(ipStr);
       } else {
-        // PPP/cellular connection (future)
         const char* netStr = "4G";
         display.setCursor(display.width() - display.getTextWidth(netStr) - 2, -3);
         display.print(netStr);
@@ -2401,160 +2651,290 @@ private:
     display.setTextSize(1);
     display.drawRect(0, 11, display.width(), 1);
 
-    display.setTextSize(0);
-    int y = 14;
-    int listLineH = 8;
-    int itemIdx = 0;
+    // ---- Layout constants ----
+    const int headerY = 14;         // Content starts here
+    const int footerH = 14;
+    const int footerY = display.height() - 12;
+    const int viewportH = display.height() - headerY - footerH;
+    const int scrollbarW = 4;
+    const int listLineH = 8;
+    const int sepH = 8;            // Separator between IRC and web sections
+    const int sectionH = listLineH; // Section header height
+    int maxChars = _charsPerLine - 2; // Account for "> " prefix
+    if (maxChars < 10) maxChars = 10;
+    int totalItems = 2 + (int)_bookmarks.size() + (int)_history.size();
 
-    // IRC Chat (item 0)
+    // ---- Layout pass: compute virtual Y extent of each item ----
+    // We track: for each selectable item, its (virtualY, height).
+    // Non-selectable elements (separators, section headers) are accounted
+    // for in the gaps between items.
+
+    int virtualY = 0;
+    int itemIdx = 0;
+    int selectedTop = 0, selectedBot = 0;
+
+    // Item 0: IRC
+    int ircH = listLineH + 2;
+    if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + ircH; }
+    virtualY += ircH;
+    itemIdx++;
+
+    // Separator
+    virtualY += sepH;
+
+    // Item 1: URL bar
+    int urlBarH = listLineH + 2;
+    if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + urlBarH; }
+    virtualY += urlBarH;
+    itemIdx++;
+
+    // Bookmarks
+    if (_bookmarks.size() > 0) {
+      virtualY += sectionH; // "-- Bookmarks --" header
+      for (int i = 0; i < (int)_bookmarks.size(); i++) {
+        int urlLen = _bookmarks[i].length();
+        int numLines = (urlLen + maxChars - 1) / maxChars;
+        if (numLines < 1) numLines = 1;
+        int h = numLines * listLineH;
+        if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + h; }
+        virtualY += h;
+        itemIdx++;
+      }
+    }
+
+    // History
+    if (_history.size() > 0) {
+      virtualY += sectionH; // "-- History --" header
+      for (int i = 0; i < (int)_history.size(); i++) {
+        int urlLen = _history[i].length();
+        int numLines = (urlLen + maxChars - 1) / maxChars;
+        if (numLines < 1) numLines = 1;
+        int h = numLines * listLineH;
+        if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + h; }
+        virtualY += h;
+        itemIdx++;
+      }
+    }
+
+    int totalContentH = virtualY;
+
+    // ---- Adjust scroll to keep selected item visible ----
+    if (selectedTop < _homeScrollY) {
+      _homeScrollY = selectedTop;
+    }
+    if (selectedBot > _homeScrollY + viewportH) {
+      _homeScrollY = selectedBot - viewportH;
+    }
+    if (_homeScrollY < 0) _homeScrollY = 0;
+    if (totalContentH <= viewportH) _homeScrollY = 0;
+
+    // ---- Render pass (with scroll offset) ----
+    display.setTextSize(0);
+    int y = headerY - _homeScrollY;  // Start Y in screen coords
+    itemIdx = 0;
+    bool needsScroll = (totalContentH > viewportH);
+    // Clip region: only draw items with y between headerY and headerY+viewportH
+    int clipTop = headerY;
+    int clipBot = headerY + viewportH;
+
+    // Helper: check if a rect at (y, height) is at least partially visible
+    #define HOME_VISIBLE(yy, hh) ((yy) + (hh) > clipTop && (yy) < clipBot)
+
+    // Item 0: IRC Chat
     {
       bool selected = (_homeSelected == itemIdx);
-      if (selected) {
-        display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(0, y + 5, display.width(), listLineH);
-        display.setColor(DisplayDriver::DARK);
-      } else {
-        display.setColor(DisplayDriver::GREEN);
+      if (HOME_VISIBLE(y, ircH)) {
+        if (selected) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.setColor(DisplayDriver::DARK);
+        } else {
+          display.setColor(DisplayDriver::GREEN);
+        }
+        display.setCursor(0, y);
+        if (_ircConnected && _ircJoined) {
+          char ircLabel[80];
+          snprintf(ircLabel, sizeof(ircLabel), "IRC: %s [connected]", _ircChannel);
+          display.print(ircLabel);
+        } else if (_ircConnected) {
+          display.print("IRC: connecting...");
+        } else {
+          char ircLabel[80];
+          snprintf(ircLabel, sizeof(ircLabel), "IRC: %s:%d", _ircHost, _ircPort);
+          display.print(ircLabel);
+        }
       }
-      display.setCursor(0, y);
-      if (_ircConnected && _ircJoined) {
-        char ircLabel[80];
-        snprintf(ircLabel, sizeof(ircLabel), "IRC: %s [connected]", _ircChannel);
-        display.print(ircLabel);
-      } else if (_ircConnected) {
-        display.print("IRC: connecting...");
-      } else {
-        char ircLabel[80];
-        snprintf(ircLabel, sizeof(ircLabel), "IRC: %s:%d", _ircHost, _ircPort);
-        display.print(ircLabel);
-      }
-      y += listLineH + 2;
+      y += ircH;
       itemIdx++;
     }
 
-    // Separator between IRC and Web sections
-    display.setColor(DisplayDriver::GREEN);
-    display.drawRect(0, y + 5, display.width(), 1);
-    y += 8;
+    // Separator
+    if (HOME_VISIBLE(y, sepH)) {
+      display.setColor(DisplayDriver::GREEN);
+      display.drawRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), 1);
+    }
+    y += sepH;
 
-    // URL bar (item 1)
+    // Item 1: URL bar
     {
       bool selected = (_homeSelected == itemIdx);
-      if (selected) {
-        display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(0, y + 5, display.width(), listLineH);
-        display.setColor(DisplayDriver::DARK);
-      } else {
-        display.setColor(DisplayDriver::LIGHT);
+      if (HOME_VISIBLE(y, urlBarH)) {
+        if (selected) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.setColor(DisplayDriver::DARK);
+        } else {
+          display.setColor(DisplayDriver::LIGHT);
+        }
+        display.setCursor(0, y);
+        if (_urlEditing) {
+          char urlDisp[WEB_MAX_URL_LEN + 2];
+          int maxShow = maxChars - 3;  // "Web: " prefix
+          int start = 0;
+          if (_urlLen > maxShow) start = _urlLen - maxShow;
+          snprintf(urlDisp, sizeof(urlDisp), "Web: %s_", _urlBuffer + start);
+          display.print(urlDisp);
+        } else if (_urlLen > 0) {
+          char urlDisp[80];
+          int maxShow = maxChars - 3;
+          snprintf(urlDisp, sizeof(urlDisp), "Web: %s",
+                   _urlLen > maxShow ? (_urlBuffer + _urlLen - maxShow) : _urlBuffer);
+          display.print(urlDisp);
+        } else {
+          display.print("Web: [Enter URL]");
+        }
       }
-      display.setCursor(0, y);
-      if (_urlEditing) {
-        // Show URL with cursor
-        char urlDisp[WEB_MAX_URL_LEN + 2];
-        int maxShow = _charsPerLine - 5;
-        int start = 0;
-        if (_urlLen > maxShow) start = _urlLen - maxShow;
-        snprintf(urlDisp, sizeof(urlDisp), "Web: %s_", _urlBuffer + start);
-        display.print(urlDisp);
-      } else if (_urlLen > 0) {
-        char urlDisp[80];
-        snprintf(urlDisp, sizeof(urlDisp), "Web: %s",
-                 _urlLen > _charsPerLine - 5 ?
-                   (_urlBuffer + _urlLen - _charsPerLine + 5) : _urlBuffer);
-        display.print(urlDisp);
-      } else {
-        display.print("Web: [Enter URL]");
-      }
-      y += listLineH + 2;
+      y += urlBarH;
       itemIdx++;
     }
 
     // Bookmarks section
     if (_bookmarks.size() > 0) {
-      display.setColor(DisplayDriver::GREEN);
-      display.setCursor(0, y);
-      display.print("-- Bookmarks --");
-      y += listLineH;
+      // Section header
+      if (HOME_VISIBLE(y, sectionH)) {
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(0, y);
+        display.print("-- Bookmarks --");
+      }
+      y += sectionH;
 
-      for (int i = 0; i < (int)_bookmarks.size() && y < display.height() - 35; i++) {
+      for (int i = 0; i < (int)_bookmarks.size(); i++) {
         bool selected = (_homeSelected == itemIdx);
         const char* url = _bookmarks[i].c_str();
         int urlLen = strlen(url);
-        int maxChars = _charsPerLine - 2;
-
         int numLines = (urlLen + maxChars - 1) / maxChars;
         if (numLines < 1) numLines = 1;
+        int itemH = numLines * listLineH;
 
-        if (selected) {
-          display.setColor(DisplayDriver::LIGHT);
-          display.fillRect(0, y + 5, display.width(), listLineH * numLines);
-          display.setColor(DisplayDriver::DARK);
-        } else {
-          display.setColor(DisplayDriver::LIGHT);
-        }
+        if (HOME_VISIBLE(y, itemH)) {
+          int contentW = display.width() - (needsScroll ? scrollbarW + 1 : 0);
+          if (selected) {
+            display.setColor(DisplayDriver::LIGHT);
+            display.fillRect(0, y + 5, contentW, itemH);
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
 
-        int off = 0;
-        for (int ln = 0; ln < numLines && y < display.height() - 35; ln++) {
-          display.setCursor(0, y);
-          char lineBuf[128];
-          const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
-          int charsThisLine = maxChars;
-          if (urlLen - off < charsThisLine) charsThisLine = urlLen - off;
-          snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, charsThisLine, url + off);
-          display.print(lineBuf);
-          off += charsThisLine;
-          y += listLineH;
+          int off = 0;
+          for (int ln = 0; ln < numLines; ln++) {
+            int lineY = y + ln * listLineH;
+            if (lineY >= clipTop && lineY < clipBot) {
+              display.setCursor(0, lineY);
+              char lineBuf[128];
+              const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
+              int chars = maxChars;
+              if (urlLen - off < chars) chars = urlLen - off;
+              snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, chars, url + off);
+              display.print(lineBuf);
+            }
+            off += maxChars;
+          }
         }
+        y += itemH;
         itemIdx++;
       }
     }
 
     // History section
-    if (_history.size() > 0 && y < display.height() - 24) {
-      display.setColor(DisplayDriver::GREEN);
-      display.setCursor(0, y);
-      display.print("-- History --");
-      y += listLineH;
+    if (_history.size() > 0) {
+      // Section header
+      if (HOME_VISIBLE(y, sectionH)) {
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(0, y);
+        display.print("-- History --");
+      }
+      y += sectionH;
 
-      for (int i = 0; i < (int)_history.size() && y < display.height() - 24; i++) {
+      for (int i = 0; i < (int)_history.size(); i++) {
         bool selected = (_homeSelected == itemIdx);
         const char* url = _history[i].c_str();
         int urlLen = strlen(url);
-        int maxChars = _charsPerLine - 2;  // Account for "> " prefix
-
-        // Calculate how many lines this URL needs
         int numLines = (urlLen + maxChars - 1) / maxChars;
         if (numLines < 1) numLines = 1;
+        int itemH = numLines * listLineH;
 
-        if (selected) {
-          // Multi-line highlight
-          display.setColor(DisplayDriver::LIGHT);
-          display.fillRect(0, y + 5, display.width(), listLineH * numLines);
-          display.setColor(DisplayDriver::DARK);
-        } else {
-          display.setColor(DisplayDriver::LIGHT);
-        }
+        if (HOME_VISIBLE(y, itemH)) {
+          int contentW = display.width() - (needsScroll ? scrollbarW + 1 : 0);
+          if (selected) {
+            display.setColor(DisplayDriver::LIGHT);
+            display.fillRect(0, y + 5, contentW, itemH);
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
 
-        // Render URL across multiple lines
-        int off = 0;
-        for (int ln = 0; ln < numLines && y < display.height() - 24; ln++) {
-          display.setCursor(0, y);
-          char lineBuf[128];
-          const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
-          int charsThisLine = maxChars;
-          if (urlLen - off < charsThisLine) charsThisLine = urlLen - off;
-          snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, charsThisLine, url + off);
-          display.print(lineBuf);
-          off += charsThisLine;
-          y += listLineH;
+          int off = 0;
+          for (int ln = 0; ln < numLines; ln++) {
+            int lineY = y + ln * listLineH;
+            if (lineY >= clipTop && lineY < clipBot) {
+              display.setCursor(0, lineY);
+              char lineBuf[128];
+              const char* prefix = (ln == 0) ? (selected ? "> " : "  ") : "  ";
+              int chars = maxChars;
+              if (urlLen - off < chars) chars = urlLen - off;
+              snprintf(lineBuf, sizeof(lineBuf), "%s%.*s", prefix, chars, url + off);
+              display.print(lineBuf);
+            }
+            off += maxChars;
+          }
         }
+        y += itemH;
         itemIdx++;
       }
     }
 
-    // Footer
+    #undef HOME_VISIBLE
+
+    // ---- Scrollbar ----
+    if (needsScroll) {
+      int sbX = display.width() - scrollbarW;
+      int sbTop = headerY;
+      int sbH = viewportH;
+
+      // Track line
+      display.setColor(DisplayDriver::DARK);
+      display.drawRect(sbX, sbTop, 1, sbH);
+
+      // Thumb
+      int thumbH = (viewportH * viewportH) / totalContentH;
+      if (thumbH < 6) thumbH = 6;
+      if (thumbH > sbH) thumbH = sbH;
+      int scrollRange = totalContentH - viewportH;
+      int thumbY = sbTop;
+      if (scrollRange > 0) {
+        thumbY = sbTop + (_homeScrollY * (sbH - thumbH)) / scrollRange;
+      }
+      display.setColor(DisplayDriver::GREEN);
+      display.fillRect(sbX, thumbY, scrollbarW, thumbH);
+    }
+
+    // ---- Footer (fixed, not scrolled) ----
+    // Clear footer area in case scrolled content bleeds into it
+    display.setColor(DisplayDriver::DARK);
+    display.fillRect(0, footerY - 2, display.width(), footerH + 2);
+
     display.setTextSize(1);
-    int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
@@ -2598,6 +2978,66 @@ private:
       snprintf(progBuf, sizeof(progBuf), "Connecting...");
     }
     display.print(progBuf);
+  }
+
+  void renderDownloadDone(DisplayDriver& display) {
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+
+    if (_downloadOk) {
+      display.setColor(DisplayDriver::GREEN);
+      display.print("Download Complete");
+      display.drawRect(0, 11, display.width(), 1);
+
+      display.setTextSize(0);
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, 16);
+      display.print("Saved to /books/:");
+      display.setCursor(0, 26);
+
+      // Word-wrap filename
+      int fnLen = strlen(_downloadedFile);
+      int off = 0;
+      int y = 26;
+      while (off < fnLen && y < 54) {
+        int lineLen = min(_charsPerLine, fnLen - off);
+        char lineBuf[64];
+        snprintf(lineBuf, sizeof(lineBuf), "%.*s", lineLen, _downloadedFile + off);
+        display.setCursor(0, y);
+        display.print(lineBuf);
+        off += lineLen;
+        y += 8;
+      }
+
+      display.setCursor(0, y + 6);
+      display.setColor(DisplayDriver::GREEN);
+      display.print("Ent: Open in Reader");
+      display.setCursor(0, y + 16);
+      display.print("Q:   Back to browser");
+    } else {
+      display.setColor(DisplayDriver::YELLOW);
+      display.print("Download Failed");
+      display.drawRect(0, 11, display.width(), 1);
+
+      display.setTextSize(0);
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, 18);
+      display.print(_fetchError.c_str());
+      display.setCursor(0, 36);
+      display.print(_downloadedFile);
+
+      display.setCursor(0, 56);
+      display.setColor(DisplayDriver::GREEN);
+      display.print("Q: Back to browser");
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setCursor(0, footerY);
+    display.setColor(DisplayDriver::YELLOW);
+    display.print(_downloadOk ? "Ent:Read  Q:Back" : "Q:Back");
   }
 
   void renderReading(DisplayDriver& display) {
@@ -4249,12 +4689,14 @@ public:
       _urlLen(0), _urlCursor(0),
       _textBuffer(nullptr), _textLen(0), _links(nullptr), _linkCount(0),
       _currentPage(0), _totalPages(0),
-      _homeSelected(0), _urlEditing(false),
+      _homeSelected(0), _homeScrollY(0), _urlEditing(false),
       _linkInput(0), _linkInputActive(false),
       _formCount(0), _forms(nullptr), _activeForm(-1), _activeField(0),
       _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0),
       _cookies(nullptr), _cookieCount(0),
       _fetchStartTime(0), _fetchProgress(0),
+      _downloadOk(false),
+      _requestTextReader(false),
       _ircClient(nullptr), _ircUseTLS(false), _ircConnected(false), _ircRegistered(false),
       _ircJoined(false), _ircPort(6697), _ircMessages(nullptr),
       _ircMsgHead(0), _ircMsgCount(0), _ircLineLen(0),
@@ -4267,6 +4709,7 @@ public:
     _pageTitle[0] = '\0';
     _currentUrl[0] = '\0';
     _formEditBuf[0] = '\0';
+    _downloadedFile[0] = '\0';
     _ircHost[0] = '\0';
     _ircNick[0] = '\0';
     _ircChannel[0] = '\0';
@@ -4343,12 +4786,67 @@ public:
 
   // Called when leaving the screen
   void exitReader() {
-    // Don't disconnect WiFi - keep it available
-    // Don't free buffers - keep page content for when user returns
+    Serial.printf("WebReader: exitReader - heap before: %d, largest: %d\n",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
+    // Disconnect IRC if active
+    if (_ircClient) {
+      if (_ircClient->connected()) {
+        // Send QUIT before disconnecting
+        _ircClient->println("QUIT :leaving");
+        delay(100);
+        _ircClient->stop();
+      }
+      delete _ircClient;
+      _ircClient = nullptr;
+    }
+    _ircConnected = false;
+    _ircRegistered = false;
+    _ircJoined = false;
+    _ircReconnectAt = 0;
+
+    // Free PSRAM buffers (text, links — will be re-allocated on next fetch)
+    freeBuffers();
+
+    // Free IRC message ring buffer
+    if (_ircMessages) { free(_ircMessages); _ircMessages = nullptr; }
+    _ircMsgHead = 0;
+    _ircMsgCount = 0;
+
+    // Clear String vectors to release heap fragments
+    // (bookmarks/history are reloaded from SD on re-entry via enter())
+    _bookmarks.clear();
+    _bookmarks.shrink_to_fit();
+    _history.clear();
+    _history.shrink_to_fit();
+    _backHistory.clear();
+    _backHistory.shrink_to_fit();
+    _pageOffsets.clear();
+    _pageOffsets.shrink_to_fit();
+
+    // Clear Arduino Strings that may hold heap allocations
+    _fetchError = String();
+    _connectedSSID = String();
+
+    // Shut down WiFi to reclaim ~50-70KB internal RAM
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    _wifiState = WIFI_IDLE;
+
+    // Reset mode so re-entry starts fresh
+    _mode = HOME;
+    _homeSelected = 0;
+    _homeScrollY = 0;
+    _urlEditing = false;
+
+    Serial.printf("WebReader: exitReader - heap after: %d, largest: %d\n",
+                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   }
 
   bool isReading() const { return _mode == READING; }
   bool isHome() const { return _mode == HOME; }
+  bool wantsTextReader() const { return _requestTextReader; }
+  void clearTextReaderRequest() { _requestTextReader = false; }
   bool isUrlEditing() const { return _urlEditing && _mode == HOME; }
   bool isWifiSetup() const { return _mode == WIFI_SETUP; }
   bool isPasswordEntry() const {
@@ -4408,6 +4906,9 @@ public:
       case IRC_CHAT:
         renderIRCChat(display);
         return 500;  // Fast refresh for live chat
+      case DOWNLOAD_DONE:
+        renderDownloadDone(display);
+        return 5000;
       default:
         return 5000;
     }
@@ -4473,6 +4974,19 @@ public:
           return true;
         }
         return false;
+      case DOWNLOAD_DONE:
+        if ((c == '\r' || c == 13) && _downloadOk) {
+          // Set flag — main.cpp will navigate to text reader
+          exitReader();
+          _requestTextReader = true;
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          _mode = HOME;
+          _homeSelected = 0;
+          return true;
+        }
+        return true;  // Consume all other keys
       default:
         return false;
     }
