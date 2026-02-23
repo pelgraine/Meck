@@ -1526,8 +1526,29 @@ private:
   // (WiFi STA, PPP via 4G modem, etc). The caller is responsible for
   // ensuring network connectivity before calling fetchPage().
 
+  // Fetch a page with a self-referrer (origin of the URL) for Cloudflare compatibility
+  bool fetchWithSelfRef(const char* url) {
+    char selfRef[256];
+    const char* schEnd = strstr(url, "://");
+    if (schEnd) {
+      const char* pathStart = strchr(schEnd + 3, '/');
+      int oLen = pathStart ? (pathStart - url) : strlen(url);
+      if (oLen > 254) oLen = 254;
+      memcpy(selfRef, url, oLen);
+      selfRef[oLen] = '/';
+      selfRef[oLen + 1] = '\0';
+    } else {
+      strncpy(selfRef, url, 255);
+      selfRef[255] = '\0';
+    }
+    return fetchPage(url, nullptr, nullptr, selfRef);
+  }
+
   // Translate ESP32 HTTPClient error codes to readable strings
   static String httpErrorString(int code) {
+    if (code == 525) return "SSL error (Cloudflare)";
+    if (code == 403) return "Blocked (403)";
+    if (code == 503) return "Unavailable (503)";
     if (code > 0) return "HTTP " + String(code);
     switch (code) {
       case -1:  return "Connection refused";
@@ -1605,7 +1626,10 @@ private:
     ensureTlsUsesPsram();
     WiFiClientSecure* tlsClient = new WiFiClientSecure();
     tlsClient->setInsecure();
+    tlsClient->setHandshakeTimeout(30);
     String lastHost = ""; // Track host for connection reuse
+    int connRetries = 0;  // Connection failure retries (max 1)
+    int serverRetries = 0; // 5xx error retries (max 1)
 
     while (redirectCount <= maxRedirects) {
       // Update domain and cookies for current URL
@@ -1637,6 +1661,7 @@ private:
           delete tlsClient;
           tlsClient = new WiFiClientSecure();
           tlsClient->setInsecure();
+          tlsClient->setHandshakeTimeout(30);
         }
         lastHost = currentHost;
         
@@ -1702,12 +1727,37 @@ private:
         httpCode = http.POST((uint8_t*)postBody, strlen(postBody));
         Serial.printf("WebReader: POST -> %d (Referer: %s)\n", httpCode, ref);
       } else {
+        // Send Referer on GET too — helps with Cloudflare bot detection
+        if (referer && referer[0]) {
+          http.addHeader("Referer", referer);
+        }
         httpCode = http.GET();
         Serial.printf("WebReader: GET -> %d\n", httpCode);
       }
 
       // Capture all Set-Cookie headers from this response
       captureResponseCookies(http, domain);
+
+      // Connection-level failure (timeout, TLS error, etc) — retry once
+      if (httpCode < 0 && connRetries < 1) {
+        http.end();
+        // Destroy and recreate TLS client — old connection state is broken
+        delete tlsClient;
+        tlsClient = new WiFiClientSecure();
+        tlsClient->setInsecure();
+        tlsClient->setHandshakeTimeout(30);
+        lastHost = "";  // Force fresh connection
+        connRetries++;
+        redirectCount++;
+        Serial.printf("WebReader: Connection error %d, retrying...\n", httpCode);
+        delay(2000);
+        continue;
+      }
+      if (httpCode < 0) {
+        _fetchError = httpErrorString(httpCode);
+        http.end();
+        break;
+      }
 
       // Handle redirects
       if (httpCode == 301 || httpCode == 302 || httpCode == 303 || httpCode == 307) {
@@ -1733,6 +1783,15 @@ private:
         success = (htmlLen > 0);
         http.end();
         break;
+      } else if (httpCode >= 500 && httpCode < 600 && serverRetries < 1) {
+        // Server error (e.g. Cloudflare 525) — retry once after brief delay
+        String body = http.getString();
+        http.end();
+        serverRetries++;
+        redirectCount++;
+        Serial.printf("WebReader: Server error %d, retrying...\n", httpCode);
+        delay(1500);
+        continue;
       } else {
         _fetchError = httpErrorString(httpCode);
         http.end();
@@ -1907,7 +1966,7 @@ private:
         // bypass its cache and serve a fresh page from AO3's origin with
         // a CSRF token that matches our session.
         Serial.printf("WebReader: Re-fetching form page: %s\n", savedReferer);
-        result = fetchPage(savedReferer);
+        result = fetchWithSelfRef(savedReferer);
 
         if (result && _formCount > 0) {
           // Find the login form and update its fields with saved user data
@@ -1974,7 +2033,7 @@ private:
       }
       strncpy(_urlBuffer, getUrl.c_str(), WEB_MAX_URL_LEN - 1);
       _urlLen = strlen(_urlBuffer);
-      return fetchPage(getUrl.c_str());
+      return fetchPage(getUrl.c_str(), nullptr, nullptr, _currentUrl);
     }
   }
 
@@ -2680,10 +2739,10 @@ private:
             if (!loadAndAutoConnect()) {
               startWifiScan();
             } else {
-              fetchPage(_urlBuffer);
+              fetchWithSelfRef(_urlBuffer);
             }
           } else {
-            fetchPage(_urlBuffer);
+            fetchWithSelfRef(_urlBuffer);
           }
         }
         return true;
@@ -2761,10 +2820,10 @@ private:
           if (!loadAndAutoConnect()) {
             startWifiScan();
           } else {
-            fetchPage(_urlBuffer);
+            fetchWithSelfRef(_urlBuffer);
           }
         } else {
-          fetchPage(_urlBuffer);
+          fetchWithSelfRef(_urlBuffer);
         }
       }
       return true;
@@ -2801,7 +2860,7 @@ private:
           WebLink& link = _links[_linkInput - 1];
           strncpy(_urlBuffer, link.url, WEB_MAX_URL_LEN - 1);
           _urlLen = strlen(_urlBuffer);
-          fetchPage(_urlBuffer);
+          fetchPage(_urlBuffer, nullptr, nullptr, _currentUrl);
         } else {
           _linkInputActive = false;
           _linkInput = 0;
@@ -2875,7 +2934,7 @@ private:
         _currentUrl[0] = '\0';
         strncpy(_urlBuffer, prevUrl.c_str(), WEB_MAX_URL_LEN - 1);
         _urlLen = strlen(_urlBuffer);
-        fetchPage(_urlBuffer);
+        fetchWithSelfRef(_urlBuffer);
       } else {
         _mode = HOME;
         _homeSelected = 0;
@@ -4240,7 +4299,7 @@ public:
           // Show "Connected!" confirmation then go to URL entry
           if (_urlLen > 0) {
             // URL was pending — fetch it directly
-            fetchPage(_urlBuffer);
+            fetchWithSelfRef(_urlBuffer);
           } else {
             showConnectedAndGoHome();
           }
