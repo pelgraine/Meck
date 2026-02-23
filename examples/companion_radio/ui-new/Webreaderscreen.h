@@ -965,6 +965,10 @@ private:
   int _linkInput;     // Accumulated link number digits
   bool _linkInputActive;
 
+  // Brief toast notification
+  char _toastMsg[32];
+  unsigned long _toastTime;  // millis() when toast was set
+
   // Forms
   WebForm _forms[WEB_MAX_FORMS];
   int _formCount;
@@ -2623,6 +2627,27 @@ private:
     }
     display.setCursor(display.width() - display.getTextWidth(hint) - 2, footerY);
     display.print(hint);
+
+    // Toast notification overlay
+    if (_toastMsg[0] && (millis() - _toastTime < 1500)) {
+      display.setTextSize(1);
+      int tw = display.getTextWidth(_toastMsg);
+      int bw = tw + 16;
+      int bh = 20;
+      int bx = (display.width() - bw) / 2;
+      int by = (display.height() - bh) / 2;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, 1);
+      display.drawRect(bx, by + bh - 1, bw, 1);
+      display.drawRect(bx, by, 1, bh);
+      display.drawRect(bx + bw - 1, by, 1, bh);
+      display.setCursor(bx + 8, by + 5);
+      display.print(_toastMsg);
+    } else if (_toastMsg[0]) {
+      _toastMsg[0] = '\0';  // Clear expired toast
+    }
   }
 
   // ---- Layout Initialization ----
@@ -2920,6 +2945,8 @@ private:
     if (c == 'k' || c == 'K') {
       if (_currentUrl[0]) {
         addBookmark(_currentUrl);
+        strncpy(_toastMsg, "Bookmarked!", sizeof(_toastMsg));
+        _toastTime = millis();
         return true;
       }
       return false;
