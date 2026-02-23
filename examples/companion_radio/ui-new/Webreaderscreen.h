@@ -98,9 +98,9 @@ struct IRCMessage {
   char text[IRC_MAX_MSG_LEN];
   bool isSystem;  // true for join/part/server notices
 };
-#define WEB_MAX_PAGE_SIZE   32768   // Max HTML download size (32KB)
-#define WEB_MAX_TEXT_SIZE   24576   // Max extracted text size (24KB)
-#define WEB_MAX_LINKS       64      // Max links per page
+#define WEB_MAX_PAGE_SIZE   196608  // Max HTML download size (192KB)
+#define WEB_MAX_TEXT_SIZE   98304   // Max extracted text size (96KB)
+#define WEB_MAX_LINKS       512     // Max links per page
 #define WEB_MAX_URL_LEN     256
 #define WEB_MAX_BOOKMARKS   20
 #define WEB_MAX_HISTORY     30
@@ -155,7 +155,7 @@ static const char* HTML_SKIP_TAGS[] = {
 // Tags that produce a paragraph break
 static const char* HTML_BLOCK_TAGS[] = {
   "p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6",
-  "li", "tr", "blockquote", "article", "section", "figcaption",
+  "tr", "blockquote", "article", "section", "figcaption",
   "dt", "dd", nullptr
 };
 
@@ -282,6 +282,31 @@ inline bool extractHref(const char* tagContent, int tagLen, char* hrefOut, int h
     }
   }
   return false;
+}
+
+// Encode spaces in URL as %20 (in-place, buffer must have room)
+inline void encodeUrlSpaces(char* url, int maxLen) {
+  int len = strlen(url);
+  // Count spaces to check if result fits
+  int spaces = 0;
+  for (int i = 0; i < len; i++) {
+    if (url[i] == ' ') spaces++;
+  }
+  int newLen = len + spaces * 2;  // Each space becomes 3 chars (%20) instead of 1
+  if (newLen >= maxLen) return;    // Won't fit, leave as-is
+
+  // Work backwards to encode in-place
+  url[newLen] = '\0';
+  int dst = newLen - 1;
+  for (int src = len - 1; src >= 0; src--) {
+    if (url[src] == ' ') {
+      url[dst--] = '0';
+      url[dst--] = '2';
+      url[dst--] = '%';
+    } else {
+      url[dst--] = url[src];
+    }
+  }
 }
 
 // Resolve a relative URL against a base URL
@@ -545,7 +570,8 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
           if (ti < textMax - 8) {
             int n = result.linkCount;
             textOut[ti++] = '[';
-            if (n >= 10) textOut[ti++] = '0' + (n / 10);
+            if (n >= 100) textOut[ti++] = '0' + (n / 100);
+            if (n >= 10) textOut[ti++] = '0' + ((n / 10) % 10);
             textOut[ti++] = '0' + (n % 10);
             textOut[ti++] = ']';
             lastWasSpace = false;
@@ -556,9 +582,13 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         currentHref[0] = '\0';
       }
 
-      // Handle <li> - add bullet marker
+      // Handle <li> - single newline + bullet marker
       if (!isClosing && tagNameLen == 2 && tagName[0] == 'l' && tagName[1] == 'i') {
-        if (ti < textMax - 4) {
+        if (ti < textMax - 5) {
+          if (!lastWasBreak && ti > 0) {
+            textOut[ti++] = '\n';
+            lastWasBreak = true;
+          }
           textOut[ti++] = ' ';
           textOut[ti++] = '*';
           textOut[ti++] = ' ';
@@ -722,15 +752,8 @@ inline ParseResult parseHtml(const char* html, int htmlLen,
         }
       }
 
-      // <button> - extract text as submit label (skip content rendering)
-      // We handle button text as a form submit
-      if (tagNameLen == 6 &&
-          tagName[0] == 'b' && tagName[1] == 'u' && tagName[2] == 't' &&
-          tagName[3] == 't' && tagName[4] == 'o' && tagName[5] == 'n') {
-        // Buttons are mostly decorative in our context — skip their content
-        if (!isClosing) skipDepth++;
-        else if (skipDepth > 0) skipDepth--;
-      }
+      // <button> - render content inline (don't skip, as buttons may wrap links)
+      // Form submit buttons are handled separately in form rendering.
 
       hi = tagEnd + 1;
       continue;
@@ -925,6 +948,7 @@ private:
   int _linkCount;
   char _pageTitle[64];     // Page title (from <title> tag)
   char _currentUrl[WEB_MAX_URL_LEN];
+  std::vector<String> _backHistory;  // URL stack for back navigation
 
   // Pagination
   std::vector<int> _pageOffsets;  // Byte offset of each page start
@@ -1536,6 +1560,12 @@ private:
     _fetchStartTime = millis();
     _fetchProgress = 0;
     _fetchError = "";
+
+    // Push current URL to back stack (if we have one)
+    if (_currentUrl[0] != '\0') {
+      _backHistory.push_back(String(_currentUrl));
+      if (_backHistory.size() > 20) _backHistory.erase(_backHistory.begin());
+    }
 
     // Show the loading screen before blocking fetch
     if (_display) {
@@ -2361,10 +2391,11 @@ private:
       display.print("Type URL  Ent:Go");
     } else {
       char footerBuf[48];
-      if (_cookieCount > 0)
-        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go X:Clr%dck", _cookieCount);
+      bool hasData = (_cookieCount > 0 || !_history.empty());
+      if (hasData)
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S Ent:Go X:Clr");
       else
-        snprintf(footerBuf, sizeof(footerBuf), "Q:Back W/S:Nav Ent:Go");
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go");
       display.print(footerBuf);
     }
   }
@@ -2523,13 +2554,13 @@ private:
       snprintf(linkBuf, sizeof(linkBuf), "#%d_ Ent:Go", _linkInput);
       hint = linkBuf;
     } else if (_formCount > 0 && _linkCount > 0) {
-      hint = "L:Lnk F:Frm Q:Bk";
+      hint = "L:Lnk F:Frm B:Bk Q:X";
     } else if (_formCount > 0) {
-      hint = "W/S F:Frm Q:Bk";
+      hint = "F:Frm B:Bk Q:X";
     } else if (_linkCount > 0) {
-      hint = "W/S L:Lnk Q:Bk";
+      hint = "L:Lnk B:Bk Q:X";
     } else {
-      hint = "W/S:Pg Q:Bk";
+      hint = "B:Bk Q:X";
     }
     display.setCursor(display.width() - display.getTextWidth(hint) - 2, footerY);
     display.print(hint);
@@ -2640,6 +2671,9 @@ private:
             strncpy(_urlBuffer, tmp, WEB_MAX_URL_LEN - 1);
             _urlLen = strlen(_urlBuffer);
           }
+          // Encode spaces as %20
+          encodeUrlSpaces(_urlBuffer, WEB_MAX_URL_LEN);
+          _urlLen = strlen(_urlBuffer);
           _urlEditing = false;
           if (!isNetworkAvailable()) {
             _mode = WIFI_SETUP;
@@ -2738,10 +2772,13 @@ private:
 
     // X - clear all cookies
     if (c == 'x' || c == 'X') {
+      bool hadData = (_cookieCount > 0 || !_history.empty());
       _cookieCount = 0;
       memset(_cookies, 0, sizeof(_cookies));
-      Serial.println("WebReader: Cookies cleared");
-      return true;
+      _history.clear();
+      saveHistory();
+      Serial.println("WebReader: Cookies and history cleared");
+      return hadData;
     }
 
     return false;
@@ -2829,7 +2866,24 @@ private:
       return false;
     }
 
-    // Q - back to home
+    // B - back to previous page
+    if (c == 'b' || c == 'B') {
+      if (!_backHistory.empty()) {
+        String prevUrl = _backHistory.back();
+        _backHistory.pop_back();
+        // Temporarily clear _currentUrl so fetchPage doesn't re-push it
+        _currentUrl[0] = '\0';
+        strncpy(_urlBuffer, prevUrl.c_str(), WEB_MAX_URL_LEN - 1);
+        _urlLen = strlen(_urlBuffer);
+        fetchPage(_urlBuffer);
+      } else {
+        _mode = HOME;
+        _homeSelected = 0;
+      }
+      return true;
+    }
+
+    // Q - exit to home
     if (c == 'q' || c == 'Q') {
       _mode = HOME;
       _homeSelected = 0;
