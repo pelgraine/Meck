@@ -14,7 +14,7 @@
 // Maximum messages to store in history
 #define CHANNEL_MSG_HISTORY_SIZE 300
 #define CHANNEL_MSG_TEXT_LEN 160
-#define MSG_PATH_MAX 8  // Max repeater hops stored per message
+#define MSG_PATH_MAX 20  // Max repeater hops stored per message
 
 #ifndef MAX_GROUP_CHANNELS
   #define MAX_GROUP_CHANNELS 20
@@ -24,7 +24,7 @@
 // On-disk format for message persistence (SD card)
 // ---------------------------------------------------------------------------
 #define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
-#define MSG_FILE_VERSION 2
+#define MSG_FILE_VERSION 3
 #define MSG_FILE_PATH    "/meshcore/messages.bin"
 
 struct __attribute__((packed)) MsgFileHeader {
@@ -44,7 +44,7 @@ struct __attribute__((packed)) MsgFileRecord {
   uint8_t  reserved;
   uint8_t  path[MSG_PATH_MAX];  // Repeater hop hashes (first byte of pub key)
   char     text[CHANNEL_MSG_TEXT_LEN];
-  // 176 bytes total
+  // 188 bytes total
 };
 
 class UITask;  // Forward declaration
@@ -74,11 +74,12 @@ private:
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
   bool _sdReady;      // SD card is available for persistence
   bool _showPathOverlay;  // Show path detail overlay for last received msg
+  int _pathOverlayScroll; // Scroll offset for hop list in path overlay
   
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false) {
+      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathOverlayScroll(0) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -118,6 +119,7 @@ public:
     // Reset scroll to show newest message
     _scrollPos = 0;
     _showPathOverlay = false;  // Dismiss overlay on new message
+    _pathOverlayScroll = 0;
 
     // Persist to SD card
     saveToSD();
@@ -137,7 +139,7 @@ public:
   int getMessageCount() const { return _msgCount; }
   
   uint8_t getViewChannelIdx() const { return _viewChannelIdx; }
-  void setViewChannelIdx(uint8_t idx) { _viewChannelIdx = idx; _scrollPos = 0; _showPathOverlay = false; }
+  void setViewChannelIdx(uint8_t idx) { _viewChannelIdx = idx; _scrollPos = 0; _showPathOverlay = false; _pathOverlayScroll = 0; }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
 
   // Find the newest RECEIVED message for the current channel
@@ -160,7 +162,7 @@ public:
   // -----------------------------------------------------------------------
 
   // Save the entire message buffer to SD card.
-  // File: /meshcore/messages.bin  (~50 KB for 300 messages)
+  // File: /meshcore/messages.bin  (~56 KB for 300 messages)
   void saveToSD() {
 #if defined(HAS_SDCARD) && defined(ESP32)
     if (!_sdReady) return;
@@ -360,12 +362,25 @@ public:
         }
         y += lineH + 2;
         
-        // Show each hop resolved against contacts
+        // Show each hop resolved against contacts (scrollable)
         if (plen > 0 && plen != 0xFF) {
           int displayHops = plen < MSG_PATH_MAX ? plen : MSG_PATH_MAX;
-          int maxY = display.height() - 26;
+          int footerHeight = 14;
+          int scrollBarW = 4;
+          int maxY = display.height() - footerHeight;
           
-          for (int h = 0; h < displayHops && y + lineH <= maxY; h++) {
+          // Calculate how many hops fit in the visible area
+          int hopsAreaTop = y;
+          int visibleHops = (maxY - y) / lineH;
+          if (visibleHops < 1) visibleHops = 1;
+          
+          // Clamp scroll position
+          int maxScroll = displayHops > visibleHops ? displayHops - visibleHops : 0;
+          if (_pathOverlayScroll > maxScroll) _pathOverlayScroll = maxScroll;
+          
+          int startHop = _pathOverlayScroll;
+          
+          for (int h = startHop; h < displayHops && y + lineH <= maxY; h++) {
             uint8_t hopHash = msg->path[h];
             display.setCursor(0, y);
             display.setColor(DisplayDriver::LIGHT);
@@ -408,6 +423,24 @@ public:
             }
             y += lineH;
           }
+          
+          // --- Scroll bar for hop list ---
+          if (displayHops > visibleHops) {
+            int sbX = display.width() - scrollBarW;
+            int sbTop = hopsAreaTop;
+            int sbHeight = maxY - hopsAreaTop;
+            
+            // Draw track outline
+            display.setColor(DisplayDriver::LIGHT);
+            display.drawRect(sbX, sbTop, scrollBarW, sbHeight);
+            
+            // Draw proportional thumb
+            int thumbH = (visibleHops * sbHeight) / displayHops;
+            if (thumbH < 4) thumbH = 4;
+            int thumbY = sbTop + (_pathOverlayScroll * (sbHeight - thumbH)) / maxScroll;
+            for (int ty = thumbY + 1; ty < thumbY + thumbH - 1; ty++)
+              display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
+          }
         }
       }
       
@@ -417,7 +450,7 @@ public:
       display.drawRect(0, footerY - 2, display.width(), 1);
       display.setCursor(0, footerY);
       display.setColor(DisplayDriver::YELLOW);
-      display.print("Q:Back");
+      display.print("Q:Back W/S:Scroll");
 
 #if AUTO_OFF_MILLIS == 0
       return 5000;
@@ -676,6 +709,18 @@ public:
         _showPathOverlay = false;
         return true;
       }
+      // W - scroll up in hop list
+      if (c == 'w' || c == 'W' || c == 0xF2) {
+        if (_pathOverlayScroll > 0) {
+          _pathOverlayScroll--;
+          return true;
+        }
+      }
+      // S - scroll down in hop list
+      if (c == 's' || c == 'S' || c == 0xF1) {
+        _pathOverlayScroll++;  // Clamped during render
+        return true;
+      }
       return true;  // Consume all keys while overlay is up
     }
     
@@ -685,6 +730,7 @@ public:
     if (c == 'v' || c == 'V') {
       if (getNewestReceivedMsg() != nullptr) {
         _showPathOverlay = true;
+        _pathOverlayScroll = 0;
         return true;
       }
       return false;  // No received messages to show
