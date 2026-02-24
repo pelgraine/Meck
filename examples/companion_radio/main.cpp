@@ -714,6 +714,58 @@ void loop() {
 
       Serial.printf("[SMS] Received from %s: %.40s...\n", incoming.phone, incoming.body);
     }
+
+    // Poll for voice call events from modem
+    CallEvent callEvt;
+    while (modemManager.pollCallEvent(callEvt)) {
+      SMSScreen* smsScr2 = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr2) {
+        smsScr2->onCallEvent(callEvt);
+      }
+
+      if (callEvt.type == CallEventType::INCOMING) {
+        // Incoming call — auto-switch to SMS screen if not already there
+        char alertBuf[48];
+        char dispName[SMS_CONTACT_NAME_LEN];
+        smsContacts.displayName(callEvt.phone, dispName, sizeof(dispName));
+        snprintf(alertBuf, sizeof(alertBuf), "Call: %s", dispName);
+        ui_task.showAlert(alertBuf, 3000);
+        ui_task.notify(UIEventType::contactMessage);
+
+        if (!smsMode) {
+          ui_task.gotoSMSScreen();
+        }
+        ui_task.forceRefresh();
+        Serial.printf("[Call] Incoming from %s\n", callEvt.phone);
+      } else if (callEvt.type == CallEventType::CONNECTED) {
+        Serial.printf("[Call] Connected to %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::ENDED) {
+        Serial.printf("[Call] Ended (%lus) with %s\n",
+                      (unsigned long)callEvt.duration, callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::MISSED) {
+        char alertBuf[48];
+        char dispName[SMS_CONTACT_NAME_LEN];
+        smsContacts.displayName(callEvt.phone, dispName, sizeof(dispName));
+        snprintf(alertBuf, sizeof(alertBuf), "Missed: %s", dispName);
+        ui_task.showAlert(alertBuf, 3000);
+        Serial.printf("[Call] Missed from %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::BUSY) {
+        ui_task.showAlert("Line busy", 2000);
+        Serial.printf("[Call] Busy: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::NO_ANSWER) {
+        ui_task.showAlert("No answer", 2000);
+        Serial.printf("[Call] No answer: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::DIAL_FAILED) {
+        ui_task.showAlert("Call failed", 2000);
+        Serial.printf("[Call] Dial failed: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      }
+    }
   }
   #endif
 #ifdef DISPLAY_CLASS
@@ -1255,6 +1307,20 @@ void handleKeyboardInput() {
   if (smsMode) {
     SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
     if (smsScr) {
+      // During active call views, route all keys directly to the screen
+      // and force a refresh after each keypress (no debounce needed)
+      if (smsScr->isInCallView()) {
+        smsScr->handleInput(key);
+        if (smsScr->isInCallView()) {
+          // Still in a call view — refresh to update display
+          ui_task.forceRefresh();
+        } else {
+          // Call ended, returned to a non-call view
+          ui_task.forceRefresh();
+        }
+        return;
+      }
+
       // Q from inbox → go home; Q from inner views is handled by SMSScreen
       if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::INBOX) {
         Serial.println("Nav: SMS -> Home");
@@ -1294,13 +1360,12 @@ void handleKeyboardInput() {
     bool urlEdit = wr ? wr->isUrlEditing() : false;
     bool passEdit = wr ? wr->isPasswordEntry() : false;
     bool formEdit = wr ? wr->isFormFilling() : false;
-    bool ircEdit = wr ? wr->isIRCTextEntry() : false;
-    if (wr && (urlEdit || passEdit || formEdit || ircEdit)) {
+    if (wr && (urlEdit || passEdit || formEdit)) {
       webReaderTextEntry = true;  // Suppress ui_task.loop() in main loop
       wr->handleInput(key);       // Updates buffer instantly, no render
       
       // Check if text entry ended (submitted, cancelled, etc.)
-      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling() && !wr->isIRCTextEntry()) {
+      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling()) {
         // Text entry ended
         webReaderTextEntry = false;
         webReaderNeedsRefresh = false;
@@ -1319,29 +1384,12 @@ void handleKeyboardInput() {
       // Q from HOME mode exits the web reader entirely (like text reader)
       if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing()) {
         Serial.println("Exiting web reader");
-        wr->exitReader();  // Shut down WiFi, free buffers
         ui_task.gotoHomeScreen();
-        return;
-      }
-
-      // IRC modes: route keys directly through handleInput and render
-      // immediately. Using webReaderNeedsRefresh doesn't work here because
-      // that check only runs when webReaderTextEntry is true (else branch),
-      // but in IRC non-compose mode webReaderTextEntry is false.
-      if (wr && wr->isIRCMode()) {
-        wr->handleInput(key);
-        wr->directRedraw();
         return;
       }
 
       // Route keys through normal UITask for navigation/scrolling
       ui_task.injectKey(key);
-
-      // Check if web reader wants to switch to text reader (EPUB download)
-      if (wr && wr->wantsTextReader()) {
-        wr->clearTextReaderRequest();
-        ui_task.gotoTextReader();
-      }
       return;
     }
   }
@@ -1407,18 +1455,11 @@ void handleKeyboardInput() {
           Serial.printf("WebReader: heap BEFORE BT release: free=%d, largest=%d\n",
                          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-          // 1) Gracefully disable BLE interface (stop advertising, disconnect, clear queues)
-          //    Must happen BEFORE btStop() while BLE objects are still valid
-          #ifdef BLE_PIN_CODE
-            serial_interface.disable();
-            delay(50);
-          #endif
-
-          // 2) Stop BLE controller (disable + deinit)
+          // 1) Stop BLE controller (disable + deinit)
           btStop();
           delay(50);
 
-          // 3) Release the BT controller's reserved memory region back to heap
+          // 2) Release the BT controller's reserved memory region back to heap
           esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
           delay(50);
 
