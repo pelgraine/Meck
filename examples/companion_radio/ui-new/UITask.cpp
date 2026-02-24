@@ -336,7 +336,7 @@ public:
       display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
 #ifdef HAS_4G_MODEM
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [T] Phone       ");
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [T] Phone     ");
 #elif defined(MECK_AUDIO_VARIANT)
       display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
 #else
