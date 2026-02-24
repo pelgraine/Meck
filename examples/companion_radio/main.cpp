@@ -714,6 +714,58 @@ void loop() {
 
       Serial.printf("[SMS] Received from %s: %.40s...\n", incoming.phone, incoming.body);
     }
+
+    // Poll for voice call events from modem
+    CallEvent callEvt;
+    while (modemManager.pollCallEvent(callEvt)) {
+      SMSScreen* smsScr2 = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr2) {
+        smsScr2->onCallEvent(callEvt);
+      }
+
+      if (callEvt.type == CallEventType::INCOMING) {
+        // Incoming call — auto-switch to SMS screen if not already there
+        char alertBuf[48];
+        char dispName[SMS_CONTACT_NAME_LEN];
+        smsContacts.displayName(callEvt.phone, dispName, sizeof(dispName));
+        snprintf(alertBuf, sizeof(alertBuf), "Call: %s", dispName);
+        ui_task.showAlert(alertBuf, 3000);
+        ui_task.notify(UIEventType::contactMessage);
+
+        if (!smsMode) {
+          ui_task.gotoSMSScreen();
+        }
+        ui_task.forceRefresh();
+        Serial.printf("[Call] Incoming from %s\n", callEvt.phone);
+      } else if (callEvt.type == CallEventType::CONNECTED) {
+        Serial.printf("[Call] Connected to %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::ENDED) {
+        Serial.printf("[Call] Ended (%lus) with %s\n",
+                      (unsigned long)callEvt.duration, callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::MISSED) {
+        char alertBuf[48];
+        char dispName[SMS_CONTACT_NAME_LEN];
+        smsContacts.displayName(callEvt.phone, dispName, sizeof(dispName));
+        snprintf(alertBuf, sizeof(alertBuf), "Missed: %s", dispName);
+        ui_task.showAlert(alertBuf, 3000);
+        Serial.printf("[Call] Missed from %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::BUSY) {
+        ui_task.showAlert("Line busy", 2000);
+        Serial.printf("[Call] Busy: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::NO_ANSWER) {
+        ui_task.showAlert("No answer", 2000);
+        Serial.printf("[Call] No answer: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      } else if (callEvt.type == CallEventType::DIAL_FAILED) {
+        ui_task.showAlert("Call failed", 2000);
+        Serial.printf("[Call] Dial failed: %s\n", callEvt.phone);
+        ui_task.forceRefresh();
+      }
+    }
   }
   #endif
 #ifdef DISPLAY_CLASS
@@ -1255,6 +1307,14 @@ void handleKeyboardInput() {
   if (smsMode) {
     SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
     if (smsScr) {
+      // During active call views, route all keys directly to the screen
+      // and force a refresh after each keypress (no debounce needed)
+      if (smsScr->isInCallView()) {
+        smsScr->handleInput(key);
+        ui_task.forceRefresh();
+        return;
+      }
+
       // Q from inbox → go home; Q from inner views is handled by SMSScreen
       if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::INBOX) {
         Serial.println("Nav: SMS -> Home");

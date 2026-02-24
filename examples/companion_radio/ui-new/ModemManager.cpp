@@ -18,7 +18,7 @@ ModemManager modemManager;
 static char _atBuf[AT_BUF_SIZE];
 
 // ---------------------------------------------------------------------------
-// Public API
+// Public API - SMS (unchanged)
 // ---------------------------------------------------------------------------
 
 void ModemManager::begin() {
@@ -27,11 +27,16 @@ void ModemManager::begin() {
   _state = ModemState::OFF;
   _csq = 99;
   _operator[0] = '\0';
+  _callPhone[0] = '\0';
+  _callStartTime = 0;
+  _urcPos = 0;
 
   // Create FreeRTOS primitives
-  _sendQueue = xQueueCreate(MODEM_SEND_QUEUE_SIZE, sizeof(SMSOutgoing));
-  _recvQueue = xQueueCreate(MODEM_RECV_QUEUE_SIZE, sizeof(SMSIncoming));
-  _uartMutex = xSemaphoreCreateMutex();
+  _sendQueue   = xQueueCreate(MODEM_SEND_QUEUE_SIZE, sizeof(SMSOutgoing));
+  _recvQueue   = xQueueCreate(MODEM_RECV_QUEUE_SIZE, sizeof(SMSIncoming));
+  _callCmdQueue = xQueueCreate(MODEM_CALL_CMD_QUEUE_SIZE, sizeof(CallCommand));
+  _callEvtQueue = xQueueCreate(MODEM_CALL_EVT_QUEUE_SIZE, sizeof(CallEvent));
+  _uartMutex   = xSemaphoreCreateMutex();
 
   // Launch background task on Core 0
   xTaskCreatePinnedToCore(
@@ -49,6 +54,15 @@ void ModemManager::shutdown() {
   if (!_taskHandle) return;
 
   MESH_DEBUG_PRINTLN("[Modem] shutdown()");
+
+  // Hang up any active call first
+  if (isCallActive()) {
+    CallCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.cmd = CallCmd::HANGUP;
+    xQueueSend(_callCmdQueue, &cmd, pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(2000));  // Give time for AT+CHUP
+  }
 
   // Tell modem to power off gracefully
   if (xSemaphoreTake(_uartMutex, pdMS_TO_TICKS(2000))) {
@@ -81,6 +95,74 @@ bool ModemManager::recvSMS(SMSIncoming& out) {
   return xQueueReceive(_recvQueue, &out, 0) == pdTRUE;
 }
 
+// ---------------------------------------------------------------------------
+// Public API - Voice Calls
+// ---------------------------------------------------------------------------
+
+bool ModemManager::dialCall(const char* phone) {
+  if (!_callCmdQueue) return false;
+  if (isCallActive()) return false;  // Already in a call
+
+  CallCommand cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.cmd = CallCmd::DIAL;
+  strncpy(cmd.phone, phone, SMS_PHONE_LEN - 1);
+
+  return xQueueSend(_callCmdQueue, &cmd, 0) == pdTRUE;
+}
+
+bool ModemManager::answerCall() {
+  if (!_callCmdQueue) return false;
+
+  CallCommand cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.cmd = CallCmd::ANSWER;
+
+  return xQueueSend(_callCmdQueue, &cmd, 0) == pdTRUE;
+}
+
+bool ModemManager::hangupCall() {
+  if (!_callCmdQueue) return false;
+
+  CallCommand cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.cmd = CallCmd::HANGUP;
+
+  return xQueueSend(_callCmdQueue, &cmd, 0) == pdTRUE;
+}
+
+bool ModemManager::sendDTMF(char digit) {
+  if (!_callCmdQueue) return false;
+  if (_state != ModemState::IN_CALL) return false;
+
+  CallCommand cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.cmd = CallCmd::DTMF;
+  cmd.dtmf = digit;
+
+  return xQueueSend(_callCmdQueue, &cmd, 0) == pdTRUE;
+}
+
+bool ModemManager::setCallVolume(uint8_t level) {
+  if (!_callCmdQueue) return false;
+
+  CallCommand cmd;
+  memset(&cmd, 0, sizeof(cmd));
+  cmd.cmd = CallCmd::SET_VOLUME;
+  cmd.volume = level > 5 ? 5 : level;
+
+  return xQueueSend(_callCmdQueue, &cmd, 0) == pdTRUE;
+}
+
+bool ModemManager::pollCallEvent(CallEvent& out) {
+  if (!_callEvtQueue) return false;
+  return xQueueReceive(_callEvtQueue, &out, 0) == pdTRUE;
+}
+
+// ---------------------------------------------------------------------------
+// State helpers
+// ---------------------------------------------------------------------------
+
 int ModemManager::getSignalBars() const {
   if (_csq == 99 || _csq == 0) return 0;
   if (_csq <= 5)  return 1;
@@ -99,6 +181,9 @@ const char* ModemManager::stateToString(ModemState s) {
     case ModemState::READY:        return "READY";
     case ModemState::ERROR:        return "ERROR";
     case ModemState::SENDING_SMS:  return "SENDING";
+    case ModemState::DIALING:      return "DIALING";
+    case ModemState::RINGING_IN:   return "INCOMING";
+    case ModemState::IN_CALL:      return "IN CALL";
     default:                       return "???";
   }
 }
@@ -130,6 +215,282 @@ void ModemManager::saveEnabledConfig(bool enabled) {
     f.close();
     Serial.printf("[Modem] Config saved: %s\n", enabled ? "ENABLED" : "DISABLED");
   }
+}
+
+// ---------------------------------------------------------------------------
+// URC (Unsolicited Result Code) Handling
+// ---------------------------------------------------------------------------
+// The modem can send unsolicited messages at any time:
+//   RING                        — incoming call ringing
+//   +CLIP: "+1234...",145,...   — caller ID (after AT+CLIP=1)
+//   NO CARRIER                  — call ended by remote
+//   BUSY                        — outgoing call busy
+//   NO ANSWER                   — outgoing call no answer
+//   +CMTI: "SM",<idx>          — new SMS arrived
+//
+// drainURCs() accumulates bytes into a line buffer and calls
+// processURCLine() for each complete line.
+// ---------------------------------------------------------------------------
+
+void ModemManager::drainURCs() {
+  while (MODEM_SERIAL.available()) {
+    char c = MODEM_SERIAL.read();
+
+    // Accumulate into line buffer
+    if (c == '\n') {
+      // End of line — process if non-empty
+      if (_urcPos > 0) {
+        // Trim trailing \r
+        while (_urcPos > 0 && _urcBuf[_urcPos - 1] == '\r') _urcPos--;
+        _urcBuf[_urcPos] = '\0';
+
+        if (_urcPos > 0) {
+          processURCLine(_urcBuf);
+        }
+      }
+      _urcPos = 0;
+    } else if (c != '\r' || _urcPos > 0) {
+      // Accumulate (skip leading \r)
+      if (_urcPos < URC_BUF_SIZE - 1) {
+        _urcBuf[_urcPos++] = c;
+      }
+    }
+  }
+}
+
+void ModemManager::processURCLine(const char* line) {
+  // --- RING: incoming call ---
+  if (strcmp(line, "RING") == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: RING");
+    if (_state != ModemState::RINGING_IN && _state != ModemState::IN_CALL) {
+      _state = ModemState::RINGING_IN;
+      // Phone number will be filled by +CLIP if available
+      // Queue event with empty phone (updated by +CLIP)
+      // Only queue on first RING; subsequent RINGs are repeats
+      if (_callPhone[0] == '\0') {
+        queueCallEvent(CallEventType::INCOMING, "");
+      }
+    }
+    return;
+  }
+
+  // --- +CLIP: caller ID ---
+  // +CLIP: "+61412345678",145,,,,0
+  if (strncmp(line, "+CLIP:", 6) == 0) {
+    char* q1 = strchr(line + 6, '"');
+    if (q1) {
+      q1++;
+      char* q2 = strchr(q1, '"');
+      if (q2) {
+        int len = q2 - q1;
+        if (len >= SMS_PHONE_LEN) len = SMS_PHONE_LEN - 1;
+        memcpy(_callPhone, q1, len);
+        _callPhone[len] = '\0';
+        MESH_DEBUG_PRINTLN("[Modem] URC: CLIP phone=%s", _callPhone);
+
+        // Re-queue INCOMING event with the actual phone number
+        // (replaces the empty-phone event from RING)
+        if (_state == ModemState::RINGING_IN) {
+          queueCallEvent(CallEventType::INCOMING, _callPhone);
+        }
+      }
+    }
+    return;
+  }
+
+  // --- NO CARRIER: call ended ---
+  if (strcmp(line, "NO CARRIER") == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: NO CARRIER");
+    if (_state == ModemState::RINGING_IN) {
+      // Incoming call ended before we answered — missed call
+      queueCallEvent(CallEventType::MISSED, _callPhone);
+    } else if (_state == ModemState::DIALING || _state == ModemState::IN_CALL) {
+      uint32_t duration = 0;
+      if (_state == ModemState::IN_CALL && _callStartTime > 0) {
+        duration = (millis() - _callStartTime) / 1000;
+      }
+      queueCallEvent(CallEventType::ENDED, _callPhone, duration);
+    }
+    _state = ModemState::READY;
+    _callPhone[0] = '\0';
+    _callStartTime = 0;
+    return;
+  }
+
+  // --- BUSY ---
+  if (strcmp(line, "BUSY") == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: BUSY");
+    if (_state == ModemState::DIALING) {
+      queueCallEvent(CallEventType::BUSY, _callPhone);
+      _state = ModemState::READY;
+      _callPhone[0] = '\0';
+    }
+    return;
+  }
+
+  // --- NO ANSWER ---
+  if (strcmp(line, "NO ANSWER") == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: NO ANSWER");
+    if (_state == ModemState::DIALING) {
+      queueCallEvent(CallEventType::NO_ANSWER, _callPhone);
+      _state = ModemState::READY;
+      _callPhone[0] = '\0';
+    }
+    return;
+  }
+
+  // --- +CMTI: new SMS indication ---
+  // +CMTI: "SM",<index>
+  // We don't need to act on this immediately since we poll for SMS,
+  // but we can trigger an early poll
+  if (strncmp(line, "+CMTI:", 6) == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: CMTI (new SMS)");
+    // Next SMS poll will pick it up; we just log it
+    return;
+  }
+
+  // --- VOICE CALL: BEGIN — A76xx-specific: audio path established ---
+  if (strncmp(line, "VOICE CALL: BEGIN", 17) == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: VOICE CALL: BEGIN");
+    if (_state == ModemState::DIALING) {
+      _state = ModemState::IN_CALL;
+      _callStartTime = millis();
+      queueCallEvent(CallEventType::CONNECTED, _callPhone);
+      MESH_DEBUG_PRINTLN("[Modem] Call connected (VOICE CALL: BEGIN)");
+    }
+    return;
+  }
+
+  // --- VOICE CALL: END — A76xx-specific: audio path closed ---
+  // Format: "VOICE CALL: END: <duration>"
+  if (strncmp(line, "VOICE CALL: END", 15) == 0) {
+    MESH_DEBUG_PRINTLN("[Modem] URC: %s", line);
+    // Parse duration if present: "VOICE CALL: END: 0:12"
+    uint32_t duration = 0;
+    const char* dp = strstr(line, "END:");
+    if (dp) {
+      dp += 4;
+      while (*dp == ' ') dp++;
+      int mins = 0, secs = 0;
+      if (sscanf(dp, "%d:%d", &mins, &secs) == 2) {
+        duration = mins * 60 + secs;
+      }
+    }
+    if (_state == ModemState::RINGING_IN) {
+      queueCallEvent(CallEventType::MISSED, _callPhone);
+    } else if (_state == ModemState::IN_CALL || _state == ModemState::DIALING) {
+      queueCallEvent(CallEventType::ENDED, _callPhone, duration);
+    }
+    _state = ModemState::READY;
+    _callPhone[0] = '\0';
+    _callStartTime = 0;
+    return;
+  }
+}
+
+void ModemManager::queueCallEvent(CallEventType type, const char* phone, uint32_t duration) {
+  CallEvent evt;
+  memset(&evt, 0, sizeof(evt));
+  evt.type = type;
+  evt.duration = duration;
+  if (phone) {
+    strncpy(evt.phone, phone, SMS_PHONE_LEN - 1);
+  }
+  xQueueSend(_callEvtQueue, &evt, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Call control (executed on modem task)
+// ---------------------------------------------------------------------------
+
+bool ModemManager::doDialCall(const char* phone) {
+  MESH_DEBUG_PRINTLN("[Modem] doDialCall: %s", phone);
+
+  strncpy(_callPhone, phone, SMS_PHONE_LEN - 1);
+  _callPhone[SMS_PHONE_LEN - 1] = '\0';
+  _state = ModemState::DIALING;
+
+  // ATD<number>; — the semicolon makes it a voice call (not data)
+  char cmd[32];
+  snprintf(cmd, sizeof(cmd), "ATD%s;", phone);
+
+  if (!sendAT(cmd, "OK", 30000)) {
+    MESH_DEBUG_PRINTLN("[Modem] ATD failed");
+    queueCallEvent(CallEventType::DIAL_FAILED, phone);
+    _state = ModemState::READY;
+    _callPhone[0] = '\0';
+    return false;
+  }
+
+  // ATD returned OK — call is being set up.
+  // Connection/failure will come as URCs (NO CARRIER, BUSY, etc.)
+  // or we detect active call via AT+CLCC polling.
+  // For now, assume we're dialing and wait for URCs.
+  MESH_DEBUG_PRINTLN("[Modem] ATD OK — dialing...");
+  return true;
+}
+
+bool ModemManager::doAnswerCall() {
+  MESH_DEBUG_PRINTLN("[Modem] doAnswerCall");
+
+  if (sendAT("ATA", "OK", 10000)) {
+    _state = ModemState::IN_CALL;
+    _callStartTime = millis();
+    queueCallEvent(CallEventType::CONNECTED, _callPhone);
+    MESH_DEBUG_PRINTLN("[Modem] Call answered");
+    return true;
+  }
+
+  MESH_DEBUG_PRINTLN("[Modem] ATA failed");
+  return false;
+}
+
+bool ModemManager::doHangup() {
+  MESH_DEBUG_PRINTLN("[Modem] doHangup (state=%d)", (int)_state);
+
+  uint32_t duration = 0;
+  if (_state == ModemState::IN_CALL && _callStartTime > 0) {
+    duration = (millis() - _callStartTime) / 1000;
+  }
+
+  bool wasRinging = (_state == ModemState::RINGING_IN);
+
+  // AT+CHUP is the 3GPP standard hangup for A76xx family (per TinyGSM)
+  if (sendAT("AT+CHUP", "OK", 5000)) {
+    if (wasRinging) {
+      queueCallEvent(CallEventType::MISSED, _callPhone);
+    } else {
+      queueCallEvent(CallEventType::ENDED, _callPhone, duration);
+    }
+    _state = ModemState::READY;
+    _callPhone[0] = '\0';
+    _callStartTime = 0;
+    MESH_DEBUG_PRINTLN("[Modem] Hangup OK");
+    return true;
+  }
+
+  MESH_DEBUG_PRINTLN("[Modem] AT+CHUP failed");
+  // Force state back to READY even if hangup fails
+  _state = ModemState::READY;
+  _callPhone[0] = '\0';
+  _callStartTime = 0;
+  return false;
+}
+
+bool ModemManager::doSendDTMF(char digit) {
+  char cmd[16];
+  snprintf(cmd, sizeof(cmd), "AT+VTS=%c", digit);
+  bool ok = sendAT(cmd, "OK", 3000);
+  MESH_DEBUG_PRINTLN("[Modem] DTMF '%c' %s", digit, ok ? "OK" : "FAIL");
+  return ok;
+}
+
+bool ModemManager::doSetVolume(uint8_t level) {
+  char cmd[16];
+  snprintf(cmd, sizeof(cmd), "AT+CLVL=%d", level);
+  bool ok = sendAT(cmd, "OK", 2000);
+  MESH_DEBUG_PRINTLN("[Modem] Volume %d %s", level, ok ? "OK" : "FAIL");
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +549,17 @@ restart:
   // Enable automatic time zone update from network (needed for AT+CCLK)
   sendAT("AT+CTZU=1", "OK");
 
+  // --- Voice call setup ---
+  // Enable caller ID presentation (CLIP) so we get +CLIP URCs on incoming calls
+  sendAT("AT+CLIP=1", "OK");
+
+  // Set audio output to loudspeaker mode (device speaker)
+  // 1=earpiece, 3=loudspeaker — use loudspeaker for T-Deck Pro
+  sendAT("AT+CSDVC=3", "OK", 1000);
+
+  // Set initial call volume (mid-level)
+  sendAT("AT+CLVL=3", "OK", 1000);
+
   // ---- Phase 3: Wait for network registration ----
   _state = ModemState::REGISTERING;
   MESH_DEBUG_PRINTLN("[Modem] waiting for network registration...");
@@ -196,7 +568,6 @@ restart:
   for (int i = 0; i < 60; i++) {  // up to 60 seconds
     if (sendAT("AT+CREG?", "OK", 2000)) {
       // Full response now in _atBuf, e.g.: "\r\n+CREG: 0,1\r\n\r\nOK\r\n"
-      // stat: 1=registered home, 5=registered roaming
       char* p = strstr(_atBuf, "+CREG:");
       if (p) {
         int n, stat;
@@ -215,12 +586,10 @@ restart:
 
   if (!registered) {
     MESH_DEBUG_PRINTLN("[Modem] registration timeout - continuing anyway");
-    // Don't set ERROR; some networks are slow but SMS may still work
   }
 
   // Query operator name
   if (sendAT("AT+COPS?", "OK", 5000)) {
-    // +COPS: 0,0,"Operator Name",7
     char* p = strchr(_atBuf, '"');
     if (p) {
       p++;
@@ -239,36 +608,33 @@ restart:
   pollCSQ();
 
   // Sync ESP32 system clock from modem network time
-  // Network time may take a few seconds to arrive after registration
   bool clockSet = false;
   for (int attempt = 0; attempt < 5 && !clockSet; attempt++) {
     if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(2000));
     if (sendAT("AT+CCLK?", "OK", 3000)) {
-      // Response: +CCLK: "YY/MM/DD,HH:MM:SS±TZ"  (TZ in quarter-hours)
       char* p = strstr(_atBuf, "+CCLK:");
       if (p) {
         int yy = 0, mo = 0, dd = 0, hh = 0, mm = 0, ss = 0, tz = 0;
         if (sscanf(p, "+CCLK: \"%d/%d/%d,%d:%d:%d", &yy, &mo, &dd, &hh, &mm, &ss) >= 6) {
-          // Skip if modem clock not synced (default is 1970 = yy 70, or yy 0)
           if (yy < 24 || yy > 50) {
             MESH_DEBUG_PRINTLN("[Modem] CCLK not synced yet (yy=%d), retrying...", yy);
             continue;
           }
 
-          // Parse timezone offset (e.g. "+40" = UTC+10 in quarter-hours)
-          char* tzp = p + 7; // skip "+CCLK: "
+          // Parse timezone offset
+          char* tzp = p + 7;
           while (*tzp && *tzp != '+' && *tzp != '-') tzp++;
           if (*tzp) tz = atoi(tzp);
 
           struct tm t = {};
-          t.tm_year = yy + 100;  // years since 1900
-          t.tm_mon  = mo - 1;    // 0-based
+          t.tm_year = yy + 100;
+          t.tm_mon  = mo - 1;
           t.tm_mday = dd;
           t.tm_hour = hh;
           t.tm_min  = mm;
           t.tm_sec  = ss;
-          time_t epoch = mktime(&t);  // treats input as UTC (no TZ set on ESP32)
-          epoch -= (tz * 15 * 60);    // subtract local offset to get real UTC
+          time_t epoch = mktime(&t);
+          epoch -= (tz * 15 * 60);
 
           struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
           settimeofday(&tv, nullptr);
@@ -284,7 +650,7 @@ restart:
   }
 
   // Delete any stale SMS on SIM to free slots
-  sendAT("AT+CMGD=1,4", "OK", 5000);  // Delete all read messages
+  sendAT("AT+CMGD=1,4", "OK", 5000);
 
   _state = ModemState::READY;
   MESH_DEBUG_PRINTLN("[Modem] READY (CSQ=%d, operator=%s)", _csq, _operator);
@@ -292,32 +658,128 @@ restart:
   // ---- Phase 4: Main loop ----
   unsigned long lastCSQPoll = 0;
   unsigned long lastSMSPoll = 0;
-  const unsigned long CSQ_POLL_INTERVAL = 30000;  // 30s
-  const unsigned long SMS_POLL_INTERVAL = 10000;  // 10s
+  unsigned long lastCLCCPoll = 0;
+  const unsigned long CSQ_POLL_INTERVAL = 30000;   // 30s
+  const unsigned long SMS_POLL_INTERVAL = 10000;   // 10s
+  const unsigned long CLCC_POLL_INTERVAL = 2000;   // 2s (during dialing only)
 
   while (true) {
-    // Check for outgoing SMS in queue
-    SMSOutgoing outMsg;
-    if (xQueueReceive(_sendQueue, &outMsg, 0) == pdTRUE) {
-      _state = ModemState::SENDING_SMS;
-      bool ok = doSendSMS(outMsg.phone, outMsg.body);
-      MESH_DEBUG_PRINTLN("[Modem] SMS send %s to %s", ok ? "OK" : "FAIL", outMsg.phone);
-      _state = ModemState::READY;
+    // ================================================================
+    // Step 1: Drain URCs — catch RING, NO CARRIER, +CLIP, etc.
+    // This must run every iteration to avoid missing time-sensitive
+    // events like incoming calls or call-ended notifications.
+    // ================================================================
+    drainURCs();
+
+    // ================================================================
+    // Step 2: Process call commands from main loop
+    // ================================================================
+    CallCommand callCmd;
+    if (xQueueReceive(_callCmdQueue, &callCmd, 0) == pdTRUE) {
+      switch (callCmd.cmd) {
+        case CallCmd::DIAL:
+          if (_state == ModemState::READY) {
+            doDialCall(callCmd.phone);
+          } else {
+            MESH_DEBUG_PRINTLN("[Modem] Can't dial — state=%d", (int)_state);
+            queueCallEvent(CallEventType::DIAL_FAILED, callCmd.phone);
+          }
+          break;
+
+        case CallCmd::ANSWER:
+          if (_state == ModemState::RINGING_IN) {
+            doAnswerCall();
+          }
+          break;
+
+        case CallCmd::HANGUP:
+          if (isCallActive()) {
+            doHangup();
+          }
+          break;
+
+        case CallCmd::DTMF:
+          if (_state == ModemState::IN_CALL) {
+            doSendDTMF(callCmd.dtmf);
+          }
+          break;
+
+        case CallCmd::SET_VOLUME:
+          doSetVolume(callCmd.volume);
+          break;
+      }
     }
 
-    // Poll for incoming SMS periodically (not every loop iteration)
-    if (millis() - lastSMSPoll > SMS_POLL_INTERVAL) {
-      pollIncomingSMS();
-      lastSMSPoll = millis();
+    // ================================================================
+    // Step 3: Poll AT+CLCC during DIALING as fallback.
+    // Primary detection is via "VOICE CALL: BEGIN" URC (handled by
+    // drainURCs/processURCLine above). CLCC polling is a safety net
+    // in case the URC is missed or delayed.
+    // ================================================================
+    if (_state == ModemState::DIALING &&
+        millis() - lastCLCCPoll > CLCC_POLL_INTERVAL) {
+      if (sendAT("AT+CLCC", "OK", 2000)) {
+        // +CLCC: 1,0,0,0,0,"number",129   — stat field:
+        //   0=active, 1=held, 2=dialing, 3=alerting, 4=incoming, 5=waiting
+        char* p = strstr(_atBuf, "+CLCC:");
+        if (p) {
+          int idx, dir, stat, mode, mpty;
+          if (sscanf(p, "+CLCC: %d,%d,%d,%d,%d", &idx, &dir, &stat, &mode, &mpty) >= 3) {
+            MESH_DEBUG_PRINTLN("[Modem] CLCC: stat=%d", stat);
+            if (stat == 0) {
+              // Call is active — remote answered
+              _state = ModemState::IN_CALL;
+              _callStartTime = millis();
+              queueCallEvent(CallEventType::CONNECTED, _callPhone);
+              MESH_DEBUG_PRINTLN("[Modem] Call connected (detected via CLCC)");
+            }
+            // stat 2=dialing, 3=alerting — still setting up, keep polling
+          }
+        } else {
+          // No +CLCC line in response — no active calls
+          // This shouldn't happen during DIALING unless the call ended
+          // and we missed the URC. Check state and clean up.
+          // (NO CARRIER URC should have been caught by drainURCs)
+        }
+      }
+      lastCLCCPoll = millis();
     }
 
-    // Periodic signal strength update
+    // ================================================================
+    // Step 4: SMS and signal polling (only when not in a call)
+    // ================================================================
+    if (!isCallActive()) {
+      // Check for outgoing SMS in queue
+      SMSOutgoing outMsg;
+      if (xQueueReceive(_sendQueue, &outMsg, 0) == pdTRUE) {
+        _state = ModemState::SENDING_SMS;
+        bool ok = doSendSMS(outMsg.phone, outMsg.body);
+        MESH_DEBUG_PRINTLN("[Modem] SMS send %s to %s", ok ? "OK" : "FAIL", outMsg.phone);
+        _state = ModemState::READY;
+      }
+
+      // Poll for incoming SMS periodically
+      if (millis() - lastSMSPoll > SMS_POLL_INTERVAL) {
+        pollIncomingSMS();
+        lastSMSPoll = millis();
+      }
+    }
+
+    // Periodic signal strength update (always, even during calls)
     if (millis() - lastCSQPoll > CSQ_POLL_INTERVAL) {
-      pollCSQ();
+      // Only poll CSQ if not actively in a call (avoid interrupting audio)
+      if (!isCallActive()) {
+        pollCSQ();
+      }
       lastCSQPoll = millis();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(500));  // 500ms loop — responsive for sends, calm for polls
+    // Shorter delay during active call states for responsive URC handling
+    if (isCallActive()) {
+      vTaskDelay(pdMS_TO_TICKS(100));  // 100ms — responsive to URCs
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(500));  // 500ms — normal idle
+    }
   }
 }
 
@@ -334,8 +796,7 @@ bool ModemManager::modemPowerOn() {
   vTaskDelay(pdMS_TO_TICKS(500));
   MESH_DEBUG_PRINTLN("[Modem] power supply enabled (GPIO %d HIGH)", MODEM_POWER_EN);
 
-  // Reset pulse — drive RST low briefly then release
-  // (Some A7682E boards need this to clear stuck states)
+  // Reset pulse
   pinMode(MODEM_RST, OUTPUT);
   digitalWrite(MODEM_RST, LOW);
   vTaskDelay(pdMS_TO_TICKS(200));
@@ -343,29 +804,23 @@ bool ModemManager::modemPowerOn() {
   vTaskDelay(pdMS_TO_TICKS(500));
   MESH_DEBUG_PRINTLN("[Modem] reset pulse done (GPIO %d)", MODEM_RST);
 
-  // PWRKEY toggle: pull low for ≥1.5s then release
-  // A7682E datasheet: PWRKEY low >1s triggers power-on
+  // PWRKEY toggle
   pinMode(MODEM_PWRKEY, OUTPUT);
-  digitalWrite(MODEM_PWRKEY, HIGH);   // Start high (idle state)
+  digitalWrite(MODEM_PWRKEY, HIGH);
   vTaskDelay(pdMS_TO_TICKS(100));
-  digitalWrite(MODEM_PWRKEY, LOW);    // Active-low trigger
+  digitalWrite(MODEM_PWRKEY, LOW);
   vTaskDelay(pdMS_TO_TICKS(1500));
-  digitalWrite(MODEM_PWRKEY, HIGH);   // Release
+  digitalWrite(MODEM_PWRKEY, HIGH);
   MESH_DEBUG_PRINTLN("[Modem] PWRKEY toggled, waiting for boot...");
 
-  // Wait for modem to boot — A7682E needs 3-5 seconds after PWRKEY
   vTaskDelay(pdMS_TO_TICKS(5000));
 
-  // Assert DTR LOW — many cellular modems require DTR active (LOW) for AT mode
+  // Assert DTR LOW
   pinMode(MODEM_DTR, OUTPUT);
   digitalWrite(MODEM_DTR, LOW);
   MESH_DEBUG_PRINTLN("[Modem] DTR asserted LOW (GPIO %d)", MODEM_DTR);
 
   // Configure UART
-  // NOTE: variant.h pin names are modem-perspective, so:
-  //   MODEM_RX (GPIO 10) = modem receives = ESP32 TX out
-  //   MODEM_TX (GPIO 11) = modem transmits = ESP32 RX in
-  // Serial1.begin(baud, config, ESP32_RX, ESP32_TX)
   MODEM_SERIAL.begin(MODEM_BAUD, SERIAL_8N1, MODEM_TX, MODEM_RX);
   vTaskDelay(pdMS_TO_TICKS(500));
   MESH_DEBUG_PRINTLN("[Modem] UART started (ESP32 RX=%d TX=%d @ %d)", MODEM_TX, MODEM_RX, MODEM_BAUD);
@@ -373,7 +828,7 @@ bool ModemManager::modemPowerOn() {
   // Drain any boot garbage from UART
   while (MODEM_SERIAL.available()) MODEM_SERIAL.read();
 
-  // Test communication — generous attempts
+  // Test communication
   for (int i = 0; i < 10; i++) {
     MESH_DEBUG_PRINTLN("[Modem] AT probe attempt %d/10", i + 1);
     if (sendAT("AT", "OK", 1500)) {
@@ -392,14 +847,13 @@ bool ModemManager::modemPowerOn() {
 // ---------------------------------------------------------------------------
 
 bool ModemManager::sendAT(const char* cmd, const char* expect, uint32_t timeout_ms) {
-  // Flush any pending data
-  while (MODEM_SERIAL.available()) MODEM_SERIAL.read();
+  // Before flushing, drain any pending URCs so we don't lose them
+  drainURCs();
 
   Serial.printf("[Modem] TX: %s\n", cmd);
   MODEM_SERIAL.println(cmd);
   bool ok = waitResponse(expect, timeout_ms, _atBuf, AT_BUF_SIZE);
   if (_atBuf[0]) {
-    // Trim trailing whitespace for cleaner log output
     int len = strlen(_atBuf);
     while (len > 0 && (_atBuf[len-1] == '\r' || _atBuf[len-1] == '\n')) _atBuf[--len] = '\0';
     Serial.printf("[Modem] RX: %s  [%s]\n", _atBuf, ok ? "OK" : "FAIL");
@@ -426,6 +880,17 @@ bool ModemManager::waitResponse(const char* expect, uint32_t timeout_ms,
       // Check for expected response in accumulated buffer
       if (buf && expect && strstr(buf, expect)) {
         return true;
+      }
+      // Also check for call-related URCs embedded in AT responses
+      // (e.g. NO CARRIER can arrive during an AT+CLCC response)
+      if (buf && strstr(buf, "NO CARRIER")) {
+        processURCLine("NO CARRIER");
+      }
+      if (buf && strstr(buf, "BUSY")) {
+        // Only process if we're in a call-related state
+        if (_state == ModemState::DIALING) {
+          processURCLine("BUSY");
+        }
       }
     }
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -457,23 +922,21 @@ void ModemManager::pollIncomingSMS() {
   char* p = _atBuf;
   while ((p = strstr(p, "+CMGL:")) != nullptr) {
     int idx;
-    char stat[16], phone[SMS_PHONE_LEN], timestamp[24];
-    
+    char phone[SMS_PHONE_LEN];
+
     // Parse header line
-    // +CMGL: 1,"REC UNREAD","+1234567890","","26/02/15,10:30:00+00"
     char* lineEnd = strchr(p, '\n');
     if (!lineEnd) break;
 
     // Extract index
     if (sscanf(p, "+CMGL: %d", &idx) != 1) { p = lineEnd + 1; continue; }
 
-    // Extract phone number (between first and second quote pair after stat)
-    char* q1 = strchr(p + 7, '"');  // skip "+CMGL: N,"
+    // Extract phone number
+    char* q1 = strchr(p + 7, '"');
     if (!q1) { p = lineEnd + 1; continue; }
-    q1++;  // skip opening quote of stat
-    char* q2 = strchr(q1, '"');  // end of stat
+    q1++;
+    char* q2 = strchr(q1, '"');
     if (!q2) { p = lineEnd + 1; continue; }
-    // Next quoted field is the phone number
     char* q3 = strchr(q2 + 1, '"');
     if (!q3) { p = lineEnd + 1; continue; }
     q3++;
@@ -497,7 +960,7 @@ void ModemManager::pollIncomingSMS() {
     if (bodyLen >= SMS_BODY_LEN) bodyLen = SMS_BODY_LEN - 1;
     memcpy(incoming.body, p, bodyLen);
     incoming.body[bodyLen] = '\0';
-    incoming.timestamp = (uint32_t)time(nullptr);  // Real epoch from modem-synced clock
+    incoming.timestamp = (uint32_t)time(nullptr);
 
     // Queue for main loop
     xQueueSend(_recvQueue, &incoming, 0);
