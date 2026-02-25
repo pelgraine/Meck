@@ -354,17 +354,25 @@ public:
       display.print(countHint);
     }
 
-    // Modem status if not ready
+    // Modem status indicator 
     ModemState ms = modemManager.getState();
-    if (ms != ModemState::READY && ms != ModemState::SENDING_SMS) {
-      display.setTextSize(0);
+    display.setTextSize(0);
+    display.setCursor(4, y + lineHeight + 8);
+    if (ms == ModemState::OFF || ms == ModemState::POWERING_ON || 
+        ms == ModemState::INITIALIZING) {
       display.setColor(DisplayDriver::YELLOW);
-      display.setCursor(4, y + lineHeight + 8);
+      display.print("Please wait...");
+    } else if (ms == ModemState::ERROR) {
+      display.setColor(DisplayDriver::YELLOW);
       char statBuf[40];
       snprintf(statBuf, sizeof(statBuf), "Modem: %s", ModemManager::stateToString(ms));
       display.print(statBuf);
-      display.setTextSize(1);
+    } else if (ms == ModemState::REGISTERING || ms == ModemState::READY || 
+               ms == ModemState::SENDING_SMS) {
+      display.setColor(DisplayDriver::GREEN);
+      display.print("Ready!");
     }
+    display.setTextSize(1);
 
     // Footer
     display.setTextSize(1);
@@ -377,6 +385,9 @@ public:
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
 
+    if (ms != ModemState::READY && ms != ModemState::SENDING_SMS) {
+      return 1000;
+    }
     return 5000;
   }
 
