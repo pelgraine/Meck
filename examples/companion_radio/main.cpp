@@ -1548,12 +1548,13 @@ void handleKeyboardInput() {
     bool urlEdit = wr ? wr->isUrlEditing() : false;
     bool passEdit = wr ? wr->isPasswordEntry() : false;
     bool formEdit = wr ? wr->isFormFilling() : false;
-    if (wr && (urlEdit || passEdit || formEdit)) {
+    bool searchEdit = wr ? wr->isSearchEditing() : false;
+    if (wr && (urlEdit || passEdit || formEdit || searchEdit)) {
       webReaderTextEntry = true;  // Suppress ui_task.loop() in main loop
       wr->handleInput(key);       // Updates buffer instantly, no render
       
       // Check if text entry ended (submitted, cancelled, etc.)
-      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling()) {
+      if (!wr->isUrlEditing() && !wr->isPasswordEntry() && !wr->isFormFilling() && !wr->isSearchEditing()) {
         // Text entry ended
         webReaderTextEntry = false;
         webReaderNeedsRefresh = false;
@@ -1570,7 +1571,7 @@ void handleKeyboardInput() {
       webReaderTextEntry = false;
 
       // Q from HOME mode exits the web reader entirely (like text reader)
-      if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing()) {
+      if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing() && !wr->isSearchEditing()) {
         Serial.println("Exiting web reader");
         ui_task.gotoHomeScreen();
         return;
@@ -1786,22 +1787,14 @@ void handleKeyboardInput() {
       // Export contacts to SD card (contacts screen only)
       if (ui_task.isOnContactsScreen()) {
         Serial.println("Contacts: Exporting to SD...");
-        // Show "working" toaster immediately (force e-ink render before blocking SD I/O)
-        ui_task.showAlert("Exporting to SD...", 10000);
-        ui_task.forceRefresh();
-        ui_task.loop();  // immediate render so user sees the popup
-
         int exported = exportContactsToSD();
-
-        // Update toaster with result
         if (exported >= 0) {
           char alertBuf[48];
           snprintf(alertBuf, sizeof(alertBuf), "Exported %d to SD", exported);
-          ui_task.showAlert(alertBuf, 2500);
+          ui_task.showAlert(alertBuf, 2000);
         } else {
-          ui_task.showAlert("Export failed (no SD?)", 2500);
+          ui_task.showAlert("Export failed (no SD?)", 2000);
         }
-        ui_task.forceRefresh();
       }
       break;
 
@@ -1809,15 +1802,9 @@ void handleKeyboardInput() {
       // Import/merge contacts from SD backup (contacts screen only)
       if (ui_task.isOnContactsScreen()) {
         Serial.println("Contacts: Importing from SD...");
-        // Show "working" toaster immediately (force e-ink render before blocking SD I/O)
-        ui_task.showAlert("Importing from SD...", 10000);
-        ui_task.forceRefresh();
-        ui_task.loop();  // immediate render so user sees the popup
-
         int added = importContactsFromSD();
-
-        // Update toaster with result
         if (added > 0) {
+          // Invalidate the contacts screen cache so it rebuilds
           ContactsScreen* cs2 = (ContactsScreen*)ui_task.getContactsScreen();
           if (cs2) cs2->invalidateCache();
           char alertBuf[48];
@@ -1825,11 +1812,10 @@ void handleKeyboardInput() {
                    added, (int)the_mesh.getNumContacts());
           ui_task.showAlert(alertBuf, 2500);
         } else if (added == 0) {
-          ui_task.showAlert("No new contacts to add", 2500);
+          ui_task.showAlert("No new contacts to add", 2000);
         } else {
-          ui_task.showAlert("Import failed (no backup?)", 2500);
+          ui_task.showAlert("Import failed (no backup?)", 2000);
         }
-        ui_task.forceRefresh();
       }
       break;
 
