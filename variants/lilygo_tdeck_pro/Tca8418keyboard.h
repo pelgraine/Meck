@@ -256,14 +256,12 @@ public:
       return KB_KEY_EMOJI;
     }
     
-    // Handle Mic key - produces 0 with Sym, otherwise ignore
+    // Handle Mic key - always produces '0' (silk-screened on key)
+    // Sym+Mic also produces '0' (consumes sym so it doesn't leak)
     if (keyCode == 34) {
-      if (_symActive) {
-        _symActive = false;
-        Serial.println("KB: Sym+Mic -> '0'");
-        return '0';
-      }
-      return 0;  // Ignore mic without Sym
+      _symActive = false;
+      Serial.println("KB: Mic -> '0'");
+      return '0';
     }
 
     // Get the character
