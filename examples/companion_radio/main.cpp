@@ -1322,7 +1322,7 @@ void handleKeyboardInput() {
       }
 
       // Q from inbox → go home; Q from inner views is handled by SMSScreen
-      if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::INBOX) {
+      if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::APP_MENU) {
         Serial.println("Nav: SMS -> Home");
         ui_task.gotoHomeScreen();
         return;
