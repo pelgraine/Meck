@@ -35,6 +35,9 @@
 #include <esp_heap_caps.h>
 #include <SD.h>
 #include <vector>
+#ifdef HAS_4G_MODEM
+#include "ModemManager.h"
+#endif
 #include "Utf8CP437.h"
 
 // Forward declarations
@@ -1104,7 +1107,14 @@ private:
   // Fetch state
   unsigned long _fetchStartTime;
   int _fetchProgress;    // Bytes received so far
+  int _fetchRetryCount;  // Current retry attempt (0 = first try)
   String _fetchError;
+
+  // Persistent TLS client — kept alive between page loads to reuse TCP
+  // connections to the same host (avoids repeated 5-8s TLS handshakes).
+  // Destroyed on error, host change, or WiFi disconnect.
+  WiFiClientSecure* _tlsClient;
+  String _tlsHost;  // Host _tlsClient is connected/configured for
 
   // Download state (for EPUB/file downloads to SD)
   char _downloadedFile[64];   // Filename of last downloaded file
@@ -1226,6 +1236,27 @@ private:
       }
     }
     return result;
+  }
+
+  // Remove Cloudflare challenge cookies for a domain.
+  // Stale __cf_bm and _cfuvid tokens from failed handshakes can poison
+  // subsequent requests, causing Cloudflare to keep returning 525/503.
+  void clearCloudflareCookies(const char* domain) {
+    int dst = 0;
+    for (int i = 0; i < _cookieCount; i++) {
+      bool isCfDomain = (strstr(domain, _cookies[i].domain) ||
+                         strcmp(domain, _cookies[i].domain) == 0);
+      bool isCfCookie = (strncmp(_cookies[i].name, "__cf_bm", 7) == 0 ||
+                         strncmp(_cookies[i].name, "_cfuvid", 7) == 0 ||
+                         strncmp(_cookies[i].name, "cf_", 3) == 0);
+      if (isCfDomain && isCfCookie) {
+        Serial.printf("WebReader: Cleared CF cookie '%s'\n", _cookies[i].name);
+        continue;  // Skip — don't copy to dst
+      }
+      if (dst != i) _cookies[dst] = _cookies[i];
+      dst++;
+    }
+    _cookieCount = dst;
   }
 
   // Parse Set-Cookie header(s) from HTTP response
@@ -1919,6 +1950,17 @@ private:
                  const char* referer = nullptr) {
     Serial.printf("WebReader: fetchPage('%s', post=%s, ref=%s)\n",
                   url, postBody ? "yes" : "no", referer ? referer : "(null)");
+
+    // Pause modem polling during fetch to avoid Core 0 contention with
+    // WiFi/TLS.  The modem task's 10ms UART poll loop on Core 0 disrupts
+    // TLS handshakes, causing Cloudflare 525/503 errors.
+#ifdef HAS_4G_MODEM
+    struct ModemPauseGuard {
+      ModemPauseGuard()  { modemManager.pausePolling(); Serial.println("WebReader: modem paused"); }
+      ~ModemPauseGuard() { modemManager.resumePolling(); Serial.println("WebReader: modem resumed"); }
+    } _modemGuard;
+#endif
+
     if (!allocateBuffers()) {
       _fetchError = "Out of memory";
       _mode = HOME;
@@ -1928,6 +1970,7 @@ private:
     _mode = FETCHING;
     _fetchStartTime = millis();
     _fetchProgress = 0;
+    _fetchRetryCount = 0;
     _fetchError = "";
 
     // Push current URL to back stack (if we have one)
@@ -1970,16 +2013,44 @@ private:
     const int maxRedirects = 5;
     bool isPost = (postBody != nullptr);
 
-    // Pre-create TLS client outside loop for connection reuse
+    // Use persistent TLS client (member variable) — survives across
+    // fetchPage() calls for connection reuse to the same host.
     ensureTlsUsesPsram();
-    WiFiClientSecure* tlsClient = new WiFiClientSecure();
-    tlsClient->setInsecure();
-    tlsClient->setHandshakeTimeout(30);
-    String lastHost = ""; // Track host for connection reuse
-    int connRetries = 0;  // Connection failure retries (max 1)
-    int serverRetries = 0; // 5xx error retries (max 1)
+    int totalRetries = 0;     // Combined conn + server retries (max 4)
+    bool needsFreshTls = false;  // Deferred TLS client recreation
 
     while (redirectCount <= maxRedirects) {
+      // Determine current host for TLS session management
+      bool isHttps = currentUrl.startsWith("https://");
+      String currentHost;
+      if (isHttps) {
+        currentHost = currentUrl.substring(8); // skip "https://"
+        int slashIdx = currentHost.indexOf('/');
+        if (slashIdx > 0) currentHost = currentHost.substring(0, slashIdx);
+      }
+
+      // Unified TLS client creation/recreation.
+      // This runs BEFORE 'HTTPClient http' below is constructed, so it's safe
+      // to delete _tlsClient (no stack-local HTTPClient holds a reference yet).
+      // Triggers: error recovery, host change, first use, stale connection.
+      bool tlsStale = (_tlsClient && !_tlsClient->connected());
+      if (tlsStale) {
+        Serial.println("WebReader: TLS connection closed by server, reconnecting");
+      }
+      if (isHttps && (needsFreshTls || !_tlsClient || _tlsHost != currentHost || tlsStale)) {
+        if (_tlsClient) {
+          _tlsClient->stop();
+          delete _tlsClient;
+        }
+        _tlsClient = new WiFiClientSecure();
+        _tlsClient->setInsecure();
+        _tlsClient->setHandshakeTimeout(15);
+        _tlsHost = currentHost;
+        needsFreshTls = false;
+        Serial.printf("WebReader: New TLS session for %s (heap: %d, largest: %d)\n",
+                      currentHost.c_str(), ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      }
+
       // Update domain and cookies for current URL
       extractDomain(currentUrl.c_str(), domain, sizeof(domain));
       cookieHeader = buildCookieHeader(domain);
@@ -1989,31 +2060,15 @@ private:
       Serial.printf("WebReader: heap: %d, largest: %d\n",
                     ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 
-      bool isHttps = currentUrl.startsWith("https://");
-
       HTTPClient http;
       http.setUserAgent(WEB_USER_AGENT);
       http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
-      http.setTimeout(30000);
+      http.setTimeout(15000);  // 15s — fail fast to allow retries
       http.setReuse(true); // Keep connection alive for redirects
 
       bool beginOk;
       if (isHttps) {
-        // Check if we need a fresh TLS client (different host)
-        String currentHost = currentUrl.substring(8); // skip "https://"
-        int slashIdx = currentHost.indexOf('/');
-        if (slashIdx > 0) currentHost = currentHost.substring(0, slashIdx);
-        
-        if (lastHost.length() > 0 && lastHost != currentHost) {
-          // Different host — need fresh TLS client
-          delete tlsClient;
-          tlsClient = new WiFiClientSecure();
-          tlsClient->setInsecure();
-          tlsClient->setHandshakeTimeout(30);
-        }
-        lastHost = currentHost;
-        
-        beginOk = http.begin(*tlsClient, currentUrl);
+        beginOk = http.begin(*_tlsClient, currentUrl);
       } else {
         beginOk = http.begin(currentUrl);
       }
@@ -2086,17 +2141,42 @@ private:
       // Capture all Set-Cookie headers from this response
       captureResponseCookies(http, domain);
 
-      // Connection-level failure (timeout, TLS error, etc) — retry once
-      if (httpCode < 0 && connRetries < 1) {
+      // Connection-level failure (timeout, TLS error, etc)
+      if (httpCode < 0 && totalRetries < 4) {
         http.end();
-        // Reset TLS client — stop connection but keep the object alive
-        // (HTTPClient destructor will access it when 'http' goes out of scope)
-        tlsClient->stop();
-        lastHost = "";  // Force fresh connection on next begin()
-        connRetries++;
-        redirectCount++;
-        Serial.printf("WebReader: Connection error %d, retrying...\n", httpCode);
-        delay(2000);
+        totalRetries++;
+        _fetchRetryCount++;
+        needsFreshTls = true;  // Recreate at top of next iteration (after http destructor)
+
+        // After 2 failures, try WiFi reconnect — the lwIP stack may be wedged
+        if (totalRetries == 2 && isWiFiConnected()) {
+          Serial.println("WebReader: WiFi reconnect after persistent failures");
+          // Destroy TLS before WiFi teardown
+          if (_tlsClient) { delete _tlsClient; _tlsClient = nullptr; }
+          _tlsHost = "";
+          WiFi.disconnect(false);
+          delay(500);
+          WiFi.reconnect();
+          unsigned long wt = millis();
+          while (WiFi.status() != WL_CONNECTED && millis() - wt < 8000) delay(100);
+          if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WebReader: WiFi reconnect failed");
+            _fetchError = "WiFi reconnect failed";
+            break;
+          }
+          Serial.printf("WebReader: WiFi reconnected, IP: %s\n",
+                        WiFi.localIP().toString().c_str());
+        }
+
+        int retryDelay = 1000 + totalRetries * 1000;  // 2s, 3s, 4s, 5s
+        Serial.printf("WebReader: Connection error %d, retrying in %dms... (attempt %d/4)\n",
+                      httpCode, retryDelay, totalRetries);
+        if (_display) {
+          _display->startFrame();
+          renderFetching(*_display);
+          _display->endFrame();
+        }
+        delay(retryDelay);
         continue;
       }
       if (httpCode < 0) {
@@ -2108,10 +2188,11 @@ private:
       // Handle redirects
       if (httpCode == 301 || httpCode == 302 || httpCode == 303 || httpCode == 307) {
         String location = http.header("Location");
-        // Don't call http.end() for same-host redirects — preserve connection
-        String body = http.getString(); // consume response body to free connection
+        // End the connection — the next loop iteration creates a fresh
+        // HTTPClient. Don't use getString() to "consume" the body because
+        // chunked responses without proper termination can hang forever.
+        http.end();
         if (location.length() == 0) {
-          http.end();
           _fetchError = "Redirect with no Location";
           break;
         }
@@ -2138,7 +2219,7 @@ private:
           Serial.println("WebReader: EPUB detected, downloading to SD");
           free(htmlBuffer);
           bool dlOk = downloadToSD(http, currentUrl.c_str(), cdisp);
-          delete tlsClient;
+          // _tlsClient persists as member — cleaned up by exitReader()
           return dlOk;
         }
 
@@ -2146,14 +2227,48 @@ private:
         success = (htmlLen > 0);
         http.end();
         break;
-      } else if (httpCode >= 500 && httpCode < 600 && serverRetries < 1) {
-        // Server error (e.g. Cloudflare 525) — retry once after brief delay
-        String body = http.getString();
+      } else if (httpCode >= 500 && httpCode < 600 && totalRetries < 4) {
+        // Server error (e.g. Cloudflare 525/503)
+        // Don't call getString() — CF error responses can use chunked encoding
+        // without proper termination, causing getString() to block forever.
+        // http.end() forcefully closes the socket which is fine since we're
+        // recreating the TLS client anyway.
         http.end();
-        serverRetries++;
-        redirectCount++;
-        Serial.printf("WebReader: Server error %d, retrying...\n", httpCode);
-        delay(1500);
+        needsFreshTls = true;  // Recreate at top of next iteration
+        totalRetries++;
+        _fetchRetryCount++;
+
+        // Clear Cloudflare cookies — stale __cf_bm tokens from failed
+        // handshakes cause CF to keep rejecting us
+        clearCloudflareCookies(domain);
+
+        // WiFi reconnect after 2 total failures (same logic as conn errors)
+        if (totalRetries == 2 && isWiFiConnected()) {
+          Serial.println("WebReader: WiFi reconnect after persistent failures");
+          if (_tlsClient) { delete _tlsClient; _tlsClient = nullptr; }
+          _tlsHost = "";
+          WiFi.disconnect(false);
+          delay(500);
+          WiFi.reconnect();
+          unsigned long wt = millis();
+          while (WiFi.status() != WL_CONNECTED && millis() - wt < 8000) delay(100);
+          if (WiFi.status() != WL_CONNECTED) {
+            _fetchError = "WiFi reconnect failed";
+            break;
+          }
+          Serial.printf("WebReader: WiFi reconnected, IP: %s\n",
+                        WiFi.localIP().toString().c_str());
+        }
+
+        int retryDelay = 1000 + totalRetries * 1000;  // 2s, 3s, 4s, 5s
+        Serial.printf("WebReader: Server error %d, retrying in %dms... (attempt %d/4)\n",
+                      httpCode, retryDelay, totalRetries);
+        if (_display) {
+          _display->startFrame();
+          renderFetching(*_display);
+          _display->endFrame();
+        }
+        delay(retryDelay);
         continue;
       } else {
         _fetchError = httpErrorString(httpCode);
@@ -2162,7 +2277,8 @@ private:
       }
     } // end redirect loop
 
-    delete tlsClient;
+    // Don't delete _tlsClient — keep for connection reuse on next fetchPage().
+    // Cleaned up by exitReader() or on next fetch to a different host.
 
     if (redirectCount > maxRedirects && !success) {
       _fetchError = "Too many redirects";
@@ -2968,9 +3084,12 @@ private:
     display.print(urlDisp);
 
     display.setCursor(10, 60);
-    char progBuf[40];
+    char progBuf[48];
     int elapsed = (int)((millis() - _fetchStartTime) / 1000);
-    if (_fetchProgress > 0) {
+    if (_fetchRetryCount > 0) {
+      snprintf(progBuf, sizeof(progBuf), "Retry %d/4...  %ds", _fetchRetryCount, elapsed);
+      display.setColor(DisplayDriver::YELLOW);
+    } else if (_fetchProgress > 0) {
       snprintf(progBuf, sizeof(progBuf), "%d bytes  (%ds)", _fetchProgress, elapsed);
     } else if (elapsed >= 2) {
       snprintf(progBuf, sizeof(progBuf), "Connecting... %ds", elapsed);
@@ -4694,7 +4813,8 @@ public:
       _formCount(0), _forms(nullptr), _activeForm(-1), _activeField(0),
       _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0),
       _cookies(nullptr), _cookieCount(0),
-      _fetchStartTime(0), _fetchProgress(0),
+      _fetchStartTime(0), _fetchProgress(0), _fetchRetryCount(0),
+      _tlsClient(nullptr),
       _downloadOk(false),
       _requestTextReader(false),
       _ircClient(nullptr), _ircUseTLS(false), _ircConnected(false), _ircRegistered(false),
@@ -4734,6 +4854,7 @@ public:
       _ircClient = nullptr;
     }
     if (_ircMessages) { free(_ircMessages); _ircMessages = nullptr; }
+    if (_tlsClient) { delete _tlsClient; _tlsClient = nullptr; }
   }
 
   // Called when entering the web reader screen
@@ -4827,6 +4948,10 @@ public:
     // Clear Arduino Strings that may hold heap allocations
     _fetchError = String();
     _connectedSSID = String();
+
+    // Destroy persistent TLS client before WiFi shutdown
+    if (_tlsClient) { delete _tlsClient; _tlsClient = nullptr; }
+    _tlsHost = String();
 
     // Shut down WiFi to reclaim ~50-70KB internal RAM
     WiFi.disconnect(true);

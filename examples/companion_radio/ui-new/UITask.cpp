@@ -642,8 +642,11 @@ public:
       display.drawTextRightAlign(display.width()-1, y, buf);
       y += 10;
 
-      // Remaining capacity
+      // Remaining capacity (clamped to design capacity — gauge FCC may be
+      // stale from factory defaults until a full charge cycle re-learns it)
       uint16_t remCap = board.getRemainingCapacity();
+      uint16_t desCap = board.getDesignCapacity();
+      if (desCap > 0 && remCap > desCap) remCap = desCap;
       display.drawTextLeftAlign(0, y, "remaining cap");
       sprintf(buf, "%d mAh", remCap);
       display.drawTextRightAlign(display.width()-1, y, buf);

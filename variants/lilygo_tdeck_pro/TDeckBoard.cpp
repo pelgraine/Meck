@@ -177,7 +177,85 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
   Serial.printf("BQ27220: Design Capacity = %d mAh (target %d)\n", currentDC, designCapacity_mAh);
 
   if (currentDC == designCapacity_mAh) {
-    Serial.println("BQ27220: Design Capacity already correct, skipping");
+    // Design Capacity correct, but check if Full Charge Capacity is sane.
+    // After a Design Capacity change, FCC may still hold the old factory
+    // value (e.g. 3000 mAh) until a RESET forces reinitialization.
+    uint16_t fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
+    Serial.printf("BQ27220: Design Capacity already correct, FCC=%d mAh\n", fcc);
+    if (fcc >= designCapacity_mAh * 3 / 2) {
+      // FCC is >=150% of design — stale from factory defaults.
+      // The gauge derives FCC from Design Energy (not just Design Capacity).
+      // Design Energy = capacity × nominal voltage (3.7V for LiPo).
+      // If Design Energy still reflects 3000 mAh, FCC stays at 3000.
+      // Fix: enter CFG_UPDATE and write correct Design Energy.
+      Serial.printf("BQ27220: FCC %d >> DC %d, updating Design Energy\n",
+                    fcc, designCapacity_mAh);
+
+      uint16_t designEnergy = (uint16_t)((uint32_t)designCapacity_mAh * 37 / 10);
+      Serial.printf("BQ27220: Target Design Energy = %d mWh\n", designEnergy);
+
+      // Unseal
+      bq27220_writeControl(0x0414); delay(2);
+      bq27220_writeControl(0x3672); delay(2);
+      // Full Access
+      bq27220_writeControl(0xFFFF); delay(2);
+      bq27220_writeControl(0xFFFF); delay(2);
+      // Enter CFG_UPDATE
+      bq27220_writeControl(0x0090);
+      bool ready = false;
+      for (int i = 0; i < 50; i++) {
+        delay(20);
+        uint16_t opSt = bq27220_read16(BQ27220_REG_OP_STATUS);
+        if (opSt & 0x0400) { ready = true; break; }
+      }
+      if (ready) {
+        // Design Energy is at data memory address 0x92A1 (2 bytes after DC at 0x929F)
+        // Read old values for checksum calculation
+        Wire.beginTransmission(BQ27220_I2C_ADDR);
+        Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
+        Wire.endTransmission();
+        delay(10);
+        uint8_t oldMSB = bq27220_read8(0x40);
+        uint8_t oldLSB = bq27220_read8(0x41);
+        uint8_t oldChk = bq27220_read8(0x60);
+        uint8_t dLen   = bq27220_read8(0x61);
+
+        uint8_t newMSB = (designEnergy >> 8) & 0xFF;
+        uint8_t newLSB = designEnergy & 0xFF;
+        uint8_t temp = (255 - oldChk - oldMSB - oldLSB);
+        uint8_t newChk = 255 - ((temp + newMSB + newLSB) & 0xFF);
+
+        Serial.printf("BQ27220: DE old=0x%02X%02X new=0x%02X%02X chk=0x%02X\n",
+                      oldMSB, oldLSB, newMSB, newLSB, newChk);
+
+        // Write new Design Energy
+        Wire.beginTransmission(BQ27220_I2C_ADDR);
+        Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
+        Wire.write(newMSB); Wire.write(newLSB);
+        Wire.endTransmission();
+        delay(5);
+        // Write checksum
+        Wire.beginTransmission(BQ27220_I2C_ADDR);
+        Wire.write(0x60); Wire.write(newChk); Wire.write(dLen);
+        Wire.endTransmission();
+        delay(10);
+
+        // Exit CFG_UPDATE with reinit
+        bq27220_writeControl(0x0091);
+        delay(200);
+        Serial.println("BQ27220: Design Energy updated, exited CFG_UPDATE");
+      } else {
+        Serial.println("BQ27220: Failed to enter CFG_UPDATE for DE fix");
+        bq27220_writeControl(0x0092);  // Exit cleanly
+      }
+
+      // Seal
+      bq27220_writeControl(0x0030);
+      delay(5);
+
+      fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
+      Serial.printf("BQ27220: FCC after Design Energy update: %d mAh\n", fcc);
+    }
     return true;
   }
 
@@ -281,6 +359,39 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
   Serial.printf("BQ27220: Verify in CFGUPDATE: DC bytes=0x%02X 0x%02X (%d mAh)\n",
                      verMSB, verLSB, (verMSB << 8) | verLSB);
 
+  // Step 4g: Also update Design Energy (address 0x92A1) while in CFG_UPDATE.
+  // Design Energy = capacity × 3.7V (nominal LiPo voltage).
+  // The gauge uses both DC and DE to compute Full Charge Capacity.
+  {
+    uint16_t designEnergy = (uint16_t)((uint32_t)designCapacity_mAh * 37 / 10);
+    Wire.beginTransmission(BQ27220_I2C_ADDR);
+    Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
+    Wire.endTransmission();
+    delay(10);
+    uint8_t deOldMSB = bq27220_read8(0x40);
+    uint8_t deOldLSB = bq27220_read8(0x41);
+    uint8_t deOldChk = bq27220_read8(0x60);
+    uint8_t deLen    = bq27220_read8(0x61);
+
+    uint8_t deNewMSB = (designEnergy >> 8) & 0xFF;
+    uint8_t deNewLSB = designEnergy & 0xFF;
+    uint8_t deTemp = (255 - deOldChk - deOldMSB - deOldLSB);
+    uint8_t deNewChk = 255 - ((deTemp + deNewMSB + deNewLSB) & 0xFF);
+
+    Serial.printf("BQ27220: Design Energy: old=%d new=%d mWh\n",
+                  (deOldMSB << 8) | deOldLSB, designEnergy);
+
+    Wire.beginTransmission(BQ27220_I2C_ADDR);
+    Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
+    Wire.write(deNewMSB); Wire.write(deNewLSB);
+    Wire.endTransmission();
+    delay(5);
+    Wire.beginTransmission(BQ27220_I2C_ADDR);
+    Wire.write(0x60); Wire.write(deNewChk); Wire.write(deLen);
+    Wire.endTransmission();
+    delay(10);
+  }
+
   // Step 5: Exit CFG_UPDATE (with reinit to apply changes immediately)
   bq27220_writeControl(0x0091);  // EXIT_CFG_UPDATE_REINIT
   Serial.println("BQ27220: Sent EXIT_CFG_UPDATE_REINIT, waiting...");
@@ -291,13 +402,16 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
   Serial.printf("BQ27220: Design Capacity now reads %d mAh (expected %d)\n",
                      verifyDC, designCapacity_mAh);
 
+  uint16_t newFCC = bq27220_read16(BQ27220_REG_FULL_CAP);
+  Serial.printf("BQ27220: Full Charge Capacity: %d mAh\n", newFCC);
+
   if (verifyDC == designCapacity_mAh) {
     Serial.println("BQ27220: Configuration SUCCESS");
   } else {
     Serial.println("BQ27220: Configuration FAILED");
   }
 
-  // Step 7: Seal the device
+  // Step 6: Seal the device
   bq27220_writeControl(0x0030);
   delay(5);
 

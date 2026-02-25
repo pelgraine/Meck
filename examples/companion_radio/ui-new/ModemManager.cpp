@@ -715,8 +715,10 @@ restart:
     // Primary detection is via "VOICE CALL: BEGIN" URC (handled by
     // drainURCs/processURCLine above). CLCC polling is a safety net
     // in case the URC is missed or delayed.
+    // Skip when paused to avoid Core 0 contention with WiFi TLS.
     // ================================================================
-    if (_state == ModemState::DIALING &&
+    if (!_paused &&
+        _state == ModemState::DIALING &&
         millis() - lastCLCCPoll > CLCC_POLL_INTERVAL) {
       if (sendAT("AT+CLCC", "OK", 2000)) {
         // +CLCC: 1,0,0,0,0,"number",129   — stat field:
@@ -747,8 +749,11 @@ restart:
 
     // ================================================================
     // Step 4: SMS and signal polling (only when not in a call)
+    // Skip when paused to avoid Core 0 contention with WiFi/TLS.
+    // The modem task's sendAT() calls (AT+CMGL 5s, AT+CSQ 2s) do
+    // tight UART poll loops that disrupt WiFi packet timing.
     // ================================================================
-    if (!isCallActive()) {
+    if (!_paused && !isCallActive()) {
       // Check for outgoing SMS in queue
       SMSOutgoing outMsg;
       if (xQueueReceive(_sendQueue, &outMsg, 0) == pdTRUE) {
@@ -766,7 +771,7 @@ restart:
     }
 
     // Periodic signal strength update (always, even during calls)
-    if (millis() - lastCSQPoll > CSQ_POLL_INTERVAL) {
+    if (!_paused && millis() - lastCSQPoll > CSQ_POLL_INTERVAL) {
       // Only poll CSQ if not actively in a call (avoid interrupting audio)
       if (!isCallActive()) {
         pollCSQ();

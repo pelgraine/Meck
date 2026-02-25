@@ -158,6 +158,14 @@ public:
   const char* getCallPhone() const { return _callPhone; }
   uint32_t getCallStartTime() const { return _callStartTime; }
 
+  // Pause/resume polling — used by web reader to avoid Core 0 contention
+  // during WiFi TLS handshakes.  While paused, the task skips AT commands
+  // (SMS poll, CSQ poll) but still drains URCs and handles call commands
+  // so incoming calls aren't missed.
+  void pausePolling()  { _paused = true; }
+  void resumePolling() { _paused = false; }
+  bool isPaused() const { return _paused; }
+
   static const char* stateToString(ModemState s);
 
   // Persistent enable/disable config (SD file /sms/modem.cfg)
@@ -167,6 +175,7 @@ public:
 private:
   volatile ModemState _state = ModemState::OFF;
   volatile int _csq = 99;    // 99 = unknown
+  volatile bool _paused = false;  // Suppresses AT polling when true
   char _operator[24] = {0};
 
   // Call state (written by modem task, read by main loop)
