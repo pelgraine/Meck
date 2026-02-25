@@ -286,17 +286,17 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    // Left: Q:Bk X:Exp
+    // Left: Q:Back
     display.setCursor(0, footerY);
-    display.print("Q:Bk X:Exp");
+    display.print("Q:Back");
 
     // Center: A/D:Filter
     const char* mid = "A/D:Filtr";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
 
-    // Right: R:Imp W/S
-    const char* right = "R:Imp W/S";
+    // Right: W/S:Scroll
+    const char* right = "W/S:Scrll";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 
