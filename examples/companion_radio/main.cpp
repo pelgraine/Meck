@@ -77,6 +77,12 @@
     static bool smsMode = false;
   #endif
 
+  // Touch input (for phone dialer numpad)
+  #ifdef HAS_TOUCHSCREEN
+    #include "TouchInput.h"
+    TouchInput touchInput(&Wire);
+  #endif
+
   // Power management
   #if HAS_GPS
     GPSDutyCycle gpsDuty;
@@ -186,6 +192,135 @@
     }
     digitalWrite(SDCARD_CS, HIGH);
     return restored;
+  }
+
+  // -----------------------------------------------------------------------
+  // On-demand export: save current contacts to SD card.
+  // Writes binary backup + human-readable listing.
+  // Returns number of contacts exported, or -1 on error.
+  // -----------------------------------------------------------------------
+  int exportContactsToSD() {
+    if (!sdCardReady) return -1;
+
+    // Ensure in-memory contacts are flushed to SPIFFS first
+    the_mesh.saveContacts();
+
+    if (!SD.exists("/meshcore")) SD.mkdir("/meshcore");
+
+    // 1) Binary backup: SPIFFS /contacts3 → SD /meshcore/contacts.bin
+    if (!SPIFFS.exists("/contacts3")) return -1;
+    if (!copyFile(SPIFFS, "/contacts3", SD, "/meshcore/contacts.bin")) return -1;
+
+    // 2) Human-readable listing for inspection on a computer
+    int count = 0;
+    File txt = SD.open("/meshcore/contacts_export.txt", "w", true);
+    if (txt) {
+      txt.printf("Meck Contacts Export  (%d total)\n", (int)the_mesh.getNumContacts());
+      txt.printf("========================================\n");
+      txt.printf("%-5s  %-30s  %s\n", "Type", "Name", "PubKey (prefix)");
+      txt.printf("----------------------------------------\n");
+
+      ContactInfo c;
+      for (uint32_t i = 0; i < (uint32_t)the_mesh.getNumContacts(); i++) {
+        if (the_mesh.getContactByIdx(i, c)) {
+          const char* typeStr = "???";
+          switch (c.type) {
+            case ADV_TYPE_CHAT:     typeStr = "Chat"; break;
+            case ADV_TYPE_REPEATER: typeStr = "Rptr"; break;
+            case ADV_TYPE_ROOM:     typeStr = "Room"; break;
+          }
+          // First 8 bytes of pub key as hex identifier
+          char hexBuf[20];
+          mesh::Utils::toHex(hexBuf, c.id.pub_key, 8);
+          txt.printf("%-5s  %-30s  %s\n", typeStr, c.name, hexBuf);
+          count++;
+        }
+      }
+
+      txt.printf("========================================\n");
+      txt.printf("Total: %d contacts\n", count);
+      txt.close();
+    }
+
+    digitalWrite(SDCARD_CS, HIGH);
+    Serial.printf("Contacts exported to SD: %d contacts\n", count);
+    return count;
+  }
+
+  // -----------------------------------------------------------------------
+  // On-demand import: merge contacts from SD backup into live table.
+  //
+  // Reads /meshcore/contacts.bin from SD and for each contact:
+  //   - If already in memory (matching pub_key) → skip (keep current)
+  //   - If NOT in memory → addContact (append to table)
+  //
+  // This is a non-destructive merge: you never lose contacts already in
+  // memory, and you gain any that were only in the backup.
+  //
+  // After merging, saves the combined set back to SPIFFS so it persists.
+  // Returns number of NEW contacts added, or -1 on error.
+  // -----------------------------------------------------------------------
+  int importContactsFromSD() {
+    if (!sdCardReady) return -1;
+    if (!SD.exists("/meshcore/contacts.bin")) return -1;
+
+    File file = SD.open("/meshcore/contacts.bin", "r");
+    if (!file) return -1;
+
+    int added = 0;
+    int skipped = 0;
+
+    while (true) {
+      ContactInfo c;
+      uint8_t pub_key[32];
+      uint8_t unused;
+
+      // Parse one contact record (same binary format as DataStore::loadContacts)
+      bool success = (file.read(pub_key, 32) == 32);
+      success = success && (file.read((uint8_t *)&c.name, 32) == 32);
+      success = success && (file.read(&c.type, 1) == 1);
+      success = success && (file.read(&c.flags, 1) == 1);
+      success = success && (file.read(&unused, 1) == 1);
+      success = success && (file.read((uint8_t *)&c.sync_since, 4) == 4);
+      success = success && (file.read((uint8_t *)&c.out_path_len, 1) == 1);
+      success = success && (file.read((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+      success = success && (file.read(c.out_path, 64) == 64);
+      success = success && (file.read((uint8_t *)&c.lastmod, 4) == 4);
+      success = success && (file.read((uint8_t *)&c.gps_lat, 4) == 4);
+      success = success && (file.read((uint8_t *)&c.gps_lon, 4) == 4);
+
+      if (!success) break;  // EOF or read error
+
+      c.id = mesh::Identity(pub_key);
+      c.shared_secret_valid = false;
+
+      // Check if this contact already exists in the live table
+      if (the_mesh.lookupContactByPubKey(pub_key, PUB_KEY_SIZE) != NULL) {
+        skipped++;
+        continue;  // Already have this contact, skip
+      }
+
+      // New contact — add to the live table
+      if (the_mesh.addContact(c)) {
+        added++;
+      } else {
+        // Table is full, stop importing
+        Serial.printf("Import: table full after adding %d contacts\n", added);
+        break;
+      }
+    }
+
+    file.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    // Persist the merged set to SPIFFS
+    if (added > 0) {
+      the_mesh.saveContacts();
+    }
+
+    Serial.printf("Contacts import: %d added, %d already present, %d total\n",
+                  added, skipped, (int)the_mesh.getNumContacts());
+    return added;
   }
 #endif
 
@@ -548,6 +683,15 @@ void setup() {
     initKeyboard();
   #endif
 
+  // Initialize touch input (CST328)
+  #ifdef HAS_TOUCHSCREEN
+    if (touchInput.begin(CST328_PIN_INT)) {
+      MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
+    } else {
+      MESH_DEBUG_PRINTLN("setup() - Touch input FAILED");
+    }
+  #endif
+
   // ---------------------------------------------------------------------------
   // SD card is already initialized (early init above).
   // Now set up SD-dependent features: message history + text reader.
@@ -860,6 +1004,43 @@ void loop() {
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
+  #endif
+
+  // Poll touch input for phone dialer numpad
+  // Hybrid debounce: finger-up detection + 150ms minimum between accepted taps.
+  // The CST328 INT pin is pulse-based (not level), so getPoint() can return
+  // false intermittently during a hold. Time guard prevents that from
+  // causing repeat fires.
+  #if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
+  {
+    static bool touchFingerDown = false;
+    static unsigned long lastTouchAccepted = 0;
+
+    if (smsMode) {
+      SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        int16_t tx, ty;
+        if (touchInput.getPoint(tx, ty)) {
+          unsigned long now = millis();
+          if (!touchFingerDown && (now - lastTouchAccepted >= 150)) {
+            touchFingerDown = true;
+            lastTouchAccepted = now;
+            if (smsScr->handleTouch(tx, ty)) {
+              ui_task.forceRefresh();
+            }
+          }
+        } else {
+          // Only allow finger-up after 100ms from last acceptance
+          // (prevents INT pulse misses from resetting state mid-hold)
+          if (touchFingerDown && (millis() - lastTouchAccepted >= 100)) {
+            touchFingerDown = false;
+          }
+        }
+      } else {
+        touchFingerDown = false;
+      }
+    }
+  }
   #endif
 }
 
@@ -1321,10 +1502,17 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Q from inbox → go home; Q from inner views is handled by SMSScreen
+      // Q from app menu → go home; Q from inner views is handled by SMSScreen
       if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::APP_MENU) {
         Serial.println("Nav: SMS -> Home");
         ui_task.gotoHomeScreen();
+        return;
+      }
+
+      // Phone dialer: route keys directly (letter keys map to numbers)
+      if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        smsScr->handleInput(key);
+        ui_task.forceRefresh();
         return;
       }
 
@@ -1594,6 +1782,42 @@ void handleKeyboardInput() {
       }
       break;
       
+    case 'x':
+      // Export contacts to SD card (contacts screen only)
+      if (ui_task.isOnContactsScreen()) {
+        Serial.println("Contacts: Exporting to SD...");
+        int exported = exportContactsToSD();
+        if (exported >= 0) {
+          char alertBuf[48];
+          snprintf(alertBuf, sizeof(alertBuf), "Exported %d to SD", exported);
+          ui_task.showAlert(alertBuf, 2000);
+        } else {
+          ui_task.showAlert("Export failed (no SD?)", 2000);
+        }
+      }
+      break;
+
+    case 'r':
+      // Import/merge contacts from SD backup (contacts screen only)
+      if (ui_task.isOnContactsScreen()) {
+        Serial.println("Contacts: Importing from SD...");
+        int added = importContactsFromSD();
+        if (added > 0) {
+          // Invalidate the contacts screen cache so it rebuilds
+          ContactsScreen* cs2 = (ContactsScreen*)ui_task.getContactsScreen();
+          if (cs2) cs2->invalidateCache();
+          char alertBuf[48];
+          snprintf(alertBuf, sizeof(alertBuf), "+%d imported (%d total)",
+                   added, (int)the_mesh.getNumContacts());
+          ui_task.showAlert(alertBuf, 2500);
+        } else if (added == 0) {
+          ui_task.showAlert("No new contacts to add", 2000);
+        } else {
+          ui_task.showAlert("Import failed (no backup?)", 2000);
+        }
+      }
+      break;
+
     case 'q':
     case '\b':
       // If channel screen path overlay is showing, dismiss it instead of going home

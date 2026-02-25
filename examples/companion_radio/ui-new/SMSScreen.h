@@ -313,8 +313,49 @@ public:
     return 5000;
   }
 
-  // ---- Phone dialer ----
+  // ---- Phone dialer with touch numpad ----
+
+  // Numpad layout constants — computed dynamically from display dimensions
+  static const int NUMPAD_ROWS   = 5;
+  static const int NUMPAD_COLS   = 3;
+
+  // Button labels: [row][col]
+  const char* numpadLabel(int row, int col) const {
+    static const char* labels[5][3] = {
+      {"1", "2", "3"},
+      {"4", "5", "6"},
+      {"7", "8", "9"},
+      {"*", "0", "#"},
+      {"+", "DEL", "CALL"}
+    };
+    return labels[row][col];
+  }
+
+  // Button character values: '\b' = backspace, '\r' = call
+  char numpadChar(int row, int col) const {
+    static const char chars[5][3] = {
+      {'1', '2', '3'},
+      {'4', '5', '6'},
+      {'7', '8', '9'},
+      {'*', '0', '#'},
+      {'+', '\b', '\r'}
+    };
+    return chars[row][col];
+  }
+
   int renderPhoneDialer(DisplayDriver& display) {
+    int W = display.width();
+    int H = display.height();
+
+    // Layout regions (dynamic based on display size)
+    int headerH    = 12;
+    int phoneFieldH = 14;
+    int footerH    = 12;
+    int numpadTop  = headerH + phoneFieldH;
+    int numpadH    = H - numpadTop - footerH;
+    int rowH       = numpadH / NUMPAD_ROWS;
+    int colW       = W / NUMPAD_COLS;
+
     // Header
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
@@ -322,45 +363,87 @@ public:
     display.print("Dial Number");
 
     // Signal strength at top-right
-    renderSignalIndicator(display, display.width() - 2, 0);
+    renderSignalIndicator(display, W - 2, 0);
 
     display.setColor(DisplayDriver::LIGHT);
-    display.drawRect(0, 11, display.width(), 1);
+    display.drawRect(0, headerH - 1, W, 1);
 
-    // Phone number input
-    display.setTextSize(0);
-    display.setColor(DisplayDriver::LIGHT);
-    display.setCursor(4, 24);
-    display.print("Enter phone number:");
-
+    // Phone number field
     display.setTextSize(1);
     display.setColor(DisplayDriver::LIGHT);
-    display.setCursor(4, 40);
+    display.setCursor(2, headerH + 2);
     if (_phoneInputPos > 0) {
       display.print(_phoneInputBuf);
     }
     display.print("_");
 
-    // Hint if empty
-    if (_phoneInputPos == 0) {
-      display.setTextSize(0);
-      display.setColor(DisplayDriver::DARK);
-      display.setCursor(4, 58);
-      display.print("digits, +, *, #");
-      display.setTextSize(1);
+    // Separator above numpad
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, numpadTop - 1, W, 1);
+
+    // Draw numpad grid
+    for (int row = 0; row < NUMPAD_ROWS; row++) {
+      int y = numpadTop + row * rowH;
+
+      // Row separator
+      if (row > 0) {
+        display.setColor(DisplayDriver::DARK);
+        display.drawRect(0, y, W, 1);
+      }
+
+      for (int col = 0; col < NUMPAD_COLS; col++) {
+        int x = col * colW;
+
+        // Column separator
+        if (col > 0) {
+          display.setColor(DisplayDriver::DARK);
+          display.drawRect(x, y, 1, rowH);
+        }
+
+        // Button label - centered in cell
+        const char* label = numpadLabel(row, col);
+        bool isAction = (row == 4);  // Bottom row has action buttons
+
+        if (isAction) {
+          display.setTextSize(0);
+          if (col == 2 && _phoneInputPos > 0) {
+            display.setColor(DisplayDriver::GREEN);  // CALL
+          } else if (col == 1) {
+            display.setColor(DisplayDriver::YELLOW);  // DEL
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
+        } else {
+          display.setTextSize(1);
+          display.setColor(DisplayDriver::LIGHT);
+        }
+
+        uint16_t textW = display.getTextWidth(label);
+        int textH = isAction ? 7 : 8;
+        int cx = x + (colW - textW) / 2;
+        int cy = y + (rowH - textH) / 2;
+        display.setCursor(cx, cy);
+        display.print(label);
+      }
     }
 
     // Footer
     display.setTextSize(1);
-    int footerY = display.height() - 12;
-    display.drawRect(0, footerY - 2, display.width(), 1);
+    int footerY = H - footerH;
+    display.drawRect(0, footerY - 1, W, 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Q:Bk");
     if (_phoneInputPos > 0) {
       const char* rt = "Ent:Call";
-      display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+      display.setCursor(W - display.getTextWidth(rt) - 2, footerY);
       display.print(rt);
+    } else {
+      // Hint: letter keys type numbers directly
+      display.setColor(DisplayDriver::DARK);
+      const char* hint = "W-C=1-9";
+      display.setCursor(W - display.getTextWidth(hint) - 2, footerY);
+      display.print(hint);
     }
 
     return 2000;
@@ -820,7 +903,28 @@ public:
     }
   }
 
-  // ---- Phone dialer input ----
+  // ---- Phone dialer input (keyboard) ----
+  //
+  // Three ways to enter digits:
+  //   1. Touch the on-screen numpad
+  //   2. Sym+key (normal keyboard number entry)
+  //   3. Just press the letter key — the dialer maps it automatically
+  //      using the silk-screened number labels on the keyboard:
+  //        w=1 e=2 r=3 | s=4 d=5 f=6 | z=7 x=8 c=9
+  //        q=# a=* o=+ | 0=mic key (arrives as sym+'0')
+
+  // Map a letter key to its dialer equivalent (0 = no mapping)
+  // Note: 'q' is reserved for back navigation, use sym+q or touch for '#'
+  char dialerKeyMap(char c) {
+    switch (c) {
+      case 'w': return '1';  case 'e': return '2';  case 'r': return '3';
+      case 's': return '4';  case 'd': return '5';  case 'f': return '6';
+      case 'z': return '7';  case 'x': return '8';  case 'c': return '9';
+      case 'a': return '*';  case 'o': return '+';
+      default:  return 0;
+    }
+  }
+
   bool handlePhoneDialerInput(char c) {
     switch (c) {
       case '\r':  // Enter - place call
@@ -838,22 +942,104 @@ public:
         }
         return true;
 
-      case 'q': case 'Q':  // Back to app menu
+      case 'q':  // Back to app menu
         _phoneInputBuf[0] = '\0';
         _phoneInputPos = 0;
         _view = APP_MENU;
         return true;
 
       default:
-        // Accept phone number characters
-        if (_phoneInputPos < SMS_PHONE_LEN - 1 &&
-            ((c >= '0' && c <= '9') || c == '+' || c == '*' || c == '#')) {
-          _phoneInputBuf[_phoneInputPos++] = c;
-          _phoneInputBuf[_phoneInputPos] = '\0';
+        // Accept phone number characters directly (from sym+key)
+        if ((c >= '0' && c <= '9') || c == '+' || c == '*' || c == '#') {
+          if (_phoneInputPos < SMS_PHONE_LEN - 1) {
+            _phoneInputBuf[_phoneInputPos++] = c;
+            _phoneInputBuf[_phoneInputPos] = '\0';
+          }
+          return true;
+        }
+        // Map plain letter keys to their silk-screened number equivalents
+        char mapped = dialerKeyMap(c);
+        if (mapped) {
+          if (_phoneInputPos < SMS_PHONE_LEN - 1) {
+            _phoneInputBuf[_phoneInputPos++] = mapped;
+            _phoneInputBuf[_phoneInputPos] = '\0';
+          }
+          return true;
         }
         return true;
     }
   }
+
+  // ---- Touch numpad input (called from main loop when touch detected) ----
+
+  // Process a touch event at PHYSICAL display coordinates (px, py).
+  // The touch controller reports 240x320; display draws in virtual coords.
+  // Returns true if the touch was consumed (a button was pressed).
+  // Caller should call forceRefresh() after this returns true.
+  //
+  // dispW/dispH: virtual display dimensions (display.width()/height())
+  // physW/physH: physical touch panel dimensions (240/320)
+  bool handleTouch(int16_t px, int16_t py, int dispW = 128, int dispH = 128,
+                   int physW = 240, int physH = 320) {
+    if (_view != PHONE_DIALER) return false;
+
+    // Map physical touch coordinates to virtual display coordinates
+    int x = (int)px * dispW / physW;
+    int y = (int)py * dispH / physH;
+
+    // Compute layout (must match renderPhoneDialer)
+    int headerH    = 12;
+    int phoneFieldH = 14;
+    int footerH    = 12;
+    int numpadTop  = headerH + phoneFieldH;
+    int numpadH    = dispH - numpadTop - footerH;
+    int rowH       = numpadH / NUMPAD_ROWS;
+    int colW       = dispW / NUMPAD_COLS;
+
+    // Check bounds: must be within numpad grid
+    if (y < numpadTop || y >= numpadTop + NUMPAD_ROWS * rowH) return false;
+    if (x < 0 || x >= NUMPAD_COLS * colW) return false;
+
+    // Map coordinates to grid cell
+    int col = x / colW;
+    int row = (y - numpadTop) / rowH;
+
+    if (col < 0 || col >= NUMPAD_COLS || row < 0 || row >= NUMPAD_ROWS) return false;
+
+    char c = numpadChar(row, col);
+    bool changed = false;
+
+    if (c == '\r') {
+      // CALL button
+      if (_phoneInputPos > 0) {
+        _phoneInputBuf[_phoneInputPos] = '\0';
+        modemManager.dialCall(_phoneInputBuf);
+        changed = true;
+      }
+    } else if (c == '\b') {
+      // DEL button
+      if (_phoneInputPos > 0) {
+        _phoneInputPos--;
+        _phoneInputBuf[_phoneInputPos] = '\0';
+        changed = true;
+      }
+    } else {
+      // Digit/symbol button
+      if (_phoneInputPos < SMS_PHONE_LEN - 1) {
+        _phoneInputBuf[_phoneInputPos++] = c;
+        _phoneInputBuf[_phoneInputPos] = '\0';
+        changed = true;
+      }
+    }
+
+    Serial.printf("[Touch] Numpad: phys=(%d,%d) virt=(%d,%d) row=%d col=%d btn=%s %s\n",
+                  px, py, x, y, row, col, numpadLabel(row, col),
+                  changed ? "OK" : "NOOP");
+    return changed;
+  }
+
+  // clearTouch() is a no-op with time-based debounce, kept for API compat
+  void clearTouch() { }
 
   // ---- Inbox input ----
   bool handleInboxInput(char c) {

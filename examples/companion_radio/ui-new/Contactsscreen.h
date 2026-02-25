@@ -88,7 +88,7 @@ private:
       }
     }
     // Sort by last_advert_timestamp descending (most recently seen first)
-    // Simple insertion sort â€” fine for up to 400 entries on ESP32
+    // Simple insertion sort — fine for up to 400 entries on ESP32
     for (int i = 1; i < _filteredCount; i++) {
       uint16_t tmpIdx = _filteredIdx[i];
       uint32_t tmpTs  = _filteredTs[i];
@@ -286,17 +286,17 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    // Left: Q:Back
+    // Left: Q:Bk X:Exp
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Q:Bk X:Exp");
 
     // Center: A/D:Filter
     const char* mid = "A/D:Filtr";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
 
-    // Right: W/S:Scroll
-    const char* right = "W/S:Scrll";
+    // Right: R:Imp W/S
+    const char* right = "R:Imp W/S";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 
