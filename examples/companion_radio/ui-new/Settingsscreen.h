@@ -69,6 +69,11 @@ enum SettingsRowType : uint8_t {
   ROW_INFO_HEADER,    // "--- Info ---" separator
   ROW_PUB_KEY,        // Public key display
   ROW_FIRMWARE,       // Firmware version
+  #ifdef HAS_4G_MODEM
+  ROW_IMEI,           // IMEI display (read-only)
+  ROW_OPERATOR_INFO,  // Carrier/operator display (read-only)
+  ROW_APN,            // APN setting (editable)
+  #endif
 };
 
 // ---------------------------------------------------------------------------
@@ -83,7 +88,11 @@ enum EditMode : uint8_t {
 };
 
 // Max rows in the settings list
+#ifdef HAS_4G_MODEM
+#define SETTINGS_MAX_ROWS 46  // Extra rows for IMEI, Carrier, APN
+#else
 #define SETTINGS_MAX_ROWS 40
+#endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 
 class SettingsScreen : public UIScreen {
@@ -160,6 +169,12 @@ private:
     addRow(ROW_PUB_KEY);
     addRow(ROW_FIRMWARE);
 
+    #ifdef HAS_4G_MODEM
+    addRow(ROW_IMEI);
+    addRow(ROW_OPERATOR_INFO);
+    addRow(ROW_APN);
+    #endif
+
     // Clamp cursor
     if (_cursor >= _numRows) _cursor = _numRows - 1;
     if (_cursor < 0) _cursor = 0;
@@ -177,7 +192,11 @@ private:
   bool isSelectable(int idx) const {
     if (idx < 0 || idx >= _numRows) return false;
     SettingsRowType t = _rows[idx].type;
-    return t != ROW_CH_HEADER && t != ROW_INFO_HEADER;
+    return t != ROW_CH_HEADER && t != ROW_INFO_HEADER
+    #ifdef HAS_4G_MODEM
+      && t != ROW_IMEI && t != ROW_OPERATOR_INFO
+    #endif
+    ;
   }
 
   void skipNonSelectable(int dir) {
@@ -548,7 +567,7 @@ public:
           // Show first 8 bytes of pub key as hex (16 chars)
           char hexBuf[17];
           mesh::Utils::toHex(hexBuf, the_mesh.self_id.pub_key, 8);
-          snprintf(tmp, sizeof(tmp), "ID: %s", hexBuf);
+          snprintf(tmp, sizeof(tmp), "Node ID: %s", hexBuf);
           display.print(tmp);
           break;
         }
@@ -557,6 +576,53 @@ public:
           snprintf(tmp, sizeof(tmp), "FW: %s", FIRMWARE_VERSION);
           display.print(tmp);
           break;
+
+        #ifdef HAS_4G_MODEM
+        case ROW_IMEI: {
+          const char* imei = modemManager.getIMEI();
+          snprintf(tmp, sizeof(tmp), "IMEI: %s", imei[0] ? imei : "(unavailable)");
+          display.print(tmp);
+          break;
+        }
+
+        case ROW_OPERATOR_INFO: {
+          const char* op = modemManager.getOperator();
+          int bars = modemManager.getSignalBars();
+          if (op[0]) {
+            // Show carrier name with signal bar count
+            snprintf(tmp, sizeof(tmp), "Carrier: %s (%d/5)", op, bars);
+          } else {
+            snprintf(tmp, sizeof(tmp), "Carrier: (searching)");
+          }
+          display.print(tmp);
+          break;
+        }
+
+        case ROW_APN: {
+          if (editing && _editMode == EDIT_TEXT) {
+            snprintf(tmp, sizeof(tmp), "APN: %s_", _editBuf);
+          } else {
+            const char* apn = modemManager.getAPN();
+            const char* src = modemManager.getAPNSource();
+            if (apn[0]) {
+              // Truncate APN to fit: "APN: " (5) + apn (max 28) + " [x]" (4) = ~37 chars
+              char apnShort[29];
+              strncpy(apnShort, apn, 28);
+              apnShort[28] = '\0';
+              // Abbreviate source: auto→A, network→N, user→U, none→?
+              char srcChar = '?';
+              if (strcmp(src, "auto") == 0) srcChar = 'A';
+              else if (strcmp(src, "network") == 0) srcChar = 'N';
+              else if (strcmp(src, "user") == 0) srcChar = 'U';
+              snprintf(tmp, sizeof(tmp), "APN: %s [%c]", apnShort, srcChar);
+            } else {
+              snprintf(tmp, sizeof(tmp), "APN: (none)");
+            }
+          }
+          display.print(tmp);
+          break;
+        }
+        #endif
       }
 
       y += lineHeight;
@@ -673,6 +739,20 @@ public:
           }
           _editMode = EDIT_NONE;
         }
+        #ifdef HAS_4G_MODEM
+        else if (type == ROW_APN) {
+          // Save the edited APN (even if empty — clears user override)
+          if (_editPos > 0) {
+            modemManager.setAPN(_editBuf);
+            Serial.printf("Settings: APN set to '%s'\n", _editBuf);
+          } else {
+            // Empty APN: remove user override, revert to auto-detection
+            ModemManager::saveAPNConfig("");
+            Serial.println("Settings: APN cleared (will auto-detect on next boot)");
+          }
+          _editMode = EDIT_NONE;
+        }
+        #endif
         return true;
       }
       if (c == 'q' || c == 'Q' || c == 27) {
@@ -876,6 +956,12 @@ public:
             Serial.println("Settings: 4G modem DISABLED (shutdown)");
           }
           break;
+        case ROW_APN: {
+          // Start text editing with current APN as initial value
+          const char* currentApn = modemManager.getAPN();
+          startEditText(currentApn);
+          break;
+        }
         #endif
         case ROW_ADD_CHANNEL:
           startEditText("");

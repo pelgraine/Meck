@@ -297,7 +297,7 @@ public:
       int y = 20;
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
-      sprintf(tmp, "MSG: %d", _task->getMsgCount());
+      sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
       display.drawTextCentered(display.width() / 2, y, tmp);
       y += 18;
 
@@ -985,6 +985,13 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Add to channel history screen with channel index and path data
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path);
   
+  // If user is currently viewing this channel, mark it as read immediately
+  // (they can see the message arrive in real-time)
+  if (isOnChannelScreen() && 
+      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) {
+    ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  }
+  
 #if defined(LilyGo_TDeck_Pro)
   // T-Deck Pro: Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via 'M' key
@@ -1365,6 +1372,10 @@ bool UITask::isEditingHomeScreen() const {
 
 void UITask::gotoChannelScreen() {
   ((ChannelScreen *) channel_screen)->resetScroll();
+  // Mark the currently viewed channel as read
+  ((ChannelScreen *) channel_screen)->markChannelRead(
+    ((ChannelScreen *) channel_screen)->getViewChannelIdx()
+  );
   setCurrScreen(channel_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -1460,6 +1471,10 @@ void UITask::gotoSMSScreen() {
 
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
+}
+
+int UITask::getUnreadMsgCount() const {
+  return ((ChannelScreen *) channel_screen)->getTotalUnread();
 }
 
 void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {

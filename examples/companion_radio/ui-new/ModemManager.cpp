@@ -17,6 +17,10 @@ ModemManager modemManager;
 #define AT_BUF_SIZE  512
 static char _atBuf[AT_BUF_SIZE];
 
+// Config file paths
+#define MODEM_CONFIG_FILE "/sms/modem.cfg"
+#define APN_CONFIG_FILE   "/sms/apn.cfg"
+
 // ---------------------------------------------------------------------------
 // Public API - SMS (unchanged)
 // ---------------------------------------------------------------------------
@@ -30,6 +34,10 @@ void ModemManager::begin() {
   _callPhone[0] = '\0';
   _callStartTime = 0;
   _urcPos = 0;
+  _imei[0] = '\0';
+  _imsi[0] = '\0';
+  _apn[0] = '\0';
+  strcpy(_apnSource, "none");
 
   // Create FreeRTOS primitives
   _sendQueue   = xQueueCreate(MODEM_SEND_QUEUE_SIZE, sizeof(SMSOutgoing));
@@ -192,8 +200,6 @@ const char* ModemManager::stateToString(ModemState s) {
 // Persistent modem enable/disable config
 // ---------------------------------------------------------------------------
 
-#define MODEM_CONFIG_FILE "/sms/modem.cfg"
-
 bool ModemManager::loadEnabledConfig() {
   File f = SD.open(MODEM_CONFIG_FILE, FILE_READ);
   if (!f) {
@@ -215,6 +221,112 @@ void ModemManager::saveEnabledConfig(bool enabled) {
     f.close();
     Serial.printf("[Modem] Config saved: %s\n", enabled ? "ENABLED" : "DISABLED");
   }
+}
+
+// ---------------------------------------------------------------------------
+// APN Configuration
+// ---------------------------------------------------------------------------
+
+void ModemManager::setAPN(const char* apn) {
+  strncpy(_apn, apn, sizeof(_apn) - 1);
+  _apn[sizeof(_apn) - 1] = '\0';
+  strcpy(_apnSource, "user");
+  saveAPNConfig(apn);
+  MESH_DEBUG_PRINTLN("[Modem] APN set by user: %s", _apn);
+}
+
+bool ModemManager::loadAPNConfig(char* apnOut, int maxLen) {
+  File f = SD.open(APN_CONFIG_FILE, FILE_READ);
+  if (!f) { return false; }
+  String line = f.readStringUntil('\n');
+  f.close();
+  line.trim();
+  if (line.length() == 0) return false;
+  strncpy(apnOut, line.c_str(), maxLen - 1);
+  apnOut[maxLen - 1] = '\0';
+  return true;
+}
+
+void ModemManager::saveAPNConfig(const char* apn) {
+  if (!SD.exists("/sms")) SD.mkdir("/sms");
+  File f = SD.open(APN_CONFIG_FILE, FILE_WRITE);
+  if (f) {
+    f.println(apn);
+    f.close();
+    Serial.printf("[Modem] APN config saved: %s\n", apn);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// APN Resolution — called during init after network registration
+//
+// Priority:
+//   1. User-configured APN (from /sms/apn.cfg)
+//   2. Network-provisioned APN (AT+CGDCONT? — modem already has one)
+//   3. Auto-detected from IMSI via embedded ApnDatabase
+//   4. Blank (some carriers work with empty APN)
+// ---------------------------------------------------------------------------
+
+void ModemManager::resolveAPN() {
+  // 1. Check for user-configured APN on SD card
+  char userApn[64];
+  if (loadAPNConfig(userApn, sizeof(userApn))) {
+    strncpy(_apn, userApn, sizeof(_apn) - 1);
+    strcpy(_apnSource, "user");
+    MESH_DEBUG_PRINTLN("[Modem] APN from user config: %s", _apn);
+
+    // Apply to modem
+    char cmd[80];
+    snprintf(cmd, sizeof(cmd), "AT+CGDCONT=1,\"IP\",\"%s\"", _apn);
+    sendAT(cmd, "OK", 3000);
+    return;
+  }
+
+  // 2. Check if modem already has a network-provisioned APN
+  if (sendAT("AT+CGDCONT?", "OK", 3000)) {
+    // Response: +CGDCONT: 1,"IP","telstra.internet",,0,0
+    char* p = strstr(_atBuf, "+CGDCONT:");
+    if (p) {
+      char* q1 = strchr(p, '"');     // first quote (before IP)
+      if (q1) q1 = strchr(q1 + 1, '"');  // close quote of IP
+      if (q1) q1 = strchr(q1 + 1, '"');  // open quote of APN
+      if (q1) {
+        q1++;
+        char* q2 = strchr(q1, '"');
+        if (q2 && q2 > q1) {
+          int len = q2 - q1;
+          if (len > 0 && len < (int)sizeof(_apn)) {
+            memcpy(_apn, q1, len);
+            _apn[len] = '\0';
+            strcpy(_apnSource, "network");
+            MESH_DEBUG_PRINTLN("[Modem] APN from network/modem: %s", _apn);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  // 3. Auto-detect from IMSI using embedded database
+  if (_imsi[0]) {
+    const ApnEntry* entry = apnLookupFromIMSI(_imsi);
+    if (entry) {
+      strncpy(_apn, entry->apn, sizeof(_apn) - 1);
+      strcpy(_apnSource, "auto");
+      MESH_DEBUG_PRINTLN("[Modem] APN auto-detected: %s (%s)", _apn, entry->carrier);
+
+      // Apply to modem
+      char cmd[80];
+      snprintf(cmd, sizeof(cmd), "AT+CGDCONT=1,\"IP\",\"%s\"", _apn);
+      sendAT(cmd, "OK", 3000);
+      return;
+    }
+  }
+
+  // 4. No APN found — leave blank
+  _apn[0] = '\0';
+  strcpy(_apnSource, "none");
+  MESH_DEBUG_PRINTLN("[Modem] APN: none detected (IMSI=%s)", _imsi[0] ? _imsi : "unknown");
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +649,28 @@ restart:
   // Disable echo
   sendAT("ATE0", "OK");
 
+  // --- Query device identity ---
+  // IMEI (International Mobile Equipment Identity)
+  if (sendAT("AT+GSN", "OK", 3000)) {
+    // Response is just the IMEI number on its own line
+    char* p = _atBuf;
+    while (*p && !isdigit(*p)) p++;  // skip to first digit
+    int i = 0;
+    while (isdigit(p[i]) && i < 19) { _imei[i] = p[i]; i++; }
+    _imei[i] = '\0';
+    MESH_DEBUG_PRINTLN("[Modem] IMEI: %s", _imei);
+  }
+
+  // IMSI (International Mobile Subscriber Identity) — for APN auto-detection
+  if (sendAT("AT+CIMI", "OK", 3000)) {
+    char* p = _atBuf;
+    while (*p && !isdigit(*p)) p++;
+    int i = 0;
+    while (isdigit(p[i]) && i < 19) { _imsi[i] = p[i]; i++; }
+    _imsi[i] = '\0';
+    MESH_DEBUG_PRINTLN("[Modem] IMSI: %s", _imsi);
+  }
+
   // Set SMS text mode
   sendAT("AT+CMGF=1", "OK");
 
@@ -589,6 +723,10 @@ restart:
   }
 
   // Query operator name
+  // AT+COPS=3,0 sets the format to "long alphanumeric" so AT+COPS?
+  // returns "Optus" instead of "50502"
+  sendAT("AT+COPS=3,0", "OK", 2000);
+
   if (sendAT("AT+COPS?", "OK", 5000)) {
     char* p = strchr(_atBuf, '"');
     if (p) {
@@ -604,8 +742,27 @@ restart:
     }
   }
 
+  // If operator is still numeric (all digits), look up friendly name from IMSI
+  if (_operator[0] && isdigit(_operator[0])) {
+    bool allDigits = true;
+    for (int i = 0; _operator[i]; i++) {
+      if (!isdigit(_operator[i])) { allDigits = false; break; }
+    }
+    if (allDigits && _imsi[0]) {
+      const ApnEntry* entry = apnLookupFromIMSI(_imsi);
+      if (entry && entry->carrier) {
+        strncpy(_operator, entry->carrier, sizeof(_operator) - 1);
+        _operator[sizeof(_operator) - 1] = '\0';
+        MESH_DEBUG_PRINTLN("[Modem] operator (from IMSI lookup): %s", _operator);
+      }
+    }
+  }
+
   // Initial signal query
   pollCSQ();
+
+  // Resolve APN (user config → network provisioned → IMSI auto-detect)
+  resolveAPN();
 
   // Sync ESP32 system clock from modem network time
   bool clockSet = false;
@@ -653,7 +810,8 @@ restart:
   sendAT("AT+CMGD=1,4", "OK", 5000);
 
   _state = ModemState::READY;
-  MESH_DEBUG_PRINTLN("[Modem] READY (CSQ=%d, operator=%s)", _csq, _operator);
+  MESH_DEBUG_PRINTLN("[Modem] READY (CSQ=%d, operator=%s, APN=%s [%s], IMEI=%s)",
+                     _csq, _operator, _apn[0] ? _apn : "(none)", _apnSource, _imei);
 
   // ---- Phase 4: Main loop ----
   unsigned long lastCSQPoll = 0;

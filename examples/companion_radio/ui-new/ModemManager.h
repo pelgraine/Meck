@@ -22,6 +22,7 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include "variant.h"
+#include "ApnDatabase.h"
 
 // ---------------------------------------------------------------------------
 // Modem pins (from variant.h, always defined for reference)
@@ -158,6 +159,20 @@ public:
   const char* getCallPhone() const { return _callPhone; }
   uint32_t getCallStartTime() const { return _callStartTime; }
 
+  // --- Device info (populated during init) ---
+  const char* getIMEI() const { return _imei; }
+  const char* getIMSI() const { return _imsi; }
+  const char* getAPN() const { return _apn; }
+  const char* getAPNSource() const { return _apnSource; }  // "auto", "network", "user", "none"
+
+  // --- APN configuration ---
+  // Set APN manually (overrides auto-detection). Persists to SD.
+  void setAPN(const char* apn);
+  // Load user-configured APN from SD card. Returns true if found.
+  static bool loadAPNConfig(char* apnOut, int maxLen);
+  // Save user-configured APN to SD card.
+  static void saveAPNConfig(const char* apn);
+
   // Pause/resume polling — used by web reader to avoid Core 0 contention
   // during WiFi TLS handshakes.  While paused, the task skips AT commands
   // (SMS poll, CSQ poll) but still drains URCs and handles call commands
@@ -177,6 +192,12 @@ private:
   volatile int _csq = 99;    // 99 = unknown
   volatile bool _paused = false;  // Suppresses AT polling when true
   char _operator[24] = {0};
+
+  // Device identity (populated during Phase 2 init)
+  char _imei[20] = {0};      // IMEI from AT+GSN
+  char _imsi[20] = {0};      // IMSI from AT+CIMI (for APN lookup)
+  char _apn[64] = {0};       // Active APN
+  char _apnSource[8] = {0};  // "auto", "network", "user", "none"
 
   // Call state (written by modem task, read by main loop)
   char _callPhone[SMS_PHONE_LEN] = {0};  // Current call number
@@ -210,6 +231,9 @@ private:
   // URC (unsolicited result code) handling
   void drainURCs();                // Read available UART data, process complete lines
   void processURCLine(const char* line);  // Handle a single URC line
+
+  // APN resolution (called from modem task during init)
+  void resolveAPN();              // Auto-detect APN from network/IMSI/user config
 
   // Call control (called from modem task)
   bool doDialCall(const char* phone);
