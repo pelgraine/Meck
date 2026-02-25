@@ -529,6 +529,7 @@ public:
       // Display messages oldest-to-newest (top to bottom)
       int msgsDrawn = 0;
       bool screenFull = false;
+      bool lastMsgTruncated = false;  // Did the last message get clipped by footer?
       for (int i = startIdx; i < numChannelMsgs && y + lineHeight <= maxY; i++) {
         int idx = channelMsgs[i];
         ChannelMessage* msg = &_messages[idx];
@@ -651,6 +652,9 @@ public:
           }
         }
         
+        // Check if this message was clipped (not all text rendered)
+        lastMsgTruncated = (pos < textLen);
+        
         // If we didn't end on a full line, still count it
         if (px > 0) {
           y += lineHeight;
@@ -666,7 +670,12 @@ public:
       // prevents a feedback loop where variable-height messages cause
       // msgsPerPage to oscillate, shifting startIdx every render (flicker).
       if (screenFull && msgsDrawn > 0 && _scrollPos == 0) {
-        _msgsPerPage = msgsDrawn;
+        // If the last message was truncated (text clipped by footer), exclude it
+        // from the page count so next render starts one message later and the
+        // bottom message fits completely.
+        int effectiveDrawn = lastMsgTruncated ? msgsDrawn - 1 : msgsDrawn;
+        if (effectiveDrawn < 1) effectiveDrawn = 1;
+        _msgsPerPage = effectiveDrawn;
       }
       
       // --- Scroll bar (emoji picker style) ---
