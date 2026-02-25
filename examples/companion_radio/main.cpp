@@ -33,6 +33,11 @@
   static bool composeNeedsRefresh = false;
   #define COMPOSE_REFRESH_INTERVAL 100  // ms before starting e-ink refresh after keypress (refresh itself takes ~644ms)
 
+  // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
+  // interfering with call view rendering and alert display
+  static bool dialerNeedsRefresh = false;
+  static unsigned long lastDialerRefresh = 0;
+
   // DM compose mode (direct message to a specific contact)
   static bool composeDM = false;
   static int composeDMContactIdx = -1;
@@ -887,6 +892,19 @@ void loop() {
       } else if (callEvt.type == CallEventType::ENDED) {
         Serial.printf("[Call] Ended (%lus) with %s\n",
                       (unsigned long)callEvt.duration, callEvt.phone);
+        // Show alert with duration (supplements the immediate alert from Q hangup;
+        // this catches remote hangups and network drops)
+        {
+          char alertBuf[48];
+          if (callEvt.duration > 0) {
+            snprintf(alertBuf, sizeof(alertBuf), "Call Ended  %lu:%02lu",
+                     (unsigned long)(callEvt.duration / 60),
+                     (unsigned long)(callEvt.duration % 60));
+          } else {
+            snprintf(alertBuf, sizeof(alertBuf), "Call Ended");
+          }
+          ui_task.showAlert(alertBuf, 2000);
+        }
         ui_task.forceRefresh();
       } else if (callEvt.type == CallEventType::MISSED) {
         char alertBuf[48];
@@ -931,7 +949,7 @@ void loop() {
     webReaderNeedsRefresh = false;
   }
   #endif
-  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop
+  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop && !dialerNeedsRefresh
   #ifdef MECK_WEB_READER
       && !webReaderTextEntry
   #endif
@@ -961,6 +979,21 @@ void loop() {
       lastComposeRefresh = millis();
       composeNeedsRefresh = false;
     }
+    // Phone dialer debounced render (separate from compose debounce)
+    #ifdef HAS_4G_MODEM
+    if (dialerNeedsRefresh && (millis() - lastDialerRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+      if (smsMode) {
+        SMSScreen* dialScr = (SMSScreen*)ui_task.getSMSScreen();
+        if (dialScr && dialScr->getSubView() == SMSScreen::PHONE_DIALER) {
+          display.startFrame();
+          dialScr->render(display);
+          display.endFrame();
+        }
+      }
+      dialerNeedsRefresh = false;
+      lastDialerRefresh = millis();
+    }
+    #endif
     #ifdef MECK_WEB_READER
     if (webReaderNeedsRefresh && (millis() - lastWebReaderRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       WebReaderScreen* wr2 = (WebReaderScreen*)ui_task.getWebReaderScreen();
@@ -1026,7 +1059,8 @@ void loop() {
             touchFingerDown = true;
             lastTouchAccepted = now;
             if (smsScr->handleTouch(tx, ty)) {
-              ui_task.forceRefresh();
+              dialerNeedsRefresh = true;
+              lastDialerRefresh = millis();
             }
           }
         } else {
@@ -1488,17 +1522,18 @@ void handleKeyboardInput() {
   if (smsMode) {
     SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
     if (smsScr) {
-      // During active call views, route all keys directly to the screen
-      // and force a refresh after each keypress (no debounce needed)
+      // Keep display alive — SMS routes many keys via handleInput() directly,
+      // bypassing injectKey() which normally extends the auto-off timer.
+      ui_task.keepAlive();
       if (smsScr->isInCallView()) {
         smsScr->handleInput(key);
-        if (smsScr->isInCallView()) {
-          // Still in a call view — refresh to update display
-          ui_task.forceRefresh();
-        } else {
-          // Call ended, returned to a non-call view
-          ui_task.forceRefresh();
+        if (!smsScr->isInCallView()) {
+          // Hangup just happened — show "Call Ended" alert immediately
+          ui_task.showAlert("Call Ended", 2000);
         }
+        // Force immediate render (call screen updates or return-to-dialer)
+        ui_task.forceRefresh();
+        ui_task.loop();
         return;
       }
 
@@ -1509,10 +1544,21 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Phone dialer: route keys directly (letter keys map to numbers)
+      // Phone dialer: debounced refresh for digit entry, immediate render for
+      // view transitions (Enter=call, Q=back). This avoids the 686ms e-ink
+      // block per keypress while ensuring call/back screens render instantly.
       if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
         smsScr->handleInput(key);
-        ui_task.forceRefresh();
+        if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+          // Still on dialer (digit/backspace) — debounced refresh
+          dialerNeedsRefresh = true;
+          lastDialerRefresh = millis();
+        } else {
+          // View changed (startCall or Q back) — render immediately
+          dialerNeedsRefresh = false;
+          ui_task.forceRefresh();
+          ui_task.loop();
+        }
         return;
       }
 

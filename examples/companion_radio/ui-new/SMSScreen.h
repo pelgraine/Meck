@@ -47,7 +47,7 @@ class UITask;   // forward declaration
 class SMSScreen : public UIScreen {
 public:
   enum SubView { APP_MENU, INBOX, CONVERSATION, COMPOSE, CONTACTS, EDIT_CONTACT, PHONE_DIALER,
-                 DIALING_OUT, INCOMING_CALL, IN_CALL, CALL_ENDED };
+                 DIALING_OUT, INCOMING_CALL, IN_CALL };
 
 private:
   UITask* _task;
@@ -96,8 +96,6 @@ private:
   unsigned long _callConnectTime;   // millis() when call connected (UI timer)
   uint8_t _callVolume;              // Current speaker volume (0-5)
   uint8_t _callDotAnim;            // Animation frame for dialing dots
-  unsigned long _callEndedTime;     // millis() when call ended (for brief splash)
-  unsigned long _callEndedDuration; // Call duration in seconds (for ended screen)
 
   // Refresh debounce
   bool _needsRefresh;
@@ -129,7 +127,6 @@ public:
     , _contactsCursor(0), _contactsScrollTop(0)
     , _editNamePos(0), _editIsNew(false), _editReturnView(INBOX)
     , _callReturnView(APP_MENU), _callConnectTime(0), _callVolume(3), _callDotAnim(0)
-    , _callEndedTime(0), _callEndedDuration(0)
     , _needsRefresh(false), _lastRefresh(0)
     , _sdReady(false)
   {
@@ -154,7 +151,7 @@ public:
   bool isComposing() const { return _view == COMPOSE; }
   bool isEnteringPhone() const { return _enteringPhone || _view == PHONE_DIALER; }
   bool isInCallView() const {
-    return _view == DIALING_OUT || _view == INCOMING_CALL || _view == IN_CALL || _view == CALL_ENDED;
+    return _view == DIALING_OUT || _view == INCOMING_CALL || _view == IN_CALL;
   }
 
   // Transition to dialing screen — used by all dial callsites
@@ -167,13 +164,6 @@ public:
     _callDotAnim = 0;
     _view = DIALING_OUT;
     modemManager.dialCall(phone);
-  }
-
-  // Show brief "Call Ended" splash before returning to previous view
-  void showCallEnded(unsigned long duration) {
-    _callEndedDuration = duration;
-    _callEndedTime = millis();
-    _view = CALL_ENDED;
   }
 
   // Handle call events from modem (incoming, connected, ended, etc.)
@@ -202,13 +192,12 @@ public:
       case CallEventType::ENDED:
         Serial.printf("[SMSScreen] Call ended (%lus)\n", (unsigned long)evt.duration);
         if (_view == IN_CALL || _view == DIALING_OUT) {
-          // Remote hangup or network drop — show ended splash
-          showCallEnded(evt.duration);
-        } else if (_view != CALL_ENDED) {
-          // Already left call view (e.g. user hung up), just clean up
-          _callPhone[0] = '\0';
-          _callConnectTime = 0;
+          // Remote hangup or network drop — return to previous view
+          // "Call Ended" alert is shown by main.cpp via showAlert()
+          _view = _callReturnView;
         }
+        _callPhone[0] = '\0';
+        _callConnectTime = 0;
         _needsRefresh = true;
         break;
 
@@ -318,7 +307,6 @@ public:
       case DIALING_OUT:   return renderDialingOut(display);
       case INCOMING_CALL: return renderIncomingCall(display);
       case IN_CALL:       return renderInCall(display);
-      case CALL_ENDED:    return renderCallEnded(display);
     }
     return 1000;
   }
@@ -1110,54 +1098,6 @@ public:
     return 1000;  // 1s refresh for timer
   }
 
-  // ---- Call ended (brief splash) ----
-  int renderCallEnded(DisplayDriver& display) {
-    // Auto-dismiss after 2 seconds
-    if (_callEndedTime > 0 && (millis() - _callEndedTime) > 2000) {
-      _view = _callReturnView;
-      _callPhone[0] = '\0';
-      _callConnectTime = 0;
-      return 0;  // Immediate re-render in new view
-    }
-
-    int W = display.width();
-    int H = display.height();
-
-    // Header
-    display.setTextSize(1);
-    display.setColor(DisplayDriver::GREEN);
-    display.setCursor(0, 0);
-    display.print("Call Ended");
-
-    renderSignalIndicator(display, W - 2, 0);
-
-    display.setColor(DisplayDriver::LIGHT);
-    display.drawRect(0, 11, W, 1);
-
-    // Contact name
-    char dispName[SMS_CONTACT_NAME_LEN];
-    smsContacts.displayName(_callPhone, dispName, sizeof(dispName));
-
-    display.setTextSize(1);
-    display.setColor(DisplayDriver::LIGHT);
-    display.setCursor(4, 20);
-    display.print(dispName);
-
-    // Duration
-    if (_callEndedDuration > 0) {
-      char durBuf[16];
-      snprintf(durBuf, sizeof(durBuf), "%02lu:%02lu",
-               _callEndedDuration / 60, _callEndedDuration % 60);
-      display.setTextSize(1);
-      display.setColor(DisplayDriver::LIGHT);
-      uint16_t durW = display.getTextWidth(durBuf);
-      display.setCursor((W - durW) / 2, H / 2 + 4);
-      display.print(durBuf);
-    }
-
-    return 500;  // Check frequently for auto-dismiss
-  }
-
   // =========================================================================
   // INPUT HANDLING
   // =========================================================================
@@ -1174,7 +1114,6 @@ public:
       case DIALING_OUT:   return handleDialingOutInput(c);
       case INCOMING_CALL: return handleIncomingCallInput(c);
       case IN_CALL:       return handleInCallInput(c);
-      case CALL_ENDED:    return handleCallEndedInput(c);
     }
     return false;
   }
@@ -1658,15 +1597,12 @@ public:
   bool handleInCallInput(char c) {
     switch (c) {
       case '\r':  // Enter - hang up
-      case 'q': case 'Q': {
-        unsigned long dur = 0;
-        if (_callConnectTime > 0) {
-          dur = (millis() - _callConnectTime) / 1000;
-        }
+      case 'q': case 'Q':
         modemManager.hangupCall();
-        showCallEnded(dur);
+        _view = _callReturnView;
+        _callPhone[0] = '\0';
+        _callConnectTime = 0;
         return true;
-      }
 
       case 'w': case 'W':  // Volume up
         if (_callVolume < 5) {
@@ -1689,15 +1625,6 @@ public:
         }
         return true;  // Absorb all keys during call
     }
-  }
-
-  // ---- Call ended input (any key dismisses) ----
-  bool handleCallEndedInput(char c) {
-    (void)c;
-    _view = _callReturnView;
-    _callPhone[0] = '\0';
-    _callConnectTime = 0;
-    return true;
   }
 };
 

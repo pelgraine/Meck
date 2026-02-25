@@ -114,6 +114,12 @@ public:
 #endif
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
+  // Wake display and extend auto-off timer. Call this when handling keys
+  // outside of injectKey() to prevent display auto-off during direct input.
+  void keepAlive() {
+    if (_display != NULL && !_display->isOn()) _display->turnOn();
+    _auto_off = millis() + 15000;  // matches AUTO_OFF_MILLIS default
+  }
   int  getMsgCount() const { return _msgcount; }
   int  getUnreadMsgCount() const;  // Per-channel unread tracking (standalone)
   bool hasDisplay() const { return _display != NULL; }
