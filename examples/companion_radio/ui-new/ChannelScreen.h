@@ -14,7 +14,7 @@
 // Maximum messages to store in history
 #define CHANNEL_MSG_HISTORY_SIZE 300
 #define CHANNEL_MSG_TEXT_LEN 160
-#define MSG_PATH_MAX 8  // Max repeater hops stored per message
+#define MSG_PATH_MAX 20  // Max repeater hops stored per message
 
 #ifndef MAX_GROUP_CHANNELS
   #define MAX_GROUP_CHANNELS 20
@@ -24,7 +24,7 @@
 // On-disk format for message persistence (SD card)
 // ---------------------------------------------------------------------------
 #define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
-#define MSG_FILE_VERSION 2
+#define MSG_FILE_VERSION 3           // v3: MSG_PATH_MAX increased to 20
 #define MSG_FILE_PATH    "/meshcore/messages.bin"
 
 struct __attribute__((packed)) MsgFileHeader {
@@ -44,7 +44,7 @@ struct __attribute__((packed)) MsgFileRecord {
   uint8_t  reserved;
   uint8_t  path[MSG_PATH_MAX];  // Repeater hop hashes (first byte of pub key)
   char     text[CHANNEL_MSG_TEXT_LEN];
-  // 176 bytes total
+  // 188 bytes total
 };
 
 class UITask;  // Forward declaration
@@ -74,6 +74,8 @@ private:
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
   bool _sdReady;      // SD card is available for persistence
   bool _showPathOverlay;  // Show path detail overlay for last received msg
+  int _pathScrollPos;     // Scroll offset within path overlay hop list
+  int _pathHopsVisible;   // Hops that fit on screen (set during render)
 
   // Per-channel unread message counts (standalone mode)
   // Index 0..MAX_GROUP_CHANNELS-1 for channel messages
@@ -83,7 +85,7 @@ private:
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false) {
+      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathScrollPos(0), _pathHopsVisible(20) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -125,6 +127,7 @@ public:
     // Reset scroll to show newest message
     _scrollPos = 0;
     _showPathOverlay = false;  // Dismiss overlay on new message
+    _pathScrollPos = 0;
 
     // Track unread count for this channel (only for received messages, not sent)
     // path_len == 0 means locally sent
@@ -157,10 +160,11 @@ public:
     _viewChannelIdx = idx;
     _scrollPos = 0;
     _showPathOverlay = false;
+    _pathScrollPos = 0;
     markChannelRead(idx);
   }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
-  void dismissPathOverlay() { _showPathOverlay = false; }
+  void dismissPathOverlay() { _showPathOverlay = false; _pathScrollPos = 0; }
 
   // --- Unread message tracking (standalone mode) ---
 
@@ -428,12 +432,34 @@ public:
         }
         y += lineH + 2;
         
-        // Show each hop resolved against contacts
+        // Show each hop resolved against contacts (scrollable)
         if (plen > 0 && plen != 0xFF) {
           int displayHops = plen < MSG_PATH_MAX ? plen : MSG_PATH_MAX;
-          int maxY = display.height() - 26;
+          int footerReserve = 26;  // footer + divider
+          int scrollBarW = 4;
+          int maxY = display.height() - footerReserve;
+          int hopAreaTop = y;
           
-          for (int h = 0; h < displayHops && y + lineH <= maxY; h++) {
+          // Calculate how many hops fit in the visible area
+          int hopsVisible = (maxY - hopAreaTop) / lineH;
+          if (hopsVisible < 1) hopsVisible = 1;
+          _pathHopsVisible = hopsVisible;  // Cache for input handler
+          bool needsScroll = displayHops > hopsVisible;
+          
+          // Clamp scroll position
+          int maxScroll = displayHops - hopsVisible;
+          if (maxScroll < 0) maxScroll = 0;
+          if (_pathScrollPos > maxScroll) _pathScrollPos = maxScroll;
+          
+          // Available text width (narrower if scroll bar present)
+          int textRight = needsScroll ? display.width() - scrollBarW - 2 : display.width();
+          (void)textRight;  // reserved for future truncation
+          
+          int startHop = _pathScrollPos;
+          int endHop = startHop + hopsVisible;
+          if (endHop > displayHops) endHop = displayHops;
+          
+          for (int h = startHop; h < endHop && y + lineH <= maxY; h++) {
             uint8_t hopHash = msg->path[h];
             display.setCursor(0, y);
             display.setColor(DisplayDriver::LIGHT);
@@ -480,6 +506,25 @@ public:
             }
             y += lineH;
           }
+          
+          // Scroll bar (right edge) when hops exceed visible area
+          if (needsScroll) {
+            int sbX = display.width() - scrollBarW;
+            int sbTop = hopAreaTop;
+            int sbHeight = maxY - hopAreaTop;
+            
+            // Outline
+            display.setColor(DisplayDriver::LIGHT);
+            display.drawRect(sbX, sbTop, scrollBarW, sbHeight);
+            
+            // Proportional thumb
+            int thumbH = (hopsVisible * sbHeight) / displayHops;
+            if (thumbH < 4) thumbH = 4;
+            int thumbY = sbTop + (_pathScrollPos * (sbHeight - thumbH)) / maxScroll;
+            display.setColor(DisplayDriver::GREEN);
+            for (int ty = thumbY + 1; ty < thumbY + thumbH - 1; ty++)
+              display.drawRect(sbX + 1, ty, scrollBarW - 2, 1);
+          }
         }
       }
       
@@ -490,6 +535,13 @@ public:
       display.setCursor(0, footerY);
       display.setColor(DisplayDriver::YELLOW);
       display.print("Q:Back");
+      // Show scroll hint if path is scrollable
+      if (msg && msg->path_len > _pathHopsVisible && msg->path_len != 0xFF) {
+        const char* scrollHint = "W/S:Scrl";
+        int scrollW = display.getTextWidth(scrollHint);
+        display.setCursor((display.width() - scrollW) / 2, footerY);
+        display.print(scrollHint);
+      }
       const char* copyHint = "Ent:Copy";
       display.setCursor(display.width() - display.getTextWidth(copyHint) - 2, footerY);
       display.print(copyHint);
@@ -754,14 +806,33 @@ public:
   }
 
   bool handleInput(char c) override {
-    // If overlay is showing, only handle dismiss
+    // If overlay is showing, handle scroll and dismiss
     if (_showPathOverlay) {
       if (c == 'q' || c == 'Q' || c == '\b' || c == 'v' || c == 'V') {
         _showPathOverlay = false;
+        _pathScrollPos = 0;
         return true;
       }
       if (c == '\r' || c == 13) {
         return false;  // Let main.cpp handle Enter for copy-to-compose
+      }
+      // W - scroll up in hop list
+      if (c == 'w' || c == 'W' || c == 0xF2) {
+        if (_pathScrollPos > 0) {
+          _pathScrollPos--;
+        }
+        return true;
+      }
+      // S - scroll down in hop list
+      if (c == 's' || c == 'S' || c == 0xF1) {
+        ChannelMessage* msg = getNewestReceivedMsg();
+        if (msg && msg->path_len > 0 && msg->path_len != 0xFF) {
+          int totalHops = msg->path_len < MSG_PATH_MAX ? msg->path_len : MSG_PATH_MAX;
+          if (_pathScrollPos < totalHops - _pathHopsVisible) {
+            _pathScrollPos++;
+          }
+        }
+        return true;
       }
       return true;  // Consume all other keys while overlay is up
     }
@@ -772,6 +843,7 @@ public:
     if (c == 'v' || c == 'V') {
       if (getNewestReceivedMsg() != nullptr) {
         _showPathOverlay = true;
+        _pathScrollPos = 0;
         return true;
       }
       return false;  // No received messages to show
