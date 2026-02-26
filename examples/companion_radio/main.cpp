@@ -1837,9 +1837,23 @@ void handleKeyboardInput() {
         composeDMContactIdx = -1;
         composeChannelIdx = ui_task.getChannelScreenViewIdx();
         composeMode = true;
-        composeBuffer[0] = '\0';
-        composePos = 0;
-        Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
+
+        // If reply select mode is active, pre-fill @SenderName
+        char replySender[32];
+        if (chScr2 && chScr2->isReplySelectMode()
+            && chScr2->getReplySelectSender(replySender, sizeof(replySender))) {
+          int prefixLen = snprintf(composeBuffer, sizeof(composeBuffer),
+                                   "@%s ", replySender);
+          composePos = prefixLen;
+          chScr2->exitReplySelect();
+          Serial.printf("Reply compose to @%s, channel %d\n",
+                        replySender, composeChannelIdx);
+        } else {
+          composeBuffer[0] = '\0';
+          composePos = 0;
+          if (chScr2) chScr2->exitReplySelect();  // Clean up if somehow active
+          Serial.printf("Entering compose mode, channel %d\n", composeChannelIdx);
+        }
         drawComposeScreen();
         lastComposeRefresh = millis();
       } else {
@@ -1864,8 +1878,10 @@ void handleKeyboardInput() {
       break;
 
     case 'r':
-      // Import/merge contacts from SD backup (contacts screen only)
-      if (ui_task.isOnContactsScreen()) {
+      // Reply select mode (channel screen) or import contacts (contacts screen)
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.injectKey('r');
+      } else if (ui_task.isOnContactsScreen()) {
         Serial.println("Contacts: Importing from SD...");
         int added = importContactsFromSD();
         if (added > 0) {
@@ -1886,9 +1902,13 @@ void handleKeyboardInput() {
 
     case 'q':
     case '\b':
-      // If channel screen path overlay is showing, dismiss it instead of going home
+      // If channel screen reply select or path overlay is showing, dismiss it
       if (ui_task.isOnChannelScreen()) {
         ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+        if (chScr && chScr->isReplySelectMode()) {
+          ui_task.injectKey('q');
+          break;
+        }
         if (chScr && chScr->isShowingPathOverlay()) {
           ui_task.injectKey('q');
           break;

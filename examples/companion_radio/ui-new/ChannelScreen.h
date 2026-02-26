@@ -77,6 +77,11 @@ private:
   int _pathScrollPos;     // Scroll offset within path overlay hop list
   int _pathHopsVisible;   // Hops that fit on screen (set during render)
 
+  // Reply select mode — press R to pick a message and reply with @mention
+  bool _replySelectMode;       // True when user is picking a message to reply to
+  int  _replySelectPos;        // Index into chronological channelMsgs[] (0=oldest)
+  int  _replyChannelMsgCount;  // Cached count from last render (for input bounds)
+
   // Per-channel unread message counts (standalone mode)
   // Index 0..MAX_GROUP_CHANNELS-1 for channel messages
   // Index MAX_GROUP_CHANNELS for DMs (channel_idx == 0xFF)
@@ -85,7 +90,8 @@ private:
 public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
-      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathScrollPos(0), _pathHopsVisible(20) {
+      _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathScrollPos(0), _pathHopsVisible(20),
+      _replySelectMode(false), _replySelectPos(-1), _replyChannelMsgCount(0) {
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -128,6 +134,8 @@ public:
     _scrollPos = 0;
     _showPathOverlay = false;  // Dismiss overlay on new message
     _pathScrollPos = 0;
+    _replySelectMode = false;  // Dismiss reply select on new message
+    _replySelectPos = -1;
 
     // Track unread count for this channel (only for received messages, not sent)
     // path_len == 0 means locally sent
@@ -165,6 +173,70 @@ public:
   }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
   void dismissPathOverlay() { _showPathOverlay = false; _pathScrollPos = 0; }
+
+  // --- Reply select mode (R key → pick a message → Enter to @mention reply) ---
+  bool isReplySelectMode() const { return _replySelectMode; }
+  void exitReplySelect() { _replySelectMode = false; _replySelectPos = -1; }
+
+  // Extract sender name from a "Sender: message" formatted text.
+  // Returns true if a sender was found, fills senderBuf (null-terminated).
+  static bool extractSenderName(const char* msgText, char* senderBuf, int bufLen) {
+    const char* colon = strstr(msgText, ": ");
+    if (!colon || colon == msgText) return false;
+    int nameLen = colon - msgText;
+    if (nameLen >= bufLen) nameLen = bufLen - 1;
+    memcpy(senderBuf, msgText, nameLen);
+    senderBuf[nameLen] = '\0';
+    return true;
+  }
+
+  // Get the sender name of the currently selected message in reply select mode.
+  // Returns true and fills senderBuf if valid selection exists.
+  bool getReplySelectSender(char* senderBuf, int bufLen) {
+    if (!_replySelectMode || _replySelectPos < 0) return false;
+
+    // Rebuild the channel message list (same logic as render)
+    static int rsMsgs[CHANNEL_MSG_HISTORY_SIZE];
+    int count = 0;
+    for (int i = 0; i < _msgCount && count < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      int idx = _newestIdx - i;
+      while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+      idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx) {
+        rsMsgs[count++] = idx;
+      }
+    }
+    // Reverse to chronological (oldest first)
+    for (int l = 0, r = count - 1; l < r; l++, r--) {
+      int t = rsMsgs[l]; rsMsgs[l] = rsMsgs[r]; rsMsgs[r] = t;
+    }
+
+    if (_replySelectPos >= count) return false;
+    int idx = rsMsgs[_replySelectPos];
+    return extractSenderName(_messages[idx].text, senderBuf, bufLen);
+  }
+
+  // Get the ChannelMessage pointer for the currently selected reply message.
+  ChannelMessage* getReplySelectMsg() {
+    if (!_replySelectMode || _replySelectPos < 0) return nullptr;
+
+    static int rsMsgs[CHANNEL_MSG_HISTORY_SIZE];
+    int count = 0;
+    for (int i = 0; i < _msgCount && count < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      int idx = _newestIdx - i;
+      while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+      idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx) {
+        rsMsgs[count++] = idx;
+      }
+    }
+    for (int l = 0, r = count - 1; l < r; l++, r--) {
+      int t = rsMsgs[l]; rsMsgs[l] = rsMsgs[r]; rsMsgs[r] = t;
+    }
+
+    if (_replySelectPos >= count) return nullptr;
+    return &_messages[rsMsgs[_replySelectPos]];
+  }
 
   // --- Unread message tracking (standalone mode) ---
 
@@ -595,6 +667,9 @@ public:
         int tmp = channelMsgs[l]; channelMsgs[l] = channelMsgs[r]; channelMsgs[r] = tmp;
       }
       
+      // Cache for reply select input bounds
+      _replyChannelMsgCount = numChannelMsgs;
+      
       // Clamp scroll position to valid range
       int maxScroll = numChannelMsgs > _msgsPerPage ? numChannelMsgs - _msgsPerPage : 0;
       if (_scrollPos > maxScroll) _scrollPos = maxScroll;
@@ -612,31 +687,61 @@ public:
         int idx = channelMsgs[i];
         ChannelMessage* msg = &_messages[idx];
         
+        // Reply select: is this the currently selected message?
+        bool isSelected = (_replySelectMode && i == _replySelectPos);
+        
+        // Highlight: single fillRect for the entire message area, then
+        // draw DARK text on top (same pattern as web reader bookmarks).
+        // Because message height depends on word-wrap, we fill a generous
+        // area up-front and erase the excess after rendering.
+        int yStart = y;
+        int contentW = display.width();
+        int maxLinesPerMsg = 8;
+        if (isSelected) {
+          int maxFillH = (maxLinesPerMsg + 1) * lineHeight + 2;
+          int availH = maxY - y;
+          if (maxFillH > availH) maxFillH = availH;
+          display.setColor(DisplayDriver::LIGHT);
+          display.fillRect(0, y + 5, contentW, maxFillH);
+        }
+        
         // Time indicator with hop count - inline on same line as message start
         display.setCursor(0, y);
-        display.setColor(DisplayDriver::YELLOW);
+        display.setColor(isSelected ? DisplayDriver::DARK : DisplayDriver::YELLOW);
         
         uint32_t age = _rtc->getCurrentTime() - msg->timestamp;
-        if (age < 60) {
-          sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : msg->path_len, age);
-        } else if (age < 3600) {
-          sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 60);
-        } else if (age < 86400) {
-          sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 3600);
+        if (isSelected) {
+          // Show > marker for selected message, replacing the hop count
+          if (age < 60) {
+            sprintf(tmp, ">%ds ", age);
+          } else if (age < 3600) {
+            sprintf(tmp, ">%dm ", age / 60);
+          } else if (age < 86400) {
+            sprintf(tmp, ">%dh ", age / 3600);
+          } else {
+            sprintf(tmp, ">%dd ", age / 86400);
+          }
         } else {
-          sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
+          if (age < 60) {
+            sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : msg->path_len, age);
+          } else if (age < 3600) {
+            sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 60);
+          } else if (age < 86400) {
+            sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 3600);
+          } else {
+            sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
+          }
         }
         display.print(tmp);
         // DO NOT advance y - message text continues on the same line
         
         // Message text with character wrapping and inline emoji support
         // (continues after timestamp on first line)
-        display.setColor(DisplayDriver::LIGHT);
+        display.setColor(isSelected ? DisplayDriver::DARK : DisplayDriver::LIGHT);
         
         int textLen = strlen(msg->text);
         int pos = 0;
         int linesForThisMsg = 0;
-        int maxLinesPerMsg = 8;
         char charStr[2] = {0, 0};
         
         // Track position in pixels for emoji placement
@@ -739,6 +844,21 @@ public:
         }
         
         y += 2;  // Small gap between messages
+        
+        // Erase excess highlight below the actual message.
+        // The upfront fillRect covered a max area; restore the unused
+        // portion back to background so subsequent messages render cleanly.
+        if (isSelected) {
+          int usedH = y - yStart;
+          int maxFillH = (maxLinesPerMsg + 1) * lineHeight + 2;
+          int availH = maxY - yStart;
+          if (maxFillH > availH) maxFillH = availH;
+          if (usedH < maxFillH) {
+            display.setColor(DisplayDriver::DARK);
+            display.fillRect(0, y + 5, contentW, maxFillH - usedH);
+          }
+        }
+        
         msgsDrawn++;
         if (y + lineHeight > maxY) screenFull = true;
       }
@@ -791,12 +911,17 @@ public:
     display.setColor(DisplayDriver::YELLOW);
     
     // Left side: abbreviated controls
-    display.print("Q:Bck A/D:Ch V:Pth");
-    
-    // Right side: Ent:New
-    const char* rightText = "Ent:New";
-    display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
-    display.print(rightText);
+    if (_replySelectMode) {
+      display.print("W/S:Sel V:Pth Q:X");
+      const char* rightText = "Ent:Reply";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
+    } else {
+      display.print("Q:Bck A/D:Ch R:Rply");
+      const char* rightText = "Ent:New";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
+    }
 
 #if AUTO_OFF_MILLIS == 0  // e-ink
     return 5000;
@@ -836,8 +961,71 @@ public:
       }
       return true;  // Consume all other keys while overlay is up
     }
-    
+
+    // --- Reply select mode ---
+    if (_replySelectMode) {
+      // Q - exit reply select
+      if (c == 'q' || c == 'Q' || c == '\b') {
+        _replySelectMode = false;
+        _replySelectPos = -1;
+        return true;
+      }
+      // W - select older message (lower index in chronological order)
+      if (c == 'w' || c == 'W' || c == 0xF2) {
+        if (_replySelectPos > 0) {
+          _replySelectPos--;
+          // Auto-scroll to keep selection visible
+          int startIdx = _replyChannelMsgCount - _msgsPerPage - _scrollPos;
+          if (startIdx < 0) startIdx = 0;
+          if (_replySelectPos < startIdx) {
+            _scrollPos++;
+          }
+        }
+        return true;
+      }
+      // S - select newer message (higher index in chronological order)
+      if (c == 's' || c == 'S' || c == 0xF1) {
+        if (_replySelectPos < _replyChannelMsgCount - 1) {
+          _replySelectPos++;
+          // Auto-scroll to keep selection visible
+          int endIdx = _replyChannelMsgCount - _scrollPos;
+          if (_replySelectPos >= endIdx) {
+            if (_scrollPos > 0) _scrollPos--;
+          }
+        }
+        return true;
+      }
+      // V - view path for the SELECTED message (not just newest received)
+      if (c == 'v' || c == 'V') {
+        // Path overlay will use getNewestReceivedMsg() — for v1 this is fine.
+        // The user can see the selected message's hop count in the > marker.
+        ChannelMessage* selMsg = getReplySelectMsg();
+        if (selMsg && selMsg->path_len != 0) {
+          _showPathOverlay = true;
+          _pathScrollPos = 0;
+        }
+        return true;
+      }
+      // Enter - let main.cpp handle (enters compose with @mention)
+      if (c == '\r' || c == 13) {
+        return false;
+      }
+      return true;  // Consume all other keys in reply select
+    }
+
     int channelMsgCount = getMessageCountForChannel();
+
+    // R - enter reply select mode
+    if (c == 'r' || c == 'R') {
+      if (channelMsgCount > 0) {
+        _replySelectMode = true;
+        // Start with newest message selected
+        _replySelectPos = _replyChannelMsgCount > 0
+                            ? _replyChannelMsgCount - 1 : channelMsgCount - 1;
+        return true;
+      }
+      return false;
+    }
     
     // V - show path detail for last received message
     if (c == 'v' || c == 'V') {
@@ -867,6 +1055,8 @@ public:
     
     // A - previous channel
     if (c == 'a' || c == 'A') {
+      _replySelectMode = false;
+      _replySelectPos = -1;
       if (_viewChannelIdx > 0) {
         _viewChannelIdx--;
       } else {
@@ -886,6 +1076,8 @@ public:
     
     // D - next channel
     if (c == 'd' || c == 'D') {
+      _replySelectMode = false;
+      _replySelectPos = -1;
       ChannelDetails ch;
       uint8_t nextIdx = _viewChannelIdx + 1;
       if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
