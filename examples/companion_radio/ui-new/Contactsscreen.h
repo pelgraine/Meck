@@ -18,6 +18,7 @@ public:
     FILTER_REPEATER,
     FILTER_ROOM,       // Room servers
     FILTER_SENSOR,
+    FILTER_FAVOURITE,  // Contacts marked as favourite (any type)
     FILTER_COUNT       // keep last
   };
 
@@ -48,6 +49,7 @@ private:
       case FILTER_REPEATER:  return "Rptr";
       case FILTER_ROOM:      return "Room";
       case FILTER_SENSOR:    return "Sens";
+      case FILTER_FAVOURITE: return "Fav";
       default:               return "?";
     }
   }
@@ -61,7 +63,7 @@ private:
     }
   }
 
-  bool matchesFilter(uint8_t adv_type) const {
+  bool matchesFilter(uint8_t adv_type, uint8_t flags = 0) const {
     switch (_filter) {
       case FILTER_ALL:       return true;
       case FILTER_CHAT:      return adv_type == ADV_TYPE_CHAT;
@@ -70,6 +72,7 @@ private:
       case FILTER_SENSOR:    return (adv_type != ADV_TYPE_CHAT &&
                                      adv_type != ADV_TYPE_REPEATER &&
                                      adv_type != ADV_TYPE_ROOM);
+      case FILTER_FAVOURITE: return (flags & 0x01) != 0;
       default:               return true;
     }
   }
@@ -80,7 +83,7 @@ private:
     ContactInfo contact;
     for (uint32_t i = 0; i < numContacts && _filteredCount < MAX_CONTACTS; i++) {
       if (the_mesh.getContactByIdx(i, contact)) {
-        if (matchesFilter(contact.type)) {
+        if (matchesFilter(contact.type, contact.flags)) {
           _filteredIdx[_filteredCount] = (uint16_t)i;
           _filteredTs[_filteredCount] = contact.last_advert_timestamp;
           _filteredCount++;
@@ -294,17 +297,17 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    // Left: Q:Bk X:Exp
+    // Left: Q:Back
     display.setCursor(0, footerY);
-    display.print("Q:Bk X:Exp");
+    display.print("Q:Back");
 
     // Center: A/D:Filter
     const char* mid = "A/D:Filtr";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
 
-    // Right: R:Imp W/S
-    const char* right = "R:Imp W/S";
+    // Right: W/S:Scroll
+    const char* right = "W/S:Scrll";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 
