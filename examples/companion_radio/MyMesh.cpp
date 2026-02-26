@@ -1043,6 +1043,7 @@ void MyMesh::begin(bool has_display) {
   _active_ble_pin = 0;
 #endif
 
+  initContacts();    // allocate contacts array from PSRAM (deferred from constructor)
   resetContacts();
   _store->loadContacts(this);
   bootstrapRTCfromContacts();

@@ -58,9 +58,9 @@ class BaseChatMesh : public mesh::Mesh {
 
   friend class ContactsIterator;
 
-  ContactInfo contacts[MAX_CONTACTS];
+  ContactInfo* contacts;
   int num_contacts;
-  int sort_array[MAX_CONTACTS];
+  int* sort_array;
   int matching_peer_indexes[MAX_SEARCH_RESULTS];
   unsigned long txt_send_timeout;
 #ifdef MAX_GROUP_CHANNELS
@@ -78,6 +78,8 @@ protected:
   BaseChatMesh(mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::PacketManager& mgr, mesh::MeshTables& tables)
       : mesh::Mesh(radio, ms, rng, rtc, mgr, tables)
   { 
+    contacts = NULL;
+    sort_array = NULL;
     num_contacts = 0;
   #ifdef MAX_GROUP_CHANNELS
     memset(channels, 0, sizeof(channels));
@@ -90,6 +92,19 @@ protected:
 
   void bootstrapRTCfromContacts();
   void resetContacts() { num_contacts = 0; }
+
+  // Must be called from begin() before loadContacts/bootstrapRTCfromContacts.
+  // Deferred from constructor because PSRAM is not available during global init.
+  void initContacts() {
+    if (contacts != NULL) return;  // already initialized
+  #if defined(ESP32) && defined(BOARD_HAS_PSRAM)
+    contacts = (ContactInfo*)ps_calloc(MAX_CONTACTS, sizeof(ContactInfo));
+    sort_array = (int*)ps_calloc(MAX_CONTACTS, sizeof(int));
+  #else
+    contacts = new ContactInfo[MAX_CONTACTS]();
+    sort_array = new int[MAX_CONTACTS]();
+  #endif
+  }
   void populateContactFromAdvert(ContactInfo& ci, const mesh::Identity& id, const AdvertDataParser& parser, uint32_t timestamp);
   ContactInfo* allocateContactSlot(); // helper to find slot for new contact
 

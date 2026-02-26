@@ -18,7 +18,6 @@ public:
     FILTER_REPEATER,
     FILTER_ROOM,       // Room servers
     FILTER_SENSOR,
-    FILTER_FAVOURITE,  // Contacts marked as favourite (any type)
     FILTER_COUNT       // keep last
   };
 
@@ -31,9 +30,9 @@ private:
 
   // Cached filtered contact indices for efficient scrolling
   // We rebuild this on filter change or when entering the screen
-  static const int MAX_VISIBLE = 400;  // matches MAX_CONTACTS build flag
-  uint16_t _filteredIdx[MAX_VISIBLE];  // indices into contact table
-  uint32_t _filteredTs[MAX_VISIBLE];   // cached last_advert_timestamp for sorting
+  // Arrays allocated in PSRAM when available (supports 1000+ contacts)
+  uint16_t* _filteredIdx;    // indices into contact table
+  uint32_t* _filteredTs;     // cached last_advert_timestamp for sorting
   int _filteredCount;                  // how many contacts match current filter
   bool _cacheValid;
 
@@ -49,7 +48,6 @@ private:
       case FILTER_REPEATER:  return "Rptr";
       case FILTER_ROOM:      return "Room";
       case FILTER_SENSOR:    return "Sens";
-      case FILTER_FAVOURITE: return "Fav";
       default:               return "?";
     }
   }
@@ -63,7 +61,7 @@ private:
     }
   }
 
-  bool matchesFilter(uint8_t adv_type, uint8_t flags = 0) const {
+  bool matchesFilter(uint8_t adv_type) const {
     switch (_filter) {
       case FILTER_ALL:       return true;
       case FILTER_CHAT:      return adv_type == ADV_TYPE_CHAT;
@@ -72,7 +70,6 @@ private:
       case FILTER_SENSOR:    return (adv_type != ADV_TYPE_CHAT &&
                                      adv_type != ADV_TYPE_REPEATER &&
                                      adv_type != ADV_TYPE_ROOM);
-      case FILTER_FAVOURITE: return (flags & 0x01) != 0;
       default:               return true;
     }
   }
@@ -81,9 +78,9 @@ private:
     _filteredCount = 0;
     uint32_t numContacts = the_mesh.getNumContacts();
     ContactInfo contact;
-    for (uint32_t i = 0; i < numContacts && _filteredCount < MAX_VISIBLE; i++) {
+    for (uint32_t i = 0; i < numContacts && _filteredCount < MAX_CONTACTS; i++) {
       if (the_mesh.getContactByIdx(i, contact)) {
-        if (matchesFilter(contact.type, contact.flags)) {
+        if (matchesFilter(contact.type)) {
           _filteredIdx[_filteredCount] = (uint16_t)i;
           _filteredTs[_filteredCount] = contact.last_advert_timestamp;
           _filteredCount++;
@@ -91,7 +88,7 @@ private:
       }
     }
     // Sort by last_advert_timestamp descending (most recently seen first)
-    // Simple insertion sort — fine for up to 400 entries on ESP32
+    // Insertion sort — fine for up to ~1000 entries on ESP32
     for (int i = 1; i < _filteredCount; i++) {
       uint16_t tmpIdx = _filteredIdx[i];
       uint32_t tmpTs  = _filteredTs[i];
@@ -133,7 +130,15 @@ private:
 public:
   ContactsScreen(UITask* task, mesh::RTCClock* rtc)
     : _task(task), _rtc(rtc), _scrollPos(0), _filter(FILTER_ALL),
-      _filteredCount(0), _cacheValid(false), _rowsPerPage(5) {}
+      _filteredCount(0), _cacheValid(false), _rowsPerPage(5) {
+  #if defined(ESP32) && defined(BOARD_HAS_PSRAM)
+    _filteredIdx = (uint16_t*)ps_calloc(MAX_CONTACTS, sizeof(uint16_t));
+    _filteredTs = (uint32_t*)ps_calloc(MAX_CONTACTS, sizeof(uint32_t));
+  #else
+    _filteredIdx = new uint16_t[MAX_CONTACTS]();
+    _filteredTs = new uint32_t[MAX_CONTACTS]();
+  #endif
+  }
 
   void invalidateCache() { _cacheValid = false; }
 
@@ -289,17 +294,17 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
-    // Left: Q:Back
+    // Left: Q:Bk X:Exp
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Q:Bk X:Exp");
 
     // Center: A/D:Filter
     const char* mid = "A/D:Filtr";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
 
-    // Right: W/S:Scroll
-    const char* right = "W/S:Scrll";
+    // Right: R:Imp W/S
+    const char* right = "R:Imp W/S";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 

@@ -1524,6 +1524,9 @@ void UITask::gotoWebReader() {
   if (_display != NULL) {
     wr->enter(*_display);
   }
+  // Heap diagnostic — check state after web reader entry (WiFi connects later)
+  Serial.printf("[HEAP] WebReader enter - free: %u, largest: %u, PSRAM: %u\n",
+      ESP.getFreeHeap(), ESP.getMaxAllocHeap(), ESP.getFreePsram());
   setCurrScreen(web_reader);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
