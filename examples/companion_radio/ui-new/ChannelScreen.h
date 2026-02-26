@@ -160,6 +160,7 @@ public:
     markChannelRead(idx);
   }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
+  void dismissPathOverlay() { _showPathOverlay = false; }
 
   // --- Unread message tracking (standalone mode) ---
 
@@ -202,6 +203,24 @@ public:
       }
     }
     return nullptr;
+  }
+
+  // Format the path of the newest received message as paste-ready text
+  // Output: comma-separated hex prefixes e.g. "30, 3b, 9b, 05, e8, 36"
+  // Returns length written (0 if no path available)
+  int formatPathAsText(char* buf, int bufLen) {
+    ChannelMessage* msg = getNewestReceivedMsg();
+    if (!msg || msg->path_len == 0 || msg->path_len == 0xFF) return 0;
+    
+    int pos = 0;
+    int plen = msg->path_len < MSG_PATH_MAX ? msg->path_len : MSG_PATH_MAX;
+    
+    for (int h = 0; h < plen && pos < bufLen - 1; h++) {
+      if (h > 0) pos += snprintf(buf + pos, bufLen - pos, ", ");
+      pos += snprintf(buf + pos, bufLen - pos, "%02x", msg->path[h]);
+    }
+    
+    return pos;
   }
 
   // -----------------------------------------------------------------------
@@ -421,7 +440,12 @@ public:
             sprintf(tmp, " %d: ", h + 1);
             display.print(tmp);
             
-            // Try to resolve: prefer repeaters, then any contact
+            // Always show hex prefix first
+            display.setColor(DisplayDriver::LIGHT);
+            sprintf(tmp, "%02X ", hopHash);
+            display.print(tmp);
+            
+            // Try to resolve name: prefer repeaters, then any contact
             bool resolved = false;
             int numContacts = the_mesh.getNumContacts();
             ContactInfo contact;
@@ -449,11 +473,10 @@ public:
                 }
               }
             }
-            // Fallback: show hex hash
+            // No name resolved - hex prefix already shown, add "?" marker
             if (!resolved) {
               display.setColor(DisplayDriver::LIGHT);
-              sprintf(tmp, "?%02X", hopHash);
-              display.print(tmp);
+              display.print("?");
             }
             y += lineH;
           }
@@ -467,6 +490,9 @@ public:
       display.setCursor(0, footerY);
       display.setColor(DisplayDriver::YELLOW);
       display.print("Q:Back");
+      const char* copyHint = "Ent:Copy";
+      display.setCursor(display.width() - display.getTextWidth(copyHint) - 2, footerY);
+      display.print(copyHint);
 
 #if AUTO_OFF_MILLIS == 0
       return 5000;
@@ -734,7 +760,10 @@ public:
         _showPathOverlay = false;
         return true;
       }
-      return true;  // Consume all keys while overlay is up
+      if (c == '\r' || c == 13) {
+        return false;  // Let main.cpp handle Enter for copy-to-compose
+      }
+      return true;  // Consume all other keys while overlay is up
     }
     
     int channelMsgCount = getMessageCountForChannel();

@@ -1809,9 +1809,28 @@ void handleKeyboardInput() {
           Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
         }
       } else if (ui_task.isOnChannelScreen()) {
-        // Don't enter compose if path overlay is showing
+        // If path overlay is showing, Enter copies path text to compose buffer
         ChannelScreen* chScr2 = (ChannelScreen*)ui_task.getChannelScreen();
         if (chScr2 && chScr2->isShowingPathOverlay()) {
+          char pathText[138];
+          int pathLen = chScr2->formatPathAsText(pathText, sizeof(pathText));
+          if (pathLen > 0) {
+            int copyLen = pathLen < 137 ? pathLen : 137;
+            memcpy(composeBuffer, pathText, copyLen);
+            composeBuffer[copyLen] = '\0';
+            composePos = copyLen;
+          } else {
+            composeBuffer[0] = '\0';
+            composePos = 0;
+          }
+          composeDM = false;
+          composeDMContactIdx = -1;
+          composeChannelIdx = ui_task.getChannelScreenViewIdx();
+          composeMode = true;
+          chScr2->dismissPathOverlay();
+          Serial.printf("Compose with path, channel %d, prefill %d chars\n", composeChannelIdx, composePos);
+          drawComposeScreen();
+          lastComposeRefresh = millis();
           break;
         }
         composeDM = false;
