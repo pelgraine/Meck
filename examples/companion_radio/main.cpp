@@ -1484,8 +1484,8 @@ void handleKeyboardInput() {
       return;
     }
 
-    // In menu state: Shift+Del exits to contacts, C opens compose
-    if (astate == RepeaterAdminScreen::STATE_MENU) {
+    // In category menu (top level): Shift+Del exits to contacts, C opens compose
+    if (astate == RepeaterAdminScreen::STATE_CATEGORY_MENU) {
       if (shiftDel) {
         Serial.println("Nav: Back to contacts from admin menu");
         ui_task.gotoContactsScreen();
@@ -1507,8 +1507,9 @@ void handleKeyboardInput() {
       return;
     }
 
-    // In waiting/response/error states: convert Shift+Del to exit signal,
-    // pass all other keys through
+    // All other states (command menu, param entry, confirm, waiting,
+    // response, error): convert Shift+Del to exit signal and let the
+    // screen handle back-navigation internally
     if (shiftDel) {
       ui_task.injectKey(KEY_ADMIN_EXIT);
     } else {
