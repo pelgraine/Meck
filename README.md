@@ -14,6 +14,8 @@ This fork was created specifically to focus on enabling BLE companion firmware f
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
   - [Emoji Picker](#emoji-picker)
+  - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
+  - [Web Browser & IRC](#web-browser--irc)
 - [About MeshCore](#about-meshcore)
 - [What is MeshCore?](#what-is-meshcore)
 - [Key Features](#key-features)
@@ -42,7 +44,11 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | M | Open channel messages |
 | C | Open contacts list |
 | E | Open e-book reader |
+| N | Open notes |
 | S | Open settings |
+| B | Open web browser (BLE and 4G variants only) |
+| T | Open SMS & Phone app (4G variant only) |
+| P | Open audiobook player (audio variant only) |
 | Q | Back to home screen |
 
 ### Bluetooth (BLE)
@@ -80,6 +86,8 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 | W / S | Scroll messages up/down |
 | A / D | Switch between channels |
 | Enter | Compose new message |
+| R | Reply to a message — enter reply select mode, scroll to a message with W/S, then press Enter to compose a reply with an @mention |
+| V | View relay path of the last received message (scrollable, up to 20 hops) |
 | Q | Back to home screen |
 
 ### Contacts Screen
@@ -89,9 +97,13 @@ Press **C** from the home screen to open the contacts list. All known mesh conta
 | Key | Action |
 |-----|--------|
 | W / S | Scroll up / down through contacts |
-| A / D | Cycle filter: All → Chat → Repeater → Room → Sensor |
+| A / D | Cycle filter: All → Chat → Repeater → Room → Sensor → Favourites |
 | Enter | Open DM compose (Chat contact) or repeater admin (Repeater contact) |
+| X | Export contacts to SD card (wait 5–10 seconds for confirmation popup) |
+| R | Import contacts from SD card (wait 5–10 seconds for confirmation popup) |
 | Q | Back to home screen |
+
+**Contact limits:** Standalone variants support up to 1,500 contacts (stored in PSRAM). BLE variants (both Audio-BLE and 4G-BLE) are limited to 500 contacts due to BLE protocol constraints.
 
 ### Sending a Direct Message
 
@@ -145,6 +157,8 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Channels | View existing channels, add hashtag channels, or delete non-primary channels (X) |
 | Device Info | Public key and firmware version (read-only) |
 
+The bottom of the settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
+
 When adding a hashtag channel, type the channel name and press Enter. The channel secret is automatically derived from the name via SHA-256, matching the standard MeshCore hashtag convention.
 
 If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
@@ -193,6 +207,22 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 | A / D | Navigate left / right |
 | Enter | Insert selected emoji |
 | $ / Q / Backspace | Cancel and return to compose |
+
+### SMS & Phone App (4G only)
+
+Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts).
+
+For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS%20%26%20Phone%20App%20Guide.md).
+
+### Web Browser & IRC
+
+Press **B** from the home screen to open the web reader. This is available on the BLE and 4G variants (not the standalone audio variant, which excludes WiFi to preserve lowest-battery-usage design).
+
+The web reader home screen provides access to the **IRC client**, the **URL bar**, and your **bookmarks** and **history**. Select IRC Chat and press Enter to configure and connect to an IRC server. Select the URL bar to enter a web address, or scroll down to open a bookmark or history entry.
+
+The browser is a text-centric reader best suited to text-heavy websites. It also includes basic web search via DuckDuckGo Lite, and can download EPUB files — follow a link to an `.epub` and it will be saved to the books folder on your SD card for reading later in the e-book reader.
+
+For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web%20App%20Guide.md).
 
 ## About MeshCore
 
@@ -285,12 +315,13 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Standalone repeater admin access for Companion BLE firmware
 - [X] GPS time sync with on-device timezone setting
 - [X] Settings screen with radio presets, channel management, and first-boot onboarding
+- [X] Expand SMS app to enable phone calls
+- [X] Basic web reader app for text-centric websites
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
-- [ ] Expand SMS app to enable phone calls
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
 - [ ] Map support with GPS
-- [ ] Basic web reader app for text-centric websites
+- [ ] WiFi companion environment
 
 ## 📞 Get Support
 
