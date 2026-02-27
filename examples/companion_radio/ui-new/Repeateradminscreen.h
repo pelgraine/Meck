@@ -208,6 +208,13 @@ private:
   PwdCacheEntry _pwdCache[PWD_CACHE_SIZE];
   int _pwdCacheCount;
 
+  // Remote telemetry (from LPP response)
+  float _telemVoltage;          // Battery voltage in volts
+  float _telemTempC;            // Temperature in celsius
+  bool _telemHasVoltage;
+  bool _telemHasTemp;
+  bool _telemRequested;         // Telemetry request already sent
+
   const char* getCachedPassword(int contactIdx) {
     for (int i = 0; i < _pwdCacheCount; i++) {
       if (_pwdCache[i].contactIdx == contactIdx) return _pwdCache[i].password;
@@ -233,6 +240,49 @@ private:
       _pwdCache[PWD_CACHE_SIZE - 1].contactIdx = contactIdx;
       strncpy(_pwdCache[PWD_CACHE_SIZE - 1].password, pwd, ADMIN_PASSWORD_MAX - 1);
       _pwdCache[PWD_CACHE_SIZE - 1].password[ADMIN_PASSWORD_MAX - 1] = '\0';
+    }
+  }
+
+  // --- LPP telemetry parser ---
+  // Walks a CayenneLPP buffer extracting voltage and temperature.
+  // Format per entry: [channel 1B][type 1B][data varies]
+  void parseLPPTelemetry(const uint8_t* data, uint8_t len) {
+    const uint8_t TELEM_TYPE_VOLTAGE     = 0x74;  // 2 bytes, uint16 / 100 = V
+    const uint8_t TELEM_TYPE_TEMPERATURE = 0x67;  // 2 bytes, int16 / 10 = C
+
+    int pos = 0;
+    while (pos + 2 < len) {
+      // uint8_t channel = data[pos];  // not needed
+      uint8_t type = data[pos + 1];
+      pos += 2;  // skip channel + type
+
+      // Determine data size for this type
+      int dataSize = 0;
+      switch (type) {
+        case TELEM_TYPE_VOLTAGE:     dataSize = 2; break;
+        case TELEM_TYPE_TEMPERATURE: dataSize = 2; break;
+        case 0x88:            dataSize = 9; break;  // GPS
+        case 0x75:            dataSize = 2; break;  // Current
+        case 0x68:            dataSize = 1; break;  // Humidity
+        case 0x73:            dataSize = 2; break;  // Pressure
+        case 0x76:            dataSize = 2; break;  // Altitude
+        case 0x80:            dataSize = 2; break;  // Power
+        default:              return;                // Unknown type, stop parsing
+      }
+
+      if (pos + dataSize > len) break;
+
+      if (type == TELEM_TYPE_VOLTAGE) {
+        uint16_t raw = ((uint16_t)data[pos] << 8) | data[pos + 1];
+        _telemVoltage = raw / 100.0f;
+        _telemHasVoltage = true;
+      } else if (type == TELEM_TYPE_TEMPERATURE) {
+        int16_t raw = ((int16_t)data[pos] << 8) | data[pos + 1];
+        _telemTempC = raw / 10.0f;
+        _telemHasTemp = true;
+      }
+
+      pos += dataSize;
     }
   }
 
@@ -378,7 +428,9 @@ public:
       _catSel(0), _cmdSel(0), _scrollOffset(0),
       _paramLen(0), _pendingCmd(nullptr),
       _responseLen(0), _responseScroll(0), _responseTotalLines(0),
-      _cmdSentAt(0), _waitingForLogin(false), _pwdCacheCount(0) {
+      _cmdSentAt(0), _waitingForLogin(false), _pwdCacheCount(0),
+      _telemVoltage(0), _telemTempC(0),
+      _telemHasVoltage(false), _telemHasTemp(false), _telemRequested(false) {
     _password[0] = '\0';
     _repeaterName[0] = '\0';
     _response[0] = '\0';
@@ -405,6 +457,9 @@ public:
     _pendingCmd = nullptr;
     _paramLen = 0;
     _paramBuf[0] = '\0';
+    _telemHasVoltage = false;
+    _telemHasTemp = false;
+    _telemRequested = false;
 
     const char* cached = getCachedPassword(contactIdx);
     if (cached) {
@@ -427,6 +482,14 @@ public:
       _serverTime = server_time;
       _state = STATE_CATEGORY_MENU;
       cachePassword(_contactIdx, _password);
+
+      // Auto-request telemetry (battery & temperature) after login
+      if (!_telemRequested) {
+        _telemRequested = true;
+        bool sent = the_mesh.uiSendTelemetryRequest(_contactIdx);
+        Serial.printf("[Admin] Telemetry request %s for contact idx %d\n",
+                      sent ? "sent" : "FAILED", _contactIdx);
+      }
     } else {
       snprintf(_response, sizeof(_response), "Login failed.\nCheck password.");
       _responseLen = strlen(_response);
@@ -456,6 +519,15 @@ public:
     _state = STATE_RESPONSE_VIEW;
   }
 
+  void onTelemetryResult(const uint8_t* data, uint8_t len) {
+    Serial.printf("[Admin] Telemetry response received, %d bytes:", len);
+    for (int i = 0; i < len && i < 32; i++) Serial.printf(" %02X", data[i]);
+    Serial.println();
+    parseLPPTelemetry(data, len);
+    Serial.printf("[Admin] Parsed: hasVoltage=%d (%.2fV) hasTemp=%d (%.1fC)\n",
+                  _telemHasVoltage, _telemVoltage, _telemHasTemp, _telemTempC);
+  }
+
   void poll() override {
     if ((_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) &&
         _cmdSentAt > 0 && (millis() - _cmdSentAt) > ADMIN_TIMEOUT_MS) {
@@ -469,6 +541,7 @@ public:
         _responseLen = strlen(_response);
         _state = STATE_ERROR;
       }
+      _task->forceRefresh();  // Immediate redraw on state change
     }
   }
 
@@ -558,7 +631,7 @@ public:
         break;
     }
 
-    if (_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) return 1000;
+    if (_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) return 30000;  // static text; poll()/callbacks force refresh on state change
     if (_state == STATE_PASSWORD_ENTRY && _lastCharAt > 0 && (millis() - _lastCharAt) < 800) {
       return _lastCharAt + 800 - millis() + 50;
     }
@@ -679,6 +752,28 @@ private:
       char info[48];
       snprintf(info, sizeof(info), "Rpt:%s Us:%s %s", srvTime, ourTime, driftStr);
       display.print(info);
+      y += lineHeight + 2;
+    }
+
+    // Remote telemetry info line (battery & temperature)
+    if (_telemHasVoltage || _telemHasTemp) {
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, y);
+      char telem[48];
+      int tpos = 0;
+      if (_telemHasVoltage) {
+        tpos += snprintf(telem + tpos, sizeof(telem) - tpos, "Batt:%.2fV", _telemVoltage);
+      }
+      if (_telemHasTemp) {
+        if (tpos > 0) tpos += snprintf(telem + tpos, sizeof(telem) - tpos, " ");
+        tpos += snprintf(telem + tpos, sizeof(telem) - tpos, "Temp:%.1fC", _telemTempC);
+      }
+      display.print(telem);
+      y += lineHeight + 2;
+    } else if (_telemRequested) {
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, y);
+      display.print("Telemetry: requesting...");
       y += lineHeight + 2;
     }
 

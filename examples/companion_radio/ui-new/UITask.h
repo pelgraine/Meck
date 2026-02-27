@@ -158,6 +158,7 @@ public:
   // Repeater admin callbacks
   void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
   void onAdminCliResponse(const char* from_name, const char* text) override;
+  void onAdminTelemetryResult(const uint8_t* data, uint8_t len) override;
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }

@@ -706,6 +706,29 @@ bool MyMesh::uiSendCliCommand(uint32_t contact_idx, const char* command) {
   return true;
 }
 
+bool MyMesh::uiSendTelemetryRequest(uint32_t contact_idx) {
+  ContactInfo contact;
+  if (!getContactByIdx(contact_idx, contact)) return false;
+
+  ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+  if (!recipient) return false;
+
+  uint32_t tag, est_timeout;
+  int result = sendRequest(*recipient, REQ_TYPE_GET_TELEMETRY_DATA, tag, est_timeout);
+  if (result == MSG_SEND_FAILED) {
+    MESH_DEBUG_PRINTLN("UI: Telemetry request send failed to %s", recipient->name);
+    return false;
+  }
+
+  clearPendingReqs();
+  pending_telemetry = tag;
+
+  MESH_DEBUG_PRINTLN("UI: Telemetry request sent to %s (%s), timeout=%dms",
+                     recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
+                     est_timeout);
+  return true;
+}
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -816,6 +839,7 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     _serial->writeFrame(out_frame, i);
   } else if (len > 4 && tag == pending_telemetry) {  // check for matching response tag
     pending_telemetry = 0;
+    MESH_DEBUG_PRINTLN("Telemetry response received from %s, len=%d", contact.name, len);
 
     int i = 0;
     out_frame[i++] = PUSH_CODE_TELEMETRY_RESPONSE;
@@ -825,6 +849,11 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     memcpy(&out_frame[i], &data[4], len - 4);
     i += (len - 4);
     _serial->writeFrame(out_frame, i);
+
+    #ifdef DISPLAY_CLASS
+    // Route telemetry data to UI (LPP buffer after the 4-byte tag)
+    if (_ui) _ui->onAdminTelemetryResult(&data[4], len - 4);
+    #endif
   } else if (len > 4 && tag == pending_req) {  // check for matching response tag
     pending_req = 0;
 

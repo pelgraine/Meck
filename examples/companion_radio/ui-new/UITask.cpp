@@ -1550,6 +1550,14 @@ void UITask::onAdminCliResponse(const char* from_name, const char* text) {
   }
 }
 
+void UITask::onAdminTelemetryResult(const uint8_t* data, uint8_t len) {
+  Serial.printf("[UITask] onAdminTelemetryResult: %d bytes, onAdmin=%d\n", len, isOnRepeaterAdmin());
+  if (repeater_admin && isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onTelemetryResult(data, len);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
 #ifdef MECK_AUDIO_VARIANT
 bool UITask::isAudioPlayingInBackground() const {
   if (!audiobook_screen) return false;

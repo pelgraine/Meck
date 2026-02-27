@@ -51,4 +51,5 @@ public:
   // Repeater admin callbacks (from MyMesh)
   virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}
   virtual void onAdminCliResponse(const char* from_name, const char* text) {}
+  virtual void onAdminTelemetryResult(const uint8_t* data, uint8_t len) {}
 };
