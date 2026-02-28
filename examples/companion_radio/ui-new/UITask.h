@@ -155,6 +155,9 @@ public:
   // Add a sent message to the channel screen history
   void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
 
+  // Mark channel as read when BLE companion app syncs messages
+  void markChannelReadFromBLE(uint8_t channel_idx) override;
+
   // Repeater admin callbacks
   void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
   void onAdminCliResponse(const char* from_name, const char* text) override;

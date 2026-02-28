@@ -48,6 +48,9 @@ public:
   virtual void forceRefresh() {}
   virtual void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {}
 
+  // Mark a channel as read when BLE companion app syncs a message
+  virtual void markChannelReadFromBLE(uint8_t channel_idx) {}
+
   // Repeater admin callbacks (from MyMesh)
   virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}
   virtual void onAdminCliResponse(const char* from_name, const char* text) {}

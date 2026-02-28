@@ -1486,6 +1486,12 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
 }
 
+void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
+  ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  // Trigger a refresh so the home screen unread count updates in real-time
+  _next_refresh = millis() + 200;
+}
+
 void UITask::gotoRepeaterAdmin(int contactIdx) {
   // Lazy-initialize on first use (same pattern as audiobook player)
   if (repeater_admin == nullptr) {

@@ -5,7 +5,7 @@
 #include <MeshCore.h>
 
 // Forward declarations
-class UITask;
+#include "../AbstractUITask.h"
 class MyMesh;
 extern MyMesh the_mesh;
 
@@ -165,7 +165,7 @@ public:
   };
 
 private:
-  UITask* _task;
+  AbstractUITask* _task;
   mesh::RTCClock* _rtc;
 
   AdminState _state;
@@ -421,7 +421,7 @@ private:
   }
 
 public:
-  RepeaterAdminScreen(UITask* task, mesh::RTCClock* rtc)
+  RepeaterAdminScreen(AbstractUITask* task, mesh::RTCClock* rtc)
     : _task(task), _rtc(rtc), _state(STATE_PASSWORD_ENTRY),
       _contactIdx(-1), _permissions(0), _serverTime(0),
       _pwdLen(0), _lastCharAt(0),

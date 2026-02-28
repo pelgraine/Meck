@@ -1410,7 +1410,19 @@ void MyMesh::handleCmdFrame(size_t len) {
     if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
       _serial->writeFrame(out_frame, out_len);
 #ifdef DISPLAY_CLASS
-      if (_ui) _ui->msgRead(offline_queue_len);
+      if (_ui) {
+        _ui->msgRead(offline_queue_len);
+
+        // Mark channel as read when BLE companion app syncs the message.
+        // Frame layout V3: [resp_code][snr][res1][res2][channel_idx][path_len]...
+        // Frame layout V1: [resp_code][channel_idx][path_len]...
+        bool is_v3_ch = (out_frame[0] == RESP_CODE_CHANNEL_MSG_RECV_V3);
+        bool is_old_ch = (out_frame[0] == RESP_CODE_CHANNEL_MSG_RECV);
+        if (is_v3_ch || is_old_ch) {
+          uint8_t ch_idx = is_v3_ch ? out_frame[4] : out_frame[1];
+          _ui->markChannelReadFromBLE(ch_idx);
+        }
+      }
 #endif
     } else {
       out_frame[0] = RESP_CODE_NO_MORE_MESSAGES;

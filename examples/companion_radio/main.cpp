@@ -1156,7 +1156,7 @@ void handleKeyboardInput() {
       if (wasDM) {
         ui_task.gotoContactsScreen();
       } else {
-        ui_task.gotoHomeScreen();
+        ui_task.gotoChannelScreen();
       }
       return;
     }
@@ -1176,7 +1176,7 @@ void handleKeyboardInput() {
         if (wasDM) {
           ui_task.gotoContactsScreen();
         } else {
-          ui_task.gotoHomeScreen();
+          ui_task.gotoChannelScreen();
         }
         return;
       }
