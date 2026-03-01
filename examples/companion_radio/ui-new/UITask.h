@@ -44,6 +44,11 @@ class UITask : public AbstractUITask {
 #endif
   unsigned long _next_refresh, _auto_off;
   unsigned long _kb_flash_off_at;          // Keyboard flash turn-off timer
+#ifdef HAS_4G_MODEM
+  bool _incomingCallRinging;               // Currently ringing (incoming call)
+  unsigned long _nextCallFlash;            // Next LED toggle time
+  bool _callFlashState;                    // Current LED state during ring
+#endif
   NodePrefs* _node_prefs;
   char _alert[80];
   unsigned long _alert_expiry;
@@ -94,6 +99,11 @@ public:
   UITask(mesh::MainBoard* board, BaseSerialInterface* serial) : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
     next_batt_chck = _next_refresh = 0;
     _kb_flash_off_at = 0;
+  #ifdef HAS_4G_MODEM
+    _incomingCallRinging = false;
+    _nextCallFlash = 0;
+    _callFlashState = false;
+  #endif
     ui_started_at = 0;
     curr = NULL;
   }

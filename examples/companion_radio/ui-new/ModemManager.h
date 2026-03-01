@@ -142,6 +142,10 @@ public:
   bool setCallVolume(uint8_t level);          // Set volume 0-5
   bool pollCallEvent(CallEvent& out);         // Poll from main loop
 
+  // Ringtone control — called from main loop
+  void setRingtoneEnabled(bool en) { _ringtoneEnabled = en; }
+  bool isRingtoneEnabled() const { return _ringtoneEnabled; }
+
   // --- State queries (lock-free reads) ---
   ModemState getState() const { return _state; }
   int  getSignalBars() const;       // 0-5
@@ -203,6 +207,12 @@ private:
   char _callPhone[SMS_PHONE_LEN] = {0};  // Current call number
   volatile uint32_t _callStartTime = 0;    // millis() when call connected
 
+  // Ringtone state
+  volatile bool _ringtoneEnabled = false;
+  bool _ringing = false;              // Shadow of RINGING_IN for tone logic
+  unsigned long _nextRingTone = 0;    // Next tone burst timestamp (modem task)
+  bool _toneActive = false;           // Is a tone currently sounding
+
   TaskHandle_t _taskHandle = nullptr;
 
   // SMS queues
@@ -242,6 +252,7 @@ private:
   bool doSendDTMF(char digit);
   bool doSetVolume(uint8_t level);
   void queueCallEvent(CallEventType type, const char* phone = nullptr, uint32_t duration = 0);
+  void handleRingtone();  // Play tone bursts while incoming call rings
 
   // FreeRTOS task
   static void taskEntry(void* param);

@@ -906,6 +906,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   digitalWrite(KB_BL_PIN, LOW);
 #endif
 
+#ifdef HAS_4G_MODEM
+  // Sync ringtone enabled state to modem manager
+  modemManager.setRingtoneEnabled(node_prefs->ringtone_enabled);
+#endif
+
   ui_started_at = millis();
   _alert_expiry = 0;
 
@@ -1190,8 +1195,57 @@ void UITask::loop() {
   // Turn off keyboard flash after timeout
 #ifdef KB_BL_PIN
   if (_kb_flash_off_at && millis() >= _kb_flash_off_at) {
+  #ifdef HAS_4G_MODEM
+    // Don't turn off LED if incoming call flash is active
+    if (!_incomingCallRinging) {
+      digitalWrite(KB_BL_PIN, LOW);
+    }
+  #else
     digitalWrite(KB_BL_PIN, LOW);
+  #endif
     _kb_flash_off_at = 0;
+  }
+#endif
+
+  // Incoming call LED flash — rapid repeated pulse while ringing
+#if defined(HAS_4G_MODEM) && defined(KB_BL_PIN)
+  {
+    bool ringing = modemManager.isRinging();
+
+    if (ringing && !_incomingCallRinging) {
+      // Ringing just started
+      _incomingCallRinging = true;
+      _callFlashState = false;
+      _nextCallFlash = 0;  // Start immediately
+
+      // Wake display for incoming call
+      if (_display != NULL && !_display->isOn()) {
+        _display->turnOn();
+      }
+      _auto_off = millis() + 60000;  // Keep display on while ringing (60s)
+
+    } else if (!ringing && _incomingCallRinging) {
+      // Ringing stopped
+      _incomingCallRinging = false;
+      // Only turn off LED if message flash isn't also active
+      if (!_kb_flash_off_at) {
+        digitalWrite(KB_BL_PIN, LOW);
+      }
+      _callFlashState = false;
+    }
+
+    // Rapid LED flash while ringing (if kb_flash_notify is ON)
+    if (_incomingCallRinging && _node_prefs->kb_flash_notify) {
+      unsigned long now = millis();
+      if (now >= _nextCallFlash) {
+        _callFlashState = !_callFlashState;
+        digitalWrite(KB_BL_PIN, _callFlashState ? HIGH : LOW);
+        // 250ms on, 250ms off — fast pulse to distinguish from single msg flash
+        _nextCallFlash = now + 250;
+      }
+      // Extend auto-off while ringing
+      _auto_off = millis() + 60000;
+    }
   }
 #endif
 

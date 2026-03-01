@@ -30,4 +30,5 @@ struct NodePrefs {  // persisted to file
   uint8_t autoadd_config;    // bitmask for auto-add contacts config
   int8_t  utc_offset_hours;  // UTC offset in hours (-12 to +14), default 0
   uint8_t kb_flash_notify;   // Keyboard backlight flash on new message (0=off, 1=on)
+  uint8_t ringtone_enabled;  // Ringtone on incoming call (0=off, 1=on) — 4G only
 };

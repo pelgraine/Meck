@@ -230,6 +230,18 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)&_prefs.autoadd_config, sizeof(_prefs.autoadd_config));           // 87
     file.read((uint8_t *)&_prefs.utc_offset_hours, sizeof(_prefs.utc_offset_hours));       // 88
 
+    // Fields added later — may not exist in older prefs files
+    if (file.read((uint8_t *)&_prefs.kb_flash_notify, sizeof(_prefs.kb_flash_notify)) != sizeof(_prefs.kb_flash_notify)) {
+      _prefs.kb_flash_notify = 0;  // default OFF for old files
+    }
+    if (file.read((uint8_t *)&_prefs.ringtone_enabled, sizeof(_prefs.ringtone_enabled)) != sizeof(_prefs.ringtone_enabled)) {
+      _prefs.ringtone_enabled = 0;  // default OFF for old files
+    }
+
+    // Clamp booleans to 0/1 in case of garbage
+    if (_prefs.kb_flash_notify > 1) _prefs.kb_flash_notify = 0;
+    if (_prefs.ringtone_enabled > 1) _prefs.ringtone_enabled = 0;
+
     file.close();
   }
 }
@@ -265,6 +277,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.gps_interval, sizeof(_prefs.gps_interval));               // 86
     file.write((uint8_t *)&_prefs.autoadd_config, sizeof(_prefs.autoadd_config));           // 87
     file.write((uint8_t *)&_prefs.utc_offset_hours, sizeof(_prefs.utc_offset_hours));     // 88
+    file.write((uint8_t *)&_prefs.kb_flash_notify, sizeof(_prefs.kb_flash_notify));      // 89
+    file.write((uint8_t *)&_prefs.ringtone_enabled, sizeof(_prefs.ringtone_enabled));    // 90
 
     file.close();
   }

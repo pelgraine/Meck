@@ -33,6 +33,10 @@ void ModemManager::begin() {
   _operator[0] = '\0';
   _callPhone[0] = '\0';
   _callStartTime = 0;
+  _ringtoneEnabled = false;
+  _ringing = false;
+  _nextRingTone = 0;
+  _toneActive = false;
   _urcPos = 0;
   _imei[0] = '\0';
   _imsi[0] = '\0';
@@ -606,6 +610,46 @@ bool ModemManager::doSetVolume(uint8_t level) {
 }
 
 // ---------------------------------------------------------------------------
+// Incoming call ringtone — tone bursts via AT+SIMTONE on modem speaker
+// Pattern: 400ms tone → 1200ms silence → repeat
+// ---------------------------------------------------------------------------
+
+void ModemManager::handleRingtone() {
+  bool nowRinging = (_state == ModemState::RINGING_IN);
+
+  if (nowRinging && !_ringing) {
+    // Just started ringing
+    _ringing = true;
+    _nextRingTone = 0;  // Play first burst immediately
+    _toneActive = false;
+  } else if (!nowRinging && _ringing) {
+    // Ringing stopped (answered, rejected, missed)
+    _ringing = false;
+    if (_toneActive) {
+      sendAT("AT+SIMTONE=0", "OK", 500);
+      _toneActive = false;
+    }
+    return;
+  }
+
+  if (!_ringing || !_ringtoneEnabled) return;
+
+  unsigned long now = millis();
+  if (now < _nextRingTone) return;
+
+  if (!_toneActive) {
+    // Play tone burst: 1000 Hz, level 5000 (of 50-25500), 400ms duration
+    sendAT("AT+SIMTONE=1,1000,5000,400", "OK", 500);
+    _toneActive = true;
+    _nextRingTone = now + 400;   // Tone plays for 400ms
+  } else {
+    // Tone just finished — gap before next burst
+    _toneActive = false;
+    _nextRingTone = now + 1200;  // 1.2s silence (classic ring cadence)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // FreeRTOS Task
 // ---------------------------------------------------------------------------
 
@@ -828,6 +872,11 @@ restart:
     // events like incoming calls or call-ended notifications.
     // ================================================================
     drainURCs();
+
+    // ================================================================
+    // Step 1b: Ringtone — play tone bursts while incoming call rings
+    // ================================================================
+    handleRingtone();
 
     // ================================================================
     // Step 2: Process call commands from main loop
