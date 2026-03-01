@@ -152,7 +152,7 @@ private:
     addRow(ROW_MSG_NOTIFY);
     #ifdef HAS_4G_MODEM
     addRow(ROW_MODEM_TOGGLE);
-    addRow(ROW_RINGTONE);
+   // addRow(ROW_RINGTONE);
     #endif
     addRow(ROW_CH_HEADER);
 
@@ -519,11 +519,11 @@ public:
           display.print(tmp);
           break;
 
-        case ROW_RINGTONE:
-          snprintf(tmp, sizeof(tmp), "Incoming Call Ring: %s",
-                   _prefs->ringtone_enabled ? "ON" : "OFF");
-          display.print(tmp);
-          break;
+        //case ROW_RINGTONE:
+        //  snprintf(tmp, sizeof(tmp), "Incoming Call Ring: %s",
+        //           _prefs->ringtone_enabled ? "ON" : "OFF");
+       //   display.print(tmp);
+        //  break;
         #endif
 
         case ROW_CH_HEADER:
@@ -964,13 +964,13 @@ public:
             Serial.println("Settings: 4G modem DISABLED (shutdown)");
           }
           break;
-        case ROW_RINGTONE:
-          _prefs->ringtone_enabled = _prefs->ringtone_enabled ? 0 : 1;
-          modemManager.setRingtoneEnabled(_prefs->ringtone_enabled);
-          the_mesh.savePrefs();
-          Serial.printf("Settings: Ringtone = %s\n",
-                        _prefs->ringtone_enabled ? "ON" : "OFF");
-          break;
+       // case ROW_RINGTONE:
+       //   _prefs->ringtone_enabled = _prefs->ringtone_enabled ? 0 : 1;
+       //   modemManager.setRingtoneEnabled(_prefs->ringtone_enabled);
+        //  the_mesh.savePrefs();
+       //   Serial.printf("Settings: Ringtone = %s\n",
+      //                  _prefs->ringtone_enabled ? "ON" : "OFF");
+       //   break;
         case ROW_APN: {
           // Start text editing with current APN as initial value
           const char* currentApn = modemManager.getAPN();
