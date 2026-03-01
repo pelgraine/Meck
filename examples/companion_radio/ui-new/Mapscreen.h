@@ -717,11 +717,40 @@ private:
     }
   }
 
+  // Strip non-ASCII characters (emoji, flags, symbols) from label text.
+  // Copies only printable ASCII (0x20-0x7E) into dest buffer.
+  // Skips leading whitespace after stripping. Returns length.
+  static int extractAsciiLabel(const char* src, char* dest, int destSize) {
+    int j = 0;
+    for (int i = 0; src[i] != '\0' && j < destSize - 1; i++) {
+      uint8_t ch = (uint8_t)src[i];
+      if (ch >= 0x20 && ch <= 0x7E) {
+        dest[j++] = src[i];
+      }
+      // Skip continuation bytes of multi-byte UTF-8 sequences
+    }
+    dest[j] = '\0';
+
+    // Trim leading spaces (left after stripping emoji prefix)
+    int start = 0;
+    while (dest[start] == ' ') start++;
+    if (start > 0) {
+      memmove(dest, dest + start, j - start + 1);
+      j -= start;
+    }
+    return j;
+  }
+
   // Draw a text label above a marker with white background for readability
   // Built-in font is 5×7 pixels per character
   void drawLabel(int cx, int topY, const char* text) {
-    int len = strlen(text);
-    if (len > 12) len = 12;  // Truncate long names
+    // Clean emoji/non-ASCII from label
+    char clean[24];
+    int len = extractAsciiLabel(text, clean, sizeof(clean));
+    if (len == 0) return;  // Nothing printable
+    if (len > 14) len = 14;  // Truncate long names
+    clean[len] = '\0';
+
     int textW = len * 6;     // 5px char + 1px spacing
     int textH = 8;           // 7px + 1px padding
 
@@ -745,7 +774,7 @@ private:
     }
 
     // Draw text using raw font rendering
-    _einkDisplay->drawTextRaw(lx, ly, text, GxEPD_BLACK);
+    _einkDisplay->drawTextRaw(lx, ly, clean, GxEPD_BLACK);
   }
 
   // Draw own-position marker: bold circle with filled center dot

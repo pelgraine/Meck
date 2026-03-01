@@ -271,7 +271,23 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
 }
 
 void DataStore::loadContacts(DataStoreHost* host) {
-File file = openRead(_getContactsChannelsFS(), "/contacts3");
+  FILESYSTEM* fs = _getContactsChannelsFS();
+
+  // --- Crash recovery ---
+  // If /contacts3 is missing but /contacts3.tmp exists, a crash occurred
+  // after removing the original but before the rename completed.
+  // The .tmp file has the valid data — promote it.
+  if (!fs->exists("/contacts3") && fs->exists("/contacts3.tmp")) {
+    Serial.println("DataStore: recovering contacts from .tmp file");
+    fs->rename("/contacts3.tmp", "/contacts3");
+  }
+  // If both exist, a crash occurred before the old file was removed.
+  // The original /contacts3 is still valid — just clean up the orphan.
+  if (fs->exists("/contacts3.tmp")) {
+    fs->remove("/contacts3.tmp");
+  }
+
+  File file = openRead(fs, "/contacts3");
     if (file) {
       bool full = false;
       while (!full) {
@@ -302,36 +318,82 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host) {
-  File file = openWrite(_getContactsChannelsFS(), "/contacts3");
-  if (file) {
-    uint32_t idx = 0;
-    ContactInfo c;
-    uint8_t unused = 0;
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  const char* finalPath = "/contacts3";
+  const char* tmpPath   = "/contacts3.tmp";
 
-    while (host->getContactForSave(idx, c)) {
-      bool success = (file.write(c.id.pub_key, 32) == 32);
-      success = success && (file.write((uint8_t *)&c.name, 32) == 32);
-      success = success && (file.write(&c.type, 1) == 1);
-      success = success && (file.write(&c.flags, 1) == 1);
-      success = success && (file.write(&unused, 1) == 1);
-      success = success && (file.write((uint8_t *)&c.sync_since, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.out_path_len, 1) == 1);
-      success = success && (file.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
-      success = success && (file.write(c.out_path, 64) == 64);
-      success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
-      success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
+  // --- Step 1: Write all contacts to a temporary file ---
+  File file = openWrite(fs, tmpPath);
+  if (!file) {
+    Serial.println("DataStore: saveContacts FAILED — cannot open tmp file");
+    return;
+  }
 
-      if (!success) break; // write failed
+  uint32_t idx = 0;
+  ContactInfo c;
+  uint8_t unused = 0;
+  uint32_t recordsWritten = 0;
+  bool writeOk = true;
 
-      idx++;  // advance to next contact
+  while (host->getContactForSave(idx, c)) {
+    bool success = (file.write(c.id.pub_key, 32) == 32);
+    success = success && (file.write((uint8_t *)&c.name, 32) == 32);
+    success = success && (file.write(&c.type, 1) == 1);
+    success = success && (file.write(&c.flags, 1) == 1);
+    success = success && (file.write(&unused, 1) == 1);
+    success = success && (file.write((uint8_t *)&c.sync_since, 4) == 4);
+    success = success && (file.write((uint8_t *)&c.out_path_len, 1) == 1);
+    success = success && (file.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+    success = success && (file.write(c.out_path, 64) == 64);
+    success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
+    success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
+    success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
+
+    if (!success) {
+      writeOk = false;
+      Serial.printf("DataStore: saveContacts write error at record %d\n", idx);
+      break;
     }
-    file.close();
+
+    recordsWritten++;
+    idx++;
+  }
+
+  size_t bytesWritten = file.size();
+  file.close();
+
+  // --- Step 2: Verify the write completed ---
+  size_t expectedBytes = recordsWritten * 152;  // 152 bytes per contact record
+  if (!writeOk || bytesWritten != expectedBytes) {
+    Serial.printf("DataStore: saveContacts ABORTED — wrote %d bytes, expected %d (%d records)\n",
+                  (int)bytesWritten, (int)expectedBytes, recordsWritten);
+    fs->remove(tmpPath);  // Clean up failed tmp file
+    return;  // Original /contacts3 is untouched
+  }
+
+  // --- Step 3: Replace original with verified temp file ---
+  fs->remove(finalPath);
+  if (fs->rename(tmpPath, finalPath)) {
+    Serial.printf("DataStore: saved %d contacts (%d bytes)\n", recordsWritten, (int)bytesWritten);
+  } else {
+    // Rename failed — tmp file still has the good data
+    Serial.println("DataStore: rename failed, tmp file preserved");
   }
 }
 
 void DataStore::loadChannels(DataStoreHost* host) {
-    File file = openRead(_getContactsChannelsFS(), "/channels2");
+    FILESYSTEM* fs = _getContactsChannelsFS();
+
+    // Crash recovery (same pattern as contacts)
+    if (!fs->exists("/channels2") && fs->exists("/channels2.tmp")) {
+      Serial.println("DataStore: recovering channels from .tmp file");
+      fs->rename("/channels2.tmp", "/channels2");
+    }
+    if (fs->exists("/channels2.tmp")) {
+      fs->remove("/channels2.tmp");
+    }
+
+    File file = openRead(fs, "/channels2");
     if (file) {
       bool full = false;
       uint8_t channel_idx = 0;
@@ -356,22 +418,51 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
-  File file = openWrite(_getContactsChannelsFS(), "/channels2");
-  if (file) {
-    uint8_t channel_idx = 0;
-    ChannelDetails ch;
-    uint8_t unused[4];
-    memset(unused, 0, 4);
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  const char* finalPath = "/channels2";
+  const char* tmpPath   = "/channels2.tmp";
 
-    while (host->getChannelForSave(channel_idx, ch)) {
-      bool success = (file.write(unused, 4) == 4);
-      success = success && (file.write((uint8_t *)ch.name, 32) == 32);
-      success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
+  File file = openWrite(fs, tmpPath);
+  if (!file) {
+    Serial.println("DataStore: saveChannels FAILED — cannot open tmp file");
+    return;
+  }
 
-      if (!success) break; // write failed
-      channel_idx++;
+  uint8_t channel_idx = 0;
+  ChannelDetails ch;
+  uint8_t unused[4];
+  memset(unused, 0, 4);
+  bool writeOk = true;
+
+  while (host->getChannelForSave(channel_idx, ch)) {
+    bool success = (file.write(unused, 4) == 4);
+    success = success && (file.write((uint8_t *)ch.name, 32) == 32);
+    success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
+
+    if (!success) {
+      writeOk = false;
+      Serial.printf("DataStore: saveChannels write error at channel %d\n", channel_idx);
+      break;
     }
-    file.close();
+    channel_idx++;
+  }
+
+  size_t bytesWritten = file.size();
+  file.close();
+
+  size_t expectedBytes = channel_idx * 68;  // 4 + 32 + 32 = 68 bytes per channel
+  if (!writeOk || bytesWritten != expectedBytes) {
+    Serial.printf("DataStore: saveChannels ABORTED — wrote %d bytes, expected %d\n",
+                  (int)bytesWritten, (int)expectedBytes);
+    fs->remove(tmpPath);
+    return;
+  }
+
+  fs->remove(finalPath);
+  if (fs->rename(tmpPath, finalPath)) {
+    Serial.printf("DataStore: saved %d channels (%d bytes)\n", channel_idx, (int)bytesWritten);
+  } else {
+    Serial.println("DataStore: channels rename failed, tmp file preserved");
   }
 }
 
