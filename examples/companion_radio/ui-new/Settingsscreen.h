@@ -62,7 +62,7 @@ enum SettingsRowType : uint8_t {
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   #ifdef HAS_4G_MODEM
   ROW_MODEM_TOGGLE,   // 4G modem enable/disable toggle (4G builds only)
-  ROW_RINGTONE,       // Incoming call ringtone toggle (4G builds only)
+  // ROW_RINGTONE,       // Incoming call ringtone toggle (4G builds only)
   #endif
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
