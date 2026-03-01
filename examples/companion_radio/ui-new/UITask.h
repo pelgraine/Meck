@@ -30,6 +30,9 @@
   #include "WebReaderScreen.h"
 #endif
 
+// MapScreen.h included in UITask.cpp and main.cpp only (PNGdec headers
+// conflict with BLE if pulled into the global include chain)
+
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
   SensorManager* _sensors;
@@ -73,6 +76,7 @@ class UITask : public AbstractUITask {
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
+  UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
   UIScreen* curr;
 
   void userLedHandler();
@@ -104,6 +108,7 @@ public:
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
+  void gotoMapScreen();         // Navigate to map tile screen
 #ifdef MECK_WEB_READER
   void gotoWebReader();         // Navigate to web reader (browser)
 #endif
@@ -131,6 +136,7 @@ public:
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
+  bool isOnMapScreen() const { return curr == map_screen; }
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }
 #endif
@@ -174,6 +180,7 @@ public:
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
+  UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }
 #endif

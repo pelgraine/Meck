@@ -12,7 +12,31 @@
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
-#include <CRC32.h>
+
+// Inline CRC32 for frame change detection (replaces bakercp/CRC32
+// to avoid naming collision with PNGdec's bundled CRC32.h)
+class FrameCRC32 {
+  uint32_t _crc = 0xFFFFFFFF;
+public:
+  void reset() { _crc = 0xFFFFFFFF; }
+  template<typename T> void update(T val) {
+    const uint8_t* p = (const uint8_t*)&val;
+    for (size_t i = 0; i < sizeof(T); i++) {
+      _crc ^= p[i];
+      for (int b = 0; b < 8; b++)
+        _crc = (_crc >> 1) ^ (0xEDB88320 & -(int32_t)(_crc & 1));
+    }
+  }
+  template<typename T> void update(const T* data, size_t len) {
+    const uint8_t* p = (const uint8_t*)data;
+    for (size_t i = 0; i < len * sizeof(T); i++) {
+      _crc ^= p[i];
+      for (int b = 0; b < 8; b++)
+        _crc = (_crc >> 1) ^ (0xEDB88320 & -(int32_t)(_crc & 1));
+    }
+  }
+  uint32_t finalize() { return _crc ^ 0xFFFFFFFF; }
+};
 
 #include "DisplayDriver.h"
 
@@ -34,7 +58,7 @@ class GxEPDDisplay : public DisplayDriver {
   bool _init = false;
   bool _isOn = false;
   uint16_t _curr_color;
-  CRC32 display_crc;
+  FrameCRC32 display_crc;
   int last_display_crc_value = 0;
 
 public:
@@ -60,4 +84,15 @@ public:
   void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override;
   uint16_t getTextWidth(const char* str) override;
   void endFrame() override;
+
+  // --- Raw pixel access for MapScreen (bypasses scaling) ---
+  void drawPixelRaw(int16_t x, int16_t y, uint16_t color) {
+    display.drawPixel(x, y, color);
+  }
+  int16_t rawWidth()  { return display.width(); }
+  int16_t rawHeight() { return display.height(); }
+
+  // Force endFrame() to push to display even if CRC unchanged
+  // (needed because drawPixelRaw bypasses CRC tracking)
+  void invalidateFrameCRC() { last_display_crc_value = 0; }
 };

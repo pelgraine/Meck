@@ -415,6 +415,7 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
+  #include "MapScreen.h"  // After BLE — PNGdec headers conflict with BLE if included earlier
   UITask ui_task(&board, &serial_interface);
 #endif
 
@@ -825,6 +826,35 @@ void loop() {
   #endif
 
   sensors.loop();
+
+  // Map screen: periodically update own GPS position and contact markers
+  if (ui_task.isOnMapScreen()) {
+    static unsigned long lastMapUpdate = 0;
+    if (millis() - lastMapUpdate > 30000) {  // Every 30 seconds
+      lastMapUpdate = millis();
+      MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+      if (ms) {
+        // Update own GPS position only when GPS hardware is active
+        #if HAS_GPS
+        if (gpsDuty.isHardwareOn()) {
+          ms->updateGPSPosition(sensors.node_lat, sensors.node_lon);
+        }
+        #endif
+
+        // Always refresh contact markers (new contacts arrive via radio)
+        ms->clearMarkers();
+        ContactsIterator it = the_mesh.startContactsIterator();
+        ContactInfo ci;
+        while (it.hasNext(&the_mesh, ci)) {
+          if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+            double lat = ((double)ci.gps_lat) / 1000000.0;
+            double lon = ((double)ci.gps_lon) / 1000000.0;
+            ms->addMarker(lat, lon);
+          }
+        }
+      }
+    }
+  }
 
   // CPU frequency auto-timeout back to idle
   cpuPower.loop();
@@ -1720,6 +1750,39 @@ void handleKeyboardInput() {
       break;
     #endif
     
+    case 'g':
+      // Open map screen, or re-center on GPS if already on map
+      if (ui_task.isOnMapScreen()) {
+        ui_task.injectKey('g');  // Re-center on GPS
+      } else {
+        Serial.println("Opening map");
+        {
+          MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+          if (ms) {
+            ms->setSDReady(sdCardReady);
+            ms->setGPSPosition(sensors.node_lat,
+                               sensors.node_lon);
+            // Populate contact markers via iterator
+            ms->clearMarkers();
+            ContactsIterator it = the_mesh.startContactsIterator();
+            ContactInfo ci;
+            int markerCount = 0;
+            while (it.hasNext(&the_mesh, ci)) {
+              if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+                double lat = ((double)ci.gps_lat) / 1000000.0;
+                double lon = ((double)ci.gps_lon) / 1000000.0;
+                ms->addMarker(lat, lon);
+                markerCount++;
+                Serial.printf("  marker: %s @ %.4f,%.4f\n", ci.name, lat, lon);
+              }
+            }
+            Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
+          }
+        }
+        ui_task.gotoMapScreen();
+      }
+      break;
+    
     case 'n':
       // Open notes
       Serial.println("Opening notes");
@@ -1735,11 +1798,12 @@ void handleKeyboardInput() {
       break;
     
     case 's':
-      // Open settings (from home), or navigate down on channel/contacts/admin/web
+      // Open settings (from home), or navigate down on channel/contacts/admin/web/map
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
+          || ui_task.isOnMapScreen()
          ) {
         ui_task.injectKey('s');  // Pass directly for scrolling
       } else {
@@ -1754,6 +1818,7 @@ void handleKeyboardInput() {
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
+          || ui_task.isOnMapScreen()
          ) {
         ui_task.injectKey('w');  // Pass directly for scrolling
       } else {
@@ -1764,7 +1829,7 @@ void handleKeyboardInput() {
       
     case 'a':
       // Navigate left or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()) {
         ui_task.injectKey('a');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Previous");
@@ -1774,7 +1839,7 @@ void handleKeyboardInput() {
       
     case 'd':
       // Navigate right or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen()) {
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()) {
         ui_task.injectKey('d');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Next");
@@ -1863,9 +1928,18 @@ void handleKeyboardInput() {
       }
       break;
       
+    case 'z':
+      // Zoom in on map screen
+      if (ui_task.isOnMapScreen()) {
+        ui_task.injectKey('z');
+      }
+      break;
+
     case 'x':
-      // Export contacts to SD card (contacts screen only)
-      if (ui_task.isOnContactsScreen()) {
+      // Zoom out on map screen, or export contacts on contacts screen
+      if (ui_task.isOnMapScreen()) {
+        ui_task.injectKey('x');
+      } else if (ui_task.isOnContactsScreen()) {
         Serial.println("Contacts: Exporting to SD...");
         int exported = exportContactsToSD();
         if (exported >= 0) {
@@ -1957,6 +2031,11 @@ void handleKeyboardInput() {
         break;
       }
 #endif
+      // Pass unhandled keys to map screen (+, -, i, o for zoom)
+      if (ui_task.isOnMapScreen()) {
+        ui_task.injectKey(key);
+        break;
+      }
       Serial.printf("Unhandled key in normal mode: '%c' (0x%02X)\n", key, key);
       break;
   }

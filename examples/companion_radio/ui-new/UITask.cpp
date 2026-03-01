@@ -3,6 +3,7 @@
 #include "../MyMesh.h"
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
+#include "MapScreen.h"
 #include "target.h"
 #include "GPSDutyCycle.h"
 #ifdef WIFI_SSID
@@ -335,16 +336,20 @@ public:
       y += 10;
       display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
-#ifdef HAS_4G_MODEM
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [T] Phone     ");
-#elif defined(MECK_AUDIO_VARIANT)
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [P] Audiobooks");
-#else
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
-#endif
-#ifdef MECK_WEB_READER
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [G] Maps      ");
       y += 10;
+#if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
+      display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
+#elif defined(HAS_4G_MODEM)
+      display.drawTextCentered(display.width() / 2, y, "[T] Phone                     ");
+#elif defined(MECK_AUDIO_VARIANT) && defined(MECK_WEB_READER)
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [B] Browser   ");
+#elif defined(MECK_AUDIO_VARIANT)
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks                ");
+#elif defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
+#else
+      y -= 10;  // reclaim the row for standalone
 #endif
       y += 14;
 
@@ -917,6 +922,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this);
 #endif
+  map_screen = new MapScreen(this);
   setCurrScreen(splash);
 }
 
@@ -1541,6 +1547,19 @@ void UITask::gotoWebReader() {
   _next_refresh = 100;
 }
 #endif
+
+void UITask::gotoMapScreen() {
+  MapScreen* map = (MapScreen*)map_screen;
+  if (_display != NULL) {
+    map->enter(*_display);
+  }
+  setCurrScreen(map_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
 
 void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
   if (repeater_admin && isOnRepeaterAdmin()) {
