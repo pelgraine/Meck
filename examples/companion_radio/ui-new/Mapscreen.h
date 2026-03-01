@@ -57,7 +57,7 @@
 //                while (it.hasNext(&the_mesh, ci)) {
 //                  double lat = ((double)ci.gps_lat) / 1000000.0;
 //                  double lon = ((double)ci.gps_lon) / 1000000.0;
-//                  ms->addMarker(lat, lon);
+//                  ms->addMarker(lat, lon, ci.name, ci.type);
 //                }
 //              }
 //            }
@@ -109,12 +109,16 @@
 // Tile path on SD card
 #define MAP_TILE_ROOT       "/tiles"
 
+// Contact type (for label display — matches AdvertDataHelpers.h)
+#ifndef ADV_TYPE_REPEATER
+  #define ADV_TYPE_REPEATER   2
+#endif
+
 // Pan step: fraction of viewport to move per keypress
 #define MAP_PAN_FRACTION    4       // 1/4 of viewport per press
 
-// Contact marker size (pixels)
-#define MAP_MARKER_SIZE     7       // 7×7 diamond marker
-#define MAP_MAX_MARKERS     32      // Max contact markers (matches MAX_CONTACTS)
+// Max contact markers (PSRAM-allocated, ~37 bytes each)
+#define MAP_MAX_MARKERS     500
 
 
 class MapScreen : public UIScreen {
@@ -134,10 +138,22 @@ public:
       _zoomMax(MAP_MAX_ZOOM),
       _pngBuf(nullptr),
       _tileFound(false)
-  {}
+  {
+    // Allocate marker array in PSRAM at construction (~20KB)
+    // so addMarker() works before enter() is called
+    _markers = (MapMarker*)ps_calloc(MAP_MAX_MARKERS, sizeof(MapMarker));
+    if (_markers) {
+      Serial.printf("MapScreen: markers allocated (%d × %d = %d bytes PSRAM)\n",
+                     MAP_MAX_MARKERS, (int)sizeof(MapMarker),
+                     MAP_MAX_MARKERS * (int)sizeof(MapMarker));
+    } else {
+      Serial.println("MapScreen: marker PSRAM alloc FAILED");
+    }
+  }
 
   ~MapScreen() {
     if (_pngBuf) { free(_pngBuf); _pngBuf = nullptr; }
+    if (_markers) { free(_markers); _markers = nullptr; }
   }
 
   void setSDReady(bool ready) { _sdReady = ready; }
@@ -167,11 +183,14 @@ public:
 
   // Add a location marker (call once per contact before entering map)
   void clearMarkers() { _numMarkers = 0; }
-  void addMarker(double lat, double lon) {
-    if (_numMarkers >= MAP_MAX_MARKERS) return;
+  void addMarker(double lat, double lon, const char* name = "", uint8_t type = 0) {
+    if (!_markers || _numMarkers >= MAP_MAX_MARKERS) return;
     if (lat == 0.0 && lon == 0.0) return;  // Skip no-location contacts
     _markers[_numMarkers].lat = lat;
     _markers[_numMarkers].lon = lon;
+    _markers[_numMarkers].type = type;
+    strncpy(_markers[_numMarkers].name, name, sizeof(_markers[0].name) - 1);
+    _markers[_numMarkers].name[sizeof(_markers[0].name) - 1] = '\0';
     _numMarkers++;
   }
 
@@ -343,8 +362,13 @@ private:
   PNG _png;
 
   // Contacts for marker overlay
-  struct MapMarker { double lat; double lon; };
-  MapMarker _markers[MAP_MAX_MARKERS];
+  struct MapMarker {
+    double lat;
+    double lon;
+    char name[20];    // Truncated display name
+    uint8_t type;     // ADV_TYPE_CHAT, ADV_TYPE_REPEATER, etc.
+  };
+  MapMarker* _markers = nullptr;  // PSRAM-allocated
   int _numMarkers = 0;
 
   // ---- Rendering state passed to PNG callback ----
@@ -627,20 +651,25 @@ private:
   // ==========================================================================
 
   void renderContactMarkers() {
-    if (!_einkDisplay) return;
-
-    Serial.printf("MapScreen: rendering %d contact markers\n", _numMarkers);
+    if (!_einkDisplay || !_markers) return;
 
     int visible = 0;
     for (int i = 0; i < _numMarkers; i++) {
       int sx, sy;
       if (latLonToScreen(_markers[i].lat, _markers[i].lon, sx, sy)) {
-        drawDiamond(sx, sy, GxEPD_BLACK);
+        int r = markerRadius();
+        drawDiamond(sx, sy, r);
+
+        // Draw name label for repeaters (and at higher zoom for all contacts)
+        if (_markers[i].name[0] != '\0' &&
+            (_markers[i].type == ADV_TYPE_REPEATER || _zoom >= 14)) {
+          drawLabel(sx, sy - r - 2, _markers[i].name);
+        }
         visible++;
       }
     }
 
-    // Render own GPS position as a distinct marker (circle with crosshair)
+    // Render own GPS position as a distinct marker (circle)
     if (_hasFix) {
       int sx, sy;
       if (latLonToScreen(_gpsLat, _gpsLon, sx, sy)) {
@@ -648,56 +677,86 @@ private:
         visible++;
       }
     }
-
-    if (_numMarkers > 0 || _hasFix) {
-      Serial.printf("MapScreen: %d markers visible on screen\n", visible);
-    }
   }
 
-  // Draw a filled diamond marker for contacts/nodes
-  void drawDiamond(int cx, int cy, uint16_t color) {
-    int r = MAP_MARKER_SIZE / 2;  // radius = 3
+  // Marker radius scaled by zoom level
+  // z10→3px, z11→4, z12→5, z13→6, z14→7, z15→8, z16→9, z17→10
+  int markerRadius() {
+    int r = _zoom - 7;
+    if (r < 3) r = 3;
+    if (r > 10) r = 10;
+    return r;
+  }
 
-    // Filled diamond
-    for (int dy = -r; dy <= r; dy++) {
-      int span = r - abs(dy);
-      for (int dx = -span; dx <= span; dx++) {
-        int px = cx + dx;
-        int py = cy + dy;
-        if (px >= 0 && px < MAP_DISPLAY_W &&
-            py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
-          _einkDisplay->drawPixelRaw(px, py, color);
-        }
-      }
-    }
-
-    // White outline for visibility on dark map areas
+  // Draw a filled diamond marker at screen coordinates with given radius
+  void drawDiamond(int cx, int cy, int r) {
+    // White outline first (1px larger than fill)
     for (int dy = -(r + 1); dy <= (r + 1); dy++) {
       int span = (r + 1) - abs(dy);
       int innerSpan = r - abs(dy);
-
       for (int dx = -span; dx <= span; dx++) {
         if (abs(dy) <= r && abs(dx) <= innerSpan) continue;
-
-        int px = cx + dx;
-        int py = cy + dy;
+        int px = cx + dx, py = cy + dy;
         if (px >= 0 && px < MAP_DISPLAY_W &&
             py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
           _einkDisplay->drawPixelRaw(px, py, GxEPD_WHITE);
         }
       }
     }
+
+    // Filled black diamond
+    for (int dy = -r; dy <= r; dy++) {
+      int span = r - abs(dy);
+      for (int dx = -span; dx <= span; dx++) {
+        int px = cx + dx, py = cy + dy;
+        if (px >= 0 && px < MAP_DISPLAY_W &&
+            py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
+          _einkDisplay->drawPixelRaw(px, py, GxEPD_BLACK);
+        }
+      }
+    }
   }
 
-  // Draw own-position marker: filled circle with crosshair arms
-  // Visually distinct from contact diamonds
-  void drawOwnPosition(int cx, int cy) {
-    int r = 5;  // Circle radius
+  // Draw a text label above a marker with white background for readability
+  // Built-in font is 5×7 pixels per character
+  void drawLabel(int cx, int topY, const char* text) {
+    int len = strlen(text);
+    if (len > 12) len = 12;  // Truncate long names
+    int textW = len * 6;     // 5px char + 1px spacing
+    int textH = 8;           // 7px + 1px padding
 
-    // White background circle (clears map underneath)
-    for (int dy = -(r + 1); dy <= (r + 1); dy++) {
-      for (int dx = -(r + 1); dx <= (r + 1); dx++) {
-        if (dx * dx + dy * dy <= (r + 1) * (r + 1)) {
+    int lx = cx - textW / 2;
+    int ly = topY - textH;
+
+    // Clamp to viewport
+    if (lx < 1) lx = 1;
+    if (lx + textW >= MAP_DISPLAY_W - 1) lx = MAP_DISPLAY_W - textW - 1;
+    if (ly < MAP_VIEWPORT_Y) ly = MAP_VIEWPORT_Y;
+    if (ly + textH >= MAP_VIEWPORT_Y + MAP_VIEWPORT_H) return;
+
+    // White background rectangle
+    for (int y = ly - 1; y <= ly + textH; y++) {
+      for (int x = lx - 1; x <= lx + textW; x++) {
+        if (x >= 0 && x < MAP_DISPLAY_W &&
+            y >= MAP_VIEWPORT_Y && y < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
+          _einkDisplay->drawPixelRaw(x, y, GxEPD_WHITE);
+        }
+      }
+    }
+
+    // Draw text using raw font rendering
+    _einkDisplay->drawTextRaw(lx, ly, text, GxEPD_BLACK);
+  }
+
+  // Draw own-position marker: bold circle with filled center dot
+  // Fixed size (doesn't scale with zoom) so it's always clearly visible
+  void drawOwnPosition(int cx, int cy) {
+    int r = 8;  // Outer radius — always prominent
+
+    // White halo (clears map underneath)
+    for (int dy = -(r + 2); dy <= (r + 2); dy++) {
+      for (int dx = -(r + 2); dx <= (r + 2); dx++) {
+        if (dx * dx + dy * dy <= (r + 2) * (r + 2)) {
           int px = cx + dx, py = cy + dy;
           if (px >= 0 && px < MAP_DISPLAY_W &&
               py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
@@ -707,11 +766,11 @@ private:
       }
     }
 
-    // Black circle outline
+    // Thick black circle outline (2px wide ring)
     for (int dy = -r; dy <= r; dy++) {
       for (int dx = -r; dx <= r; dx++) {
         int d2 = dx * dx + dy * dy;
-        if (d2 >= (r - 1) * (r - 1) && d2 <= r * r) {
+        if (d2 >= (r - 2) * (r - 2) && d2 <= r * r) {
           int px = cx + dx, py = cy + dy;
           if (px >= 0 && px < MAP_DISPLAY_W &&
               py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
@@ -721,12 +780,18 @@ private:
       }
     }
 
-    // Black dot at center
-    _einkDisplay->drawPixelRaw(cx, cy, GxEPD_BLACK);
-    if (cx + 1 < MAP_DISPLAY_W) _einkDisplay->drawPixelRaw(cx + 1, cy, GxEPD_BLACK);
-    if (cx - 1 >= 0) _einkDisplay->drawPixelRaw(cx - 1, cy, GxEPD_BLACK);
-    if (cy + 1 < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) _einkDisplay->drawPixelRaw(cx, cy + 1, GxEPD_BLACK);
-    if (cy - 1 >= MAP_VIEWPORT_Y) _einkDisplay->drawPixelRaw(cx, cy - 1, GxEPD_BLACK);
+    // Filled black center dot (radius 3)
+    for (int dy = -3; dy <= 3; dy++) {
+      for (int dx = -3; dx <= 3; dx++) {
+        if (dx * dx + dy * dy <= 9) {
+          int px = cx + dx, py = cy + dy;
+          if (px >= 0 && px < MAP_DISPLAY_W &&
+              py >= MAP_VIEWPORT_Y && py < MAP_VIEWPORT_Y + MAP_VIEWPORT_H) {
+            _einkDisplay->drawPixelRaw(px, py, GxEPD_BLACK);
+          }
+        }
+      }
+    }
   }
 
   // ==========================================================================
@@ -738,18 +803,16 @@ private:
 
     int cx = MAP_DISPLAY_W / 2;
     int cy = MAP_VIEWPORT_Y + MAP_VIEWPORT_H / 2;
-    int len = 6;  // arm length in pixels
+    int len = markerRadius() + 2;  // Scales with zoom
 
     // Draw thin crosshair: black line with white border for contrast
     // Horizontal arm
     for (int x = cx - len; x <= cx + len; x++) {
       if (x >= 0 && x < MAP_DISPLAY_W) {
-        // White border pixels above and below
         if (cy - 1 >= MAP_VIEWPORT_Y)
           _einkDisplay->drawPixelRaw(x, cy - 1, GxEPD_WHITE);
         if (cy + 1 < MAP_VIEWPORT_Y + MAP_VIEWPORT_H)
           _einkDisplay->drawPixelRaw(x, cy + 1, GxEPD_WHITE);
-        // Black center line
         _einkDisplay->drawPixelRaw(x, cy, GxEPD_BLACK);
       }
     }

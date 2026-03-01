@@ -849,7 +849,7 @@ void loop() {
           if (ci.gps_lat != 0 || ci.gps_lon != 0) {
             double lat = ((double)ci.gps_lat) / 1000000.0;
             double lon = ((double)ci.gps_lon) / 1000000.0;
-            ms->addMarker(lat, lon);
+            ms->addMarker(lat, lon, ci.name, ci.type);
           }
         }
       }
@@ -1771,9 +1771,9 @@ void handleKeyboardInput() {
               if (ci.gps_lat != 0 || ci.gps_lon != 0) {
                 double lat = ((double)ci.gps_lat) / 1000000.0;
                 double lon = ((double)ci.gps_lon) / 1000000.0;
-                ms->addMarker(lat, lon);
+                ms->addMarker(lat, lon, ci.name, ci.type);
                 markerCount++;
-                Serial.printf("  marker: %s @ %.4f,%.4f\n", ci.name, lat, lon);
+                Serial.printf("  marker: %s @ %.4f,%.4f (type=%d)\n", ci.name, lat, lon, ci.type);
               }
             }
             Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);

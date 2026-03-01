@@ -92,6 +92,15 @@ public:
   int16_t rawWidth()  { return display.width(); }
   int16_t rawHeight() { return display.height(); }
 
+  // Draw text at raw (unscaled) physical coordinates using built-in 5x7 font
+  void drawTextRaw(int16_t x, int16_t y, const char* text, uint16_t color) {
+    display.setFont(NULL);          // Built-in 5x7 font
+    display.setTextSize(1);
+    display.setTextColor(color);
+    display.setCursor(x, y);
+    display.print(text);
+  }
+
   // Force endFrame() to push to display even if CRC unchanged
   // (needed because drawPixelRaw bypasses CRC tracking)
   void invalidateFrameCRC() { last_display_crc_value = 0; }
