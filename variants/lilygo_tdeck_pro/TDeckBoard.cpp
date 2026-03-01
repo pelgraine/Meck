@@ -78,6 +78,25 @@ void TDeckBoard::begin() {
     MESH_DEBUG_PRINTLN("TDeckBoard::begin() - Battery voltage: %d mV", voltage);
     configureFuelGauge();
   #endif
+
+  // --- Early low-voltage protection ---
+  // If we boot below the shutdown threshold, go straight to deep sleep
+  // WITHOUT touching the filesystem. This breaks the brown-out reboot
+  // loop that corrupts contacts when battery is deeply depleted (~2.5V).
+  #if HAS_BQ27220 && defined(AUTO_SHUTDOWN_MILLIVOLTS)
+  {
+    uint16_t bootMv = getBattMilliVolts();
+    if (bootMv > 0 && bootMv < AUTO_SHUTDOWN_MILLIVOLTS) {
+      Serial.printf("CRITICAL: Boot voltage %dmV < %dmV — sleeping immediately\n",
+                    bootMv, AUTO_SHUTDOWN_MILLIVOLTS);
+      // Don't mount SD, don't load contacts, don't pass Go.
+      // Only wake on user button press (presumably after plugging in charger).
+      esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+      esp_sleep_enable_ext1_wakeup(1ULL << PIN_USER_BTN, ESP_EXT1_WAKEUP_ANY_HIGH);
+      esp_deep_sleep_start();  // CPU halts here
+    }
+  }
+  #endif
   
   MESH_DEBUG_PRINTLN("TDeckBoard::begin() - complete");
 }

@@ -303,6 +303,38 @@ void DataStore::loadContacts(DataStoreHost* host) {
 
   File file = openRead(fs, "/contacts3");
     if (file) {
+      // --- Truncation guard ---
+      // If the file is smaller than one full contact record (152 bytes),
+      // it was truncated by a crash/brown-out. Discard it and try the
+      // .tmp backup if available.
+      size_t fsize = file.size();
+      if (fsize > 0 && fsize < 152) {
+        Serial.printf("DataStore: contacts3 truncated (%d bytes < 152), discarding\n", (int)fsize);
+        file.close();
+        fs->remove("/contacts3");
+        if (fs->exists("/contacts3.tmp")) {
+          File tmp = openRead(fs, "/contacts3.tmp");
+          if (tmp && tmp.size() >= 152) {
+            Serial.println("DataStore: recovering from .tmp after truncation");
+            tmp.close();
+            fs->rename("/contacts3.tmp", "/contacts3");
+            file = openRead(fs, "/contacts3");
+            if (!file) return;  // give up
+          } else {
+            if (tmp) tmp.close();
+            Serial.println("DataStore: no valid contacts backup — starting fresh");
+            return;
+          }
+        } else {
+          Serial.println("DataStore: no .tmp backup — starting fresh");
+          return;
+        }
+      } else if (fsize == 0) {
+        // Empty file — nothing to load
+        file.close();
+        return;
+      }
+
       bool full = false;
       while (!full) {
         ContactInfo c;

@@ -54,6 +54,7 @@ class UITask : public AbstractUITask {
   unsigned long _alert_expiry;
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
+  uint8_t _low_batt_count = 0;  // Consecutive low-voltage readings for debounce
   int next_backlight_btn_check = 0;
 #ifdef PIN_STATUS_LED
   int led_state = 0;

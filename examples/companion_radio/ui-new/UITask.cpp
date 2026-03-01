@@ -1289,10 +1289,11 @@ if (curr) curr->poll();
   if (millis() > next_batt_chck) {
     uint16_t milliVolts = getBattMilliVolts();
     if (milliVolts > 0 && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS) {
+      _low_batt_count++;
+      if (_low_batt_count >= 3) {  // 3 consecutive low readings (~24s) to avoid transient sags
 
-      // show low battery shutdown alert
-      // we should only do this for eink displays, which will persist after power loss
-      #if defined(THINKNODE_M1) || defined(LILYGO_TECHO)
+      // show low battery shutdown alert on e-ink (persists after power loss)
+      #if defined(THINKNODE_M1) || defined(LILYGO_TECHO) || defined(LilyGo_TDeck_Pro)
       if (_display != NULL) {
         _display->startFrame();
         _display->setTextSize(2);
@@ -1304,7 +1305,9 @@ if (curr) curr->poll();
       #endif
 
       shutdown();
-
+      }
+    } else {
+      _low_batt_count = 0;
     }
     next_batt_chck = millis() + 8000;
   }
