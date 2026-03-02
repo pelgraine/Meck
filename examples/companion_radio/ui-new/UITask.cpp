@@ -5,7 +5,6 @@
 #include "RepeaterAdminScreen.h"
 #include "MapScreen.h"
 #include "target.h"
-#include "GPSDutyCycle.h"
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -427,34 +426,16 @@ public:
       display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
-      extern GPSDutyCycle gpsDuty;
       extern GPSStreamCounter gpsStream;
       LocationProvider* nmea = sensors.getLocationProvider();
       char buf[50];
       int y = 18;
 
-      // GPS state line with duty cycle info
+      // GPS state line
       if (!_node_prefs->gps_enabled) {
         strcpy(buf, "gps off");
       } else {
-        switch (gpsDuty.getState()) {
-          case GPSDutyState::ACQUIRING: {
-            uint32_t elapsed = gpsDuty.acquireElapsedSecs();
-            sprintf(buf, "acquiring %us", (unsigned)elapsed);
-            break;
-          }
-          case GPSDutyState::SLEEPING: {
-            uint32_t remain = gpsDuty.sleepRemainingSecs();
-            if (remain >= 60) {
-              sprintf(buf, "sleep %um%02us", (unsigned)(remain / 60), (unsigned)(remain % 60));
-            } else {
-              sprintf(buf, "sleep %us", (unsigned)remain);
-            }
-            break;
-          }
-          default:
-            strcpy(buf, "gps off");
-        }
+        strcpy(buf, "gps on");
       }
       display.drawTextLeftAlign(0, y, buf);
 
@@ -470,9 +451,9 @@ public:
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
 
-        // NMEA sentence counter ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â confirms baud rate and data flow
+        // NMEA sentence counter — confirms baud rate and data flow
         display.drawTextLeftAlign(0, y, "sentences");
-        if (gpsDuty.isHardwareOn()) {
+        if (_node_prefs->gps_enabled) {
           uint16_t sps = gpsStream.getSentencesPerSec();
           uint32_t total = gpsStream.getSentenceCount();
           sprintf(buf, "%u/s (%lu)", sps, (unsigned long)total);
@@ -1097,10 +1078,11 @@ void UITask::shutdown(bool restart){
     // Disable GPS if active
     #if ENV_INCLUDE_GPS == 1
     {
-      extern GPSDutyCycle gpsDuty;
       if (_sensors != NULL && _node_prefs != NULL && _node_prefs->gps_enabled) {
         _sensors->setSettingValue("gps", "0");
-        gpsDuty.disable();
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+        #endif
       }
     }
     #endif
@@ -1358,20 +1340,22 @@ bool UITask::getGPSState() {
 
 void UITask::toggleGPS() {
   #if ENV_INCLUDE_GPS == 1
-    extern GPSDutyCycle gpsDuty;
-
     if (_sensors != NULL) {
       if (_node_prefs->gps_enabled) {
-        // Disable GPS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â cut hardware power
+        // Disable GPS — cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
-        gpsDuty.disable();
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+        #endif
         notify(UIEventType::ack);
       } else {
-        // Enable GPS ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â start duty cycle
+        // Enable GPS — power on hardware
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
-        gpsDuty.enable();
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
+        #endif
         notify(UIEventType::ack);
       }
       the_mesh.savePrefs();

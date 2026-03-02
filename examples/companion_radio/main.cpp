@@ -4,7 +4,6 @@
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
 #include "target.h"    // For sensors, board, etc.
-#include "GPSDutyCycle.h"
 #include "CPUPowerManager.h"
 
 // T-Deck Pro Keyboard support
@@ -88,10 +87,6 @@
     TouchInput touchInput(&Wire);
   #endif
 
-  // Power management
-  #if HAS_GPS
-    GPSDutyCycle gpsDuty;
-  #endif
   CPUPowerManager cpuPower;
   
   void initKeyboard();
@@ -782,18 +777,22 @@ void setup() {
   }
   #endif
 
-  // GPS duty cycle Ã¢â‚¬â€ honour saved pref, default to enabled on first boot
+  // GPS power — honour saved pref, default to enabled on first boot
   #if HAS_GPS
   {
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
-    gpsDuty.setStreamCounter(&gpsStream);
-    gpsDuty.begin(gps_wanted);
     if (gps_wanted) {
+      #ifdef PIN_GPS_EN
+        digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
+      #endif
       sensors.setSettingValue("gps", "1");
     } else {
+      #ifdef PIN_GPS_EN
+        digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+      #endif
       sensors.setSettingValue("gps", "0");
     }
-    MESH_DEBUG_PRINTLN("setup() - GPS duty cycle started (enabled=%d)", gps_wanted);
+    MESH_DEBUG_PRINTLN("setup() - GPS power %s", gps_wanted ? "on" : "off");
   }
   #endif
 
@@ -812,18 +811,6 @@ void setup() {
 void loop() {
   the_mesh.loop();
 
-  // GPS duty cycle Ã¢â‚¬â€ check for fix and manage power state
-  #if HAS_GPS
-  {
-    bool gps_hw_on = gpsDuty.loop();
-    if (gps_hw_on) {
-      LocationProvider* lp = sensors.getLocationProvider();
-      if (lp != NULL && lp->isValid()) {
-        gpsDuty.notifyFix();
-      }
-    }
-  }
-  #endif
 
   sensors.loop();
 
@@ -834,11 +821,9 @@ void loop() {
       lastMapUpdate = millis();
       MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
       if (ms) {
-        // Update own GPS position only when GPS hardware is active
+        // Update own GPS position when GPS is enabled
         #if HAS_GPS
-        if (gpsDuty.isHardwareOn()) {
-          ms->updateGPSPosition(sensors.node_lat, sensors.node_lon);
-        }
+        ms->updateGPSPosition(sensors.node_lat, sensors.node_lon);
         #endif
 
         // Always refresh contact markers (new contacts arrive via radio)
