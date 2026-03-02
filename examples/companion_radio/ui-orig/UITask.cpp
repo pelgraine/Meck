@@ -1,7 +1,15 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
+#include "NotesScreen.h"
+#include "RepeaterAdminScreen.h"
+#include "MapScreen.h"
 #include "target.h"
+#include "GPSAiding.h"
+
+#ifndef GPS_BOOT_DELAY_MS
+#define GPS_BOOT_DELAY_MS  250
+#endif
 #ifdef WIFI_SSID
   #include <WiFi.h>
 #endif
@@ -34,11 +42,18 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#ifdef MECK_AUDIO_VARIANT
+#include "AudiobookPlayerScreen.h"
+#endif
+#ifdef HAS_4G_MODEM
+  #include "SMSScreen.h"
+  #include "ModemManager.h"
+#endif
 
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
-  char _version_info[12];
+  char _version_info[24];
 
 public:
   SplashScreen(UITask* task) : _task(task) {
@@ -85,13 +100,18 @@ class HomeScreen : public UIScreen {
     FIRST,
     RECENT,
     RADIO,
+#ifdef BLE_PIN_CODE
     BLUETOOTH,
+#endif
     ADVERT,
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
 #if UI_SENSORS_PAGE == 1
     SENSORS,
+#endif
+#if HAS_BQ27220
+    BATTERY,
 #endif
     SHUTDOWN,
     Count    // keep as last
@@ -103,12 +123,13 @@ class HomeScreen : public UIScreen {
   NodePrefs* _node_prefs;
   uint8_t _page;
   bool _shutdown_init;
+  unsigned long _shutdown_at;   // earliest time to proceed with shutdown (after e-ink refresh)
   bool _editing_utc;
   int8_t _saved_utc_offset;  // for cancel/undo
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
-void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) {
+void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
     // Use voltage-based estimation to match BLE app readings
     uint8_t batteryPercentage = 0;
     if (batteryMilliVolts > 0) {
@@ -137,6 +158,8 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     int iconX = display.width() - totalWidth;
     int iconY = 0;  // vertically align with node name text
 
+    if (outIconX) *outIconX = iconX;
+
     // battery outline
     display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
@@ -155,6 +178,24 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
   }
+
+#ifdef MECK_AUDIO_VARIANT
+  // ---- Audio background playback indicator ----
+  // Shows a small play symbol to the left of the battery icon when an
+  // audiobook is actively playing in the background.
+  // Uses the font renderer (not manual pixel drawing) since it handles
+  // the e-ink coordinate scaling correctly.
+  void renderAudioIndicator(DisplayDriver& display, int batteryLeftX) {
+    if (!_task->isAudioPlayingInBackground()) return;
+
+    display.setColor(DisplayDriver::GREEN);
+    display.setTextSize(0); // tiny font (same as clock & battery %)
+    int x = batteryLeftX - display.getTextWidth(">>") - 2;
+    display.setCursor(x, -3); // align vertically with battery text
+    display.print(">>");
+    display.setTextSize(1); // restore
+  }
+#endif
 
   CayenneLPP sensors_lpp;
   int sensors_nb = 0;
@@ -186,7 +227,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts) 
 public:
   HomeScreen(UITask* task, mesh::RTCClock* rtc, SensorManager* sensors, NodePrefs* node_prefs)
      : _task(task), _rtc(rtc), _sensors(sensors), _node_prefs(node_prefs), _page(0), 
-       _shutdown_init(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
+       _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
   void cancelEditUTC() { 
@@ -197,23 +238,31 @@ public:
   }
 
   void poll() override {
-    if (_shutdown_init && !_task->isButtonPressed()) {  // must wait for USR button to be released
+    if (_shutdown_init && millis() >= _shutdown_at && !_task->isButtonPressed()) {
       _task->shutdown();
     }
   }
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-    // node name
-    display.setTextSize(1);
+    // node name (tinyfont to avoid overlapping clock)
+    display.setTextSize(0);
     display.setColor(DisplayDriver::GREEN);
     char filtered_name[sizeof(_node_prefs->node_name)];
     display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, 0);
+    display.setCursor(0, -3);
     display.print(filtered_name);
 
     // battery voltage
+#ifdef MECK_AUDIO_VARIANT
+    int battLeftX = display.width(); // default if battery doesn't render
+    renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
+
+    // audio background playback indicator (>> icon next to battery)
+    renderAudioIndicator(display, battLeftX);
+#else
     renderBatteryIndicator(display, _task->getBattMilliVolts());
+#endif
 
     // centered clock (tinyfont) - only show when time is valid
     {
@@ -250,28 +299,68 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
+      int y = 20;
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
-      sprintf(tmp, "MSG: %d", _task->getMsgCount());
-      display.drawTextCentered(display.width() / 2, 20, tmp);
+      sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
+      display.drawTextCentered(display.width() / 2, y, tmp);
+      y += 18;
 
       #ifdef WIFI_SSID
         IPAddress ip = WiFi.localIP();
         snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, 54, tmp); 
+        display.drawTextCentered(display.width() / 2, y, tmp);
+        y += 12;
       #endif
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, 43, "< Connected >");
-
-      } else if (the_mesh.getBLEPin() != 0) { // BT pin
+        display.drawTextCentered(display.width() / 2, y, "< Connected >");
+        y += 12;
+#ifdef BLE_PIN_CODE
+      } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
-        display.drawTextCentered(display.width() / 2, 43, tmp);
+        display.drawTextCentered(display.width() / 2, y, tmp);
+        y += 18;
+#endif
       }
+      #endif
+
+      // Menu shortcuts - tinyfont monospaced grid
+      y += 6;
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);  // tinyfont 6x8 monospaced
+      display.drawTextCentered(display.width() / 2, y, "Press:");
+      y += 12;
+      display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts  ");
+      y += 10;
+      display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
+      y += 10;
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [G] Maps      ");
+      y += 10;
+#if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
+      display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
+#elif defined(HAS_4G_MODEM)
+      display.drawTextCentered(display.width() / 2, y, "[T] Phone                     ");
+#elif defined(MECK_AUDIO_VARIANT) && defined(MECK_WEB_READER)
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [B] Browser   ");
+#elif defined(MECK_AUDIO_VARIANT)
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks                ");
+#elif defined(MECK_WEB_READER)
+      display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
+#else
+      y -= 10;  // reclaim the row for standalone
+#endif
+      y += 14;
+
+      // Nav hint
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, y, "Press A/D to cycle home views");
+      display.setTextSize(1);  // restore
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);
@@ -316,34 +405,45 @@ public:
       display.setCursor(0, 53);
       sprintf(tmp, "Noise floor: %d", radio_driver.getNoiseFloor());
       display.print(tmp);
+#ifdef BLE_PIN_CODE
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18,
           _task->isSerialEnabled() ? bluetooth_on : bluetooth_off,
           32, 32);
+      if (_task->hasConnection()) {
+        display.setColor(DisplayDriver::GREEN);
+        display.setTextSize(1);
+        display.drawTextCentered(display.width() / 2, 53, "< Connected >");
+      } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
+        display.setColor(DisplayDriver::RED);
+        display.setTextSize(2);
+        sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+        display.drawTextCentered(display.width() / 2, 53, tmp);
+      }
+      display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
-      display.drawTextCentered(display.width() / 2, 64 - 11, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
+#endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
       display.drawXbm((display.width() - 32) / 2, 18, advert_icon, 32, 32);
       display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
+      extern GPSStreamCounter gpsStream;
       LocationProvider* nmea = sensors.getLocationProvider();
       char buf[50];
       int y = 18;
-      bool gps_state = _task->getGPSState();
-#ifdef PIN_GPS_SWITCH
-      bool hw_gps_state = digitalRead(PIN_GPS_SWITCH);
-      if (gps_state != hw_gps_state) {
-        strcpy(buf, gps_state ? "gps off(hw)" : "gps off(sw)");
+
+      // GPS state line
+      if (!_node_prefs->gps_enabled) {
+        strcpy(buf, "gps off");
       } else {
-        strcpy(buf, gps_state ? "gps on" : "gps off");
+        strcpy(buf, "gps on");
       }
-#else
-      strcpy(buf, gps_state ? "gps on" : "gps off");
-#endif
       display.drawTextLeftAlign(0, y, buf);
+
       if (nmea == NULL) {
         y = y + 12;
         display.drawTextLeftAlign(0, y, "Can't access GPS");
@@ -355,6 +455,19 @@ public:
         sprintf(buf, "%d", nmea->satellitesCount());
         display.drawTextRightAlign(display.width()-1, y, buf);
         y = y + 12;
+
+        // NMEA sentence counter — confirms baud rate and data flow
+        display.drawTextLeftAlign(0, y, "sentences");
+        if (_node_prefs->gps_enabled) {
+          uint16_t sps = gpsStream.getSentencesPerSec();
+          uint32_t total = gpsStream.getSentenceCount();
+          sprintf(buf, "%u/s (%lu)", sps, (unsigned long)total);
+        } else {
+          strcpy(buf, "hw off");
+        }
+        display.drawTextRightAlign(display.width()-1, y, buf);
+        y = y + 12;
+
         display.drawTextLeftAlign(0, y, "pos");
         sprintf(buf, "%.4f %.4f", 
           nmea->getLatitude()/1000000., nmea->getLongitude()/1000000.);
@@ -474,6 +587,68 @@ public:
       if (sensors_scroll) sensors_scroll_offset = (sensors_scroll_offset+1)%sensors_nb;
       else sensors_scroll_offset = 0;
 #endif
+#if HAS_BQ27220
+    } else if (_page == HomePage::BATTERY) {
+      char buf[30];
+      int y = 18;
+
+      // Title
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, y, "Battery Gauge");
+      y += 12;
+
+      display.setColor(DisplayDriver::LIGHT);
+
+      // Time to empty
+      uint16_t tte = board.getTimeToEmpty();
+      display.drawTextLeftAlign(0, y, "remaining");
+      if (tte == 0xFFFF || tte == 0) {
+        strcpy(buf, tte == 0 ? "depleted" : "charging");
+      } else if (tte >= 60) {
+        sprintf(buf, "%dh %dm", tte / 60, tte % 60);
+      } else {
+        sprintf(buf, "%d min", tte);
+      }
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average current
+      int16_t avgCur = board.getAvgCurrent();
+      display.drawTextLeftAlign(0, y, "avg current");
+      sprintf(buf, "%d mA", avgCur);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Average power
+      int16_t avgPow = board.getAvgPower();
+      display.drawTextLeftAlign(0, y, "avg power");
+      sprintf(buf, "%d mW", avgPow);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Voltage (already available)
+      uint16_t mv = board.getBattMilliVolts();
+      display.drawTextLeftAlign(0, y, "voltage");
+      sprintf(buf, "%d.%03d V", mv / 1000, mv % 1000);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Remaining capacity (clamped to design capacity — gauge FCC may be
+      // stale from factory defaults until a full charge cycle re-learns it)
+      uint16_t remCap = board.getRemainingCapacity();
+      uint16_t desCap = board.getDesignCapacity();
+      if (desCap > 0 && remCap > desCap) remCap = desCap;
+      display.drawTextLeftAlign(0, y, "remaining cap");
+      sprintf(buf, "%d mAh", remCap);
+      display.drawTextRightAlign(display.width()-1, y, buf);
+      y += 10;
+
+      // Battery temperature
+      int16_t battTemp = board.getBattTemperature();
+      display.drawTextLeftAlign(0, y, "temperature");
+      sprintf(buf, "%d.%d C", battTemp / 10, abs(battTemp % 10));
+      display.drawTextRightAlign(display.width()-1, y, buf);
+#endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
@@ -533,6 +708,7 @@ public:
       }
       return true;
     }
+#ifdef BLE_PIN_CODE
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       if (_task->isSerialEnabled()) {  // toggle Bluetooth on/off
         _task->disableSerial();
@@ -541,6 +717,7 @@ public:
       }
       return true;
     }
+#endif
     if (c == KEY_ENTER && _page == HomePage::ADVERT) {
       _task->notify(UIEventType::ack);
       if (the_mesh.advert()) {
@@ -569,7 +746,8 @@ public:
     }
 #endif
     if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
-      _shutdown_init = true;  // need to wait for button to be released
+      _shutdown_init = true;
+      _shutdown_at = millis() + 900;  // allow e-ink refresh (644ms) before shutdown
       return true;
     }
     return false;
@@ -708,6 +886,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   vibration.begin();
 #endif
 
+  // Keyboard backlight for message flash notifications
+#ifdef KB_BL_PIN
+  pinMode(KB_BL_PIN, OUTPUT);
+  digitalWrite(KB_BL_PIN, LOW);
+#endif
+
+#ifdef HAS_4G_MODEM
+  // Sync ringtone enabled state to modem manager
+  modemManager.setRingtoneEnabled(node_prefs->ringtone_enabled);
+#endif
+
   ui_started_at = millis();
   _alert_expiry = 0;
 
@@ -717,7 +906,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   channel_screen = new ChannelScreen(this, &rtc_clock);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   text_reader = new TextReaderScreen(this);
+  notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
+  repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
+  audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
+#ifdef HAS_4G_MODEM
+  sms_screen = new SMSScreen(this);
+#endif
+  map_screen = new MapScreen(this);
   setCurrScreen(splash);
 }
 
@@ -759,12 +955,13 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0) {
+  if (msgcount == 0 && curr == msg_preview) {
     gotoHomeScreen();
   }
 }
 
-void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
+void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
+                    const uint8_t* path) {
   _msgcount = msgcount;
 
   // Add to preview screen (for notifications on non-keyboard devices)
@@ -782,15 +979,25 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
   
-  // Add to channel history screen with channel index
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text);
+  // Add to channel history screen with channel index and path data
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path);
+  
+  // If user is currently viewing this channel, mark it as read immediately
+  // (they can see the message arrive in real-time)
+  if (isOnChannelScreen() && 
+      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) {
+    ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  }
   
 #if defined(LilyGo_TDeck_Pro)
   // T-Deck Pro: Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via 'M' key
-  char alertBuf[40];
-  snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
-  showAlert(alertBuf, 2000);
+  // Suppress alert entirely on admin screen - it needs focused interaction
+  if (!isOnRepeaterAdmin()) {
+    char alertBuf[40];
+    snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
+    showAlert(alertBuf, 2000);
+  }
 #else
   // Other devices: Show full preview screen (legacy behavior)
   setCurrScreen(msg_preview);
@@ -805,6 +1012,14 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     _next_refresh = 100;  // trigger refresh
     }
   }
+
+  // Keyboard flash notification
+#ifdef KB_BL_PIN
+  if (_node_prefs->kb_flash_notify) {
+    digitalWrite(KB_BL_PIN, HIGH);
+    _kb_flash_off_at = millis() + 200;  // 200ms flash
+  }
+#endif
 }
 
 void UITask::userLedHandler() {
@@ -854,8 +1069,32 @@ void UITask::shutdown(bool restart){
   if (restart) {
     _board->reboot();
   } else {
-    _display->turnOff();
+    // Disable BLE if active
+    if (_serial != NULL && _serial->isEnabled()) {
+      _serial->disable();
+    }
+
+    // Disable WiFi if active
+    #ifdef WIFI_SSID
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+    #endif
+
+    // Disable GPS if active
+    #if ENV_INCLUDE_GPS == 1
+    {
+      if (_sensors != NULL && _node_prefs != NULL && _node_prefs->gps_enabled) {
+        _sensors->setSettingValue("gps", "0");
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+        #endif
+      }
+    }
+    #endif
+
+    // Power off LoRa radio, display, and board
     radio_driver.powerOff();
+    _display->turnOff();
     _board->powerOff();
   }
 }
@@ -940,6 +1179,63 @@ void UITask::loop() {
 
   userLedHandler();
 
+  // Turn off keyboard flash after timeout
+#ifdef KB_BL_PIN
+  if (_kb_flash_off_at && millis() >= _kb_flash_off_at) {
+  #ifdef HAS_4G_MODEM
+    // Don't turn off LED if incoming call flash is active
+    if (!_incomingCallRinging) {
+      digitalWrite(KB_BL_PIN, LOW);
+    }
+  #else
+    digitalWrite(KB_BL_PIN, LOW);
+  #endif
+    _kb_flash_off_at = 0;
+  }
+#endif
+
+  // Incoming call LED flash — rapid repeated pulse while ringing
+#if defined(HAS_4G_MODEM) && defined(KB_BL_PIN)
+  {
+    bool ringing = modemManager.isRinging();
+
+    if (ringing && !_incomingCallRinging) {
+      // Ringing just started
+      _incomingCallRinging = true;
+      _callFlashState = false;
+      _nextCallFlash = 0;  // Start immediately
+
+      // Wake display for incoming call
+      if (_display != NULL && !_display->isOn()) {
+        _display->turnOn();
+      }
+      _auto_off = millis() + 60000;  // Keep display on while ringing (60s)
+
+    } else if (!ringing && _incomingCallRinging) {
+      // Ringing stopped
+      _incomingCallRinging = false;
+      // Only turn off LED if message flash isn't also active
+      if (!_kb_flash_off_at) {
+        digitalWrite(KB_BL_PIN, LOW);
+      }
+      _callFlashState = false;
+    }
+
+    // Rapid LED flash while ringing (if kb_flash_notify is ON)
+    if (_incomingCallRinging && _node_prefs->kb_flash_notify) {
+      unsigned long now = millis();
+      if (now >= _nextCallFlash) {
+        _callFlashState = !_callFlashState;
+        digitalWrite(KB_BL_PIN, _callFlashState ? HIGH : LOW);
+        // 250ms on, 250ms off — fast pulse to distinguish from single msg flash
+        _nextCallFlash = now + 250;
+      }
+      // Extend auto-off while ringing
+      _auto_off = millis() + 60000;
+    }
+  }
+#endif
+
 #ifdef PIN_BUZZER
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
@@ -980,10 +1276,11 @@ if (curr) curr->poll();
   if (millis() > next_batt_chck) {
     uint16_t milliVolts = getBattMilliVolts();
     if (milliVolts > 0 && milliVolts < AUTO_SHUTDOWN_MILLIVOLTS) {
+      _low_batt_count++;
+      if (_low_batt_count >= 3) {  // 3 consecutive low readings (~24s) to avoid transient sags
 
-      // show low battery shutdown alert
-      // we should only do this for eink displays, which will persist after power loss
-      #if defined(THINKNODE_M1) || defined(LILYGO_TECHO)
+      // show low battery shutdown alert on e-ink (persists after power loss)
+      #if defined(THINKNODE_M1) || defined(LILYGO_TECHO) || defined(LilyGo_TDeck_Pro)
       if (_display != NULL) {
         _display->startFrame();
         _display->setTextSize(2);
@@ -995,7 +1292,9 @@ if (curr) curr->poll();
       #endif
 
       shutdown();
-
+      }
+    } else {
+      _low_batt_count = 0;
     }
     next_batt_chck = millis() + 8000;
   }
@@ -1037,39 +1336,41 @@ char UITask::handleTripleClick(char c) {
 }
 
 bool UITask::getGPSState() {
-  if (_sensors != NULL) {
-    int num = _sensors->getNumSettings();
-    for (int i = 0; i < num; i++) {
-      if (strcmp(_sensors->getSettingName(i), "gps") == 0) {
-        return !strcmp(_sensors->getSettingValue(i), "1");
-      }
-    }
-  } 
-  return false;
+  #if ENV_INCLUDE_GPS == 1
+    return _node_prefs != NULL && _node_prefs->gps_enabled;
+  #else
+    return false;
+  #endif
 }
 
 void UITask::toggleGPS() {
+  #if ENV_INCLUDE_GPS == 1
     if (_sensors != NULL) {
-    // toggle GPS on/off
-    int num = _sensors->getNumSettings();
-    for (int i = 0; i < num; i++) {
-      if (strcmp(_sensors->getSettingName(i), "gps") == 0) {
-        if (strcmp(_sensors->getSettingValue(i), "1") == 0) {
-          _sensors->setSettingValue("gps", "0");
-          _node_prefs->gps_enabled = 0;
-          notify(UIEventType::ack);
-        } else {
-          _sensors->setSettingValue("gps", "1");
-          _node_prefs->gps_enabled = 1;
-          notify(UIEventType::ack);
-        }
-        the_mesh.savePrefs();
-        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
-        _next_refresh = 0;
-        break;
+      if (_node_prefs->gps_enabled) {
+        // Disable GPS — cut hardware power
+        _sensors->setSettingValue("gps", "0");
+        _node_prefs->gps_enabled = 0;
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+        #endif
+        notify(UIEventType::ack);
+      } else {
+        // Enable GPS — power on hardware + send aiding for faster fix
+        _sensors->setSettingValue("gps", "1");
+        _node_prefs->gps_enabled = 1;
+        #ifdef PIN_GPS_EN
+          digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
+          delay(GPS_BOOT_DELAY_MS);
+          GPSAiding::sendAllAiding(Serial2, sensors.node_lat, sensors.node_lon,
+                                   rtc_clock.getCurrentTime(), 50000, 10);
+        #endif
+        notify(UIEventType::ack);
       }
+      the_mesh.savePrefs();
+      showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
+      _next_refresh = 0;
     }
-  }
+  #endif
 }
 
 void UITask::toggleBuzzer() {
@@ -1126,6 +1427,10 @@ bool UITask::isEditingHomeScreen() const {
 
 void UITask::gotoChannelScreen() {
   ((ChannelScreen *) channel_screen)->resetScroll();
+  // Mark the currently viewed channel as read
+  ((ChannelScreen *) channel_screen)->markChannelRead(
+    ((ChannelScreen *) channel_screen)->getViewChannelIdx()
+  );
   setCurrScreen(channel_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -1157,8 +1462,21 @@ void UITask::gotoTextReader() {
   _next_refresh = 100;
 }
 
+void UITask::gotoNotesScreen() {
+  NotesScreen* notes = (NotesScreen*)notes_screen;
+  if (_display != NULL) {
+    notes->enter(*_display);
+  }
+  setCurrScreen(notes_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
 void UITask::gotoSettingsScreen() {
-  ((SettingsScreen*)settings_screen)->enter();
+  ((SettingsScreen *) settings_screen)->enter();
   setCurrScreen(settings_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -1168,7 +1486,7 @@ void UITask::gotoSettingsScreen() {
 }
 
 void UITask::gotoOnboarding() {
-  ((SettingsScreen*)settings_screen)->enterOnboarding();
+  ((SettingsScreen *) settings_screen)->enterOnboarding();
   setCurrScreen(settings_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -1177,8 +1495,41 @@ void UITask::gotoOnboarding() {
   _next_refresh = 100;
 }
 
+void UITask::gotoAudiobookPlayer() {
+#ifdef MECK_AUDIO_VARIANT
+  if (audiobook_screen == nullptr) return;  // No audio hardware
+  AudiobookPlayerScreen* abPlayer = (AudiobookPlayerScreen*)audiobook_screen;
+  if (_display != NULL) {
+    abPlayer->enter(*_display);
+  }
+  setCurrScreen(audiobook_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+#endif
+}
+
+#ifdef HAS_4G_MODEM
+void UITask::gotoSMSScreen() {
+  SMSScreen* smsScr = (SMSScreen*)sms_screen;
+  smsScr->activate();
+  setCurrScreen(sms_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
+
 uint8_t UITask::getChannelScreenViewIdx() const {
   return ((ChannelScreen *) channel_screen)->getViewChannelIdx();
+}
+
+int UITask::getUnreadMsgCount() const {
+  return ((ChannelScreen *) channel_screen)->getTotalUnread();
 }
 
 void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {
@@ -1189,3 +1540,108 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
 }
+
+void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
+  ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  // Trigger a refresh so the home screen unread count updates in real-time
+  _next_refresh = millis() + 200;
+}
+
+void UITask::gotoRepeaterAdmin(int contactIdx) {
+  // Lazy-initialize on first use (same pattern as audiobook player)
+  if (repeater_admin == nullptr) {
+    repeater_admin = new RepeaterAdminScreen(this, &rtc_clock);
+  }
+
+  // Get contact name for the screen header
+  ContactInfo contact;
+  char name[32] = "Unknown";
+  if (the_mesh.getContactByIdx(contactIdx, contact)) {
+    strncpy(name, contact.name, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+  }
+
+  RepeaterAdminScreen* admin = (RepeaterAdminScreen*)repeater_admin;
+  admin->openForContact(contactIdx, name);
+  setCurrScreen(repeater_admin);
+
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+#ifdef MECK_WEB_READER
+void UITask::gotoWebReader() {
+  // Lazy-initialize on first use (same pattern as audiobook player)
+  if (web_reader == nullptr) {
+    Serial.printf("WebReader: lazy init - free heap: %d, largest block: %d\n",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+    web_reader = new WebReaderScreen(this);
+    Serial.printf("WebReader: init complete - free heap: %d\n", ESP.getFreeHeap());
+  }
+  WebReaderScreen* wr = (WebReaderScreen*)web_reader;
+  if (_display != NULL) {
+    wr->enter(*_display);
+  }
+  // Heap diagnostic — check state after web reader entry (WiFi connects later)
+  Serial.printf("[HEAP] WebReader enter - free: %u, largest: %u, PSRAM: %u\n",
+      ESP.getFreeHeap(), ESP.getMaxAllocHeap(), ESP.getFreePsram());
+  setCurrScreen(web_reader);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
+
+void UITask::gotoMapScreen() {
+  MapScreen* map = (MapScreen*)map_screen;
+  if (_display != NULL) {
+    map->enter(*_display);
+  }
+  setCurrScreen(map_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
+  if (repeater_admin && isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onLoginResult(success, permissions, server_time);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
+void UITask::onAdminCliResponse(const char* from_name, const char* text) {
+  if (repeater_admin && isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onCliResponse(text);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
+void UITask::onAdminTelemetryResult(const uint8_t* data, uint8_t len) {
+  Serial.printf("[UITask] onAdminTelemetryResult: %d bytes, onAdmin=%d\n", len, isOnRepeaterAdmin());
+  if (repeater_admin && isOnRepeaterAdmin()) {
+    ((RepeaterAdminScreen*)repeater_admin)->onTelemetryResult(data, len);
+    _next_refresh = 100;  // trigger re-render
+  }
+}
+
+#ifdef MECK_AUDIO_VARIANT
+bool UITask::isAudioPlayingInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isAudioActive();
+}
+
+bool UITask::isAudioPausedInBackground() const {
+  if (!audiobook_screen) return false;
+  AudiobookPlayerScreen* player = (AudiobookPlayerScreen*)audiobook_screen;
+  return player->isBookOpen() && !player->isAudioActive();
+}
+#endif
