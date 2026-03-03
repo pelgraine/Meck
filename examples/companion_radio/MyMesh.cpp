@@ -2,6 +2,11 @@
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
+#include "RadioPresets.h"        // Shared radio presets (serial CLI + settings screen)
+
+#ifdef HAS_4G_MODEM
+  #include "ModemManager.h"      // Serial CLI modem commands
+#endif
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -2031,15 +2036,447 @@ void MyMesh::checkCLIRescueCmd() {
   if (len > 0 && cli_command[len - 1] == '\r') {  // received complete line
     cli_command[len - 1] = 0;  // replace newline with C string null terminator
 
-    if (memcmp(cli_command, "set ", 4) == 0) {
+    // =====================================================================
+    // GET commands — read settings
+    // =====================================================================
+    if (memcmp(cli_command, "get ", 4) == 0) {
+      const char* key = &cli_command[4];
+
+      if (strcmp(key, "name") == 0) {
+        Serial.printf("  > %s\n", _prefs.node_name);
+      } else if (strcmp(key, "freq") == 0) {
+        Serial.printf("  > %.3f\n", _prefs.freq);
+      } else if (strcmp(key, "bw") == 0) {
+        Serial.printf("  > %.1f\n", _prefs.bw);
+      } else if (strcmp(key, "sf") == 0) {
+        Serial.printf("  > %d\n", _prefs.sf);
+      } else if (strcmp(key, "cr") == 0) {
+        Serial.printf("  > %d\n", _prefs.cr);
+      } else if (strcmp(key, "tx") == 0) {
+        Serial.printf("  > %d\n", _prefs.tx_power_dbm);
+      } else if (strcmp(key, "utc") == 0) {
+        Serial.printf("  > %d\n", _prefs.utc_offset_hours);
+      } else if (strcmp(key, "notify") == 0) {
+        Serial.printf("  > %s\n", _prefs.kb_flash_notify ? "on" : "off");
+      } else if (strcmp(key, "gps") == 0) {
+        Serial.printf("  > %s (interval: %ds)\n",
+            _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
+      } else if (strcmp(key, "pin") == 0) {
+        Serial.printf("  > %06d\n", _prefs.ble_pin);
+      } else if (strcmp(key, "radio") == 0) {
+        Serial.printf("  > freq=%.3f bw=%.1f sf=%d cr=%d tx=%d\n",
+            _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
+      } else if (strcmp(key, "pubkey") == 0) {
+        char hex[PUB_KEY_SIZE * 2 + 1];
+        mesh::Utils::toHex(hex, self_id.pub_key, PUB_KEY_SIZE);
+        Serial.printf("  > %s\n", hex);
+      } else if (strcmp(key, "firmware") == 0) {
+        Serial.printf("  > %s\n", FIRMWARE_VERSION);
+      } else if (strcmp(key, "channels") == 0) {
+        bool found = false;
+        for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+          ChannelDetails ch;
+          if (getChannel(i, ch) && ch.name[0] != '\0') {
+            Serial.printf("  [%d] %s\n", i, ch.name);
+            found = true;
+          } else {
+            break;
+          }
+        }
+        if (!found) Serial.println("  (no channels)");
+      } else if (strcmp(key, "presets") == 0) {
+        Serial.println("  Available radio presets:");
+        for (int i = 0; i < (int)NUM_RADIO_PRESETS; i++) {
+          Serial.printf("    %2d  %-30s  %.3f MHz  BW%.1f  SF%d  CR%d  TX%d\n",
+              i, RADIO_PRESETS[i].name, RADIO_PRESETS[i].freq,
+              RADIO_PRESETS[i].bw, RADIO_PRESETS[i].sf,
+              RADIO_PRESETS[i].cr, RADIO_PRESETS[i].tx_power);
+        }
+#ifdef HAS_4G_MODEM
+      } else if (strcmp(key, "modem") == 0) {
+        Serial.printf("  > %s\n", ModemManager::loadEnabledConfig() ? "on" : "off");
+      } else if (strcmp(key, "apn") == 0) {
+        Serial.printf("  > %s\n", modemManager.getAPN());
+      } else if (strcmp(key, "imei") == 0) {
+        Serial.printf("  > %s\n", modemManager.getIMEI());
+#endif
+      } else if (strcmp(key, "all") == 0) {
+        Serial.println("  === Meck Device Settings ===");
+        Serial.printf("  name:       %s\n", _prefs.node_name);
+        Serial.printf("  freq:       %.3f\n", _prefs.freq);
+        Serial.printf("  bw:         %.1f\n", _prefs.bw);
+        Serial.printf("  sf:         %d\n", _prefs.sf);
+        Serial.printf("  cr:         %d\n", _prefs.cr);
+        Serial.printf("  tx:         %d\n", _prefs.tx_power_dbm);
+        Serial.printf("  utc:        %d\n", _prefs.utc_offset_hours);
+        Serial.printf("  notify:     %s\n", _prefs.kb_flash_notify ? "on" : "off");
+        Serial.printf("  gps:        %s (interval: %ds)\n",
+            _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
+        Serial.printf("  pin:        %06d\n", _prefs.ble_pin);
+#ifdef HAS_4G_MODEM
+        Serial.printf("  modem:      %s\n", ModemManager::loadEnabledConfig() ? "on" : "off");
+        Serial.printf("  apn:        %s\n", modemManager.getAPN());
+        Serial.printf("  imei:       %s\n", modemManager.getIMEI());
+#endif
+        // Detect current preset
+        bool presetFound = false;
+        for (int i = 0; i < (int)NUM_RADIO_PRESETS; i++) {
+          if (_prefs.freq == RADIO_PRESETS[i].freq && _prefs.bw == RADIO_PRESETS[i].bw &&
+              _prefs.sf == RADIO_PRESETS[i].sf && _prefs.cr == RADIO_PRESETS[i].cr) {
+            Serial.printf("  preset:     %s\n", RADIO_PRESETS[i].name);
+            presetFound = true;
+            break;
+          }
+        }
+        if (!presetFound) Serial.println("  preset:     (custom)");
+        Serial.printf("  firmware:   %s\n", FIRMWARE_VERSION);
+        char hex[PUB_KEY_SIZE * 2 + 1];
+        mesh::Utils::toHex(hex, self_id.pub_key, PUB_KEY_SIZE);
+        Serial.printf("  pubkey:     %s\n", hex);
+        // List channels
+        Serial.println("  channels:");
+        bool chFound = false;
+        for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+          ChannelDetails ch;
+          if (getChannel(i, ch) && ch.name[0] != '\0') {
+            Serial.printf("    [%d] %s\n", i, ch.name);
+            chFound = true;
+          } else {
+            break;
+          }
+        }
+        if (!chFound) Serial.println("    (none)");
+      } else {
+        Serial.printf("  Error: unknown key '%s' (try 'help')\n", key);
+      }
+
+    // =====================================================================
+    // SET commands — write settings
+    // =====================================================================
+    } else if (memcmp(cli_command, "set ", 4) == 0) {
       const char* config = &cli_command[4];
-      if (memcmp(config, "pin ", 4) == 0) {
+
+      if (memcmp(config, "name ", 5) == 0) {
+        const char* val = &config[5];
+        // Validate name (same rules as CommonCLI)
+        bool valid = true;
+        const char* p = val;
+        while (*p) {
+          if (*p == '[' || *p == ']' || *p == '/' || *p == '\\' ||
+              *p == ':' || *p == ',' || *p == '?' || *p == '*') {
+            valid = false;
+            break;
+          }
+          p++;
+        }
+        if (valid && strlen(val) > 0) {
+          strncpy(_prefs.node_name, val, sizeof(_prefs.node_name) - 1);
+          _prefs.node_name[sizeof(_prefs.node_name) - 1] = '\0';
+          savePrefs();
+          Serial.printf("  > name = %s\n", _prefs.node_name);
+        } else {
+          Serial.println("  Error: invalid name (no []/:,?* chars)");
+        }
+
+      } else if (memcmp(config, "freq ", 5) == 0) {
+        float f = atof(&config[5]);
+        if (f >= 400.0f && f <= 928.0f) {
+          _prefs.freq = f;
+          savePrefs();
+          radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+          Serial.printf("  > freq = %.3f (applied)\n", _prefs.freq);
+        } else {
+          Serial.println("  Error: freq out of range (400-928)");
+        }
+
+      } else if (memcmp(config, "bw ", 3) == 0) {
+        float bw = atof(&config[3]);
+        if (bw >= 7.8f && bw <= 500.0f) {
+          _prefs.bw = bw;
+          savePrefs();
+          radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+          Serial.printf("  > bw = %.1f (applied)\n", _prefs.bw);
+        } else {
+          Serial.println("  Error: bw out of range (7.8-500)");
+        }
+
+      } else if (memcmp(config, "sf ", 3) == 0) {
+        int sf = atoi(&config[3]);
+        if (sf >= 5 && sf <= 12) {
+          _prefs.sf = (uint8_t)sf;
+          savePrefs();
+          radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+          Serial.printf("  > sf = %d (applied)\n", _prefs.sf);
+        } else {
+          Serial.println("  Error: sf out of range (5-12)");
+        }
+
+      } else if (memcmp(config, "cr ", 3) == 0) {
+        int cr = atoi(&config[3]);
+        if (cr >= 5 && cr <= 8) {
+          _prefs.cr = (uint8_t)cr;
+          savePrefs();
+          radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+          Serial.printf("  > cr = %d (applied)\n", _prefs.cr);
+        } else {
+          Serial.println("  Error: cr out of range (5-8)");
+        }
+
+      } else if (memcmp(config, "tx ", 3) == 0) {
+        int tx = atoi(&config[3]);
+        if (tx >= 1 && tx <= MAX_LORA_TX_POWER) {
+          _prefs.tx_power_dbm = (uint8_t)tx;
+          savePrefs();
+          radio_set_tx_power(_prefs.tx_power_dbm);
+          Serial.printf("  > tx = %d (applied)\n", _prefs.tx_power_dbm);
+        } else {
+          Serial.printf("  Error: tx out of range (1-%d)\n", MAX_LORA_TX_POWER);
+        }
+
+      } else if (memcmp(config, "utc ", 4) == 0) {
+        int utc = atoi(&config[4]);
+        if (utc >= -12 && utc <= 14) {
+          _prefs.utc_offset_hours = (int8_t)utc;
+          savePrefs();
+          Serial.printf("  > utc = %d\n", _prefs.utc_offset_hours);
+        } else {
+          Serial.println("  Error: utc out of range (-12 to 14)");
+        }
+
+      } else if (memcmp(config, "notify ", 7) == 0) {
+        if (strcmp(&config[7], "on") == 0) {
+          _prefs.kb_flash_notify = 1;
+        } else if (strcmp(&config[7], "off") == 0) {
+          _prefs.kb_flash_notify = 0;
+        } else {
+          Serial.println("  Error: use 'on' or 'off'");
+          cli_command[0] = 0;
+          return;
+        }
+        savePrefs();
+        Serial.printf("  > notify = %s\n", _prefs.kb_flash_notify ? "on" : "off");
+
+      } else if (memcmp(config, "pin ", 4) == 0) {
         _prefs.ble_pin = atoi(&config[4]);
         savePrefs();
         Serial.printf("  > pin is now %06d\n", _prefs.ble_pin);
+
+      } else if (memcmp(config, "radio ", 6) == 0) {
+        // Composite: "set radio <freq> <bw> <sf> <cr>"
+        char tmp[64];
+        strncpy(tmp, &config[6], sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        const char* parts[4];
+        int num = mesh::Utils::parseTextParts(tmp, parts, 4);
+        if (num == 4) {
+          float freq = strtof(parts[0], nullptr);
+          float bw   = strtof(parts[1], nullptr);
+          int sf     = atoi(parts[2]);
+          int cr     = atoi(parts[3]);
+          if (freq >= 400.0f && freq <= 928.0f && bw >= 7.8f && bw <= 500.0f
+              && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8) {
+            _prefs.freq = freq;
+            _prefs.bw = bw;
+            _prefs.sf = (uint8_t)sf;
+            _prefs.cr = (uint8_t)cr;
+            savePrefs();
+            radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+            radio_set_tx_power(_prefs.tx_power_dbm);
+            Serial.printf("  > radio = %.3f/%.1f/SF%d/CR%d TX:%d (applied)\n",
+                _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
+          } else {
+            Serial.println("  Error: invalid radio params");
+          }
+        } else {
+          Serial.println("  Usage: set radio <freq> <bw> <sf> <cr>");
+        }
+
+      } else if (memcmp(config, "preset ", 7) == 0) {
+        const char* name = &config[7];
+        // Try exact match first (case-insensitive)
+        bool found = false;
+        for (int i = 0; i < (int)NUM_RADIO_PRESETS; i++) {
+          if (strcasecmp(RADIO_PRESETS[i].name, name) == 0) {
+            _prefs.freq = RADIO_PRESETS[i].freq;
+            _prefs.bw = RADIO_PRESETS[i].bw;
+            _prefs.sf = RADIO_PRESETS[i].sf;
+            _prefs.cr = RADIO_PRESETS[i].cr;
+            _prefs.tx_power_dbm = RADIO_PRESETS[i].tx_power;
+            savePrefs();
+            radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+            radio_set_tx_power(_prefs.tx_power_dbm);
+            Serial.printf("  > Applied preset '%s' (%.3f/%.1f/SF%d/CR%d TX:%d)\n",
+                RADIO_PRESETS[i].name, _prefs.freq, _prefs.bw,
+                _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
+            found = true;
+            break;
+          }
+        }
+        // Try by index number if name didn't match
+        if (!found) {
+          char* endp;
+          long idx = strtol(name, &endp, 10);
+          if (endp != name && *endp == '\0' && idx >= 0 && idx < (int)NUM_RADIO_PRESETS) {
+            _prefs.freq = RADIO_PRESETS[idx].freq;
+            _prefs.bw = RADIO_PRESETS[idx].bw;
+            _prefs.sf = RADIO_PRESETS[idx].sf;
+            _prefs.cr = RADIO_PRESETS[idx].cr;
+            _prefs.tx_power_dbm = RADIO_PRESETS[idx].tx_power;
+            savePrefs();
+            radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+            radio_set_tx_power(_prefs.tx_power_dbm);
+            Serial.printf("  > Applied preset '%s' (%.3f/%.1f/SF%d/CR%d TX:%d)\n",
+                RADIO_PRESETS[idx].name, _prefs.freq, _prefs.bw,
+                _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
+            found = true;
+          }
+        }
+        if (!found) {
+          Serial.printf("  Error: unknown preset '%s' (try 'get presets')\n", name);
+        }
+
+      } else if (memcmp(config, "channel.add ", 12) == 0) {
+        const char* name = &config[12];
+        if (strlen(name) == 0) {
+          Serial.println("  Error: channel name required");
+          cli_command[0] = 0;
+          return;
+        }
+        // Build channel name with # prefix if not present
+        char chanName[32];
+        if (name[0] == '#') {
+          strncpy(chanName, name, sizeof(chanName));
+        } else {
+          chanName[0] = '#';
+          strncpy(&chanName[1], name, sizeof(chanName) - 1);
+        }
+        chanName[31] = '\0';
+
+        // Generate 128-bit PSK from SHA-256 of channel name
+        ChannelDetails newCh;
+        memset(&newCh, 0, sizeof(newCh));
+        strncpy(newCh.name, chanName, sizeof(newCh.name));
+        newCh.name[31] = '\0';
+
+        uint8_t hash[32];
+        mesh::Utils::sha256(hash, 32, (const uint8_t*)chanName, strlen(chanName));
+        memcpy(newCh.channel.secret, hash, 16);
+
+        // Find next empty slot
+        bool added = false;
+        for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+          ChannelDetails existing;
+          if (!getChannel(i, existing) || existing.name[0] == '\0') {
+            if (setChannel(i, newCh)) {
+              saveChannels();
+              Serial.printf("  > Added channel '%s' at slot %d\n", chanName, i);
+              added = true;
+            }
+            break;
+          }
+        }
+        if (!added) Serial.println("  Error: no empty channel slots");
+
+      } else if (memcmp(config, "channel.del ", 12) == 0) {
+        int idx = atoi(&config[12]);
+        if (idx <= 0) {
+          Serial.println("  Error: cannot delete channel 0 (public)");
+        } else if (idx >= MAX_GROUP_CHANNELS) {
+          Serial.printf("  Error: index out of range (1-%d)\n", MAX_GROUP_CHANNELS - 1);
+        } else {
+          // Verify channel exists
+          ChannelDetails ch;
+          if (!getChannel(idx, ch) || ch.name[0] == '\0') {
+            Serial.printf("  Error: no channel at index %d\n", idx);
+          } else {
+            // Compact: shift channels down
+            int total = 0;
+            for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+              ChannelDetails tmp;
+              if (getChannel(i, tmp) && tmp.name[0] != '\0') {
+                total = i + 1;
+              } else {
+                break;
+              }
+            }
+            for (int i = idx; i < total - 1; i++) {
+              ChannelDetails next;
+              if (getChannel(i + 1, next)) {
+                setChannel(i, next);
+              }
+            }
+            ChannelDetails empty;
+            memset(&empty, 0, sizeof(empty));
+            setChannel(total - 1, empty);
+            saveChannels();
+            Serial.printf("  > Deleted channel %d ('%s'), compacted %d channels\n",
+                idx, ch.name, total);
+          }
+        }
+
+#ifdef HAS_4G_MODEM
+      } else if (memcmp(config, "apn ", 4) == 0) {
+        const char* apn = &config[4];
+        if (strlen(apn) > 0) {
+          modemManager.setAPN(apn);
+          Serial.printf("  > apn = %s\n", apn);
+        } else {
+          ModemManager::saveAPNConfig("");
+          Serial.println("  > apn cleared (will auto-detect on next boot)");
+        }
+
+      } else if (strcmp(config, "modem on") == 0) {
+        ModemManager::saveEnabledConfig(true);
+        modemManager.begin();
+        Serial.println("  > modem enabled");
+
+      } else if (strcmp(config, "modem off") == 0) {
+        ModemManager::saveEnabledConfig(false);
+        modemManager.shutdown();
+        Serial.println("  > modem disabled");
+#endif
+
       } else {
-        Serial.printf("  Error: unknown config: %s\n", config);
+        Serial.printf("  Error: unknown setting '%s' (try 'help')\n", config);
       }
+
+    // =====================================================================
+    // HELP command
+    // =====================================================================
+    } else if (strcmp(cli_command, "help") == 0) {
+      Serial.println("=== Meck Serial CLI ===");
+      Serial.println("  get <key>                Read a setting");
+      Serial.println("  set <key> <value>        Write a setting");
+      Serial.println("");
+      Serial.println("  Settings keys:");
+      Serial.println("    name, freq, bw, sf, cr, tx, utc, notify, pin");
+      Serial.println("");
+      Serial.println("  Compound commands:");
+      Serial.println("    get all                Dump all settings");
+      Serial.println("    get radio              Show all radio params");
+      Serial.println("    get channels           List channels");
+      Serial.println("    get presets            List radio presets");
+      Serial.println("    get pubkey             Show public key");
+      Serial.println("    get firmware           Show firmware version");
+      Serial.println("    set radio <f> <bw> <sf> <cr>   Set all radio params");
+      Serial.println("    set preset <name|num>  Apply radio preset");
+      Serial.println("    set channel.add <name> Add hashtag channel");
+      Serial.println("    set channel.del <idx>  Delete channel by index");
+#ifdef HAS_4G_MODEM
+      Serial.println("");
+      Serial.println("  4G modem:");
+      Serial.println("    get/set apn, get imei, set modem on/off");
+#endif
+      Serial.println("");
+      Serial.println("  System:");
+      Serial.println("    rebuild   Erase & rebuild filesystem");
+      Serial.println("    erase     Format filesystem");
+      Serial.println("    reboot    Restart device");
+      Serial.println("    ls / cat / rm   File operations");
+
+    // =====================================================================
+    // Existing system commands (unchanged)
+    // =====================================================================
     } else if (strcmp(cli_command, "rebuild") == 0) {
       bool success = _store->formatFileSystem();
       if (success) {
@@ -2179,7 +2616,7 @@ void MyMesh::checkCLIRescueCmd() {
     } else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
     } else {
-      Serial.println("  Error: unknown command");
+      Serial.println("  Error: unknown command (try 'help')");
     }
 
     cli_command[0] = 0;  // reset command buffer
