@@ -202,7 +202,10 @@
   // Returns number of contacts exported, or -1 on error.
   // -----------------------------------------------------------------------
   int exportContactsToSD() {
-    if (!sdCardReady) return -1;
+    if (!sdCardReady) {
+      Serial.println("Export: SD card not ready");
+      return -1;
+    }
 
     // Ensure in-memory contacts are flushed to SPIFFS first
     the_mesh.saveContacts();
@@ -210,39 +213,52 @@
     if (!SD.exists("/meshcore")) SD.mkdir("/meshcore");
 
     // 1) Binary backup: SPIFFS /contacts3 → SD /meshcore/contacts.bin
-    if (!SPIFFS.exists("/contacts3")) return -1;
-    if (!copyFile(SPIFFS, "/contacts3", SD, "/meshcore/contacts.bin")) return -1;
+    //    Non-fatal — text export reads from memory and doesn't need this.
+    if (SPIFFS.exists("/contacts3")) {
+      if (copyFile(SPIFFS, "/contacts3", SD, "/meshcore/contacts.bin")) {
+        Serial.println("Export: binary backup OK");
+      } else {
+        Serial.println("Export: binary copy to SD failed (continuing with text export)");
+      }
+    } else {
+      Serial.println("Export: /contacts3 not found on SPIFFS (skipping binary backup)");
+    }
 
     // 2) Human-readable listing for inspection on a computer
+    //    Reads from in-memory contact table — always works if SD is writable.
     int count = 0;
     File txt = SD.open("/meshcore/contacts_export.txt", "w", true);
-    if (txt) {
-      txt.printf("Meck Contacts Export  (%d total)\n", (int)the_mesh.getNumContacts());
-      txt.printf("========================================\n");
-      txt.printf("%-5s  %-30s  %s\n", "Type", "Name", "PubKey (prefix)");
-      txt.printf("----------------------------------------\n");
-
-      ContactInfo c;
-      for (uint32_t i = 0; i < (uint32_t)the_mesh.getNumContacts(); i++) {
-        if (the_mesh.getContactByIdx(i, c)) {
-          const char* typeStr = "???";
-          switch (c.type) {
-            case ADV_TYPE_CHAT:     typeStr = "Chat"; break;
-            case ADV_TYPE_REPEATER: typeStr = "Rptr"; break;
-            case ADV_TYPE_ROOM:     typeStr = "Room"; break;
-          }
-          // First 8 bytes of pub key as hex identifier
-          char hexBuf[20];
-          mesh::Utils::toHex(hexBuf, c.id.pub_key, 8);
-          txt.printf("%-5s  %-30s  %s\n", typeStr, c.name, hexBuf);
-          count++;
-        }
-      }
-
-      txt.printf("========================================\n");
-      txt.printf("Total: %d contacts\n", count);
-      txt.close();
+    if (!txt) {
+      Serial.println("Export: failed to open contacts_export.txt for writing");
+      digitalWrite(SDCARD_CS, HIGH);
+      return -1;
     }
+
+    txt.printf("Meck Contacts Export  (%d total)\n", (int)the_mesh.getNumContacts());
+    txt.printf("========================================\n");
+    txt.printf("%-5s  %-30s  %s\n", "Type", "Name", "PubKey (prefix)");
+    txt.printf("----------------------------------------\n");
+
+    ContactInfo c;
+    for (uint32_t i = 0; i < (uint32_t)the_mesh.getNumContacts(); i++) {
+      if (the_mesh.getContactByIdx(i, c)) {
+        const char* typeStr = "???";
+        switch (c.type) {
+          case ADV_TYPE_CHAT:     typeStr = "Chat"; break;
+          case ADV_TYPE_REPEATER: typeStr = "Rptr"; break;
+          case ADV_TYPE_ROOM:     typeStr = "Room"; break;
+        }
+        // First 8 bytes of pub key as hex identifier
+        char hexBuf[20];
+        mesh::Utils::toHex(hexBuf, c.id.pub_key, 8);
+        txt.printf("%-5s  %-30s  %s\n", typeStr, c.name, hexBuf);
+        count++;
+      }
+    }
+
+    txt.printf("========================================\n");
+    txt.printf("Total: %d contacts\n", count);
+    txt.close();
 
     digitalWrite(SDCARD_CS, HIGH);
     Serial.printf("Contacts exported to SD: %d contacts\n", count);
@@ -1981,7 +1997,7 @@ void handleKeyboardInput() {
           snprintf(alertBuf, sizeof(alertBuf), "Exported %d to SD", exported);
           ui_task.showAlert(alertBuf, 2000);
         } else {
-          ui_task.showAlert("Export failed (no SD?)", 2000);
+          ui_task.showAlert("Export failed (check serial)", 2000);
         }
       }
       break;

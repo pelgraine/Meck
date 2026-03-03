@@ -21,6 +21,25 @@ class MyMesh;
 extern MyMesh the_mesh;
 
 // ---------------------------------------------------------------------------
+// Auto-add config bitmask (mirrored from MyMesh.cpp for UI access)
+// ---------------------------------------------------------------------------
+#define AUTO_ADD_OVERWRITE_OLDEST (1 << 0)  // 0x01 - overwrite oldest non-favourite when full
+#define AUTO_ADD_CHAT             (1 << 1)  // 0x02 - auto-add Chat (Companion) (ADV_TYPE_CHAT)
+#define AUTO_ADD_REPEATER         (1 << 2)  // 0x04 - auto-add Repeater (ADV_TYPE_REPEATER)
+#define AUTO_ADD_ROOM_SERVER      (1 << 3)  // 0x08 - auto-add Room Server (ADV_TYPE_ROOM)
+#define AUTO_ADD_SENSOR           (1 << 4)  // 0x10 - auto-add Sensor (ADV_TYPE_SENSOR)
+
+// All type bits combined (excludes overwrite flag)
+#define AUTO_ADD_ALL_TYPES (AUTO_ADD_CHAT | AUTO_ADD_REPEATER | \
+                            AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)
+
+// Contact mode indices for picker
+#define CONTACT_MODE_AUTO_ALL 0  // Add all contacts automatically
+#define CONTACT_MODE_CUSTOM   1  // Per-type toggles
+#define CONTACT_MODE_MANUAL   2  // No auto-add, companion app only
+#define CONTACT_MODE_COUNT    3
+
+// ---------------------------------------------------------------------------
 // Radio presets
 // ---------------------------------------------------------------------------
 struct RadioPreset {
@@ -67,11 +86,19 @@ enum SettingsRowType : uint8_t {
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   #ifdef MECK_WIFI_COMPANION
   ROW_WIFI_SETUP,     // WiFi SSID/password configuration
+  ROW_WIFI_TOGGLE,    // WiFi radio on/off toggle
   #endif
   #ifdef HAS_4G_MODEM
   ROW_MODEM_TOGGLE,   // 4G modem enable/disable toggle (4G builds only)
   // ROW_RINGTONE,       // Incoming call ringtone toggle (4G builds only)
   #endif
+  ROW_CONTACT_HEADER,  // "--- Contacts ---" separator
+  ROW_CONTACT_MODE,    // Contact auto-add mode picker (Auto All / Custom / Manual)
+  ROW_AUTOADD_CHAT,    // Toggle: auto-add Chat clients
+  ROW_AUTOADD_REPEATER,// Toggle: auto-add Repeaters
+  ROW_AUTOADD_ROOM,    // Toggle: auto-add Room Servers
+  ROW_AUTOADD_SENSOR,  // Toggle: auto-add Sensors
+  ROW_AUTOADD_OVERWRITE, // Toggle: overwrite oldest non-favourite when full
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
@@ -91,7 +118,7 @@ enum SettingsRowType : uint8_t {
 enum EditMode : uint8_t {
   EDIT_NONE,         // Just browsing
   EDIT_TEXT,         // Typing into a text buffer (name, channel name)
-  EDIT_PICKER,       // A/D cycles options (radio preset)
+  EDIT_PICKER,       // A/D cycles options (radio preset, contact mode)
   EDIT_NUMBER,       // W/S adjusts value (freq, BW, SF, CR, TX, UTC)
   EDIT_CONFIRM,      // Confirmation dialog (delete channel, apply radio)
   #ifdef MECK_WIFI_COMPANION
@@ -99,15 +126,15 @@ enum EditMode : uint8_t {
   #endif
 };
 
-// Max rows in the settings list
+// Max rows in the settings list (increased for contact sub-toggles + WiFi)
 #if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 48  // Extra rows for IMEI, Carrier, APN, WiFi
+#define SETTINGS_MAX_ROWS 56  // Extra rows for IMEI, Carrier, APN, contacts, WiFi
 #elif defined(HAS_4G_MODEM)
-#define SETTINGS_MAX_ROWS 46  // Extra rows for IMEI, Carrier, APN
+#define SETTINGS_MAX_ROWS 54  // Extra rows for IMEI, Carrier, APN + contacts
 #elif defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 42  // Extra row for WiFi
+#define SETTINGS_MAX_ROWS 50  // Extra rows for contacts + WiFi
 #else
-#define SETTINGS_MAX_ROWS 40
+#define SETTINGS_MAX_ROWS 48  // Contacts section
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 
@@ -133,7 +160,7 @@ private:
   EditMode _editMode;
   char _editBuf[SETTINGS_TEXT_BUF];
   int _editPos;
-  int _editPickerIdx;       // for preset picker
+  int _editPickerIdx;       // for preset picker / contact mode picker
   float _editFloat;         // for freq/BW editing
   int _editInt;             // for SF/CR/TX/UTC editing
   int _confirmAction;       // 0=none, 1=delete channel, 2=apply radio
@@ -168,6 +195,57 @@ private:
   #endif
 
   // ---------------------------------------------------------------------------
+  // Contact mode helpers
+  // ---------------------------------------------------------------------------
+
+  // Determine current contact mode from prefs
+  int getContactMode() const {
+    if ((_prefs->manual_add_contacts & 1) == 0) {
+      return CONTACT_MODE_AUTO_ALL;
+    }
+    // manual_add_contacts bit 0 is set — check if any type bits are enabled
+    if ((_prefs->autoadd_config & AUTO_ADD_ALL_TYPES) != 0) {
+      return CONTACT_MODE_CUSTOM;
+    }
+    return CONTACT_MODE_MANUAL;
+  }
+
+  // Get display label for a contact mode
+  static const char* contactModeLabel(int mode) {
+    switch (mode) {
+      case CONTACT_MODE_AUTO_ALL: return "Auto All";
+      case CONTACT_MODE_CUSTOM:   return "Custom";
+      case CONTACT_MODE_MANUAL:   return "Manual Only";
+      default:                    return "?";
+    }
+  }
+
+  // Apply a contact mode selection from picker
+  void applyContactMode(int mode) {
+    switch (mode) {
+      case CONTACT_MODE_AUTO_ALL:
+        _prefs->manual_add_contacts &= ~1;  // clear bit 0 → auto all
+        break;
+      case CONTACT_MODE_CUSTOM:
+        _prefs->manual_add_contacts |= 1;   // set bit 0 → selective
+        // If no type bits are set, default to all types enabled
+        if ((_prefs->autoadd_config & AUTO_ADD_ALL_TYPES) == 0) {
+          _prefs->autoadd_config |= AUTO_ADD_ALL_TYPES;
+        }
+        break;
+      case CONTACT_MODE_MANUAL:
+        _prefs->manual_add_contacts |= 1;   // set bit 0 → selective
+        _prefs->autoadd_config &= ~AUTO_ADD_ALL_TYPES;  // clear all type bits
+        // Note: keeps AUTO_ADD_OVERWRITE_OLDEST bit unchanged
+        break;
+    }
+    the_mesh.savePrefs();
+    rebuildRows();  // show/hide sub-toggles
+    Serial.printf("Settings: Contact mode = %s (manual=%d, autoadd=0x%02X)\n",
+                  contactModeLabel(mode), _prefs->manual_add_contacts, _prefs->autoadd_config);
+  }
+
+  // ---------------------------------------------------------------------------
   // Row table management
   // ---------------------------------------------------------------------------
 
@@ -185,11 +263,27 @@ private:
     addRow(ROW_MSG_NOTIFY);
     #ifdef MECK_WIFI_COMPANION
     addRow(ROW_WIFI_SETUP);
+    addRow(ROW_WIFI_TOGGLE);
     #endif
     #ifdef HAS_4G_MODEM
     addRow(ROW_MODEM_TOGGLE);
    // addRow(ROW_RINGTONE);
     #endif
+
+    // --- Contacts section ---
+    addRow(ROW_CONTACT_HEADER);
+    addRow(ROW_CONTACT_MODE);
+
+    // Show per-type sub-toggles only in Custom mode
+    if (getContactMode() == CONTACT_MODE_CUSTOM) {
+      addRow(ROW_AUTOADD_CHAT);
+      addRow(ROW_AUTOADD_REPEATER);
+      addRow(ROW_AUTOADD_ROOM);
+      addRow(ROW_AUTOADD_SENSOR);
+      addRow(ROW_AUTOADD_OVERWRITE);
+    }
+
+    // --- Channels section ---
     addRow(ROW_CH_HEADER);
 
     // Enumerate current channels
@@ -230,7 +324,7 @@ private:
   bool isSelectable(int idx) const {
     if (idx < 0 || idx >= _numRows) return false;
     SettingsRowType t = _rows[idx].type;
-    return t != ROW_CH_HEADER && t != ROW_INFO_HEADER
+    return t != ROW_CH_HEADER && t != ROW_INFO_HEADER && t != ROW_CONTACT_HEADER
     #ifdef HAS_4G_MODEM
       && t != ROW_IMEI && t != ROW_OPERATOR_INFO
     #endif
@@ -565,6 +659,11 @@ public:
           }
           display.print(tmp);
           break;
+        case ROW_WIFI_TOGGLE:
+          snprintf(tmp, sizeof(tmp), "WiFi Radio: %s",
+                   (WiFi.getMode() != WIFI_OFF) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
         #endif
 
         #ifdef HAS_4G_MODEM
@@ -581,6 +680,54 @@ public:
         //  break;
         #endif
 
+        // --- Contacts section ---
+        case ROW_CONTACT_HEADER:
+          display.setColor(DisplayDriver::YELLOW);
+          display.print("--- Contacts ---");
+          break;
+
+        case ROW_CONTACT_MODE:
+          if (editing && _editMode == EDIT_PICKER) {
+            snprintf(tmp, sizeof(tmp), "< Add Mode: %s >",
+                     contactModeLabel(_editPickerIdx));
+          } else {
+            snprintf(tmp, sizeof(tmp), "Add Mode: %s",
+                     contactModeLabel(getContactMode()));
+          }
+          display.print(tmp);
+          break;
+
+        case ROW_AUTOADD_CHAT:
+          snprintf(tmp, sizeof(tmp), "  Chat: %s",
+                   (_prefs->autoadd_config & AUTO_ADD_CHAT) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_AUTOADD_REPEATER:
+          snprintf(tmp, sizeof(tmp), "  Repeater: %s",
+                   (_prefs->autoadd_config & AUTO_ADD_REPEATER) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_AUTOADD_ROOM:
+          snprintf(tmp, sizeof(tmp), "  Room Server: %s",
+                   (_prefs->autoadd_config & AUTO_ADD_ROOM_SERVER) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_AUTOADD_SENSOR:
+          snprintf(tmp, sizeof(tmp), "  Sensor: %s",
+                   (_prefs->autoadd_config & AUTO_ADD_SENSOR) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_AUTOADD_OVERWRITE:
+          snprintf(tmp, sizeof(tmp), "  Overwrite Oldest: %s",
+                   (_prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        // --- Channels section ---
         case ROW_CH_HEADER:
           display.setColor(DisplayDriver::YELLOW);
           display.print("--- Channels ---");
@@ -1011,62 +1158,81 @@ public:
       return true;  // consume all keys in text edit
     }
 
-    // --- Picker mode (radio preset) ---
+    // --- Picker mode (radio preset or contact mode) ---
     if (_editMode == EDIT_PICKER) {
+      SettingsRowType type = _rows[_cursor].type;
+
       if (c == 'a' || c == 'A') {
-        _editPickerIdx--;
-        if (_editPickerIdx < 0) _editPickerIdx = (int)NUM_RADIO_PRESETS - 1;
+        if (type == ROW_CONTACT_MODE) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = CONTACT_MODE_COUNT - 1;
+        } else {
+          // Radio preset
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = (int)NUM_RADIO_PRESETS - 1;
+        }
         return true;
       }
       if (c == 'd' || c == 'D') {
-        _editPickerIdx++;
-        if (_editPickerIdx >= (int)NUM_RADIO_PRESETS) _editPickerIdx = 0;
+        if (type == ROW_CONTACT_MODE) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= CONTACT_MODE_COUNT) _editPickerIdx = 0;
+        } else {
+          // Radio preset
+          _editPickerIdx++;
+          if (_editPickerIdx >= (int)NUM_RADIO_PRESETS) _editPickerIdx = 0;
+        }
         return true;
       }
       if (c == '\r' || c == 13) {
-        // Apply preset
-        if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
-          const RadioPreset& p = RADIO_PRESETS[_editPickerIdx];
-          _prefs->freq = p.freq;
-          _prefs->bw = p.bw;
-          _prefs->sf = p.sf;
-          _prefs->cr = p.cr;
-          _prefs->tx_power_dbm = p.tx_power;
-          _radioChanged = true;
-        }
-        _editMode = EDIT_NONE;
-        if (_onboarding) {
-          applyRadioParams();
-        #ifdef MECK_WIFI_COMPANION
-          // Move to WiFi setup before finishing onboarding
-          for (int r = 0; r < _numRows; r++) {
-            if (_rows[r].type == ROW_WIFI_SETUP) {
-              _cursor = r;
-              break;
-            }
+        if (type == ROW_CONTACT_MODE) {
+          applyContactMode(_editPickerIdx);
+          _editMode = EDIT_NONE;
+        } else {
+          // Apply radio preset
+          if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
+            const RadioPreset& p = RADIO_PRESETS[_editPickerIdx];
+            _prefs->freq = p.freq;
+            _prefs->bw = p.bw;
+            _prefs->sf = p.sf;
+            _prefs->cr = p.cr;
+            _prefs->tx_power_dbm = p.tx_power;
+            _radioChanged = true;
           }
-          // Auto-launch the WiFi scan
-          _editMode = EDIT_WIFI;
-          _wifiPhase = WIFI_PHASE_SCANNING;
-          _wifiSSIDCount = 0;
-          _wifiSSIDSelected = 0;
-          WiFi.mode(WIFI_STA);
-          int n = WiFi.scanNetworks();
-          if (n > 0) {
-            _wifiSSIDCount = min(n, 10);
-            for (int si = 0; si < _wifiSSIDCount; si++) {
-              _wifiSSIDs[si] = WiFi.SSID(si);
+          _editMode = EDIT_NONE;
+          if (_onboarding) {
+            applyRadioParams();
+          #ifdef MECK_WIFI_COMPANION
+            // Move to WiFi setup before finishing onboarding
+            for (int r = 0; r < _numRows; r++) {
+              if (_rows[r].type == ROW_WIFI_SETUP) {
+                _cursor = r;
+                break;
+              }
             }
-            _wifiPhase = WIFI_PHASE_SELECT;
-          } else {
-            _editMode = EDIT_NONE;
-            _wifiPhase = WIFI_PHASE_IDLE;
-            _onboarding = false;  // Finish even without WiFi
+            // Auto-launch the WiFi scan
+            _editMode = EDIT_WIFI;
+            _wifiPhase = WIFI_PHASE_SCANNING;
+            _wifiSSIDCount = 0;
+            _wifiSSIDSelected = 0;
+            WiFi.mode(WIFI_STA);
+            int n = WiFi.scanNetworks();
+            if (n > 0) {
+              _wifiSSIDCount = min(n, 10);
+              for (int si = 0; si < _wifiSSIDCount; si++) {
+                _wifiSSIDs[si] = WiFi.SSID(si);
+              }
+              _wifiPhase = WIFI_PHASE_SELECT;
+            } else {
+              _editMode = EDIT_NONE;
+              _wifiPhase = WIFI_PHASE_IDLE;
+              _onboarding = false;  // Finish even without WiFi
+            }
+            WiFi.scanDelete();
+          #else
+            _onboarding = false;
+          #endif
           }
-          WiFi.scanDelete();
-        #else
-          _onboarding = false;
-        #endif
         }
         return true;
       }
@@ -1234,6 +1400,41 @@ public:
           WiFi.scanDelete();
           break;
         }
+        case ROW_WIFI_TOGGLE:
+          if (WiFi.getMode() != WIFI_OFF) {
+            // Turn WiFi OFF
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_OFF);
+            Serial.println("Settings: WiFi radio OFF");
+          } else {
+            // Turn WiFi ON — reconnect using saved credentials
+            WiFi.mode(WIFI_STA);
+            if (SD.exists("/web/wifi.cfg")) {
+              File f = SD.open("/web/wifi.cfg", FILE_READ);
+              if (f) {
+                String ssid = f.readStringUntil('\n'); ssid.trim();
+                String pass = f.readStringUntil('\n'); pass.trim();
+                f.close();
+                digitalWrite(SDCARD_CS, HIGH);
+                if (ssid.length() > 0) {
+                  WiFi.begin(ssid.c_str(), pass.c_str());
+                  unsigned long timeout = millis() + 8000;
+                  while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
+                    delay(100);
+                  }
+                  if (WiFi.status() == WL_CONNECTED) {
+                    Serial.printf("Settings: WiFi ON, connected to %s\n", ssid.c_str());
+                  } else {
+                    Serial.println("Settings: WiFi ON, but connection failed");
+                  }
+                }
+              } else {
+                digitalWrite(SDCARD_CS, HIGH);
+              }
+            }
+            Serial.println("Settings: WiFi radio ON");
+          }
+          break;
         #endif
         #ifdef HAS_4G_MODEM
         case ROW_MODEM_TOGGLE:
@@ -1261,6 +1462,44 @@ public:
           break;
         }
         #endif
+
+        // --- Contact mode picker ---
+        case ROW_CONTACT_MODE:
+          startEditPicker(getContactMode());
+          break;
+
+        // --- Contact sub-toggles (flip bit and save) ---
+        case ROW_AUTOADD_CHAT:
+          _prefs->autoadd_config ^= AUTO_ADD_CHAT;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Auto-add Chat = %s\n",
+                        (_prefs->autoadd_config & AUTO_ADD_CHAT) ? "ON" : "OFF");
+          break;
+        case ROW_AUTOADD_REPEATER:
+          _prefs->autoadd_config ^= AUTO_ADD_REPEATER;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Auto-add Repeater = %s\n",
+                        (_prefs->autoadd_config & AUTO_ADD_REPEATER) ? "ON" : "OFF");
+          break;
+        case ROW_AUTOADD_ROOM:
+          _prefs->autoadd_config ^= AUTO_ADD_ROOM_SERVER;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Auto-add Room = %s\n",
+                        (_prefs->autoadd_config & AUTO_ADD_ROOM_SERVER) ? "ON" : "OFF");
+          break;
+        case ROW_AUTOADD_SENSOR:
+          _prefs->autoadd_config ^= AUTO_ADD_SENSOR;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Auto-add Sensor = %s\n",
+                        (_prefs->autoadd_config & AUTO_ADD_SENSOR) ? "ON" : "OFF");
+          break;
+        case ROW_AUTOADD_OVERWRITE:
+          _prefs->autoadd_config ^= AUTO_ADD_OVERWRITE_OLDEST;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Overwrite oldest = %s\n",
+                        (_prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) ? "ON" : "OFF");
+          break;
+
         case ROW_ADD_CHANNEL:
           startEditText("");
           break;
