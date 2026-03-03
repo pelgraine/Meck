@@ -5,13 +5,6 @@
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
 #include "target.h"    // For sensors, board, etc.
 #include "CPUPowerManager.h"
-#include "GPSAiding.h"
-
-// Delay after GPS hardware power-on before sending UBX aiding (ms).
-// The MIA-M10Q needs time to boot before it can accept UBX commands.
-#ifndef GPS_BOOT_DELAY_MS
-#define GPS_BOOT_DELAY_MS  250
-#endif
 
 // T-Deck Pro Keyboard support
 #if defined(LilyGo_TDeck_Pro)
@@ -792,10 +785,6 @@ void setup() {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
       #endif
-      // Send aiding data (last position + RTC time) to reduce TTFF
-      delay(GPS_BOOT_DELAY_MS);
-      GPSAiding::sendAllAiding(Serial2, sensors.node_lat, sensors.node_lon,
-                               rtc_clock.getCurrentTime(), 50000, 10);
       sensors.setSettingValue("gps", "1");
     } else {
       #ifdef PIN_GPS_EN
