@@ -10,6 +10,11 @@
   #include "ModemManager.h"
 #endif
 
+#ifdef MECK_WIFI_COMPANION
+  #include <WiFi.h>
+  #include <SD.h>
+#endif
+
 // Forward declarations
 class UITask;
 class MyMesh;
@@ -60,6 +65,9 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
+  #ifdef MECK_WIFI_COMPANION
+  ROW_WIFI_SETUP,     // WiFi SSID/password configuration
+  #endif
   #ifdef HAS_4G_MODEM
   ROW_MODEM_TOGGLE,   // 4G modem enable/disable toggle (4G builds only)
   // ROW_RINGTONE,       // Incoming call ringtone toggle (4G builds only)
@@ -86,11 +94,18 @@ enum EditMode : uint8_t {
   EDIT_PICKER,       // A/D cycles options (radio preset)
   EDIT_NUMBER,       // W/S adjusts value (freq, BW, SF, CR, TX, UTC)
   EDIT_CONFIRM,      // Confirmation dialog (delete channel, apply radio)
+  #ifdef MECK_WIFI_COMPANION
+  EDIT_WIFI,         // WiFi scan/select/password flow
+  #endif
 };
 
 // Max rows in the settings list
-#ifdef HAS_4G_MODEM
+#if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
+#define SETTINGS_MAX_ROWS 48  // Extra rows for IMEI, Carrier, APN, WiFi
+#elif defined(HAS_4G_MODEM)
 #define SETTINGS_MAX_ROWS 46  // Extra rows for IMEI, Carrier, APN
+#elif defined(MECK_WIFI_COMPANION)
+#define SETTINGS_MAX_ROWS 42  // Extra row for WiFi
 #else
 #define SETTINGS_MAX_ROWS 40
 #endif
@@ -134,6 +149,24 @@ private:
   bool _modemEnabled;
   #endif
 
+  #ifdef MECK_WIFI_COMPANION
+  // WiFi setup sub-screen state
+  enum WifiSetupPhase : uint8_t {
+    WIFI_PHASE_IDLE,
+    WIFI_PHASE_SCANNING,
+    WIFI_PHASE_SELECT,      // W/S to pick SSID, Enter to select
+    WIFI_PHASE_PASSWORD,    // Type password, Enter to connect
+    WIFI_PHASE_CONNECTING,
+  };
+  WifiSetupPhase _wifiPhase;
+  String _wifiSSIDs[10];
+  int _wifiSSIDCount;
+  int _wifiSSIDSelected;
+  char _wifiPassBuf[64];
+  int _wifiPassLen;
+  unsigned long _wifiFormLastChar;  // For brief password reveal
+  #endif
+
   // ---------------------------------------------------------------------------
   // Row table management
   // ---------------------------------------------------------------------------
@@ -150,6 +183,9 @@ private:
     addRow(ROW_TX_POWER);
     addRow(ROW_UTC_OFFSET);
     addRow(ROW_MSG_NOTIFY);
+    #ifdef MECK_WIFI_COMPANION
+    addRow(ROW_WIFI_SETUP);
+    #endif
     #ifdef HAS_4G_MODEM
     addRow(ROW_MODEM_TOGGLE);
    // addRow(ROW_RINGTONE);
@@ -327,6 +363,14 @@ public:
     _radioChanged = false;
     #ifdef HAS_4G_MODEM
     _modemEnabled = ModemManager::loadEnabledConfig();
+    #endif
+    #ifdef MECK_WIFI_COMPANION
+    _wifiPhase = WIFI_PHASE_IDLE;
+    _wifiSSIDCount = 0;
+    _wifiSSIDSelected = 0;
+    _wifiPassLen = 0;
+    memset(_wifiPassBuf, 0, sizeof(_wifiPassBuf));
+    _wifiFormLastChar = 0;
     #endif
     rebuildRows();
   }
@@ -512,6 +556,17 @@ public:
           display.print(tmp);
           break;
 
+        #ifdef MECK_WIFI_COMPANION
+        case ROW_WIFI_SETUP:
+          if (WiFi.status() == WL_CONNECTED) {
+            snprintf(tmp, sizeof(tmp), "WiFi: %s", WiFi.SSID().c_str());
+          } else {
+            strcpy(tmp, "WiFi: (not connected)");
+          }
+          display.print(tmp);
+          break;
+        #endif
+
         #ifdef HAS_4G_MODEM
         case ROW_MODEM_TOGGLE:
           snprintf(tmp, sizeof(tmp), "4G Modem: %s",
@@ -660,6 +715,73 @@ public:
       display.setTextSize(1);
     }
 
+    #ifdef MECK_WIFI_COMPANION
+    // === WiFi setup overlay ===
+    if (_editMode == EDIT_WIFI) {
+      int bx = 2, by = 14, bw = display.width() - 4;
+      int bh = display.height() - 28;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, bh);
+
+      display.setTextSize(0);
+      int wy = by + 4;
+
+      if (_wifiPhase == WIFI_PHASE_SCANNING) {
+        display.drawTextCentered(display.width() / 2, wy, "Scanning for networks...");
+
+      } else if (_wifiPhase == WIFI_PHASE_SELECT) {
+        display.setCursor(bx + 4, wy);
+        display.print("Select network:");
+        wy += 10;
+        for (int wi = 0; wi < _wifiSSIDCount && wy < by + bh - 16; wi++) {
+          bool sel = (wi == _wifiSSIDSelected);
+          if (sel) {
+            display.setColor(DisplayDriver::LIGHT);
+            display.fillRect(bx + 2, wy + 5, bw - 4, 8);
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
+          display.setCursor(bx + 4, wy);
+          char ssidLine[40];
+          if (sel) {
+            snprintf(ssidLine, sizeof(ssidLine), "> %.33s", _wifiSSIDs[wi].c_str());
+          } else {
+            snprintf(ssidLine, sizeof(ssidLine), "  %.33s", _wifiSSIDs[wi].c_str());
+          }
+          display.print(ssidLine);
+          wy += 8;
+        }
+
+      } else if (_wifiPhase == WIFI_PHASE_PASSWORD) {
+        display.setCursor(bx + 4, wy);
+        snprintf(tmp, sizeof(tmp), "SSID: %s", _wifiSSIDs[_wifiSSIDSelected].c_str());
+        display.print(tmp);
+        wy += 12;
+        display.setCursor(bx + 4, wy);
+        display.print("Password:");
+        wy += 10;
+        display.setCursor(bx + 4, wy);
+        // Masked password with brief reveal of last char
+        char passBuf[66];
+        for (int pi = 0; pi < _wifiPassLen; pi++) passBuf[pi] = '*';
+        if (_wifiPassLen > 0 && _wifiFormLastChar > 0 &&
+            (millis() - _wifiFormLastChar) < 800) {
+          passBuf[_wifiPassLen - 1] = _wifiPassBuf[_wifiPassLen - 1];
+        }
+        passBuf[_wifiPassLen] = '_';
+        passBuf[_wifiPassLen + 1] = '\0';
+        display.print(passBuf);
+
+      } else if (_wifiPhase == WIFI_PHASE_CONNECTING) {
+        display.drawTextCentered(display.width() / 2, wy + 10, "Connecting...");
+      }
+      display.setTextSize(1);
+    }
+    #endif
+
     // === Footer ===
     int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
@@ -668,6 +790,16 @@ public:
 
     if (_editMode == EDIT_TEXT) {
       display.print("Type, Enter:Ok Q:Cancel");
+    #ifdef MECK_WIFI_COMPANION
+    } else if (_editMode == EDIT_WIFI) {
+      if (_wifiPhase == WIFI_PHASE_SELECT) {
+        display.print("W/S:Pick Enter:Select Q:Bck");
+      } else if (_wifiPhase == WIFI_PHASE_PASSWORD) {
+        display.print("Type, Enter:Connect Q:Bck");
+      } else {
+        display.print("Please wait...");
+      }
+    #endif
     } else if (_editMode == EDIT_PICKER) {
       display.print("A/D:Choose Enter:Ok");
     } else if (_editMode == EDIT_NUMBER) {
@@ -712,6 +844,102 @@ public:
       }
       return true;  // consume all keys in confirm mode
     }
+
+    #ifdef MECK_WIFI_COMPANION
+    // --- WiFi setup flow ---
+    if (_editMode == EDIT_WIFI) {
+      if (_wifiPhase == WIFI_PHASE_SELECT) {
+        if (c == 'w' || c == 'W') {
+          if (_wifiSSIDSelected > 0) _wifiSSIDSelected--;
+          return true;
+        }
+        if (c == 's' || c == 'S') {
+          if (_wifiSSIDSelected < _wifiSSIDCount - 1) _wifiSSIDSelected++;
+          return true;
+        }
+        if (c == '\r' || c == 13) {
+          // Selected an SSID — move to password entry
+          _wifiPhase = WIFI_PHASE_PASSWORD;
+          _wifiPassLen = 0;
+          memset(_wifiPassBuf, 0, sizeof(_wifiPassBuf));
+          _wifiFormLastChar = 0;
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          _editMode = EDIT_NONE;
+          _wifiPhase = WIFI_PHASE_IDLE;
+          if (_onboarding) _onboarding = false;  // Skip WiFi, finish onboarding
+          return true;
+        }
+        return true;
+      }
+
+      if (_wifiPhase == WIFI_PHASE_PASSWORD) {
+        if (c == '\r' || c == 13) {
+          // Attempt connection
+          _wifiPassBuf[_wifiPassLen] = '\0';
+          _wifiPhase = WIFI_PHASE_CONNECTING;
+
+          // Save credentials to SD first (so web reader can reuse them)
+          if (SD.exists("/web") || SD.mkdir("/web")) {
+            File f = SD.open("/web/wifi.cfg", FILE_WRITE);
+            if (f) {
+              f.println(_wifiSSIDs[_wifiSSIDSelected]);
+              f.println(_wifiPassBuf);
+              f.close();
+            }
+            digitalWrite(SDCARD_CS, HIGH);
+          }
+
+          WiFi.disconnect(false);
+          WiFi.begin(_wifiSSIDs[_wifiSSIDSelected].c_str(), _wifiPassBuf);
+
+          // Brief blocking wait — fine for e-ink (screen won't update during this anyway)
+          unsigned long timeout = millis() + 8000;
+          while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
+            delay(100);
+          }
+
+          if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("Settings: WiFi connected to %s, IP: %s\n",
+                          _wifiSSIDs[_wifiSSIDSelected].c_str(),
+                          WiFi.localIP().toString().c_str());
+            _editMode = EDIT_NONE;
+            _wifiPhase = WIFI_PHASE_IDLE;
+            if (_onboarding) _onboarding = false;  // Finish onboarding
+          } else {
+            Serial.println("Settings: WiFi connection failed");
+            // Go back to SSID selection so user can retry
+            _wifiPhase = WIFI_PHASE_SELECT;
+          }
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          // Back to SSID selection
+          _wifiPhase = WIFI_PHASE_SELECT;
+          return true;
+        }
+        if (c == '\b') {
+          if (_wifiPassLen > 0) {
+            _wifiPassLen--;
+            _wifiPassBuf[_wifiPassLen] = '\0';
+          }
+          return true;
+        }
+        // Printable character
+        if (c >= 32 && c < 127 && _wifiPassLen < 63) {
+          _wifiPassBuf[_wifiPassLen++] = c;
+          _wifiPassBuf[_wifiPassLen] = '\0';
+          _wifiFormLastChar = millis();
+          return true;
+        }
+        return true;
+      }
+
+      // Scanning and connecting phases consume all keys
+      return true;
+    }
+    #endif
 
     // --- Text editing mode ---
     if (_editMode == EDIT_TEXT) {
@@ -808,9 +1036,37 @@ public:
         }
         _editMode = EDIT_NONE;
         if (_onboarding) {
-          // Apply and finish onboarding
           applyRadioParams();
+        #ifdef MECK_WIFI_COMPANION
+          // Move to WiFi setup before finishing onboarding
+          for (int r = 0; r < _numRows; r++) {
+            if (_rows[r].type == ROW_WIFI_SETUP) {
+              _cursor = r;
+              break;
+            }
+          }
+          // Auto-launch the WiFi scan
+          _editMode = EDIT_WIFI;
+          _wifiPhase = WIFI_PHASE_SCANNING;
+          _wifiSSIDCount = 0;
+          _wifiSSIDSelected = 0;
+          WiFi.mode(WIFI_STA);
+          int n = WiFi.scanNetworks();
+          if (n > 0) {
+            _wifiSSIDCount = min(n, 10);
+            for (int si = 0; si < _wifiSSIDCount; si++) {
+              _wifiSSIDs[si] = WiFi.SSID(si);
+            }
+            _wifiPhase = WIFI_PHASE_SELECT;
+          } else {
+            _editMode = EDIT_NONE;
+            _wifiPhase = WIFI_PHASE_IDLE;
+            _onboarding = false;  // Finish even without WiFi
+          }
+          WiFi.scanDelete();
+        #else
           _onboarding = false;
+        #endif
         }
         return true;
       }
@@ -952,6 +1208,33 @@ public:
           Serial.printf("Settings: Msg flash notify = %s\n",
                         _prefs->kb_flash_notify ? "ON" : "OFF");
           break;
+        #ifdef MECK_WIFI_COMPANION
+        case ROW_WIFI_SETUP: {
+          // Launch WiFi scan → select → password → connect flow
+          _editMode = EDIT_WIFI;
+          _wifiPhase = WIFI_PHASE_SCANNING;
+          _wifiSSIDCount = 0;
+          _wifiSSIDSelected = 0;
+
+          // Blocking WiFi scan (3-5 seconds, fine for e-ink)
+          WiFi.mode(WIFI_STA);
+          int n = WiFi.scanNetworks();
+          if (n > 0) {
+            _wifiSSIDCount = min(n, 10);
+            for (int si = 0; si < _wifiSSIDCount; si++) {
+              _wifiSSIDs[si] = WiFi.SSID(si);
+            }
+            _wifiPhase = WIFI_PHASE_SELECT;
+          } else {
+            // No networks found — exit WiFi flow
+            Serial.println("Settings: WiFi scan found no networks");
+            _editMode = EDIT_NONE;
+            _wifiPhase = WIFI_PHASE_IDLE;
+          }
+          WiFi.scanDelete();
+          break;
+        }
+        #endif
         #ifdef HAS_4G_MODEM
         case ROW_MODEM_TOGGLE:
           _modemEnabled = !_modemEnabled;

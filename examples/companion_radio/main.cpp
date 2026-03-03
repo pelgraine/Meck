@@ -1,5 +1,7 @@
 #include <Arduino.h>   // needed for PlatformIO
-#include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
+#ifdef BLE_PIN_CODE
+  #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
+#endif
 #include <Mesh.h>
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
@@ -363,6 +365,13 @@ static uint32_t _atoi(const char* sp) {
     #ifndef TCP_PORT
       #define TCP_PORT 5000
     #endif
+  #elif defined(MECK_WIFI_COMPANION)
+    #include <WiFi.h>
+    #include <helpers/esp32/SerialWifiInterface.h>
+    SerialWifiInterface serial_interface;
+    #ifndef TCP_PORT
+      #define TCP_PORT 5000
+    #endif
   #elif defined(BLE_PIN_CODE)
     #include <helpers/esp32/SerialBLEInterface.h>
     SerialBLEInterface serial_interface;
@@ -639,9 +648,44 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
 
 #ifdef WIFI_SSID
-  MESH_DEBUG_PRINTLN("setup() - WiFi mode");
+  MESH_DEBUG_PRINTLN("setup() - WiFi mode (compile-time credentials)");
   WiFi.begin(WIFI_SSID, WIFI_PWD);
   serial_interface.begin(TCP_PORT);
+#elif defined(MECK_WIFI_COMPANION)
+  {
+    // WiFi companion: load credentials from SD at runtime.
+    // TCP server starts regardless — companion connects when WiFi comes up.
+    MESH_DEBUG_PRINTLN("setup() - WiFi companion mode (runtime credentials)");
+    WiFi.mode(WIFI_STA);
+    if (sdCardReady) {
+      File f = SD.open("/web/wifi.cfg", FILE_READ);
+      if (f) {
+        String ssid = f.readStringUntil('\n'); ssid.trim();
+        String pass = f.readStringUntil('\n'); pass.trim();
+        f.close();
+        digitalWrite(SDCARD_CS, HIGH);
+        if (ssid.length() > 0) {
+          MESH_DEBUG_PRINTLN("setup() - WiFi: connecting to '%s'", ssid.c_str());
+          WiFi.begin(ssid.c_str(), pass.c_str());
+          unsigned long timeout = millis() + 8000;
+          while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
+            delay(100);
+          }
+          if (WiFi.status() == WL_CONNECTED) {
+            Serial.printf("WiFi companion: connected to %s, IP: %s\n",
+                          ssid.c_str(), WiFi.localIP().toString().c_str());
+          } else {
+            Serial.println("WiFi companion: auto-connect failed (configure in Settings)");
+          }
+        }
+      } else {
+        digitalWrite(SDCARD_CS, HIGH);
+        Serial.println("WiFi companion: no /web/wifi.cfg found (configure in Settings)");
+      }
+    }
+    serial_interface.begin(TCP_PORT);
+    MESH_DEBUG_PRINTLN("setup() - WiFi TCP server started on port %d", TCP_PORT);
+  }
 #elif defined(BLE_PIN_CODE)
   MESH_DEBUG_PRINTLN("setup() - about to call serial_interface.begin() with BLE");
   serial_interface.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
@@ -1697,7 +1741,12 @@ void handleKeyboardInput() {
       Serial.println("Opening web reader");
       {
         static bool webReaderWifiReady = false;
+      #ifdef MECK_WIFI_COMPANION
+        // WiFi companion: WiFi is already up from boot, no BLE to tear down
+        webReaderWifiReady = true;
+      #endif
         if (!webReaderWifiReady) {
+      #ifdef BLE_PIN_CODE
           // WiFi needs ~40KB contiguous heap. The BLE controller holds ~30KB,
           // leaving only ~30KB largest block. We MUST release BLE memory first.
           //
@@ -1716,14 +1765,14 @@ void handleKeyboardInput() {
 
           Serial.printf("WebReader: heap AFTER BT release: free=%d, largest=%d\n",
                          ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      #endif
 
-          // 3) Now init WiFi while we have maximum contiguous heap
+          // Init WiFi while we have maximum contiguous heap
           if (WiFi.mode(WIFI_STA)) {
             Serial.println("WebReader: WiFi STA init OK");
             webReaderWifiReady = true;
           } else {
-            Serial.println("WebReader: WiFi STA init FAILED even after BT release");
-            // Clean up partial WiFi init to avoid memory leak
+            Serial.println("WebReader: WiFi STA init FAILED");
             WiFi.mode(WIFI_OFF);
           }
 
