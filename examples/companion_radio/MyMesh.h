@@ -84,6 +84,15 @@ struct AdvertPath {
   uint8_t path[MAX_PATH_SIZE];
 };
 
+// Discovery scan — transient buffer for on-device node discovery
+#define MAX_DISCOVERED_NODES 20
+
+struct DiscoveredNode {
+  ContactInfo contact;
+  uint8_t path_len;
+  bool already_in_contacts;   // true if contact was auto-added or already known
+};
+
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
   MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui=NULL);
@@ -101,6 +110,14 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
+
+  // Discovery scan — on-device node discovery
+  void startDiscovery(uint32_t duration_ms = 30000);
+  void stopDiscovery();
+  bool isDiscoveryActive() const { return _discoveryActive; }
+  int  getDiscoveredCount() const { return _discoveredCount; }
+  const DiscoveredNode& getDiscovered(int idx) const { return _discovered[idx]; }
+  bool addDiscoveredToContacts(int idx);  // promote a discovered node into contacts
   
   // Queue a sent channel message for BLE app sync
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
@@ -257,6 +274,12 @@ private:
   SentMsgTrack _sent_track[SENT_TRACK_SIZE];
   int _sent_track_idx;  // next slot in circular buffer
   int _admin_contact_idx;  // contact index for active admin session (-1 if none)
+
+  // Discovery scan state
+  DiscoveredNode _discovered[MAX_DISCOVERED_NODES];
+  int _discoveredCount;
+  bool _discoveryActive;
+  unsigned long _discoveryTimeout;
 };
 
 extern MyMesh the_mesh;

@@ -405,11 +405,15 @@ void DataStore::saveContacts(DataStoreHost* host) {
     idx++;
   }
 
-  size_t bytesWritten = file.size();
   file.close();
 
   // --- Step 2: Verify the write completed ---
+  // Reopen read-only to get true on-disk size (SPIFFS file.size() is unreliable before close)
   size_t expectedBytes = recordsWritten * 152;  // 152 bytes per contact record
+  File verify = openRead(fs, tmpPath);
+  size_t bytesWritten = verify ? verify.size() : 0;
+  if (verify) verify.close();
+
   if (!writeOk || bytesWritten != expectedBytes) {
     Serial.printf("DataStore: saveContacts ABORTED — wrote %d bytes, expected %d (%d records)\n",
                   (int)bytesWritten, (int)expectedBytes, recordsWritten);
@@ -493,10 +497,13 @@ void DataStore::saveChannels(DataStoreHost* host) {
     channel_idx++;
   }
 
-  size_t bytesWritten = file.size();
   file.close();
 
+  // Reopen read-only to get true on-disk size (SPIFFS file.size() is unreliable before close)
   size_t expectedBytes = channel_idx * 68;  // 4 + 32 + 32 = 68 bytes per channel
+  File verify = openRead(fs, tmpPath);
+  size_t bytesWritten = verify ? verify.size() : 0;
+  if (verify) verify.close();
   if (!writeOk || bytesWritten != expectedBytes) {
     Serial.printf("DataStore: saveChannels ABORTED — wrote %d bytes, expected %d\n",
                   (int)bytesWritten, (int)expectedBytes);

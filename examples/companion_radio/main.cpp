@@ -18,6 +18,7 @@
   #include "ChannelScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
+  #include "DiscoveryScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -1848,8 +1849,9 @@ void handleKeyboardInput() {
       break;
     
     case 's':
-      // Open settings (from home), or navigate down on channel/contacts/admin/web/map
+      // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -1865,6 +1867,7 @@ void handleKeyboardInput() {
     case 'w':
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -1972,6 +1975,23 @@ void handleKeyboardInput() {
         }
         drawComposeScreen();
         lastComposeRefresh = millis();
+      } else if (ui_task.isOnDiscoveryScreen()) {
+        // Discovery screen: Enter adds selected node to contacts
+        DiscoveryScreen* ds = (DiscoveryScreen*)ui_task.getDiscoveryScreen();
+        int didx = ds->getSelectedIdx();
+        if (didx >= 0 && didx < the_mesh.getDiscoveredCount()) {
+          const DiscoveredNode& node = the_mesh.getDiscovered(didx);
+          if (node.already_in_contacts) {
+            ui_task.showAlert("Already in contacts", 800);
+          } else if (the_mesh.addDiscoveredToContacts(didx)) {
+            char alertBuf[48];
+            snprintf(alertBuf, sizeof(alertBuf), "Added: %s", node.contact.name);
+            ui_task.showAlert(alertBuf, 1500);
+            ui_task.notify(UIEventType::ack);
+          } else {
+            ui_task.showAlert("Add failed", 1000);
+          }
+        }
       } else {
         // Other screens: pass Enter as generic select
         ui_task.injectKey(13);
@@ -2025,6 +2045,17 @@ void handleKeyboardInput() {
       }
       break;
 
+    case 'f':
+      // Start discovery scan from contacts screen, or rescan on discovery screen
+      if (ui_task.isOnContactsScreen()) {
+        Serial.println("Contacts: Starting discovery scan...");
+        the_mesh.startDiscovery();
+        ui_task.gotoDiscoveryScreen();
+      } else if (ui_task.isOnDiscoveryScreen()) {
+        ui_task.injectKey('f');  // pass through for rescan
+      }
+      break;
+
     case 'q':
     case '\b':
       // If channel screen reply select or path overlay is showing, dismiss it
@@ -2050,6 +2081,13 @@ void handleKeyboardInput() {
         }
       }
 #endif
+      // Discovery screen: Q goes back to contacts (not home)
+      if (ui_task.isOnDiscoveryScreen()) {
+        the_mesh.stopDiscovery();
+        Serial.println("Nav: Discovery -> Contacts");
+        ui_task.gotoContactsScreen();
+        break;
+      }
       // Go back to home screen (admin mode handled above)
       Serial.println("Nav: Back to home");
       ui_task.gotoHomeScreen();

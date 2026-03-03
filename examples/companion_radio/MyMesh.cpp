@@ -357,6 +357,30 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     memcpy(p->path, path, p->path_len);
   }
 
+  // Buffer for on-device discovery UI
+  if (_discoveryActive && _discoveredCount < MAX_DISCOVERED_NODES) {
+    bool dup = false;
+    for (int i = 0; i < _discoveredCount; i++) {
+      if (contact.id.matches(_discovered[i].contact.id)) {
+        // Update existing entry with fresher data
+        _discovered[i].contact = contact;
+        _discovered[i].path_len = path_len;
+        _discovered[i].already_in_contacts = !is_new;
+        dup = true;
+        Serial.printf("[Discovery] Updated: %s (hops=%d)\n", contact.name, path_len);
+        break;
+      }
+    }
+    if (!dup) {
+      _discovered[_discoveredCount].contact = contact;
+      _discovered[_discoveredCount].path_len = path_len;
+      _discovered[_discoveredCount].already_in_contacts = !is_new;
+      _discoveredCount++;
+      Serial.printf("[Discovery] Found: %s (hops=%d, is_new=%d, total=%d)\n",
+                    contact.name, path_len, is_new, _discoveredCount);
+    }
+  }
+
   if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
 }
 
@@ -998,6 +1022,9 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
   _admin_contact_idx = -1;
+  _discoveredCount = 0;
+  _discoveryActive = false;
+  _discoveryTimeout = 0;
 
   // defaults
   memset(&_prefs, 0, sizeof(_prefs));
@@ -2201,6 +2228,12 @@ void MyMesh::loop() {
     dirty_contacts_expiry = 0;
   }
 
+  // Discovery scan timeout
+  if (_discoveryActive && millisHasNowPassed(_discoveryTimeout)) {
+    _discoveryActive = false;
+    Serial.printf("[Discovery] Scan complete: %d nodes found\n", _discoveredCount);
+  }
+
 #ifdef DISPLAY_CLASS
   if (_ui) _ui->setHasConnection(_serial->isConnected());
 #endif
@@ -2219,4 +2252,65 @@ bool MyMesh::advert() {
   } else {
     return false;
   }
+}
+
+void MyMesh::startDiscovery(uint32_t duration_ms) {
+  _discoveredCount = 0;
+  _discoveryActive = true;
+  _discoveryTimeout = futureMillis(duration_ms);
+  Serial.printf("[Discovery] Scan started (%lu ms)\n", duration_ms);
+
+  // Pre-seed from advert_paths cache (nodes heard recently, before scan started)
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE && _discoveredCount < MAX_DISCOVERED_NODES; i++) {
+    if (advert_paths[i].recv_timestamp == 0) continue;  // empty slot
+
+    // Look up full contact info by pubkey prefix
+    ContactInfo* c = lookupContactByPubKey(advert_paths[i].pubkey_prefix, sizeof(advert_paths[i].pubkey_prefix));
+    if (c) {
+      _discovered[_discoveredCount].contact = *c;
+      _discovered[_discoveredCount].path_len = advert_paths[i].path_len;
+      _discovered[_discoveredCount].already_in_contacts = true;
+      _discoveredCount++;
+    }
+  }
+  Serial.printf("[Discovery] Pre-seeded %d nodes from cache\n", _discoveredCount);
+
+  // Flood self-advert through mesh (not zero-hop) so repeaters
+  // multiple hops away hear it and respond with their own adverts
+  mesh::Packet* pkt;
+  if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
+    pkt = createSelfAdvert(_prefs.node_name);
+  } else {
+    pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+  }
+  if (pkt) {
+    sendFlood(pkt);
+    Serial.println("[Discovery] Self-advert flooded");
+  } else {
+    Serial.println("[Discovery] ERROR: createSelfAdvert returned NULL (packet pool full?)");
+  }
+}
+
+void MyMesh::stopDiscovery() {
+  _discoveryActive = false;
+}
+
+bool MyMesh::addDiscoveredToContacts(int idx) {
+  if (idx < 0 || idx >= _discoveredCount) return false;
+  if (_discovered[idx].already_in_contacts) return true;  // already there
+
+  // Retrieve cached raw advert packet and import it
+  uint8_t buf[256];
+  int plen = getBlobByKey(_discovered[idx].contact.id.pub_key, PUB_KEY_SIZE, buf);
+  if (plen > 0) {
+    bool ok = importContact(buf, (uint8_t)plen);
+    if (ok) {
+      _discovered[idx].already_in_contacts = true;
+      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      MESH_DEBUG_PRINTLN("Discovery: added contact '%s'", _discovered[idx].contact.name);
+    }
+    return ok;
+  }
+  MESH_DEBUG_PRINTLN("Discovery: no cached advert blob for contact '%s'", _discovered[idx].contact.name);
+  return false;
 }

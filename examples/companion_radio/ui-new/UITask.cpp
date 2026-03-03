@@ -3,6 +3,7 @@
 #include "../MyMesh.h"
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
+#include "DiscoveryScreen.h"
 #include "MapScreen.h"
 #include "target.h"
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -946,6 +947,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
+  discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this);
@@ -1599,6 +1601,16 @@ void UITask::gotoRepeaterAdmin(int contactIdx) {
   admin->openForContact(contactIdx, name);
   setCurrScreen(repeater_admin);
 
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoDiscoveryScreen() {
+  ((DiscoveryScreen*)discovery_screen)->resetScroll();
+  setCurrScreen(discovery_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
