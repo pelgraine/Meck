@@ -5,7 +5,7 @@
 #include "RepeaterAdminScreen.h"
 #include "MapScreen.h"
 #include "target.h"
-#ifdef WIFI_SSID
+#if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
   #include <WiFi.h>
 #endif
 
@@ -97,6 +97,8 @@ class HomeScreen : public UIScreen {
     RADIO,
 #ifdef BLE_PIN_CODE
     BLUETOOTH,
+#elif defined(MECK_WIFI_COMPANION)
+    WIFI_STATUS,
 #endif
     ADVERT,
 #if ENV_INCLUDE_GPS == 1
@@ -301,14 +303,16 @@ public:
       display.drawTextCentered(display.width() / 2, y, tmp);
       y += 18;
 
-      #ifdef WIFI_SSID
+      #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
         IPAddress ip = WiFi.localIP();
-        snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-        display.setTextSize(1);
-        display.drawTextCentered(display.width() / 2, y, tmp);
-        y += 12;
+        if (ip != IPAddress(0,0,0,0)) {
+          snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
+          display.setTextSize(1);
+          display.drawTextCentered(display.width() / 2, y, tmp);
+          y += 12;
+        }
       #endif
-      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID)
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
@@ -419,6 +423,44 @@ public:
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
       display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
+#endif
+#ifdef MECK_WIFI_COMPANION
+    } else if (_page == HomePage::WIFI_STATUS) {
+      display.setColor(DisplayDriver::GREEN);
+      display.setTextSize(1);
+      display.drawTextCentered(display.width() / 2, 18, "WiFi Companion");
+
+      int wy = 36;
+      display.setTextSize(0);
+      if (WiFi.status() == WL_CONNECTED) {
+        display.setColor(DisplayDriver::GREEN);
+        snprintf(tmp, sizeof(tmp), "SSID: %s", WiFi.SSID().c_str());
+        display.drawTextCentered(display.width() / 2, wy, tmp);
+        wy += 10;
+        IPAddress ip = WiFi.localIP();
+        snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+        display.drawTextCentered(display.width() / 2, wy, tmp);
+        wy += 10;
+        snprintf(tmp, sizeof(tmp), "Port: %d", TCP_PORT);
+        display.drawTextCentered(display.width() / 2, wy, tmp);
+        wy += 12;
+        if (_task->hasConnection()) {
+          display.setColor(DisplayDriver::GREEN);
+          display.setTextSize(1);
+          display.drawTextCentered(display.width() / 2, wy, "< App Connected >");
+        } else {
+          display.setColor(DisplayDriver::YELLOW);
+          display.setTextSize(1);
+          display.drawTextCentered(display.width() / 2, wy, "Waiting for app...");
+        }
+      } else {
+        display.setColor(DisplayDriver::RED);
+        display.drawTextCentered(display.width() / 2, wy, "Not connected");
+        wy += 12;
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawTextCentered(display.width() / 2, wy, "Configure in Settings");
+      }
+      display.setTextSize(1);
 #endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
