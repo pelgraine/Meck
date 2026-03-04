@@ -455,6 +455,64 @@ public:
   bool hasRadioChanges() const { return _radioChanged; }
 
   // ---------------------------------------------------------------------------
+  // WiFi scan helpers
+  // ---------------------------------------------------------------------------
+
+  #ifdef MECK_WIFI_COMPANION
+  // Perform a blocking WiFi scan. Populates _wifiSSIDs/_wifiSSIDCount and
+  // advances _wifiPhase to SELECT (even on zero results, so the overlay
+  // stays visible and the user can rescan with 'r').
+  void performWifiScan() {
+    _wifiPhase = WIFI_PHASE_SCANNING;
+    _wifiSSIDCount = 0;
+    _wifiSSIDSelected = 0;
+
+    // Disconnect any active WiFi connection first — the ESP32 driver
+    // returns -2 (WIFI_SCAN_FAILED) if the radio is busy with an
+    // existing connection or the TCP companion server socket.
+    WiFi.disconnect(false);   // false = don't turn off WiFi radio
+    delay(100);               // let the driver settle
+    WiFi.mode(WIFI_STA);
+
+    // 500ms per-channel dwell helps detect phone hotspots that are slow
+    // to respond to probe requests (default 300ms often misses them).
+    int n = WiFi.scanNetworks(false, false, false, 500);
+    Serial.printf("Settings: WiFi scan found %d networks\n", n);
+
+    if (n > 0) {
+      _wifiSSIDCount = min(n, 10);
+      for (int si = 0; si < _wifiSSIDCount; si++) {
+        _wifiSSIDs[si] = WiFi.SSID(si);
+        Serial.printf("  [%d] %s (RSSI %d)\n", si,
+                      _wifiSSIDs[si].c_str(), WiFi.RSSI(si));
+      }
+    } else if (n < 0) {
+      Serial.printf("Settings: WiFi scan error %d\n", n);
+    }
+    WiFi.scanDelete();
+    _wifiPhase = WIFI_PHASE_SELECT;  // always show overlay (even if 0)
+  }
+
+  // After WiFi setup exits (connect success or user quit), try to
+  // reconnect to saved credentials so the companion TCP server works.
+  void wifiReconnectSaved() {
+    File f = SD.open("/web/wifi.cfg", FILE_READ);
+    if (f) {
+      String ssid = f.readStringUntil('\n'); ssid.trim();
+      String pass = f.readStringUntil('\n'); pass.trim();
+      f.close();
+      digitalWrite(SDCARD_CS, HIGH);
+      if (ssid.length() > 0) {
+        Serial.printf("Settings: Reconnecting to saved WiFi '%s'\n", ssid.c_str());
+        WiFi.begin(ssid.c_str(), pass.c_str());
+      }
+    } else {
+      digitalWrite(SDCARD_CS, HIGH);
+    }
+  }
+  #endif
+
+  // ---------------------------------------------------------------------------
   // Edit mode starters
   // ---------------------------------------------------------------------------
 
@@ -852,6 +910,20 @@ public:
         display.drawTextCentered(display.width() / 2, wy, "Scanning for networks...");
 
       } else if (_wifiPhase == WIFI_PHASE_SELECT) {
+        if (_wifiSSIDCount == 0) {
+          // No networks found — show message with rescan prompt
+          display.setCursor(bx + 4, wy);
+          display.print("No networks found.");
+          wy += 12;
+          display.setCursor(bx + 4, wy);
+          display.print("Check your hotspot is on");
+          wy += 8;
+          display.setCursor(bx + 4, wy);
+          display.print("and set to 2.4GHz.");
+          wy += 12;
+          display.setCursor(bx + 4, wy);
+          display.print("Press R or Enter to rescan.");
+        } else {
         display.setCursor(bx + 4, wy);
         display.print("Select network:");
         wy += 10;
@@ -873,6 +945,7 @@ public:
           }
           display.print(ssidLine);
           wy += 8;
+        }
         }
 
       } else if (_wifiPhase == WIFI_PHASE_PASSWORD) {
@@ -913,7 +986,11 @@ public:
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {
       if (_wifiPhase == WIFI_PHASE_SELECT) {
-        display.print("W/S:Pick Enter:Select Q:Bck");
+        if (_wifiSSIDCount == 0) {
+          display.print("R/Enter:Rescan Q:Back");
+        } else {
+          display.print("W/S:Pick Enter:Sel R:Rescan");
+        }
       } else if (_wifiPhase == WIFI_PHASE_PASSWORD) {
         display.print("Type, Enter:Connect Q:Bck");
       } else {
@@ -977,7 +1054,17 @@ public:
           if (_wifiSSIDSelected < _wifiSSIDCount - 1) _wifiSSIDSelected++;
           return true;
         }
+        if (c == 'r' || c == 'R') {
+          // Rescan — lets user toggle hotspot on then retry
+          performWifiScan();
+          return true;
+        }
         if (c == '\r' || c == 13) {
+          if (_wifiSSIDCount == 0) {
+            // No networks — Enter rescans (same as R)
+            performWifiScan();
+            return true;
+          }
           // Selected an SSID — move to password entry
           _wifiPhase = WIFI_PHASE_PASSWORD;
           _wifiPassLen = 0;
@@ -989,6 +1076,7 @@ public:
           _editMode = EDIT_NONE;
           _wifiPhase = WIFI_PHASE_IDLE;
           if (_onboarding) _onboarding = false;  // Skip WiFi, finish onboarding
+          wifiReconnectSaved();  // Restore connection after scan disconnect
           return true;
         }
         return true;
@@ -1185,23 +1273,7 @@ public:
             }
             // Auto-launch the WiFi scan
             _editMode = EDIT_WIFI;
-            _wifiPhase = WIFI_PHASE_SCANNING;
-            _wifiSSIDCount = 0;
-            _wifiSSIDSelected = 0;
-            WiFi.mode(WIFI_STA);
-            int n = WiFi.scanNetworks();
-            if (n > 0) {
-              _wifiSSIDCount = min(n, 10);
-              for (int si = 0; si < _wifiSSIDCount; si++) {
-                _wifiSSIDs[si] = WiFi.SSID(si);
-              }
-              _wifiPhase = WIFI_PHASE_SELECT;
-            } else {
-              _editMode = EDIT_NONE;
-              _wifiPhase = WIFI_PHASE_IDLE;
-              _onboarding = false;  // Finish even without WiFi
-            }
-            WiFi.scanDelete();
+            performWifiScan();
           #else
             _onboarding = false;
           #endif
@@ -1351,26 +1423,7 @@ public:
         case ROW_WIFI_SETUP: {
           // Launch WiFi scan → select → password → connect flow
           _editMode = EDIT_WIFI;
-          _wifiPhase = WIFI_PHASE_SCANNING;
-          _wifiSSIDCount = 0;
-          _wifiSSIDSelected = 0;
-
-          // Blocking WiFi scan (3-5 seconds, fine for e-ink)
-          WiFi.mode(WIFI_STA);
-          int n = WiFi.scanNetworks();
-          if (n > 0) {
-            _wifiSSIDCount = min(n, 10);
-            for (int si = 0; si < _wifiSSIDCount; si++) {
-              _wifiSSIDs[si] = WiFi.SSID(si);
-            }
-            _wifiPhase = WIFI_PHASE_SELECT;
-          } else {
-            // No networks found — exit WiFi flow
-            Serial.println("Settings: WiFi scan found no networks");
-            _editMode = EDIT_NONE;
-            _wifiPhase = WIFI_PHASE_IDLE;
-          }
-          WiFi.scanDelete();
+          performWifiScan();
           break;
         }
         case ROW_WIFI_TOGGLE:
