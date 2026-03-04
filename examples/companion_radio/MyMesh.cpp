@@ -58,6 +58,10 @@
 #define CMD_SET_FLOOD_SCOPE           54   // v8+
 #define CMD_SEND_CONTROL_DATA         55   // v8+
 #define CMD_GET_STATS                 56   // v8+, second byte is stats type
+
+// Control data sub-types for active node discovery
+#define CTL_TYPE_NODE_DISCOVER_REQ    0x80
+#define CTL_TYPE_NODE_DISCOVER_RESP   0x90
 #define CMD_SEND_ANON_REQ             57
 #define CMD_SET_AUTOADD_CONFIG        58
 #define CMD_GET_AUTOADD_CONFIG        59
@@ -371,6 +375,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
         _discovered[i].contact = contact;
         _discovered[i].path_len = path_len;
         _discovered[i].already_in_contacts = !is_new;
+        // Preserve snr if already set by active discovery response
         dup = true;
         Serial.printf("[Discovery] Updated: %s (hops=%d)\n", contact.name, path_len);
         break;
@@ -379,6 +384,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     if (!dup) {
       _discovered[_discoveredCount].contact = contact;
       _discovered[_discoveredCount].path_len = path_len;
+      _discovered[_discoveredCount].snr = 0;  // no SNR from passive advert
       _discovered[_discoveredCount].already_in_contacts = !is_new;
       _discoveredCount++;
       Serial.printf("[Discovery] Found: %s (hops=%d, is_new=%d, total=%d)\n",
@@ -931,6 +937,62 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
 }
 
 void MyMesh::onControlDataRecv(mesh::Packet *packet) {
+  // --- Active discovery response interception ---
+  if (_discoveryActive && packet->payload_len >= 6) {
+    uint8_t resp_type = packet->payload[0] & 0xF0;
+    if (resp_type == CTL_TYPE_NODE_DISCOVER_RESP) {
+      uint8_t node_type = packet->payload[0] & 0x0F;
+      int8_t snr_scaled = (int8_t)packet->payload[1];   // SNR × 4 (how well repeater heard us)
+      uint32_t tag;
+      memcpy(&tag, &packet->payload[2], 4);
+
+      // Validate: tag must match ours AND payload must include full 32-byte pubkey
+      if (tag == _discoveryTag && packet->payload_len >= 6 + PUB_KEY_SIZE) {
+        const uint8_t* pubkey = &packet->payload[6];
+
+        // Dedup check against existing buffer entries (pre-seeded or earlier responses)
+        for (int i = 0; i < _discoveredCount; i++) {
+          if (_discovered[i].contact.id.matches(pubkey)) {
+            // Already in buffer — update SNR (active discovery data is fresher)
+            _discovered[i].snr = snr_scaled;
+            Serial.printf("[Discovery] Updated SNR for %s: %d\n",
+                          _discovered[i].contact.name, snr_scaled);
+            return;
+          }
+        }
+
+        // New node — add if room
+        if (_discoveredCount < MAX_DISCOVERED_NODES) {
+          DiscoveredNode& node = _discovered[_discoveredCount];
+          memset(&node.contact, 0, sizeof(ContactInfo));
+          memcpy(node.contact.id.pub_key, pubkey, PUB_KEY_SIZE);
+          node.contact.type = node_type;
+          node.snr = snr_scaled;
+          node.path_len = packet->path_len;
+
+          // Try to resolve name from contacts table
+          ContactInfo* existing = lookupContactByPubKey(pubkey, PUB_KEY_SIZE);
+          if (existing) {
+            strncpy(node.contact.name, existing->name, sizeof(node.contact.name) - 1);
+            node.already_in_contacts = true;
+          } else {
+            // Show hex prefix as placeholder name
+            snprintf(node.contact.name, sizeof(node.contact.name),
+                     "%02X%02X%02X%02X",
+                     pubkey[0], pubkey[1], pubkey[2], pubkey[3]);
+            node.already_in_contacts = false;
+          }
+
+          _discoveredCount++;
+          Serial.printf("[Discovery] Active response: %s type=%d snr=%d hops=%d (total=%d)\n",
+                        node.contact.name, node_type, snr_scaled, packet->path_len, _discoveredCount);
+        }
+      }
+      return;  // consumed — don't forward discovery responses to BLE
+    }
+  }
+
+  // --- Original BLE forwarding for non-discovery control data ---
   if (packet->payload_len + 4 > sizeof(out_frame)) {
     MESH_DEBUG_PRINTLN("onControlDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
@@ -1030,6 +1092,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _discoveredCount = 0;
   _discoveryActive = false;
   _discoveryTimeout = 0;
+  _discoveryTag = 0;
 
   // defaults
   memset(&_prefs, 0, sizeof(_prefs));
@@ -2695,36 +2758,42 @@ void MyMesh::startDiscovery(uint32_t duration_ms) {
   _discoveredCount = 0;
   _discoveryActive = true;
   _discoveryTimeout = futureMillis(duration_ms);
-  Serial.printf("[Discovery] Scan started (%lu ms)\n", duration_ms);
+  _discoveryTag = getRNG()->nextInt(1, 0xFFFFFFFF);
 
-  // Pre-seed from advert_paths cache (nodes heard recently, before scan started)
+  Serial.printf("[Discovery] Active scan started (%lu ms, tag=%08X)\n",
+                duration_ms, _discoveryTag);
+
+  // --- Pre-seed from advert_paths cache (shows known nodes immediately) ---
   for (int i = 0; i < ADVERT_PATH_TABLE_SIZE && _discoveredCount < MAX_DISCOVERED_NODES; i++) {
     if (advert_paths[i].recv_timestamp == 0) continue;  // empty slot
 
-    // Look up full contact info by pubkey prefix
     ContactInfo* c = lookupContactByPubKey(advert_paths[i].pubkey_prefix, sizeof(advert_paths[i].pubkey_prefix));
     if (c) {
       _discovered[_discoveredCount].contact = *c;
       _discovered[_discoveredCount].path_len = advert_paths[i].path_len;
+      _discovered[_discoveredCount].snr = 0;  // no SNR from cache
       _discovered[_discoveredCount].already_in_contacts = true;
       _discoveredCount++;
     }
   }
   Serial.printf("[Discovery] Pre-seeded %d nodes from cache\n", _discoveredCount);
 
-  // Flood self-advert through mesh (not zero-hop) so repeaters
-  // multiple hops away hear it and respond with their own adverts
-  mesh::Packet* pkt;
-  if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
-    pkt = createSelfAdvert(_prefs.node_name);
-  } else {
-    pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
-  }
+  // --- Send active discovery request (CTL_TYPE_NODE_DISCOVER_REQ) ---
+  // Repeaters with firmware v1.11+ will respond with their pubkey + SNR
+  uint8_t ctl_payload[10];
+  ctl_payload[0] = CTL_TYPE_NODE_DISCOVER_REQ;  // 0x80, prefix_only=0 (full 32-byte pubkeys)
+  ctl_payload[1] = (1 << ADV_TYPE_REPEATER)     // repeaters
+                 | (1 << ADV_TYPE_ROOM);         // rooms (repeaters with chat)
+  memcpy(&ctl_payload[2], &_discoveryTag, 4);    // random correlation tag
+  uint32_t since = 0;                            // accept all firmware versions
+  memcpy(&ctl_payload[6], &since, 4);
+
+  auto pkt = createControlData(ctl_payload, sizeof(ctl_payload));
   if (pkt) {
-    sendFlood(pkt);
-    Serial.println("[Discovery] Self-advert flooded");
+    sendZeroHop(pkt);
+    Serial.println("[Discovery] Sent CTL_TYPE_NODE_DISCOVER_REQ (zero-hop)");
   } else {
-    Serial.println("[Discovery] ERROR: createSelfAdvert returned NULL (packet pool full?)");
+    Serial.println("[Discovery] ERROR: createControlData returned NULL (packet pool full?)");
   }
 }
 

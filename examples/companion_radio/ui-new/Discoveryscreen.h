@@ -113,12 +113,23 @@ public:
         }
         display.print(prefix);
 
-        // Build right-side info: hop count + status
-        char rightStr[12];
-        if (node.already_in_contacts) {
-          snprintf(rightStr, sizeof(rightStr), "%dh [+]", node.path_len);
+        // Build right-side info: SNR or hop count + status
+        char rightStr[16];
+        if (node.snr != 0) {
+          // Active discovery result — show SNR in dB (value is ×4 scaled)
+          int snr_db = node.snr / 4;
+          if (node.already_in_contacts) {
+            snprintf(rightStr, sizeof(rightStr), "%ddB [+]", snr_db);
+          } else {
+            snprintf(rightStr, sizeof(rightStr), "%ddB", snr_db);
+          }
         } else {
-          snprintf(rightStr, sizeof(rightStr), "%dh", node.path_len);
+          // Pre-seeded from cache — show hop count
+          if (node.already_in_contacts) {
+            snprintf(rightStr, sizeof(rightStr), "%dh [+]", node.path_len);
+          } else {
+            snprintf(rightStr, sizeof(rightStr), "%dh", node.path_len);
+          }
         }
         int rightWidth = display.getTextWidth(rightStr) + 2;
 

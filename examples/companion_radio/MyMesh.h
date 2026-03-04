@@ -90,6 +90,7 @@ struct AdvertPath {
 struct DiscoveredNode {
   ContactInfo contact;
   uint8_t path_len;
+  int8_t snr;                 // SNR × 4 from active discovery response (0 if pre-seeded)
   bool already_in_contacts;   // true if contact was auto-added or already known
 };
 
@@ -280,6 +281,7 @@ private:
   int _discoveredCount;
   bool _discoveryActive;
   unsigned long _discoveryTimeout;
+  uint32_t _discoveryTag;      // random correlation tag for active discovery
 };
 
 extern MyMesh the_mesh;
