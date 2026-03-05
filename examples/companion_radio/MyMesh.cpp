@@ -2723,9 +2723,11 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
-  if (_cli_rescue) {
-    checkCLIRescueCmd();
-  } else {
+  // Always check USB serial for text CLI commands (independent of BLE)
+  checkCLIRescueCmd();
+
+  // Process BLE/WiFi companion app binary frames
+  if (!_cli_rescue) {
     checkSerialInterface();
   }
 
