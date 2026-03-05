@@ -197,6 +197,7 @@ private:
 
   // Timing
   unsigned long _cmdSentAt;
+  unsigned long _loginTimeoutMs;   // computed timeout for login (ms), falls back to ADMIN_TIMEOUT_MS
   bool _waitingForLogin;
 
   // Password cache
@@ -428,7 +429,7 @@ public:
       _catSel(0), _cmdSel(0), _scrollOffset(0),
       _paramLen(0), _pendingCmd(nullptr),
       _responseLen(0), _responseScroll(0), _responseTotalLines(0),
-      _cmdSentAt(0), _waitingForLogin(false), _pwdCacheCount(0),
+      _cmdSentAt(0), _loginTimeoutMs(ADMIN_TIMEOUT_MS), _waitingForLogin(false), _pwdCacheCount(0),
       _telemVoltage(0), _telemTempC(0),
       _telemHasVoltage(false), _telemHasTemp(false), _telemRequested(false) {
     _password[0] = '\0';
@@ -529,19 +530,23 @@ public:
   }
 
   void poll() override {
-    if ((_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) &&
-        _cmdSentAt > 0 && (millis() - _cmdSentAt) > ADMIN_TIMEOUT_MS) {
-      if (_pendingCmd && (_pendingCmd->flags & CMDF_EXPECT_TIMEOUT)) {
-        snprintf(_response, sizeof(_response), "Command sent.\nTimeout is expected\n(device is rebooting/updating).");
-        _responseLen = strlen(_response);
-        _responseTotalLines = countLines(_response);
-        _state = STATE_RESPONSE_VIEW;
-      } else {
-        snprintf(_response, sizeof(_response), "Timeout - no response.");
-        _responseLen = strlen(_response);
-        _state = STATE_ERROR;
+    if (_cmdSentAt > 0) {
+      unsigned long elapsed = millis() - _cmdSentAt;
+      unsigned long timeout = (_state == STATE_LOGGING_IN) ? _loginTimeoutMs : ADMIN_TIMEOUT_MS;
+
+      if ((_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) && elapsed > timeout) {
+        if (_pendingCmd && (_pendingCmd->flags & CMDF_EXPECT_TIMEOUT)) {
+          snprintf(_response, sizeof(_response), "Command sent.\nTimeout is expected\n(device is rebooting/updating).");
+          _responseLen = strlen(_response);
+          _responseTotalLines = countLines(_response);
+          _state = STATE_RESPONSE_VIEW;
+        } else {
+          snprintf(_response, sizeof(_response), "Timeout - no response.");
+          _responseLen = strlen(_response);
+          _state = STATE_ERROR;
+        }
+        _task->forceRefresh();  // Immediate redraw on state change
       }
-      _task->forceRefresh();  // Immediate redraw on state change
     }
   }
 
@@ -1160,9 +1165,13 @@ private:
 inline bool RepeaterAdminScreen::doLogin() {
   if (_contactIdx < 0 || _pwdLen == 0) return false;
 
-  if (the_mesh.uiLoginToRepeater(_contactIdx, _password)) {
+  uint32_t timeout_ms = 0;
+  if (the_mesh.uiLoginToRepeater(_contactIdx, _password, timeout_ms)) {
     _state = STATE_LOGGING_IN;
     _cmdSentAt = millis();
+    // Add a 1.5s buffer over the mesh estimate; fall back to ADMIN_TIMEOUT_MS
+    // if the estimate came back zero for any reason.
+    _loginTimeoutMs = (timeout_ms > 0) ? timeout_ms + 1500 : ADMIN_TIMEOUT_MS;
     _waitingForLogin = true;
     return true;
   } else {

@@ -694,17 +694,25 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
   return true;
 }
 
-bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password) {
+bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password, uint32_t& est_timeout_ms) {
   ContactInfo contact;
   if (!getContactByIdx(contact_idx, contact)) return false;
 
   ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
   if (!recipient) return false;
 
-  uint32_t est_timeout;
-  int result = sendLogin(*recipient, password, est_timeout);
+  // Force flood routing for login — a mobile repeater's direct path may be stale.
+  // The companion protocol does the same for telemetry requests.
+  int8_t save_path_len = recipient->out_path_len;
+  recipient->out_path_len = -1;
+
+  int result = sendLogin(*recipient, password, est_timeout_ms);
+
+  recipient->out_path_len = save_path_len;  // restore
+
   if (result == MSG_SEND_FAILED) {
     MESH_DEBUG_PRINTLN("UI: Admin login send failed to %s", recipient->name);
+    est_timeout_ms = 0;
     return false;
   }
 
@@ -712,9 +720,8 @@ bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password) {
   memcpy(&pending_login, recipient->id.pub_key, 4);
   _admin_contact_idx = contact_idx;
 
-  MESH_DEBUG_PRINTLN("UI: Admin login sent to %s (%s), timeout=%dms",
-                     recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
-                     est_timeout);
+  MESH_DEBUG_PRINTLN("UI: Admin login sent to %s (flood, was path_len=%d), timeout=%dms",
+                     recipient->name, (int)save_path_len, est_timeout_ms);
   return true;
 }
 

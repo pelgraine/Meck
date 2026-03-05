@@ -127,7 +127,7 @@ public:
   bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
 
   // Repeater admin - UI-initiated operations
-  bool uiLoginToRepeater(uint32_t contact_idx, const char* password);
+  bool uiLoginToRepeater(uint32_t contact_idx, const char* password, uint32_t& est_timeout_ms);
   bool uiSendCliCommand(uint32_t contact_idx, const char* command);
   bool uiSendTelemetryRequest(uint32_t contact_idx);
   int  getAdminContactIdx() const { return _admin_contact_idx; }
