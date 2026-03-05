@@ -2716,11 +2716,9 @@ void MyMesh::checkSerialInterface() {
 void MyMesh::loop() {
   BaseChatMesh::loop();
 
-  // Always check USB serial for text CLI commands (independent of BLE)
-  checkCLIRescueCmd();
-
-  // Process BLE/WiFi companion app binary frames
-  if (!_cli_rescue) {
+  if (_cli_rescue) {
+    checkCLIRescueCmd();
+  } else {
     checkSerialInterface();
   }
 
@@ -2764,21 +2762,6 @@ void MyMesh::startDiscovery(uint32_t duration_ms) {
 
   Serial.printf("[Discovery] Active scan started (%lu ms, tag=%08X)\n",
                 duration_ms, _discoveryTag);
-
-  // --- Pre-seed from advert_paths cache (shows known nodes immediately) ---
-  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE && _discoveredCount < MAX_DISCOVERED_NODES; i++) {
-    if (advert_paths[i].recv_timestamp == 0) continue;  // empty slot
-
-    ContactInfo* c = lookupContactByPubKey(advert_paths[i].pubkey_prefix, sizeof(advert_paths[i].pubkey_prefix));
-    if (c) {
-      _discovered[_discoveredCount].contact = *c;
-      _discovered[_discoveredCount].path_len = advert_paths[i].path_len;
-      _discovered[_discoveredCount].snr = 0;  // no SNR from cache
-      _discovered[_discoveredCount].already_in_contacts = true;
-      _discoveredCount++;
-    }
-  }
-  Serial.printf("[Discovery] Pre-seeded %d nodes from cache\n", _discoveredCount);
 
   // --- Send active discovery request (CTL_TYPE_NODE_DISCOVER_REQ) ---
   // Repeaters with firmware v1.11+ will respond with their pubkey + SNR
