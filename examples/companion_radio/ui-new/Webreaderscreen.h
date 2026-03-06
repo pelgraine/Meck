@@ -1072,9 +1072,12 @@ private:
   // Bookmarks & History
   std::vector<String> _bookmarks;
   std::vector<String> _history;
-  int _homeSelected;  // Selected item in home view (0=URL bar, then bookmarks, then history)
+  int _homeSelected;  // Selected item in home view (0=IRC, 1=URL, 2=Search, then bookmarks, then history)
   int _homeScrollY;   // Pixel scroll offset for home view
   bool _urlEditing;   // True when URL bar is active for text entry
+  bool _searchEditing; // True when search bar is active for text entry
+  char _searchBuffer[128]; // Search query text
+  int _searchLen;
 
   // Link selection
   int _linkInput;     // Accumulated link number digits
@@ -2149,6 +2152,8 @@ private:
         needsFreshTls = true;  // Recreate at top of next iteration (after http destructor)
 
         // After 2 failures, try WiFi reconnect — the lwIP stack may be wedged
+        // Skip on WiFi companion variant — disconnect kills the companion TCP server
+        #ifndef MECK_WIFI_COMPANION
         if (totalRetries == 2 && isWiFiConnected()) {
           Serial.println("WebReader: WiFi reconnect after persistent failures");
           // Destroy TLS before WiFi teardown
@@ -2167,6 +2172,7 @@ private:
           Serial.printf("WebReader: WiFi reconnected, IP: %s\n",
                         WiFi.localIP().toString().c_str());
         }
+        #endif
 
         int retryDelay = 1000 + totalRetries * 1000;  // 2s, 3s, 4s, 5s
         Serial.printf("WebReader: Connection error %d, retrying in %dms... (attempt %d/4)\n",
@@ -2243,6 +2249,8 @@ private:
         clearCloudflareCookies(domain);
 
         // WiFi reconnect after 2 total failures (same logic as conn errors)
+        // Skip on WiFi companion variant — disconnect kills the companion TCP server
+        #ifndef MECK_WIFI_COMPANION
         if (totalRetries == 2 && isWiFiConnected()) {
           Serial.println("WebReader: WiFi reconnect after persistent failures");
           if (_tlsClient) { delete _tlsClient; _tlsClient = nullptr; }
@@ -2259,6 +2267,7 @@ private:
           Serial.printf("WebReader: WiFi reconnected, IP: %s\n",
                         WiFi.localIP().toString().c_str());
         }
+        #endif
 
         int retryDelay = 1000 + totalRetries * 1000;  // 2s, 3s, 4s, 5s
         Serial.printf("WebReader: Server error %d, retrying in %dms... (attempt %d/4)\n",
@@ -2778,7 +2787,7 @@ private:
     const int sectionH = listLineH; // Section header height
     int maxChars = _charsPerLine - 2; // Account for "> " prefix
     if (maxChars < 10) maxChars = 10;
-    int totalItems = 2 + (int)_bookmarks.size() + (int)_history.size();
+    int totalItems = 3 + (int)_bookmarks.size() + (int)_history.size();
 
     // ---- Layout pass: compute virtual Y extent of each item ----
     // We track: for each selectable item, its (virtualY, height).
@@ -2802,6 +2811,12 @@ private:
     int urlBarH = listLineH + 2;
     if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + urlBarH; }
     virtualY += urlBarH;
+    itemIdx++;
+
+    // Item 2: Search bar
+    int searchBarH = listLineH + 2;
+    if (itemIdx == _homeSelected) { selectedTop = virtualY; selectedBot = virtualY + searchBarH; }
+    virtualY += searchBarH;
     itemIdx++;
 
     // Bookmarks
@@ -2921,6 +2936,39 @@ private:
         }
       }
       y += urlBarH;
+      itemIdx++;
+    }
+
+    // Item 2: Search bar
+    {
+      bool selected = (_homeSelected == itemIdx);
+      if (HOME_VISIBLE(y, searchBarH)) {
+        if (selected) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.setColor(DisplayDriver::DARK);
+        } else {
+          display.setColor(DisplayDriver::LIGHT);
+        }
+        display.setCursor(0, y);
+        if (_searchEditing) {
+          char searchDisp[140];
+          int maxShow = maxChars - 8; // "Search: " prefix + cursor
+          int start = 0;
+          if (_searchLen > maxShow) start = _searchLen - maxShow;
+          snprintf(searchDisp, sizeof(searchDisp), "Search: %s_", _searchBuffer + start);
+          display.print(searchDisp);
+        } else if (_searchLen > 0) {
+          char searchDisp[140];
+          int maxShow = maxChars - 7;
+          snprintf(searchDisp, sizeof(searchDisp), "Search: %s",
+                   _searchLen > maxShow ? (_searchBuffer + _searchLen - maxShow) : _searchBuffer);
+          display.print(searchDisp);
+        } else {
+          display.print("Search: [DuckDuckGo Lite]");
+        }
+      }
+      y += searchBarH;
       itemIdx++;
     }
 
@@ -3056,14 +3104,42 @@ private:
     display.setColor(DisplayDriver::YELLOW);
     if (_urlEditing) {
       display.print("Type URL  Ent:Go");
+    } else if (_searchEditing) {
+      display.print("Type query Ent:Search");
     } else {
       char footerBuf[48];
       bool hasData = (_cookieCount > 0 || !_history.empty());
-      if (hasData)
-        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S Ent:Go X:Clr");
+      bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
+      if (onBookmark && hasData)
+        snprintf(footerBuf, sizeof(footerBuf), "Ent:Go Del:Del Bkmk X:Clr Ckies");
+      else if (onBookmark)
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk Ent:Go Del:Del Bkmk");
+      else if (hasData)
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S Ent:Go X:Clr Ckies");
       else
         snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go");
       display.print(footerBuf);
+    }
+
+    // Toast notification overlay (for bookmark deleted, etc.)
+    if (_toastMsg[0] && (millis() - _toastTime < 1500)) {
+      display.setTextSize(1);
+      int tw = display.getTextWidth(_toastMsg);
+      int bw = tw + 16;
+      int bh = 20;
+      int bx = (display.width() - bw) / 2;
+      int by = (display.height() - bh) / 2;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, 1);
+      display.drawRect(bx, by + bh - 1, bw, 1);
+      display.drawRect(bx, by, 1, bh);
+      display.drawRect(bx + bw - 1, by, 1, bh);
+      display.setCursor(bx + 8, by + 5);
+      display.print(_toastMsg);
+    } else if (_toastMsg[0]) {
+      _toastMsg[0] = '\0';
     }
   }
 
@@ -3409,7 +3485,7 @@ private:
   }
 
   bool handleHomeInput(char c) {
-    int totalItems = 2 + _bookmarks.size() + _history.size(); // IRC + URL + bookmarks + history
+    int totalItems = 3 + _bookmarks.size() + _history.size(); // IRC + URL + Search + bookmarks + history
 
     if (_urlEditing) {
       // URL text entry mode
@@ -3464,6 +3540,67 @@ private:
       return true; // Consume all keys in editing mode
     }
 
+    // Search text entry mode
+    if (_searchEditing) {
+      if (c == '\r' || c == 13) {
+        if (_searchLen > 0) {
+          _searchEditing = false;
+          // Build DuckDuckGo Lite search URL
+          // URL-encode the query: spaces become +, special chars become %XX
+          char encoded[256];
+          int ei = 0;
+          for (int i = 0; i < _searchLen && ei < (int)sizeof(encoded) - 4; i++) {
+            char ch = _searchBuffer[i];
+            if (ch == ' ') {
+              encoded[ei++] = '+';
+            } else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                       (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+              encoded[ei++] = ch;
+            } else {
+              if (ei < (int)sizeof(encoded) - 4) {
+                snprintf(encoded + ei, 4, "%%%02X", (unsigned char)ch);
+                ei += 3;
+              }
+            }
+          }
+          encoded[ei] = '\0';
+          snprintf(_urlBuffer, WEB_MAX_URL_LEN, "https://html.duckduckgo.com/lite/?q=%s", encoded);
+          _urlLen = strlen(_urlBuffer);
+          if (!isNetworkAvailable()) {
+            _mode = WIFI_SETUP;
+            if (!loadAndAutoConnect()) {
+              startWifiScan();
+            } else {
+              fetchWithSelfRef(_urlBuffer);
+            }
+          } else {
+            fetchWithSelfRef(_urlBuffer);
+          }
+        }
+        return true;
+      }
+      if (c == '\b' || c == 127) {
+        if (_searchLen > 0) {
+          _searchBuffer[--_searchLen] = '\0';
+        }
+        return true;
+      }
+      if (c == 'q' && _searchLen == 0) {
+        _searchEditing = false;
+        return true;
+      }
+      if (c == 0x1B) { // ESC
+        _searchEditing = false;
+        return true;
+      }
+      if (c >= 32 && c < 127 && _searchLen < (int)sizeof(_searchBuffer) - 1) {
+        _searchBuffer[_searchLen++] = c;
+        _searchBuffer[_searchLen] = '\0';
+        return true;
+      }
+      return true; // Consume all keys in search editing mode
+    }
+
     // Normal navigation
     if (c == 'w' || c == 'W' || c == 0xF2) {
       if (_homeSelected > 0) _homeSelected--;
@@ -3494,9 +3631,14 @@ private:
         _urlEditing = true;
         return true;
       }
-      // Bookmark or history item selected (offset by 2 for IRC + URL)
+      if (_homeSelected == 2) {
+        // Activate search editing
+        _searchEditing = true;
+        return true;
+      }
+      // Bookmark or history item selected (offset by 3 for IRC + URL + Search)
       const char* selectedUrl = nullptr;
-      int bmIdx = _homeSelected - 2;
+      int bmIdx = _homeSelected - 3;
       if (bmIdx < (int)_bookmarks.size()) {
         selectedUrl = _bookmarks[bmIdx].c_str();
       } else {
@@ -3520,6 +3662,25 @@ private:
         }
       }
       return true;
+    }
+
+    // Delete/Backspace - remove selected bookmark
+    if (c == '\b' || c == 127) {
+      int bmIdx = _homeSelected - 3;
+      if (bmIdx >= 0 && bmIdx < (int)_bookmarks.size()) {
+        _bookmarks.erase(_bookmarks.begin() + bmIdx);
+        saveBookmarks();
+        // Adjust selection if we deleted the last item
+        int newTotal = 3 + _bookmarks.size() + _history.size();
+        if (_homeSelected >= newTotal && _homeSelected > 0) {
+          _homeSelected--;
+        }
+        strncpy(_toastMsg, "Bookmark deleted", sizeof(_toastMsg));
+        _toastTime = millis();
+        Serial.printf("WebReader: Deleted bookmark %d\n", bmIdx);
+        return true;
+      }
+      return false;
     }
 
     // X - clear all cookies
@@ -4809,6 +4970,7 @@ public:
       _textBuffer(nullptr), _textLen(0), _links(nullptr), _linkCount(0),
       _currentPage(0), _totalPages(0),
       _homeSelected(0), _homeScrollY(0), _urlEditing(false),
+      _searchEditing(false), _searchLen(0),
       _linkInput(0), _linkInputActive(false),
       _formCount(0), _forms(nullptr), _activeForm(-1), _activeField(0),
       _formFieldEditing(false), _formEditLen(0), _formLastCharAt(0),
@@ -4825,6 +4987,7 @@ public:
       _ircLastDataTime(0), _ircReconnectAt(0),
       _ircDirty(false), _ircLastRender(0) {
     _urlBuffer[0] = '\0';
+    _searchBuffer[0] = '\0';
     _wifiPass[0] = '\0';
     _pageTitle[0] = '\0';
     _currentUrl[0] = '\0';
@@ -4860,6 +5023,7 @@ public:
   // Called when entering the web reader screen
   void enter(DisplayDriver& display) {
     _display = &display;
+    _fetchError = "";  // Clear stale errors from previous session
     initLayout(display);
     loadBookmarks();
     loadHistory();
@@ -4969,6 +5133,7 @@ public:
     _homeSelected = 0;
     _homeScrollY = 0;
     _urlEditing = false;
+    _searchEditing = false;
 
     Serial.printf("WebReader: exitReader - heap after: %d, largest: %d\n",
                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
@@ -4987,7 +5152,7 @@ public:
     return _mode == FORM_FILL && _formFieldEditing;
   }
   bool isSearchEditing() const {
-    return false;  // TODO: page text search not yet implemented
+    return _searchEditing && _mode == HOME;
   }
   bool isIRCMode() const { return _mode == IRC_CHAT || _mode == IRC_SETUP; }
   bool isIRCTextEntry() const {
