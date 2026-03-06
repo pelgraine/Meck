@@ -57,6 +57,7 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
+  ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
   #ifdef MECK_WIFI_COMPANION
   ROW_WIFI_SETUP,     // WiFi SSID/password configuration
   ROW_WIFI_TOGGLE,    // WiFi radio on/off toggle
@@ -234,6 +235,7 @@ private:
     addRow(ROW_TX_POWER);
     addRow(ROW_UTC_OFFSET);
     addRow(ROW_MSG_NOTIFY);
+    addRow(ROW_PATH_HASH_SIZE);
     #ifdef MECK_WIFI_COMPANION
     addRow(ROW_WIFI_SETUP);
     addRow(ROW_WIFI_TOGGLE);
@@ -678,6 +680,15 @@ public:
         case ROW_MSG_NOTIFY:
           snprintf(tmp, sizeof(tmp), "Msg Rcvd LED Light Pulse: %s",
                    _prefs->kb_flash_notify ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_PATH_HASH_SIZE:
+          if (editing && _editMode == EDIT_NUMBER) {
+            snprintf(tmp, sizeof(tmp), "Path Hash Size: %d-byte <W/S>", _editInt);
+          } else {
+            snprintf(tmp, sizeof(tmp), "Path Hash Size: %d-byte", _prefs->path_hash_mode + 1);
+          }
           display.print(tmp);
           break;
 
@@ -1306,6 +1317,7 @@ public:
           case ROW_CR:      if (_editInt < 8)  _editInt++; break;
           case ROW_TX_POWER: if (_editInt < MAX_LORA_TX_POWER) _editInt++; break;
           case ROW_UTC_OFFSET: if (_editInt < 14) _editInt++; break;
+          case ROW_PATH_HASH_SIZE: if (_editInt < 3) _editInt++; break;
           default: break;
         }
         return true;
@@ -1322,6 +1334,7 @@ public:
           case ROW_CR:      if (_editInt > 5)  _editInt--; break;
           case ROW_TX_POWER: if (_editInt > 1)  _editInt--; break;
           case ROW_UTC_OFFSET: if (_editInt > -12) _editInt--; break;
+          case ROW_PATH_HASH_SIZE: if (_editInt > 1) _editInt--; break;
           default: break;
         }
         return true;
@@ -1347,6 +1360,10 @@ public:
             break;
           case ROW_UTC_OFFSET:
             _prefs->utc_offset_hours = (int8_t)constrain(_editInt, -12, 14);
+            the_mesh.savePrefs();
+            break;
+          case ROW_PATH_HASH_SIZE:
+            _prefs->path_hash_mode = (uint8_t)constrain(_editInt - 1, 0, 2);  // display 1-3, store 0-2
             the_mesh.savePrefs();
             break;
           default: break;
@@ -1418,6 +1435,9 @@ public:
           the_mesh.savePrefs();
           Serial.printf("Settings: Msg flash notify = %s\n",
                         _prefs->kb_flash_notify ? "ON" : "OFF");
+          break;
+        case ROW_PATH_HASH_SIZE:
+          startEditInt(_prefs->path_hash_mode + 1);  // display as 1-3
           break;
         #ifdef MECK_WIFI_COMPANION
         case ROW_WIFI_SETUP: {

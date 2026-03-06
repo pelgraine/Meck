@@ -126,9 +126,9 @@ public:
         } else {
           // Pre-seeded from cache — show hop count
           if (node.already_in_contacts) {
-            snprintf(rightStr, sizeof(rightStr), "%dh [+]", node.path_len);
+            snprintf(rightStr, sizeof(rightStr), "%dh [+]", node.path_len & 63);
           } else {
-            snprintf(rightStr, sizeof(rightStr), "%dh", node.path_len);
+            snprintf(rightStr, sizeof(rightStr), "%dh", node.path_len & 63);
           }
         }
         int rightWidth = display.getTextWidth(rightStr) + 2;

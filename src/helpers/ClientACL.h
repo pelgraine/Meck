@@ -4,6 +4,10 @@
 #include <Mesh.h>
 #include <helpers/IdentityStore.h>
 
+#ifndef OUT_PATH_UNKNOWN
+  #define OUT_PATH_UNKNOWN  0xFF
+#endif
+
 #define PERM_ACL_ROLE_MASK     3   // lower 2 bits
 #define PERM_ACL_GUEST         0
 #define PERM_ACL_READ_ONLY     1
@@ -13,7 +17,7 @@
 struct ClientInfo {
   mesh::Identity id;
   uint8_t permissions;
-  int8_t out_path_len;
+  uint8_t out_path_len;   // OUT_PATH_UNKNOWN = no known path
   uint8_t out_path[MAX_PATH_SIZE];
   uint8_t shared_secret[PUB_KEY_SIZE];
   uint32_t last_timestamp;   // by THEIR clock  (transient)

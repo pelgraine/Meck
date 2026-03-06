@@ -65,6 +65,7 @@
 #define CMD_SEND_ANON_REQ             57
 #define CMD_SET_AUTOADD_CONFIG        58
 #define CMD_GET_AUTOADD_CONFIG        59
+#define CMD_SET_PATH_HASH_MODE        61
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -268,6 +269,20 @@ uint8_t MyMesh::getExtraAckTransmitCount() const {
   return _prefs.multi_acks;
 }
 
+uint32_t MyMesh::getRetransmitDelay(const mesh::Packet *packet) {
+  uint32_t t = (uint32_t)(_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * 0.5f);
+  return getRNG()->nextInt(0, 5*t + 1);
+}
+
+uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
+  uint32_t t = (uint32_t)(_radio->getEstAirtimeFor(packet->getPathByteLen() + packet->payload_len + 2) * 0.2f);
+  return getRNG()->nextInt(0, 5*t + 1);
+}
+
+uint8_t MyMesh::getAutoAddMaxHops() const {
+  return _prefs.autoadd_max_hops;
+}
+
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
@@ -345,7 +360,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
 #endif
 
   // add inbound-path to mem cache
-  if (path && path_len <= sizeof(AdvertPath::path)) {  // check path is valid
+  if (path && mesh::Packet::isValidPathLen(path_len)) {  // check path is valid
     AdvertPath* p = advert_paths;
     uint32_t oldest = 0xFFFFFFFF;
     for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {   // check if already in table, otherwise evict oldest
@@ -362,8 +377,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     memcpy(p->pubkey_prefix, contact.id.pub_key, sizeof(p->pubkey_prefix));
     strcpy(p->name, contact.name);
     p->recv_timestamp = getRTCClock()->getCurrentTime();
-    p->path_len = path_len;
-    memcpy(p->path, path, p->path_len);
+    p->path_len = mesh::Packet::copyPath(p->path, path, path_len);
   }
 
   // Buffer for on-device discovery UI
@@ -475,7 +489,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
   if (should_display && _ui) {
     const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
-    _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path);
+    _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path, pkt->_snr);
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::contactMessage); //buzz if enabled
   }
 #endif
@@ -516,14 +530,16 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
 }
 
 void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
+  Serial.printf("[sendFloodScoped] to '%s', delay=%lu, hash_mode=%d, bph=%d\n",
+                recipient.name, delay_millis, _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
   // TODO: dynamic send_scope, depending on recipient and current 'home' Region
   if (send_scope.isNull()) {
-    sendFlood(pkt, delay_millis);
+    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
   } else {
     uint16_t codes[2];
     codes[0] = send_scope.calcTransportCode(pkt);
     codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
-    sendFlood(pkt, codes, delay_millis);
+    sendFlood(pkt, codes, delay_millis, _prefs.path_hash_mode + 1);
   }
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -540,12 +556,12 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
   // TODO: have per-channel send_scope
   if (send_scope.isNull()) {
-    sendFlood(pkt, delay_millis);
+    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
   } else {
     uint16_t codes[2];
     codes[0] = send_scope.calcTransportCode(pkt);
     codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
-    sendFlood(pkt, codes, delay_millis);
+    sendFlood(pkt, codes, delay_millis, _prefs.path_hash_mode + 1);
   }
 }
 
@@ -618,7 +634,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
   if (_ui) {
     const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
-    _ui->newMsg(path_len, channel_name, text, offline_queue_len, msg_path);
+    _ui->newMsg(path_len, channel_name, text, offline_queue_len, msg_path, pkt->_snr);
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::channelMessage); //buzz if enabled
   }
 #endif
@@ -696,22 +712,33 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
 
 bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password, uint32_t& est_timeout_ms) {
   ContactInfo contact;
-  if (!getContactByIdx(contact_idx, contact)) return false;
+  if (!getContactByIdx(contact_idx, contact)) {
+    Serial.println("[uiLogin] getContactByIdx FAILED");
+    return false;
+  }
 
   ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
-  if (!recipient) return false;
+  if (!recipient) {
+    Serial.println("[uiLogin] lookupContactByPubKey FAILED");
+    return false;
+  }
 
   // Force flood routing for login — a mobile repeater's direct path may be stale.
   // The companion protocol does the same for telemetry requests.
-  int8_t save_path_len = recipient->out_path_len;
-  recipient->out_path_len = -1;
+  uint8_t save_path_len = recipient->out_path_len;
+  recipient->out_path_len = OUT_PATH_UNKNOWN;
+
+  Serial.printf("[uiLogin] Sending login to '%s' (idx=%d, path was 0x%02X, now 0x%02X, hash_mode=%d)\n",
+                recipient->name, contact_idx, save_path_len, recipient->out_path_len, _prefs.path_hash_mode);
 
   int result = sendLogin(*recipient, password, est_timeout_ms);
 
   recipient->out_path_len = save_path_len;  // restore
 
+  Serial.printf("[uiLogin] sendLogin result=%d est_timeout=%ums\n", result, est_timeout_ms);
+
   if (result == MSG_SEND_FAILED) {
-    MESH_DEBUG_PRINTLN("UI: Admin login send failed to %s", recipient->name);
+    Serial.println("[uiLogin] FAILED - MSG_SEND_FAILED");
     est_timeout_ms = 0;
     return false;
   }
@@ -720,8 +747,8 @@ bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password, uint3
   memcpy(&pending_login, recipient->id.pub_key, 4);
   _admin_contact_idx = contact_idx;
 
-  MESH_DEBUG_PRINTLN("UI: Admin login sent to %s (flood, was path_len=%d), timeout=%dms",
-                     recipient->name, (int)save_path_len, est_timeout_ms);
+  Serial.printf("[uiLogin] SUCCESS - login sent to %s (flood), timeout=%dms\n",
+                recipient->name, est_timeout_ms);
   return true;
 }
 
@@ -818,6 +845,9 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
   uint32_t tag;
   memcpy(&tag, data, 4);
+
+  Serial.printf("[onContactResponse] from '%s', tag=0x%08X, len=%d, pending_login=0x%08X\n",
+                contact.name, tag, len, pending_login);
 
   if (pending_login && memcmp(&pending_login, contact.id.pub_key, 4) == 0) { // check for login response
     // yes, is response to pending sendLogin()
@@ -918,7 +948,7 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
     if (tag == pending_discovery) {  // check for matching response tag)
       pending_discovery = 0;
 
-      if (in_path_len > MAX_PATH_SIZE || out_path_len > MAX_PATH_SIZE) {
+      if (!mesh::Packet::isValidPathLen(in_path_len) || !mesh::Packet::isValidPathLen(out_path_len)) {
         MESH_DEBUG_PRINTLN("onContactPathRecv, invalid path sizes: %d, %d", in_path_len, out_path_len);
       } else {
         int i = 0;
@@ -927,11 +957,9 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
         memcpy(&out_frame[i], contact.id.pub_key, 6);
         i += 6; // pub_key_prefix
         out_frame[i++] = out_path_len;
-        memcpy(&out_frame[i], out_path, out_path_len);
-        i += out_path_len;
+        i += mesh::Packet::writePath(&out_frame[i], out_path, out_path_len);
         out_frame[i++] = in_path_len;
-        memcpy(&out_frame[i], in_path, in_path_len);
-        i += in_path_len;
+        i += mesh::Packet::writePath(&out_frame[i], in_path, in_path_len);
         // NOTE: telemetry data in 'extra' is discarded at present
 
         _serial->writeFrame(out_frame, i);
@@ -1073,9 +1101,10 @@ uint32_t MyMesh::calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const {
   return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
 }
 uint32_t MyMesh::calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const {
+  uint8_t hop_count = path_len & 63;  // extract hops, ignore mode bits
   return SEND_TIMEOUT_BASE_MILLIS +
          ((pkt_airtime_millis * DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) *
-          (path_len + 1));
+          (hop_count + 1));
 }
 
 void MyMesh::onSendTimeout() {}
@@ -1402,7 +1431,8 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
     if (pkt) {
       if (len >= 2 && cmd_frame[1] == 1) { // optional param (1 = flood, 0 = zero hop)
-        sendFlood(pkt);
+        unsigned long delay_millis = 0;
+        sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
       } else {
         sendZeroHop(pkt);
       }
@@ -1414,7 +1444,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient) {
-      recipient->out_path_len = -1;
+      recipient->out_path_len = OUT_PATH_UNKNOWN;
       // recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
       writeOKFrame();
@@ -1603,6 +1633,14 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
     savePrefs();
     writeOKFrame();
+  } else if (cmd_frame[0] == CMD_SET_PATH_HASH_MODE && cmd_frame[1] == 0 && len >= 3) {
+    if (cmd_frame[2] >= 3) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+    } else {
+      _prefs.path_hash_mode = cmd_frame[2];
+      savePrefs();
+      writeOKFrame();
+    }
   } else if (cmd_frame[0] == CMD_REBOOT && memcmp(&cmd_frame[1], "reboot", 6) == 0) {
     if (dirty_contacts_expiry) { // is there are pending dirty contacts write needed?
       saveContacts();
@@ -1650,10 +1688,10 @@ void MyMesh::handleCmdFrame(size_t len) {
 #endif
   } else if (cmd_frame[0] == CMD_SEND_RAW_DATA && len >= 6) {
     int i = 1;
-    int8_t path_len = cmd_frame[i++];
-    if (path_len >= 0 && i + path_len + 4 <= len) { // minimum 4 byte payload
+    uint8_t path_len = cmd_frame[i++];
+    if (path_len != OUT_PATH_UNKNOWN && i + mesh::Packet::getPathByteLenFor(path_len) + 4 <= len) { // minimum 4 byte payload
       uint8_t *path = &cmd_frame[i];
-      i += path_len;
+      i += mesh::Packet::getPathByteLenFor(path_len);
       auto pkt = createRawData(&cmd_frame[i], len - i);
       if (pkt) {
         sendDirect(pkt, path, path_len);
@@ -1740,7 +1778,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       memset(&req_data[2], 0, 3);  // reserved
       getRNG()->random(&req_data[5], 4);   // random blob to help make packet-hash unique
       auto save = recipient->out_path_len;    // temporarily force sendRequest() to flood
-      recipient->out_path_len = -1;
+      recipient->out_path_len = OUT_PATH_UNKNOWN;
       int result = sendRequest(*recipient, req_data, sizeof(req_data), tag, est_timeout);
       recipient->out_path_len = save;
       if (result == MSG_SEND_FAILED) {
@@ -1983,11 +2021,12 @@ void MyMesh::handleCmdFrame(size_t len) {
       }
     }
     if (found) {
-      out_frame[0] = RESP_CODE_ADVERT_PATH;
-      memcpy(&out_frame[1], &found->recv_timestamp, 4);
-      out_frame[5] = found->path_len;
-      memcpy(&out_frame[6], found->path, found->path_len);
-      _serial->writeFrame(out_frame, 6 + found->path_len);
+      int i = 0;
+      out_frame[i++] = RESP_CODE_ADVERT_PATH;
+      memcpy(&out_frame[i], &found->recv_timestamp, 4); i += 4;
+      out_frame[i++] = found->path_len;
+      i += mesh::Packet::writePath(&out_frame[i], found->path, found->path_len);
+      _serial->writeFrame(out_frame, i);
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND);
     }
@@ -2128,6 +2167,8 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  > %d\n", _prefs.utc_offset_hours);
       } else if (strcmp(key, "notify") == 0) {
         Serial.printf("  > %s\n", _prefs.kb_flash_notify ? "on" : "off");
+      } else if (strcmp(key, "path.hash.mode") == 0) {
+        Serial.printf("  > %d (%d-byte path hashes)\n", _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
       } else if (strcmp(key, "gps") == 0) {
         Serial.printf("  > %s (interval: %ds)\n",
             _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
@@ -2180,6 +2221,7 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  tx:         %d\n", _prefs.tx_power_dbm);
         Serial.printf("  utc:        %d\n", _prefs.utc_offset_hours);
         Serial.printf("  notify:     %s\n", _prefs.kb_flash_notify ? "on" : "off");
+        Serial.printf("  path.hash:  %d (%d-byte)\n", _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
         Serial.printf("  gps:        %s (interval: %ds)\n",
             _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
         Serial.printf("  pin:        %06d\n", _prefs.ble_pin);
@@ -2325,6 +2367,16 @@ void MyMesh::checkCLIRescueCmd() {
         }
         savePrefs();
         Serial.printf("  > notify = %s\n", _prefs.kb_flash_notify ? "on" : "off");
+
+      } else if (memcmp(config, "path.hash.mode ", 15) == 0) {
+        int mode = atoi(&config[15]);
+        if (mode >= 0 && mode <= 2) {
+          _prefs.path_hash_mode = (uint8_t)mode;
+          savePrefs();
+          Serial.printf("  > path.hash.mode = %d (%d-byte path hashes)\n", mode, mode + 1);
+        } else {
+          Serial.println("  Error: mode must be 0, 1, or 2 (1-byte, 2-byte, 3-byte)");
+        }
 
       } else if (memcmp(config, "pin ", 4) == 0) {
         _prefs.ble_pin = atoi(&config[4]);
@@ -2520,6 +2572,7 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("");
       Serial.println("  Settings keys:");
       Serial.println("    name, freq, bw, sf, cr, tx, utc, notify, pin");
+      Serial.println("    path.hash.mode         Path hash size (0=1B, 1=2B, 2=3B)");
       Serial.println("");
       Serial.println("  Compound commands:");
       Serial.println("    get all                Dump all settings");

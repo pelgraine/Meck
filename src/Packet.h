@@ -1,6 +1,7 @@
 #pragma once
 
 #include <MeshCore.h>
+#include <string.h>
 
 namespace mesh {
 
@@ -80,6 +81,43 @@ public:
   bool isMarkedDoNotRetransmit() const { return header == 0xFF; }
 
   float getSNR() const { return ((float)_snr) / 4.0f; }
+
+  /**
+   * \returns  the actual byte length of path data.
+   *   path_len encodes: lower 6 bits = hop count, upper 2 bits = bytes-per-hop mode
+   *   mode 0 = 1 byte/hop (legacy), mode 1 = 2 bytes/hop, mode 2 = 3 bytes/hop
+   */
+  uint16_t getPathByteLen() const {
+    uint8_t hops = path_len & 63;
+    uint8_t bph = (path_len >> 6) + 1;
+    return hops * bph;
+  }
+
+  /** Static variant for computing byte length from any path_len value */
+  static uint16_t getPathByteLenFor(uint8_t path_len) {
+    return (path_len & 63) * ((path_len >> 6) + 1);
+  }
+
+  /** Validate that encoded path_len won't exceed buffer */
+  static bool isValidPathLen(uint8_t path_len) {
+    return getPathByteLenFor(path_len) <= MAX_PATH_SIZE;
+  }
+
+  /** Copy path bytes using encoded path_len; returns path_len unchanged */
+  static uint8_t copyPath(uint8_t* dest, const uint8_t* src, uint8_t path_len) {
+    uint16_t bl = getPathByteLenFor(path_len);
+    if (bl > MAX_PATH_SIZE) bl = MAX_PATH_SIZE;
+    memcpy(dest, src, bl);
+    return path_len;
+  }
+
+  /** Write path bytes to buffer; returns number of bytes written */
+  static uint8_t writePath(uint8_t* dest, const uint8_t* src, uint8_t path_len) {
+    uint16_t bl = getPathByteLenFor(path_len);
+    if (bl > MAX_PATH_SIZE) bl = MAX_PATH_SIZE;
+    memcpy(dest, src, bl);
+    return (uint8_t)bl;
+  }
 
   /**
    * \returns  the encoded/wire format length of this packet

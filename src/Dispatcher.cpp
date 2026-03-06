@@ -68,7 +68,7 @@ void Dispatcher::loop() {
       next_tx_time = futureMillis(t * getAirtimeBudgetFactor());
 
       _radio->onSendFinished();
-      logTx(outbound, 2 + outbound->path_len + outbound->payload_len);
+      logTx(outbound, 2 + outbound->getPathByteLen() + outbound->payload_len);
       if (outbound->isRouteFlood()) {
         n_sent_flood++;
       } else {
@@ -80,7 +80,7 @@ void Dispatcher::loop() {
       MESH_DEBUG_PRINTLN("%s Dispatcher::loop(): WARNING: outbound packed send timed out!", getLogDateTime());
 
       _radio->onSendFinished();
-      logTxFail(outbound, 2 + outbound->path_len + outbound->payload_len);
+      logTxFail(outbound, 2 + outbound->getPathByteLen() + outbound->payload_len);
 
       releasePacket(outbound);  // return to pool
       outbound = NULL;
@@ -141,12 +141,13 @@ void Dispatcher::checkRecv() {
         }
         pkt->path_len = raw[i++];
 
-        if (pkt->path_len > MAX_PATH_SIZE || i + pkt->path_len > len) {
+        uint16_t path_byte_len = pkt->getPathByteLen();
+        if (path_byte_len > MAX_PATH_SIZE || i + path_byte_len > len) {
           MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(): partial or corrupt packet received, len=%d", getLogDateTime(), len);
           _mgr->free(pkt);  // put back into pool
           pkt = NULL;
         } else {
-          memcpy(pkt->path, &raw[i], pkt->path_len); i += pkt->path_len;
+          memcpy(pkt->path, &raw[i], path_byte_len); i += path_byte_len;
 
           pkt->payload_len = len - i;  // payload is remainder
           if (pkt->payload_len > sizeof(pkt->payload)) {
@@ -258,7 +259,8 @@ void Dispatcher::checkSend() {
       memcpy(&raw[len], &outbound->transport_codes[1], 2); len += 2;
     }
     raw[len++] = outbound->path_len;
-    memcpy(&raw[len], outbound->path, outbound->path_len); len += outbound->path_len;
+    uint16_t out_pbl = outbound->getPathByteLen();
+    memcpy(&raw[len], outbound->path, out_pbl); len += out_pbl;
 
     if (len + outbound->payload_len > MAX_TRANS_UNIT) {
       MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): FATAL: Invalid packet queued... too long, len=%d", getLogDateTime(), len + outbound->payload_len);
@@ -312,8 +314,8 @@ void Dispatcher::releasePacket(Packet* packet) {
 }
 
 void Dispatcher::sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis) {
-  if (packet->path_len > MAX_PATH_SIZE || packet->payload_len > MAX_PACKET_PAYLOAD) {
-    MESH_DEBUG_PRINTLN("%s Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d, payload_len=%d", getLogDateTime(), (uint32_t) packet->path_len, (uint32_t) packet->payload_len);
+  if (packet->getPathByteLen() > MAX_PATH_SIZE || packet->payload_len > MAX_PACKET_PAYLOAD) {
+    MESH_DEBUG_PRINTLN("%s Dispatcher::sendPacket(): ERROR: invalid packet... path_len=%d (byte_len=%d), payload_len=%d", getLogDateTime(), (uint32_t) packet->path_len, (uint32_t) packet->getPathByteLen(), (uint32_t) packet->payload_len);
     _mgr->free(packet);
   } else {
     _mgr->queueOutbound(packet, priority, futureMillis(delay_millis));

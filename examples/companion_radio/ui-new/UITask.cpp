@@ -1000,7 +1000,7 @@ void UITask::msgRead(int msgcount) {
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
-                    const uint8_t* path) {
+                    const uint8_t* path, int8_t snr) {
   _msgcount = msgcount;
 
   // Add to preview screen (for notifications on non-keyboard devices)
@@ -1018,8 +1018,8 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
   
-  // Add to channel history screen with channel index and path data
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path);
+  // Add to channel history screen with channel index, path data, and SNR
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
   
   // If user is currently viewing this channel, mark it as read immediately
   // (they can see the message arrive in real-time)

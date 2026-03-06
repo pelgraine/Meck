@@ -242,6 +242,16 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (_prefs.kb_flash_notify > 1) _prefs.kb_flash_notify = 0;
     if (_prefs.ringtone_enabled > 1) _prefs.ringtone_enabled = 0;
 
+    // v1.14+ fields — may not exist in older prefs files
+    if (file.read((uint8_t *)&_prefs.path_hash_mode, sizeof(_prefs.path_hash_mode)) != sizeof(_prefs.path_hash_mode)) {
+      _prefs.path_hash_mode = 0;  // default: legacy 1-byte
+    }
+    if (file.read((uint8_t *)&_prefs.autoadd_max_hops, sizeof(_prefs.autoadd_max_hops)) != sizeof(_prefs.autoadd_max_hops)) {
+      _prefs.autoadd_max_hops = 0;  // default: no limit
+    }
+    if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;
+    if (_prefs.autoadd_max_hops > 64) _prefs.autoadd_max_hops = 0;
+
     file.close();
   }
 }
@@ -279,6 +289,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.utc_offset_hours, sizeof(_prefs.utc_offset_hours));     // 88
     file.write((uint8_t *)&_prefs.kb_flash_notify, sizeof(_prefs.kb_flash_notify));      // 89
     file.write((uint8_t *)&_prefs.ringtone_enabled, sizeof(_prefs.ringtone_enabled));    // 90
+    file.write((uint8_t *)&_prefs.path_hash_mode, sizeof(_prefs.path_hash_mode));        // 91
+    file.write((uint8_t *)&_prefs.autoadd_max_hops, sizeof(_prefs.autoadd_max_hops));   // 92
 
     file.close();
   }

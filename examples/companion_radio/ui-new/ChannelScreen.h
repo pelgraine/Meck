@@ -4,6 +4,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <helpers/ChannelDetails.h>
 #include <MeshCore.h>
+#include <Packet.h>
 #include "EmojiSprites.h"
 
 // SD card message persistence
@@ -24,7 +25,7 @@
 // On-disk format for message persistence (SD card)
 // ---------------------------------------------------------------------------
 #define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
-#define MSG_FILE_VERSION 3           // v3: MSG_PATH_MAX increased to 20
+#define MSG_FILE_VERSION 3           // v3: MSG_PATH_MAX=20, reserved→snr field
 #define MSG_FILE_PATH    "/meshcore/messages.bin"
 
 struct __attribute__((packed)) MsgFileHeader {
@@ -41,7 +42,7 @@ struct __attribute__((packed)) MsgFileRecord {
   uint8_t  path_len;
   uint8_t  channel_idx;
   uint8_t  valid;
-  uint8_t  reserved;
+  int8_t   snr;          // Receive SNR × 4 (was reserved; 0 = unknown)
   uint8_t  path[MSG_PATH_MAX];  // Repeater hop hashes (first byte of pub key)
   char     text[CHANNEL_MSG_TEXT_LEN];
   // 188 bytes total
@@ -57,6 +58,7 @@ public:
     uint32_t timestamp;
     uint8_t path_len;
     uint8_t channel_idx;  // Which channel this message belongs to
+    int8_t  snr;          // Receive SNR × 4 (0 if locally sent or unknown)
     uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
@@ -105,7 +107,7 @@ public:
 
   // Add a new message to the history
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
-                  const uint8_t* path_bytes = nullptr) {
+                  const uint8_t* path_bytes = nullptr, int8_t snr = 0) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -113,12 +115,14 @@ public:
     msg->timestamp = _rtc->getCurrentTime();
     msg->path_len = path_len;
     msg->channel_idx = channel_idx;
+    msg->snr = snr;
     msg->valid = true;
     
     // Store path hop hashes
     memset(msg->path, 0, MSG_PATH_MAX);
     if (path_bytes && path_len > 0 && path_len != 0xFF) {
-      int n = path_len < MSG_PATH_MAX ? path_len : MSG_PATH_MAX;
+      int n = mesh::Packet::getPathByteLenFor(path_len);
+      if (n > MSG_PATH_MAX) n = MSG_PATH_MAX;
       memcpy(msg->path, path_bytes, n);
     }
     
@@ -289,11 +293,15 @@ public:
     if (!msg || msg->path_len == 0 || msg->path_len == 0xFF) return 0;
     
     int pos = 0;
-    int plen = msg->path_len < MSG_PATH_MAX ? msg->path_len : MSG_PATH_MAX;
+    uint8_t hopCount = msg->path_len & 63;
+    uint8_t bytesPerHop = (msg->path_len >> 6) + 1;
     
-    for (int h = 0; h < plen && pos < bufLen - 1; h++) {
+    for (int h = 0; h < hopCount && pos < bufLen - 1; h++) {
       if (h > 0) pos += snprintf(buf + pos, bufLen - pos, ", ");
-      pos += snprintf(buf + pos, bufLen - pos, "%02x", msg->path[h]);
+      int offset = h * bytesPerHop;
+      for (int b = 0; b < bytesPerHop && pos < bufLen - 1; b++) {
+        pos += snprintf(buf + pos, bufLen - pos, "%02x", msg->path[offset + b]);
+      }
     }
     
     return pos;
@@ -336,7 +344,7 @@ public:
       rec.path_len    = _messages[i].path_len;
       rec.channel_idx = _messages[i].channel_idx;
       rec.valid       = _messages[i].valid ? 1 : 0;
-      rec.reserved    = 0;
+      rec.snr         = _messages[i].snr;
       memcpy(rec.path, _messages[i].path, MSG_PATH_MAX);
       memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
       f.write((uint8_t*)&rec, sizeof(rec));
@@ -403,6 +411,7 @@ public:
       _messages[i].path_len    = rec.path_len;
       _messages[i].channel_idx = rec.channel_idx;
       _messages[i].valid       = (rec.valid != 0);
+      _messages[i].snr         = rec.snr;
       memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
       if (_messages[i].valid) loaded++;
@@ -491,6 +500,8 @@ public:
         // Route type
         display.setCursor(0, y);
         uint8_t plen = msg->path_len;
+        uint8_t hopCount = plen & 63;           // extract hop count from encoded path_len
+        uint8_t bytesPerHop = (plen >> 6) + 1;  // 1, 2, or 3 bytes per hop
         if (plen == 0xFF) {
           display.setColor(DisplayDriver::LIGHT);
           display.print("Route: Direct");
@@ -499,14 +510,26 @@ public:
           display.print("Route: Local/Sent");
         } else {
           display.setColor(DisplayDriver::GREEN);
-          sprintf(tmp, "Route: %d hop%s", plen, plen == 1 ? "" : "s");
+          sprintf(tmp, "Route: %d hop%s (%dB)", hopCount, hopCount == 1 ? "" : "s", bytesPerHop);
           display.print(tmp);
         }
-        y += lineH + 2;
+        y += lineH;
+
+        // SNR (if available — value is SNR×4)
+        if (msg->snr != 0) {
+          display.setCursor(0, y);
+          display.setColor(DisplayDriver::YELLOW);
+          int snr_whole = msg->snr / 4;
+          int snr_frac = ((abs(msg->snr) % 4) * 10) / 4;
+          sprintf(tmp, "SNR: %d.%ddB", snr_whole, snr_frac);
+          display.print(tmp);
+          y += lineH;
+        }
+        y += 2;
         
         // Show each hop resolved against contacts (scrollable)
-        if (plen > 0 && plen != 0xFF) {
-          int displayHops = plen < MSG_PATH_MAX ? plen : MSG_PATH_MAX;
+        if (hopCount > 0 && plen != 0xFF) {
+          int displayHops = hopCount;
           int footerReserve = 26;  // footer + divider
           int scrollBarW = 4;
           int maxY = display.height() - footerReserve;
@@ -532,28 +555,37 @@ public:
           if (endHop > displayHops) endHop = displayHops;
           
           for (int h = startHop; h < endHop && y + lineH <= maxY; h++) {
-            uint8_t hopHash = msg->path[h];
+            int hopOffset = h * bytesPerHop;  // byte offset into path[]
             display.setCursor(0, y);
             display.setColor(DisplayDriver::LIGHT);
             sprintf(tmp, " %d: ", h + 1);
             display.print(tmp);
             
-            // Always show hex prefix first
+            // Show hex prefix (1, 2, or 3 bytes)
             display.setColor(DisplayDriver::LIGHT);
-            sprintf(tmp, "%02X ", hopHash);
+            if (bytesPerHop == 1) {
+              sprintf(tmp, "%02X ", msg->path[hopOffset]);
+            } else if (bytesPerHop == 2) {
+              sprintf(tmp, "%02X%02X ", msg->path[hopOffset], msg->path[hopOffset + 1]);
+            } else {
+              sprintf(tmp, "%02X%02X%02X ", msg->path[hopOffset], msg->path[hopOffset + 1], msg->path[hopOffset + 2]);
+            }
             display.print(tmp);
             
             // Try to resolve name: prefer repeaters, then any contact
             bool resolved = false;
             int numContacts = the_mesh.getNumContacts();
             ContactInfo contact;
+            char filteredName[32];
             
             // First pass: repeaters only
             for (uint32_t ci = 0; ci < numContacts && !resolved; ci++) {
               if (the_mesh.getContactByIdx(ci, contact)) {
-                if (contact.id.pub_key[0] == hopHash && contact.type == ADV_TYPE_REPEATER) {
+                if (memcmp(contact.id.pub_key, &msg->path[hopOffset], bytesPerHop) == 0
+                    && contact.type == ADV_TYPE_REPEATER) {
                   display.setColor(DisplayDriver::GREEN);
-                  display.print(contact.name);
+                  display.translateUTF8ToBlocks(filteredName, contact.name, sizeof(filteredName));
+                  display.print(filteredName);
                   resolved = true;
                 }
               }
@@ -562,9 +594,10 @@ public:
             if (!resolved) {
               for (uint32_t ci = 0; ci < numContacts; ci++) {
                 if (the_mesh.getContactByIdx(ci, contact)) {
-                  if (contact.id.pub_key[0] == hopHash) {
+                  if (memcmp(contact.id.pub_key, &msg->path[hopOffset], bytesPerHop) == 0) {
                     display.setColor(DisplayDriver::YELLOW);
-                    display.print(contact.name);
+                    display.translateUTF8ToBlocks(filteredName, contact.name, sizeof(filteredName));
+                    display.print(filteredName);
                     resolved = true;
                     break;
                   }
@@ -608,7 +641,7 @@ public:
       display.setColor(DisplayDriver::YELLOW);
       display.print("Q:Back");
       // Show scroll hint if path is scrollable
-      if (msg && msg->path_len > _pathHopsVisible && msg->path_len != 0xFF) {
+      if (msg && (msg->path_len & 63) > _pathHopsVisible && msg->path_len != 0xFF) {
         const char* scrollHint = "W/S:Scrl";
         int scrollW = display.getTextWidth(scrollHint);
         display.setCursor((display.width() - scrollW) / 2, footerY);
@@ -723,13 +756,13 @@ public:
           }
         } else {
           if (age < 60) {
-            sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : msg->path_len, age);
+            sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age);
           } else if (age < 3600) {
-            sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 60);
+            sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 60);
           } else if (age < 86400) {
-            sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 3600);
+            sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 3600);
           } else {
-            sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : msg->path_len, age / 86400);
+            sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 86400);
           }
         }
         display.print(tmp);
@@ -952,7 +985,7 @@ public:
       if (c == 's' || c == 'S' || c == 0xF1) {
         ChannelMessage* msg = getNewestReceivedMsg();
         if (msg && msg->path_len > 0 && msg->path_len != 0xFF) {
-          int totalHops = msg->path_len < MSG_PATH_MAX ? msg->path_len : MSG_PATH_MAX;
+          int totalHops = msg->path_len & 63;
           if (_pathScrollPos < totalHops - _pathHopsVisible) {
             _pathScrollPos++;
           }

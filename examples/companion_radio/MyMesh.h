@@ -5,7 +5,7 @@
 #include "AbstractUITask.h"
 
 /*------------ Frame Protocol --------------*/
-#define FIRMWARE_VER_CODE 8
+#define FIRMWARE_VER_CODE 10
 
 #ifndef FIRMWARE_BUILD_DATE
 #define FIRMWARE_BUILD_DATE "7 March 2026"
@@ -137,7 +137,10 @@ protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   int calcRxDelay(float score, uint32_t air_time) const override;
+  uint32_t getRetransmitDelay(const mesh::Packet *packet) override;
+  uint32_t getDirectRetransmitDelay(const mesh::Packet *packet) override;
   uint8_t getExtraAckTransmitCount() const override;
+  uint8_t getAutoAddMaxHops() const override;
   bool filterRecvFloodPacket(mesh::Packet* packet) override;
 
   void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0) override;

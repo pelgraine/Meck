@@ -11,7 +11,7 @@ Packet::Packet() {
 }
 
 int Packet::getRawLength() const {
-  return 2 + path_len + payload_len + (hasTransportCodes() ? 4 : 0);
+  return 2 + getPathByteLen() + payload_len + (hasTransportCodes() ? 4 : 0);
 }
 
 void Packet::calculatePacketHash(uint8_t* hash) const {
@@ -33,7 +33,8 @@ uint8_t Packet::writeTo(uint8_t dest[]) const {
     memcpy(&dest[i], &transport_codes[1], 2); i += 2;
   }
   dest[i++] = path_len;
-  memcpy(&dest[i], path, path_len); i += path_len;
+  uint16_t pbl = getPathByteLen();
+  memcpy(&dest[i], path, pbl); i += pbl;
   memcpy(&dest[i], payload, payload_len); i += payload_len;
   return i;
 }
@@ -48,8 +49,9 @@ bool Packet::readFrom(const uint8_t src[], uint8_t len) {
     transport_codes[0] = transport_codes[1] = 0;
   }
   path_len = src[i++];
-  if (path_len > sizeof(path)) return false;   // bad encoding
-  memcpy(path, &src[i], path_len); i += path_len;
+  uint16_t pbl = getPathByteLen();
+  if (pbl > sizeof(path)) return false;   // bad encoding
+  memcpy(path, &src[i], pbl); i += pbl;
   if (i >= len) return false;   // bad encoding
   payload_len = len - i;
   if (payload_len > sizeof(payload)) return false;  // bad encoding

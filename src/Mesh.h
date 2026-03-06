@@ -195,14 +195,16 @@ public:
 
   /**
    * \brief  send a locally-generated Packet with flood routing
+   * \param path_bytes_per_hop  number of bytes per path hop (1=legacy, 2, or 3)
   */
-  void sendFlood(Packet* packet, uint32_t delay_millis=0);
+  void sendFlood(Packet* packet, uint32_t delay_millis=0, uint8_t path_bytes_per_hop=1);
 
   /**
    * \brief  send a locally-generated Packet with flood routing
    * \param transport_codes   array of 2 codes to attach to packet
+   * \param path_bytes_per_hop  number of bytes per path hop (1=legacy, 2, or 3)
   */
-  void sendFlood(Packet* packet, uint16_t* transport_codes, uint32_t delay_millis=0);
+  void sendFlood(Packet* packet, uint16_t* transport_codes, uint32_t delay_millis=0, uint8_t path_bytes_per_hop=1);
 
   /**
    * \brief  send a locally-generated Packet with Direct routing
