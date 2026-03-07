@@ -257,7 +257,7 @@ float MyMesh::getAirtimeBudgetFactor() const {
 }
 
 int MyMesh::getInterferenceThreshold() const {
-  return 0; // disabled for now, until currentRSSI() problem is resolved
+  return _prefs.interference_threshold;
 }
 
 int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
@@ -1133,6 +1133,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   // defaults
   memset(&_prefs, 0, sizeof(_prefs));
   _prefs.airtime_factor = 1.0; // one half
+  _prefs.multi_acks = 1;      // redundant ACKs on by default
   strcpy(_prefs.node_name, "NONAME");
   _prefs.freq = LORA_FREQ;
   _prefs.sf = LORA_SF;
@@ -1183,6 +1184,17 @@ void MyMesh::begin(bool has_display) {
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
   _prefs.utc_offset_hours = constrain(_prefs.utc_offset_hours, -12, 14);  // Valid timezone range
+  // gps_baudrate: 0 means use compile-time default; validate known rates
+  if (_prefs.gps_baudrate != 0 && _prefs.gps_baudrate != 4800 &&
+      _prefs.gps_baudrate != 9600 && _prefs.gps_baudrate != 19200 &&
+      _prefs.gps_baudrate != 38400 && _prefs.gps_baudrate != 57600 &&
+      _prefs.gps_baudrate != 115200) {
+    _prefs.gps_baudrate = 0;  // reset to default if invalid
+  }
+  // interference_threshold: 0 = disabled, minimum functional value is 14
+  if (_prefs.interference_threshold > 0 && _prefs.interference_threshold < 14) {
+    _prefs.interference_threshold = 0;
+  }
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -2130,20 +2142,26 @@ void MyMesh::enterCLIRescue() {
 
 void MyMesh::checkCLIRescueCmd() {
   int len = strlen(cli_command);
+  bool line_complete = false;
   while (Serial.available() && len < sizeof(cli_command)-1) {
     char c = Serial.read();
-    if (c != '\n') {
-      cli_command[len++] = c;
-      cli_command[len] = 0;
+    if (c == '\r' || c == '\n') {
+      if (len > 0) {
+        line_complete = true;
+        Serial.println();  // echo newline
+      }
+      break;  // stop reading — remaining LF (from CR+LF) is consumed next loop
     }
+    cli_command[len++] = c;
+    cli_command[len] = 0;
     Serial.print(c);  // echo
   }
-  if (len == sizeof(cli_command)-1) {  // command buffer full
-    cli_command[sizeof(cli_command)-1] = '\r';
+  if (len == sizeof(cli_command)-1) {  // buffer full — force processing
+    line_complete = true;
   }
 
-  if (len > 0 && cli_command[len - 1] == '\r') {  // received complete line
-    cli_command[len - 1] = 0;  // replace newline with C string null terminator
+  if (line_complete && len > 0) {
+    cli_command[len] = 0;  // ensure null terminated
 
     // =====================================================================
     // GET commands — read settings
@@ -2174,6 +2192,21 @@ void MyMesh::checkCLIRescueCmd() {
             _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
       } else if (strcmp(key, "pin") == 0) {
         Serial.printf("  > %06d\n", _prefs.ble_pin);
+
+      // --- Mesh tuning parameters ---
+      } else if (strcmp(key, "rxdelay") == 0) {
+        Serial.printf("  > %.1f\n", _prefs.rx_delay_base);
+      } else if (strcmp(key, "af") == 0) {
+        Serial.printf("  > %.1f\n", _prefs.airtime_factor);
+      } else if (strcmp(key, "multi.acks") == 0) {
+        Serial.printf("  > %d\n", _prefs.multi_acks);
+      } else if (strcmp(key, "int.thresh") == 0) {
+        Serial.printf("  > %d\n", _prefs.interference_threshold);
+      } else if (strcmp(key, "gps.baud") == 0) {
+        uint32_t effective = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
+        Serial.printf("  > %lu (effective: %lu)\n",
+            (unsigned long)_prefs.gps_baudrate, (unsigned long)effective);
+
       } else if (strcmp(key, "radio") == 0) {
         Serial.printf("  > freq=%.3f bw=%.1f sf=%d cr=%d tx=%d\n",
             _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
@@ -2225,6 +2258,14 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  gps:        %s (interval: %ds)\n",
             _prefs.gps_enabled ? "on" : "off", _prefs.gps_interval);
         Serial.printf("  pin:        %06d\n", _prefs.ble_pin);
+        Serial.printf("  rxdelay:    %.1f\n", _prefs.rx_delay_base);
+        Serial.printf("  af:         %.1f\n", _prefs.airtime_factor);
+        Serial.printf("  multi.acks: %d\n", _prefs.multi_acks);
+        Serial.printf("  int.thresh: %d\n", _prefs.interference_threshold);
+        {
+          uint32_t eff_baud = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
+          Serial.printf("  gps.baud:   %lu\n", (unsigned long)eff_baud);
+        }
 #ifdef HAS_4G_MODEM
         Serial.printf("  modem:      %s\n", ModemManager::loadEnabledConfig() ? "on" : "off");
         Serial.printf("  apn:        %s\n", modemManager.getAPN());
@@ -2558,6 +2599,69 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.println("  > modem disabled");
 #endif
 
+      // --- Mesh tuning parameters ---
+      } else if (memcmp(config, "rxdelay ", 8) == 0) {
+        float val = atof(&config[8]);
+        if (val >= 0.0f && val <= 20.0f) {
+          _prefs.rx_delay_base = val;
+          savePrefs();
+          Serial.printf("  > rxdelay = %.1f\n", _prefs.rx_delay_base);
+        } else {
+          Serial.println("  Error: rxdelay out of range (0-20)");
+        }
+
+      } else if (memcmp(config, "af ", 3) == 0) {
+        float val = atof(&config[3]);
+        if (val >= 0.0f && val <= 9.0f) {
+          _prefs.airtime_factor = val;
+          savePrefs();
+          Serial.printf("  > af = %.1f\n", _prefs.airtime_factor);
+        } else {
+          Serial.println("  Error: af out of range (0-9)");
+        }
+
+      } else if (memcmp(config, "multi.acks ", 11) == 0) {
+        int val = atoi(&config[11]);
+        if (val == 0 || val == 1) {
+          _prefs.multi_acks = (uint8_t)val;
+          savePrefs();
+          Serial.printf("  > multi.acks = %d\n", _prefs.multi_acks);
+        } else {
+          Serial.println("  Error: use 0 or 1");
+        }
+
+      // Interference threshold — not recommended unless the device is in a high
+      // RF interference environment (low noise floor with significant fluctuations).
+      // Enabling adds ~4s receive delay per packet for channel activity scanning.
+      } else if (memcmp(config, "int.thresh ", 11) == 0) {
+        int val = atoi(&config[11]);
+        if (val == 0) {
+          _prefs.interference_threshold = 0;
+          savePrefs();
+          Serial.println("  > int.thresh = 0 (disabled)");
+        } else if (val >= 14 && val <= 255) {
+          _prefs.interference_threshold = (uint8_t)val;
+          savePrefs();
+          Serial.printf("  > int.thresh = %d (enabled — adds ~4s rx delay)\n",
+              _prefs.interference_threshold);
+          Serial.println("  Note: only recommended for high RF interference environments");
+        } else {
+          Serial.println("  Error: use 0 (disabled) or 14+ (typical: 14)");
+        }
+
+      } else if (memcmp(config, "gps.baud ", 9) == 0) {
+        uint32_t val = (uint32_t)atol(&config[9]);
+        if (val == 0 || val == 4800 || val == 9600 || val == 19200 ||
+            val == 38400 || val == 57600 || val == 115200) {
+          _prefs.gps_baudrate = val;
+          savePrefs();
+          uint32_t effective = val ? val : GPS_BAUDRATE;
+          Serial.printf("  > gps.baud = %lu (effective: %lu, reboot to apply)\n",
+              (unsigned long)val, (unsigned long)effective);
+        } else {
+          Serial.println("  Error: use 0 (default), 4800, 9600, 19200, 38400, 57600, or 115200");
+        }
+
       } else {
         Serial.printf("  Error: unknown setting '%s' (try 'help')\n", config);
       }
@@ -2573,6 +2677,13 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("  Settings keys:");
       Serial.println("    name, freq, bw, sf, cr, tx, utc, notify, pin");
       Serial.println("    path.hash.mode         Path hash size (0=1B, 1=2B, 2=3B)");
+      Serial.println("");
+      Serial.println("  Mesh tuning:");
+      Serial.println("    rxdelay <0-20>         Rx delay base (0=disabled)");
+      Serial.println("    af <0-9>               Airtime factor");
+      Serial.println("    multi.acks <0|1>       Redundant ACKs (default: 1)");
+      Serial.println("    int.thresh <0|14+>     Interference threshold dB (0=off, 14=typical)");
+      Serial.println("    gps.baud <rate>        GPS baud (0=default, reboot to apply)");
       Serial.println("");
       Serial.println("  Compound commands:");
       Serial.println("    get all                Dump all settings");

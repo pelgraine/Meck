@@ -33,4 +33,6 @@ struct NodePrefs {  // persisted to file
   uint8_t ringtone_enabled;  // Ringtone on incoming call (0=off, 1=on) — 4G only
   uint8_t path_hash_mode;    // 0=1-byte (legacy), 1=2-byte, 2=3-byte path hashes
   uint8_t autoadd_max_hops;  // 0=no limit, N=up to N-1 hops (max 64)
+  uint32_t gps_baudrate;     // GPS baud rate (0 = use compile-time GPS_BAUDRATE default)
+  uint8_t interference_threshold; // Interference threshold in dB (0=disabled, 14+=enabled)
 };

@@ -13,6 +13,7 @@ This fork was created specifically to focus on enabling BLE companion firmware f
   - [Sending a Direct Message](#sending-a-direct-message)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Settings Screen](#settings-screen)
+  - [Serial Settings (USB)](Serial_Settings_Guide.md)
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
   - [Emoji Picker](#emoji-picker)
@@ -51,6 +52,8 @@ The T-Deck Pro BLE companion firmware includes full keyboard support for standal
 | B | Open web browser (BLE and 4G variants only) |
 | T | Open SMS & Phone app (4G variant only) |
 | P | Open audiobook player (audio variant only) |
+| F | Open node discovery (search for nearby repeaters/nodes) |
+| G | Open map screen (shows contacts with GPS positions) |
 | Q | Back to home screen |
 
 ### Bluetooth (BLE)
@@ -164,6 +167,8 @@ The bottom of the settings screen also displays your node ID and firmware versio
 When adding a hashtag channel, type the channel name and press Enter. The channel secret is automatically derived from the name via SHA-256, matching the standard MeshCore hashtag convention.
 
 If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
+
+> **Tip:** All device settings (plus mesh tuning parameters not available on-screen) can also be configured via USB serial. See the [Serial Settings Guide](Serial_Settings_Guide.md) for complete documentation.
 
 ### Compose Mode
 

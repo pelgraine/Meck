@@ -730,8 +730,12 @@ void setup() {
   // We need to reinitialize Serial2 to reclaim them
   #if HAS_GPS
     Serial2.end();  // Close any existing Serial2
-    Serial2.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-    MESH_DEBUG_PRINTLN("setup() - Reinitialized Serial2 for GPS after sensors.begin()");
+    {
+      uint32_t gps_baud = the_mesh.getNodePrefs()->gps_baudrate;
+      if (gps_baud == 0) gps_baud = GPS_BAUDRATE;
+      Serial2.begin(gps_baud, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+      MESH_DEBUG_PRINTLN("setup() - Reinitialized Serial2 for GPS at %lu baud", (unsigned long)gps_baud);
+    }
   #endif
 
 #ifdef DISPLAY_CLASS

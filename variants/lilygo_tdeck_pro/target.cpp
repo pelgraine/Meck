@@ -49,19 +49,11 @@ bool radio_init() {
   loraSpi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, P_LORA_NSS);
   MESH_DEBUG_PRINTLN("radio_init() - SPI initialized, calling radio.std_init()...");
   bool result = radio.std_init(&loraSpi);
-  if (result) {
-    radio.setPreambleLength(32);
-    MESH_DEBUG_PRINTLN("radio_init() - preamble set to 32 symbols");
-  }
   MESH_DEBUG_PRINTLN("radio_init() - radio.std_init() returned: %s", result ? "SUCCESS" : "FAILED");
   return result;
 #else
   MESH_DEBUG_PRINTLN("radio_init() - calling radio.std_init() without custom SPI...");
   bool result = radio.std_init();
-  if (result) {
-    radio.setPreambleLength(32);
-    MESH_DEBUG_PRINTLN("radio_init() - preamble set to 32 symbols");
-  }
   return result;
 #endif
 }
@@ -75,6 +67,14 @@ void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
   radio.setSpreadingFactor(sf);
   radio.setBandwidth(bw);
   radio.setCodingRate(cr);
+
+  // Longer preamble for low SF improves reliability — each symbol is shorter
+  // at low SF, so more symbols are needed for reliable detection.
+  // SF <= 8 gets 32 symbols (~65ms at SF7/62.5kHz); SF >= 9 keeps 16 (already ~131ms+).
+  // See: https://github.com/meshcore-dev/MeshCore/pull/1954
+  uint16_t preamble = (sf <= 8) ? 32 : 16;
+  radio.setPreambleLength(preamble);
+  MESH_DEBUG_PRINTLN("radio_set_params() - bw=%.1f sf=%u preamble=%u", bw, sf, preamble);
 }
 
 void radio_set_tx_power(uint8_t dbm) {

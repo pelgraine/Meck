@@ -59,6 +59,12 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get notify` | Keyboard flash notification (on/off) |
 | `get gps` | GPS status and interval |
 | `get pin` | BLE pairing PIN |
+| `get path.hash.mode` | Path hash size (0=1-byte, 1=2-byte, 2=3-byte) |
+| `get rxdelay` | Rx delay base (0=disabled) |
+| `get af` | Airtime factor |
+| `get multi.acks` | Redundant ACKs (0 or 1) |
+| `get int.thresh` | Interference threshold (0=disabled) |
+| `get gps.baud` | GPS baud rate (0=compile-time default) |
 | `get channels` | List all channels with index numbers |
 | `get presets` | List all radio presets with parameters |
 | `get pubkey` | Device public key (hex) |
@@ -162,6 +168,78 @@ set notify off
 ```
 set pin 123456
 ```
+
+#### Path Hash Mode
+
+Controls the byte size of each repeater's identity stamp in forwarded flood packets. Larger hashes reduce collisions at the cost of fewer maximum hops.
+
+```
+set path.hash.mode 1
+```
+
+| Mode | Bytes/hop | Max hops | Notes |
+|------|-----------|----------|-------|
+| 0 | 1 | 64 | Legacy — prone to hash collisions in larger networks |
+| 1 | 2 | 32 | Recommended — effectively eliminates collisions |
+| 2 | 3 | 21 | Maximum precision, rarely needed |
+
+Nodes with different modes can coexist — the mode only affects packets your node originates. The hash size is encoded in each packet's header, so receiving nodes adapt automatically.
+
+### Mesh Tuning
+
+These settings control how the device participates in the mesh network. They take effect immediately — no reboot required (except `gps.baud`).
+
+#### Rx Delay (rxdelay)
+
+Delays processing of flood packets based on signal quality. Stronger signals are processed first; weaker copies wait longer and are typically discarded as duplicates. Direct messages are always processed immediately.
+
+```
+set rxdelay 3
+```
+
+Range: 0–20 (0 = disabled, default). Higher values create larger timing differences between strong and weak signals. Values below 1.0 have no practical effect. See the [MeshSydney wiki](https://meshsydney.com/wiki) for detailed tuning profiles.
+
+#### Airtime Factor (af)
+
+Adjusts how long certain internal timing windows remain open. Does not change the LoRa radio parameters (SF, BW, CR) — those remain as configured.
+
+```
+set af 1.0
+```
+
+Range: 0–9 (default: 1.0). Keep this value consistent across nodes in your mesh for best coherence.
+
+#### Multiple Acknowledgments (multi.acks)
+
+Sends redundant ACK packets for direct messages. When enabled, two ACKs are sent (a multi-ack first, then the standard ACK), improving delivery confirmation reliability.
+
+```
+set multi.acks 1
+```
+
+Values: 0 (single ACK) or 1 (redundant ACKs, default).
+
+#### Interference Threshold (int.thresh)
+
+Enables channel activity scanning before transmitting. Not recommended unless your device is in a high RF interference environment — specifically where the noise floor is low but shows significant fluctuations indicating interference. Enabling this adds approximately 4 seconds of receive delay per packet.
+
+```
+set int.thresh 14
+set int.thresh 0
+```
+
+Values: 0 (disabled, default) or 14+ (14 is the typical setting). Values between 1–13 are not functional and will be rejected.
+
+#### GPS Baud Rate (gps.baud)
+
+Override the GPS serial baud rate. The default (0) uses the compile-time value of 38400. **Requires a reboot to take effect** — the GPS serial port is only configured at startup.
+
+```
+set gps.baud 9600
+set gps.baud 0
+```
+
+Valid rates: 0 (default), 4800, 9600, 19200, 38400, 57600, 115200.
 
 ### Channel Management
 
