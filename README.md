@@ -35,7 +35,7 @@ This fork was created specifically to focus on enabling BLE & WiFi companion fir
 
 ## T-Deck Pro Keyboard Controls
 
-The T-Deck Pro BLE companion firmware includes full keyboard support for standalone messaging without a phone.
+The T-Deck Pro companion firmware includes full keyboard support for standalone messaging without a phone.
 
 ### Navigation (Home Screen)
 
