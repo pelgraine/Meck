@@ -343,6 +343,18 @@
   }
 #endif
 
+// --- Non-T-Deck ESP32 targets (CrowPanel, etc.) ---
+// Variables declared inside the LilyGo_TDeck_Pro block above that are
+// referenced unconditionally in setup()/loop() need parallel declarations.
+#if !defined(LilyGo_TDeck_Pro) && defined(ESP32)
+  CPUPowerManager cpuPower;
+  #define AGC_RESET_INTERVAL_MS 500
+  static unsigned long lastAGCReset = 0;
+  static bool readerMode = false;
+  static bool notesMode = false;
+  static bool audiobookMode = false;
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -749,8 +761,8 @@ void setup() {
     initKeyboard();
   #endif
 
-  // Initialize touch input (CST328)
-  #ifdef HAS_TOUCHSCREEN
+  // Initialize touch input (CST328 — T-Deck Pro only; CrowPanel uses GT911 via LovyanGFX)
+  #if defined(HAS_TOUCHSCREEN) && defined(CST328_PIN_INT)
     if (touchInput.begin(CST328_PIN_INT)) {
       MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
     } else {
@@ -910,7 +922,7 @@ void loop() {
   cpuPower.loop();
 
   // Audiobook: service audio decode regardless of which screen is active
-  #ifndef HAS_4G_MODEM
+  #if defined(LilyGo_TDeck_Pro) && !defined(HAS_4G_MODEM)
   {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -1110,10 +1122,12 @@ void loop() {
 #endif
   rtc_clock.tick();
   // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
+  #if defined(LilyGo_TDeck_Pro)
   if ((millis() - lastAGCReset) >= AGC_RESET_INTERVAL_MS) {
     radio_reset_agc();
     lastAGCReset = millis();
   }
+  #endif
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
