@@ -245,6 +245,9 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
+#endif
     // node name (tinyfont to avoid overlapping clock)
     display.setTextSize(0);
     display.setColor(DisplayDriver::GREEN);
@@ -299,6 +302,9 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      _task->setHomeShowingTiles(true);
+#endif
       int y = 20;
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
@@ -332,6 +338,54 @@ public:
       }
       #endif
 
+      // ----- T5S3: Tappable tile grid (touch-friendly home screen) -----
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // 3×2 grid of tiles below MSG count
+      // Virtual coords (128×128), scaled by DisplayDriver
+      {
+        struct Tile { const char* letter; const char* label; };
+        const Tile tiles[2][3] = {
+          { {"M", "Messages"}, {"C", "Contacts"}, {"S", "Settings"} },
+          { {"E", "Reader"},   {"N", "Notes"},     {"D", "Discover"} }
+        };
+
+        const int tileW = 40;
+        const int tileH = 32;
+        const int gapX = 1;
+        const int gapY = 2;
+        const int gridW = tileW * 3 + gapX * 2;
+        const int gridX = (display.width() - gridW) / 2;
+        const int gridY = y + 2;
+
+        for (int row = 0; row < 2; row++) {
+          for (int col = 0; col < 3; col++) {
+            int tx = gridX + col * (tileW + gapX);
+            int ty = gridY + row * (tileH + gapY);
+
+            // Tile border
+            display.setColor(DisplayDriver::LIGHT);
+            display.drawRect(tx, ty, tileW, tileH);
+
+            // Letter centered in tile (pushed down for vertical centering)
+            display.setTextSize(2);
+            display.drawTextCentered(tx + tileW / 2, ty + 10, tiles[row][col].letter);
+
+            // Label centered below letter
+            display.setTextSize(0);
+            display.drawTextCentered(tx + tileW / 2, ty + 20, tiles[row][col].label);
+          }
+        }
+
+        // Nav hint below grid
+        y = gridY + 2 * tileH + gapY + 2;
+        display.setColor(DisplayDriver::GREEN);
+        display.setTextSize(0);
+        display.drawTextCentered(display.width() / 2, y, "Tap tile to open");
+      }
+      display.setTextSize(1);
+
+#else
+      // ----- T-Deck Pro: Keyboard shortcut text menu -----
       // Menu shortcuts - tinyfont monospaced grid
       y += 6;
       display.setColor(DisplayDriver::LIGHT);
@@ -365,12 +419,9 @@ public:
 
       // Nav hint
       display.setColor(DisplayDriver::GREEN);
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      display.drawTextCentered(display.width() / 2, y, "Tap screen to cycle home views");
-#else
       display.drawTextCentered(display.width() / 2, y, "Press A/D to cycle home views");
-#endif
       display.setTextSize(1);  // restore
+#endif
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);
@@ -1188,7 +1239,28 @@ void UITask::loop() {
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    // T5S3: single click = cycle pages on home, go back to home from elsewhere
+    if (curr == home) {
+      c = checkDisplayOn(KEY_NEXT);
+    } else {
+      // Navigate back: reader reading→file list, file list→home, others→home
+      if (isOnTextReader()) {
+        TextReaderScreen* reader = (TextReaderScreen*)text_reader;
+        if (reader && reader->isReading()) {
+          c = checkDisplayOn('q');  // reading mode: close book → file list
+        } else {
+          gotoHomeScreen();  // file list: go home
+          c = 0;
+        }
+      } else {
+        gotoHomeScreen();
+        c = 0;  // consumed
+      }
+    }
+#else
     c = checkDisplayOn(KEY_NEXT);
+#endif
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
     c = handleLongPress(KEY_ENTER);
   } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
@@ -1398,7 +1470,7 @@ char UITask::handleTripleClick(char c) {
   if (board.isBacklightOn()) {
     board.setBacklight(false);  // If already on, turn off
   } else {
-    board.setBacklightBrightness(80);
+    board.setBacklightBrightness(4);
     board.setBacklight(true);
   }
 #else

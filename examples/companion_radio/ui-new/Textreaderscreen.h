@@ -863,9 +863,13 @@ private:
 
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width(), listLineH);
+#else
           // setCursor adds +5 to y internally, but fillRect does not.
           // Offset fillRect by +5 to align highlight bar with text.
           display.fillRect(0, y + 5, display.width(), listLineH);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
@@ -918,13 +922,19 @@ private:
     display.setTextSize(1);
     int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
-    display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(0);
+    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: Home");
+#else
+    display.setCursor(0, footerY);
     display.print("Q:Back W/S:Nav");
 
     const char* right = "Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
+#endif
   }
 
   void renderPage(DisplayDriver& display) {
@@ -1002,12 +1012,22 @@ private:
     char status[30];
     int pct = _totalPages > 1 ? (_currentPage * 100) / (_totalPages - 1) : 100;
     sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(0);
+    display.setCursor(0, footerY);
+    display.print(status);
+    const char* right = "Swipe: Page   Tap: Next   Hold: Close";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+#else
     display.setCursor(0, footerY);
     display.print(status);
 
     const char* right = "W/S:Nav Q:Back";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
+#endif
   }
 
 public:
@@ -1036,8 +1056,22 @@ public:
     if (tenCharsW > 0) {
       _charsPerLine = (display.width() * 10) / tenCharsW;
     }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    // FreeSans12pt is proportional — "M" is the widest character.
+    // Using M-width gives ~56 chars/line but actual text only fills 60% of screen.
+    // Re-measure with representative lowercase text for realistic average width.
+    {
+      uint16_t sampleW = display.getTextWidth("abcdefghijklmno");  // 15 chars
+      if (sampleW > 0) {
+        _charsPerLine = (display.width() * 15) / sampleW;
+      }
+    }
+    if (_charsPerLine < 15) _charsPerLine = 15;
+    if (_charsPerLine > 120) _charsPerLine = 120;  // Proportional fonts can fit many chars
+#else
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 60) _charsPerLine = 60;
+#endif
 
     // Line height for built-in 6x8 font:
     // setCursor adds +5 to y, so effective text top = (y+5)*scale_y
@@ -1051,6 +1085,13 @@ public:
     } else {
       _lineHeight = 5;  // Safe fallback
     }
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    // T5S3 uses FreeSans12pt/FreeSerif12pt for size 0 (yAdvance=29px).
+    // Line height in virtual coords: 29px / scale_y(4.22) ≈ 7 units.
+    // Add 1 unit for comfortable spacing.
+    _lineHeight = 8;
+#endif
 
     _headerHeight = 0;  // No header in reading mode (maximize text area)
     _footerHeight = 14;

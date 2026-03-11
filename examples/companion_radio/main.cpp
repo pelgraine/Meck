@@ -337,6 +337,58 @@
   }
 #endif
 
+// =============================================================================
+// T5S3 E-Paper Pro — GT911 Touch Input
+// =============================================================================
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #include "TouchDrvGT911.hpp"
+  #include <SD.h>
+  #include "TextReaderScreen.h"
+  #include "NotesScreen.h"
+  #include "ContactsScreen.h"
+  #include "ChannelScreen.h"
+  #include "SettingsScreen.h"
+  #include "RepeaterAdminScreen.h"
+  #include "DiscoveryScreen.h"
+
+  static TouchDrvGT911 gt911Touch;
+  static bool gt911Ready = false;
+  static bool sdCardReady = false;  // T5S3 SD card state
+
+  // Touch state machine — supports tap, long press, and swipe
+  static bool touchDown = false;
+  static unsigned long touchDownTime = 0;
+  static int16_t touchDownX = 0;
+  static int16_t touchDownY = 0;
+  static int16_t touchLastX = 0;
+  static int16_t touchLastY = 0;
+  static unsigned long lastTouchSeenMs = 0;  // Last time getPoint() returned true
+  #define TOUCH_LONG_PRESS_MS  500
+  #define TOUCH_SWIPE_THRESHOLD 60   // Min pixels to count as a swipe (physical)
+  #define TOUCH_LIFT_DEBOUNCE_MS 150 // No-touch duration before "finger lifted"
+  #define TOUCH_MIN_INTERVAL_MS 300  // Min ms between accepted events
+  static bool longPressHandled = false;
+  static bool swipeHandled = false;
+  static bool touchCooldown = false;
+  static unsigned long lastTouchEventMs = 0;
+
+  // Read GT911 in landscape orientation (960×540)
+  // GT911 reports portrait (540×960), rotate: x=raw_y, y=540-1-raw_x
+  // Note: Do NOT gate on GT911_PIN_INT — it pulses briefly per event
+  // and goes high between reports, causing drags to look like taps.
+  // Polling getPoint() directly works for continuous touch tracking.
+  static bool readTouchLandscape(int16_t* outX, int16_t* outY) {
+    if (!gt911Ready) return false;
+    int16_t raw_x, raw_y;
+    if (gt911Touch.getPoint(&raw_x, &raw_y)) {
+      *outX = raw_y;
+      *outY = EPD_HEIGHT - 1 - raw_x;
+      return true;
+    }
+    return false;
+  }
+#endif
+
 // Board-agnostic: CPU frequency scaling and AGC reset
 CPUPowerManager cpuPower;
 #define AGC_RESET_INTERVAL_MS 500
@@ -450,6 +502,122 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 );
 
 /* END GLOBAL OBJECTS */
+
+// T5S3 touch mapping — must be after ui_task declaration
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Home screen tile grid — physical touch zones (960×540)
+  #define TILE_Y_START  150
+  #define TILE_Y_MID    300
+  #define TILE_Y_END    460
+  #define TILE_COL1     325
+  #define TILE_COL2     640
+
+  // Map a single tap based on current screen context
+  static char mapTouchTap(int16_t x, int16_t y) {
+    // --- Status bar tap (top ~80px) → go home from any non-home screen ---
+    if (y < 80 && !ui_task.isOnHomeScreen()) {
+      ui_task.gotoHomeScreen();
+      return 0;
+    }
+
+    // Home screen FIRST page: tile taps
+    if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
+      if (y >= TILE_Y_START && y < TILE_Y_END) {
+        int col = (x < TILE_COL1) ? 0 : (x < TILE_COL2) ? 1 : 2;
+        int row = (y < TILE_Y_MID) ? 0 : 1;
+        if (row == 0 && col == 0) { ui_task.gotoChannelScreen(); return 0; }
+        if (row == 0 && col == 1) { ui_task.gotoContactsScreen(); return 0; }
+        if (row == 0 && col == 2) { ui_task.gotoSettingsScreen(); return 0; }
+        if (row == 1 && col == 0) { ui_task.gotoTextReader(); return 0; }
+        if (row == 1 && col == 1) { ui_task.gotoNotesScreen(); return 0; }
+        if (row == 1 && col == 2) { ui_task.gotoDiscoveryScreen(); return 0; }
+      }
+      // Tap outside tiles — cycle home pages
+      return (char)KEY_NEXT;
+    }
+
+    // Home screen (non-tile pages): tap cycles pages
+    if (ui_task.isOnHomeScreen()) {
+      return (char)KEY_NEXT;
+    }
+
+    // Reader (reading mode): tap = next page
+    if (ui_task.isOnTextReader()) {
+      TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+      if (reader && reader->isReading()) {
+        return 'd';  // next page
+      }
+      return KEY_ENTER;  // file list: open selected
+    }
+
+    // All other screens: tap = select
+    return KEY_ENTER;
+  }
+
+  // Map a swipe direction to a key
+  static char mapTouchSwipe(int16_t dx, int16_t dy) {
+    bool horizontal = abs(dx) > abs(dy);
+
+    // Reader (reading mode): swipe left/right for page turn
+    if (ui_task.isOnTextReader()) {
+      TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+      if (reader && reader->isReading()) {
+        if (horizontal) {
+          return (dx < 0) ? 'd' : 'a';  // swipe left=next, right=prev
+        }
+        // Vertical swipe in reader: also page turn (natural scroll)
+        return (dy > 0) ? 'd' : 'a';  // swipe down=next, up=prev
+      }
+    }
+
+    // Home screen: horizontal swipe cycles pages
+    if (ui_task.isOnHomeScreen()) {
+      return (char)KEY_NEXT;
+    }
+
+    // Settings: horizontal swipe → a/d for picker/number editing
+    if (ui_task.isOnSettingsScreen() && horizontal) {
+      return (dx < 0) ? 'd' : 'a';  // swipe left=next option, right=prev
+    }
+
+    // Channel screen: horizontal swipe → a/d to switch channels
+    if (ui_task.isOnChannelScreen() && horizontal) {
+      return (dx < 0) ? 'd' : 'a';  // swipe left=next channel, right=prev
+    }
+
+    // Contacts screen: horizontal swipe → a/d to change filter
+    if (ui_task.isOnContactsScreen() && horizontal) {
+      return (dx < 0) ? 'd' : 'a';  // swipe left=next filter, right=prev
+    }
+
+    // All other screens: vertical swipe scrolls
+    if (!horizontal) {
+      return (dy > 0) ? 's' : 'w';  // swipe down=scroll down, up=scroll up
+    }
+
+    return 0;  // ignore horizontal swipes on non-applicable screens
+  }
+
+  // Map a long press to a key
+  static char mapTouchLongPress(int16_t x, int16_t y) {
+    // Home screen: long press cycles pages
+    if (ui_task.isOnHomeScreen()) {
+      return (char)KEY_NEXT;
+    }
+
+    // Reader reading: long press = close book
+    if (ui_task.isOnTextReader()) {
+      TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+      if (reader && reader->isReading()) {
+        return 'q';
+      }
+      return KEY_ENTER;  // file list: open
+    }
+
+    // Default: enter/select (settings toggle, etc.)
+    return KEY_ENTER;
+  }
+#endif
 
 void halt() {
   while (1) ;
@@ -649,6 +817,37 @@ void setup() {
       MESH_DEBUG_PRINTLN("setup() - SD card not available after 3 attempts");
     }
   }
+  #elif defined(LilyGo_T5S3_EPaper_Pro) && defined(HAS_SDCARD)
+  {
+    // T5S3: SD card shares LoRa SPI bus (SCK=14, MOSI=13, MISO=21)
+    // LoRa SPI already initialized by target.cpp. Create a local HSPI
+    // reference for SD init (same hardware peripheral, different CS).
+    static SPIClass sdSpi(HSPI);
+    sdSpi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, SDCARD_CS);
+
+    pinMode(SDCARD_CS, OUTPUT);
+    digitalWrite(SDCARD_CS, HIGH);
+    pinMode(P_LORA_NSS, OUTPUT);
+    digitalWrite(P_LORA_NSS, HIGH);
+    delay(100);
+
+    bool mounted = false;
+    for (int attempt = 0; attempt < 3 && !mounted; attempt++) {
+      if (attempt > 0) {
+        digitalWrite(SDCARD_CS, HIGH);
+        delay(250);
+        Serial.printf("setup() - SD card retry %d/3\n", attempt + 1);
+      }
+      mounted = SD.begin(SDCARD_CS, sdSpi, 4000000);
+    }
+
+    if (mounted) {
+      sdCardReady = true;
+      Serial.println("setup() - SD card initialized");
+    } else {
+      Serial.println("setup() - SD card not available");
+    }
+  }
   #endif
 
   MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
@@ -759,6 +958,18 @@ void setup() {
     }
   #endif
 
+  // Initialize GT911 touch (T5S3 E-Paper Pro)
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+    gt911Touch.setPins(GT911_PIN_RST, GT911_PIN_INT);
+    pinMode(GT911_PIN_INT, INPUT_PULLUP);  // Ensure INT pin has pullup for clean transitions
+    if (gt911Touch.begin(Wire, GT911_SLAVE_ADDRESS_L, GT911_PIN_SDA, GT911_PIN_SCL)) {
+      gt911Ready = true;
+      Serial.println("setup() - GT911 touch initialized");
+    } else {
+      Serial.println("setup() - GT911 touch FAILED");
+    }
+  #endif
+
   // ---------------------------------------------------------------------------
   // SD card is already initialized (early init above).
   // Now set up SD-dependent features: message history + text reader.
@@ -826,8 +1037,36 @@ void setup() {
   }
   #endif
 
-  // ---------------------------------------------------------------------------
-  // First-boot onboarding detection
+  // T5S3 SD-dependent features
+  #if defined(LilyGo_T5S3_EPaper_Pro) && defined(HAS_SDCARD)
+  if (sdCardReady) {
+    // Channel message history
+    ChannelScreen* chanScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (chanScr) {
+      chanScr->setSDReady(true);
+      if (chanScr->loadFromSD()) {
+        Serial.println("setup() - Message history loaded from SD");
+      }
+    }
+
+    // Text reader — set SD ready and pre-index books
+    TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+    if (reader) {
+      reader->setSDReady(true);
+      if (disp) {
+        cpuPower.setBoost();
+        reader->bootIndex(*disp);
+      }
+    }
+
+    // Notes screen
+    NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
+    if (notesScr) {
+      notesScr->setSDReady(true);
+    }
+    Serial.println("setup() - SD features initialized");
+  }
+  #endif
   // Check if node name is still the default hex prefix (first 4 bytes of pub key)
   // If so, launch onboarding wizard to set name and radio preset
   // ---------------------------------------------------------------------------
@@ -1118,6 +1357,102 @@ void loop() {
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
+  #endif
+
+  // ---------------------------------------------------------------------------
+  // T5S3 GT911 Touch Input — tap/swipe/long-press state machine
+  // Gestures:
+  //   Tap = finger down + up with minimal movement → select/open
+  //   Swipe = finger drag > threshold → scroll/page turn
+  //   Long press = finger held > 500ms without moving → edit/enter
+  // After processing an event, cooldown waits for finger lift before next event.
+  // ---------------------------------------------------------------------------
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+  {
+    int16_t tx, ty;
+    bool gotPoint = readTouchLandscape(&tx, &ty);
+    unsigned long now = millis();
+
+    if (gotPoint) {
+      lastTouchSeenMs = now;  // Track when we last saw a valid touch report
+    }
+
+    // Determine if finger is "present" — GT911 getPoint() only returns true
+    // once per report cycle (~10ms), then returns false until the next report.
+    // During a blocking e-ink refresh (~1s), many cycles are missed.
+    // So "finger lifted" = no valid report for TOUCH_LIFT_DEBOUNCE_MS.
+    bool fingerPresent = (now - lastTouchSeenMs) < TOUCH_LIFT_DEBOUNCE_MS;
+
+    // Rate limit — after processing an event, wait for finger lift + cooldown
+    if (touchCooldown) {
+      if (!fingerPresent && (now - lastTouchEventMs) >= TOUCH_MIN_INTERVAL_MS) {
+        touchCooldown = false;
+        touchDown = false;
+      }
+    }
+    else if (gotPoint && !touchDown) {
+      // Finger just touched down (first valid report)
+      touchDown = true;
+      touchDownTime = now;
+      touchDownX = tx;
+      touchDownY = ty;
+      touchLastX = tx;
+      touchLastY = ty;
+      longPressHandled = false;
+      swipeHandled = false;
+    }
+    else if (touchDown && fingerPresent) {
+      // Finger still down — update position if we got a new point
+      if (gotPoint) {
+        touchLastX = tx;
+        touchLastY = ty;
+      }
+
+      int16_t dx = touchLastX - touchDownX;
+      int16_t dy = touchLastY - touchDownY;
+      int16_t dist = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+
+      // Swipe detection — fire once when threshold exceeded
+      if (!swipeHandled && !longPressHandled && dist >= TOUCH_SWIPE_THRESHOLD) {
+        swipeHandled = true;
+        Serial.printf("[Touch] SWIPE dx=%d dy=%d\n", dx, dy);
+        char c = mapTouchSwipe(dx, dy);
+        if (c) {
+          ui_task.injectKey(c);
+          cpuPower.setBoost();
+        }
+        lastTouchEventMs = now;
+        touchCooldown = true;
+      }
+      // Long press — only if finger hasn't moved much
+      else if (!longPressHandled && !swipeHandled && dist < TOUCH_SWIPE_THRESHOLD &&
+               (now - touchDownTime) >= TOUCH_LONG_PRESS_MS) {
+        longPressHandled = true;
+        Serial.printf("[Touch] LONG PRESS at (%d,%d)\n", touchDownX, touchDownY);
+        char c = mapTouchLongPress(touchDownX, touchDownY);
+        if (c) {
+          ui_task.injectKey(c);
+          cpuPower.setBoost();
+        }
+        lastTouchEventMs = now;
+        touchCooldown = true;
+      }
+    }
+    else if (touchDown && !fingerPresent) {
+      // Finger lifted (no report for TOUCH_LIFT_DEBOUNCE_MS)
+      touchDown = false;
+      if (!longPressHandled && !swipeHandled) {
+        Serial.printf("[Touch] TAP at (%d,%d)\n", touchDownX, touchDownY);
+        char c = mapTouchTap(touchDownX, touchDownY);
+        if (c) {
+          ui_task.injectKey(c);
+        }
+        cpuPower.setBoost();
+        lastTouchEventMs = now;
+        touchCooldown = true;
+      }
+    }
+  }
   #endif
 
   // Poll touch input for phone dialer numpad

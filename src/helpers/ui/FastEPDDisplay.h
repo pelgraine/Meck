@@ -21,6 +21,8 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold24pt7b.h>
+#include <Fonts/FreeSerif12pt7b.h>
+#include <Fonts/FreeSerif18pt7b.h>
 
 #include "DisplayDriver.h"
 
@@ -110,7 +112,7 @@ public:
   void drawTextRaw(int16_t x, int16_t y, const char* text, uint16_t color) {
     if (!_canvas) return;
     _canvas->setFont(NULL);
-    _canvas->setTextSize(4);  // 4× built-in 5×7 = 20×28, readable on 960×540
+    _canvas->setTextSize(3);  // 3× built-in 5×7 = 15×21, readable on 960×540
     _canvas->setTextColor(color ? 1 : 0);
     _canvas->setCursor(x, y);
     _canvas->print(text);

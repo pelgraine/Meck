@@ -586,7 +586,13 @@ public:
       // Selection highlight
       if (selected) {
         display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        // FreeSans12pt: baseline at (y+5)*scale_y, ascent ~17px above.
+        // Highlight needs to start above the baseline to cover ascenders.
+        display.fillRect(0, y, display.width(), lineHeight);
+#else
         display.fillRect(0, y + 5, display.width(), lineHeight);
+#endif
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
@@ -992,6 +998,14 @@ public:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(0);
+    if (_editMode == EDIT_NONE) {
+      display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Hold: Edit   Boot: Home");
+    } else {
+      display.print("Editing...");
+    }
+#else
     if (_editMode == EDIT_TEXT) {
       display.print("Type, Enter:Ok Q:Cancel");
     #ifdef MECK_WIFI_COMPANION
@@ -1020,6 +1034,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
       display.print(r);
     }
+#endif
 
     return _editMode != EDIT_NONE ? 700 : 1000;
   }

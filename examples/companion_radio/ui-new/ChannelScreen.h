@@ -651,7 +651,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(copyHint) - 2, footerY);
       display.print(copyHint);
 
-#if AUTO_OFF_MILLIS == 0
+#ifdef USE_EINK
       return 5000;
 #else
       return 1000;
@@ -735,7 +735,11 @@ public:
           int availH = maxY - y;
           if (maxFillH > availH) maxFillH = availH;
           display.setColor(DisplayDriver::LIGHT);
+          #if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, contentW, maxFillH);
+#else
           display.fillRect(0, y + 5, contentW, maxFillH);
+#endif
         }
         
         // Time indicator with hop count - inline on same line as message start
@@ -888,7 +892,11 @@ public:
           if (maxFillH > availH) maxFillH = availH;
           if (usedH < maxFillH) {
             display.setColor(DisplayDriver::DARK);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(0, y, contentW, maxFillH - usedH);
+#else
             display.fillRect(0, y + 5, contentW, maxFillH - usedH);
+#endif
           }
         }
         
@@ -943,6 +951,10 @@ public:
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
     
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(0);
+    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Boot: Home");
+#else
     // Left side: abbreviated controls
     if (_replySelectMode) {
       display.print("W/S:Sel V:Pth Q:X");
@@ -955,8 +967,9 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     }
+#endif
 
-#if AUTO_OFF_MILLIS == 0  // e-ink
+#ifdef USE_EINK
     return 5000;
 #else
     return 1000;

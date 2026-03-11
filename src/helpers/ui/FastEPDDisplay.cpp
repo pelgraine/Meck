@@ -78,7 +78,11 @@ bool FastEPDDisplay::begin() {
   // Set canvas defaults
   _canvas->fillScreen(1);  // White background (bit=1 → white in FastEPD)
   _canvas->setTextColor(0);  // Black text (bit=0 → black in FastEPD)
-  _canvas->setFont(&FreeSans24pt7b);
+#ifdef MECK_SERIF_FONT
+  _canvas->setFont(&FreeSerif12pt7b);
+#else
+  _canvas->setFont(&FreeSans12pt7b);
+#endif
   _canvas->setTextWrap(false);
 
   _curr_color = GxEPD_BLACK;
@@ -118,28 +122,34 @@ void FastEPDDisplay::setTextSize(int sz) {
   _frameCRC.update<int>(sz);
 
   // Font mapping for 960×540 display at ~234 DPI
-  // The T-Deck Pro at 240×320 (~140 DPI) uses FreeSans9pt for body text.
-  // At 234 DPI we need roughly 2.5× larger fonts for equivalent physical size.
-  // Built-in 5×7 font scaled 4× = 20×28px — readable for status bar items.
+  // Toggle between font families via -D MECK_SERIF_FONT build flag
   switch(sz) {
-    case 0:  // Tiny — node name, clock, battery %, menu shortcuts
-      _canvas->setFont(NULL);
-      _canvas->setTextSize(4);  // 5×7 × 4 = 20×28 physical pixels
-      break;
-    case 1:  // Small/normal — body text, contact list items
-      _canvas->setFont(&FreeSans24pt7b);
+    case 0:  // Body text — reader content, settings rows, messages, footers
+#ifdef MECK_SERIF_FONT
+      _canvas->setFont(&FreeSerif12pt7b);
+#else
+      _canvas->setFont(&FreeSans12pt7b);
+#endif
       _canvas->setTextSize(1);
       break;
-    case 2:  // Medium bold — MSG count, headings, labels
-      _canvas->setFont(&FreeSansBold24pt7b);
+    case 1:  // Headings — screen titles, channel names (bold, same height as body)
+      _canvas->setFont(&FreeSansBold12pt7b);
       _canvas->setTextSize(1);
       break;
-    case 3:  // Large — splash screen title, onboarding
+    case 2:  // Large bold — MSG count, tile letters
+      _canvas->setFont(&FreeSansBold18pt7b);
+      _canvas->setTextSize(1);
+      break;
+    case 3:  // Extra large — splash screen title
       _canvas->setFont(&FreeSansBold24pt7b);
       _canvas->setTextSize(1);
       break;
     default:
-      _canvas->setFont(&FreeSans24pt7b);
+#ifdef MECK_SERIF_FONT
+      _canvas->setFont(&FreeSerif12pt7b);
+#else
+      _canvas->setFont(&FreeSans12pt7b);
+#endif
       _canvas->setTextSize(1);
       break;
   }
@@ -166,9 +176,8 @@ void FastEPDDisplay::setCursor(int x, int y) {
   _frameCRC.update<int>(x);
   _frameCRC.update<int>(y);
 
-  // Scale virtual coordinates to physical, with baseline offset
-  // The +5 pushes text baseline down so ascenders don't overlap elements above
-  // (Same convention as GxEPDDisplay for T-Deck Pro)
+  // Scale virtual coordinates to physical, with baseline offset.
+  // The +5 pushes text baseline down so ascenders at y=0 are visible.
   _canvas->setCursor(
     (int)((x + offset_x) * scale_x),
     (int)((y + offset_y + 5) * scale_y)

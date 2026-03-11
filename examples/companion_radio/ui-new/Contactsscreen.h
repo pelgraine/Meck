@@ -237,7 +237,11 @@ public:
         // Highlight: fill LIGHT rect first, then draw DARK text on top
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width(), lineHeight);
+#else
           display.fillRect(0, y + 5, display.width(), lineHeight);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
@@ -297,6 +301,10 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(0);
+    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Boot: Home");
+#else
     // Left: Q:Bk
     display.setCursor(0, footerY);
     display.print("Q:Bk");
@@ -310,6 +318,7 @@ public:
     const char* right = "F:Dscvr";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
+#endif
 
     return 5000;  // e-ink: next render after 5s
   }

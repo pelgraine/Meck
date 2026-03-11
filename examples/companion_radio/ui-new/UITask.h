@@ -85,6 +85,7 @@ class UITask : public AbstractUITask {
 #endif
   UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
   UIScreen* curr;
+  bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
 
   void userLedHandler();
 
@@ -147,6 +148,9 @@ public:
   bool isOnChannelScreen() const { return curr == channel_screen; }
   bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
+  bool isOnHomeScreen() const { return curr == home; }
+  bool isHomeShowingTiles() const { return _homeShowingTiles; }
+  void setHomeShowingTiles(bool v) { _homeShowingTiles = v; }
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
