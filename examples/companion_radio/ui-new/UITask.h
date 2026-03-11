@@ -86,6 +86,11 @@ class UITask : public AbstractUITask {
   UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
+  UIScreen* _screenBeforeLock = nullptr;
+  bool _locked = false;
+#endif
 
   void userLedHandler();
 
@@ -157,6 +162,11 @@ public:
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  bool isLocked() const { return _locked; }
+  void lockScreen();
+  void unlockScreen();
+#endif
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }
 #endif

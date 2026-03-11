@@ -144,6 +144,10 @@ void FastEPDDisplay::setTextSize(int sz) {
       _canvas->setFont(&FreeSansBold24pt7b);
       _canvas->setTextSize(1);
       break;
+    case 5:  // Clock face — lock screen (FreeSansBold24pt scaled 5×)
+      _canvas->setFont(&FreeSansBold24pt7b);
+      _canvas->setTextSize(5);
+      break;
     default:
 #ifdef MECK_SERIF_FONT
       _canvas->setFont(&FreeSerif12pt7b);

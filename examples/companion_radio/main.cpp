@@ -1395,8 +1395,10 @@ void loop() {
   //   Swipe = finger drag > threshold → scroll/page turn
   //   Long press = finger held > 500ms without moving → edit/enter
   // After processing an event, cooldown waits for finger lift before next event.
+  // Touch is disabled while lock screen is active.
   // ---------------------------------------------------------------------------
   #if defined(LilyGo_T5S3_EPaper_Pro)
+  if (!ui_task.isLocked())
   {
     int16_t tx, ty;
     bool gotPoint = readTouchLandscape(&tx, &ty);

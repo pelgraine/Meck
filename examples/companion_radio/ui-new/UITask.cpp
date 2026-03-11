@@ -1003,6 +1003,75 @@ public:
   }
 };
 
+// ==========================================================================
+// Lock Screen — T5S3 only
+// Big clock, battery %, unread message count. Touch disabled while shown.
+// Long press boot button to lock/unlock. Touch disabled while locked.
+// ==========================================================================
+#if defined(LilyGo_T5S3_EPaper_Pro)
+class LockScreen : public UIScreen {
+  UITask* _task;
+  mesh::RTCClock* _rtc;
+  NodePrefs* _node_prefs;
+
+public:
+  LockScreen(UITask* task, mesh::RTCClock* rtc, NodePrefs* node_prefs)
+    : _task(task), _rtc(rtc), _node_prefs(node_prefs) {}
+
+  int render(DisplayDriver& display) override {
+    uint32_t now = _rtc->getCurrentTime();
+
+    char timeBuf[6] = "--:--";
+    if (now > 1700000000) {
+      int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
+      int hrs = (local / 3600) % 24;
+      if (hrs < 0) hrs += 24;
+      int mins = (local / 60) % 60;
+      if (mins < 0) mins += 60;
+      sprintf(timeBuf, "%02d:%02d", hrs, mins);
+    }
+
+    // ---- Huge clock: HH:MM on one line ----
+    display.setTextSize(5);  // Clock face size (FreeSansBold24pt × 5)
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawTextCentered(display.width() / 2, 55, timeBuf);
+
+    // ---- Battery + unread on one line ----
+    display.setTextSize(1);
+    {
+      uint16_t mv = _task->getBattMilliVolts();
+      int pct = 0;
+      if (mv > 0) {
+        pct = ((mv - 3000) * 100) / (4200 - 3000);
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+      }
+
+      int unread = _task->getUnreadMsgCount();
+      char infoBuf[32];
+      if (unread > 0) {
+        sprintf(infoBuf, "%d%%  |  %d unread", pct, unread);
+      } else {
+        sprintf(infoBuf, "%d%%", pct);
+      }
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextCentered(display.width() / 2, 108, infoBuf);
+    }
+
+    // ---- Unlock hint ----
+    display.setTextSize(0);
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawTextCentered(display.width() / 2, 120, "Hold button to unlock");
+
+    return 30000;
+  }
+
+  bool handleInput(char c) override {
+    return false;
+  }
+};
+#endif // LilyGo_T5S3_EPaper_Pro
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
   _sensors = sensors;
@@ -1066,6 +1135,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
+#endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this);
@@ -1297,7 +1369,10 @@ void UITask::loop() {
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // T5S3: single click = cycle pages on home, go back to home from elsewhere
-    if (curr == home) {
+    // Ignored while locked — long press required to unlock
+    if (_locked) {
+      c = 0;
+    } else if (curr == home) {
       c = checkDisplayOn(KEY_NEXT);
     } else {
       // Navigate back: reader reading→file list, file list→home, others→home
@@ -1499,6 +1574,15 @@ char UITask::handleLongPress(char c) {
     the_mesh.enterCLIRescue();
     c = 0;   // consume event
   }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  else if (_locked) {
+    unlockScreen();
+    c = 0;
+  } else {
+    lockScreen();
+    c = 0;
+  }
+#endif
   return c;
 }
 
@@ -1535,6 +1619,33 @@ char UITask::handleTripleClick(char c) {
   c = 0;
   return c;
 }
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+void UITask::lockScreen() {
+  if (_locked) return;
+  _locked = true;
+  _screenBeforeLock = curr;
+  setCurrScreen(lock_screen);
+  board.setBacklight(false);  // Save power
+  _next_refresh = 0;  // Draw lock screen immediately
+  _auto_off = millis() + 60000;  // 60s before display off while locked
+  Serial.println("[UI] Screen locked");
+}
+
+void UITask::unlockScreen() {
+  if (!_locked) return;
+  _locked = false;
+  if (_screenBeforeLock) {
+    setCurrScreen(_screenBeforeLock);
+  } else {
+    gotoHomeScreen();
+  }
+  _screenBeforeLock = nullptr;
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 0;
+  Serial.println("[UI] Screen unlocked");
+}
+#endif
 
 bool UITask::getGPSState() {
   #if ENV_INCLUDE_GPS == 1
