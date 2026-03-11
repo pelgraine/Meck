@@ -1058,16 +1058,18 @@ public:
     }
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // FreeSans12pt is proportional — "M" is the widest character.
-    // Using M-width gives ~56 chars/line but actual text only fills 60% of screen.
-    // Re-measure with representative lowercase text for realistic average width.
+    // Re-measure with representative lowercase text, then apply 1.5× multiplier
+    // because real English text averages much narrower than the sample string.
+    // With proportional fonts, character-count-based wrapping is inherently
+    // approximate — some lines will be shorter, but none should overflow.
     {
       uint16_t sampleW = display.getTextWidth("abcdefghijklmno");  // 15 chars
       if (sampleW > 0) {
-        _charsPerLine = (display.width() * 15) / sampleW;
+        _charsPerLine = (display.width() * 15 * 3) / (sampleW * 2);  // ×1.5
       }
     }
     if (_charsPerLine < 15) _charsPerLine = 15;
-    if (_charsPerLine > 120) _charsPerLine = 120;  // Proportional fonts can fit many chars
+    if (_charsPerLine > 120) _charsPerLine = 120;
 #else
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 60) _charsPerLine = 60;

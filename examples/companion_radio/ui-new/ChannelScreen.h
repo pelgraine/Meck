@@ -811,7 +811,9 @@ public:
                 if (wb == ' ' || isEmojiEscape(wb)) break;
                 charStr[0] = (char)wb;
                 dblStr[0] = dblStr[1] = (char)wb;
-                wordW += display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+                int charAdv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+                if (charAdv < 1) charAdv = 1;
+                wordW += charAdv;
               }
               if (px + wordW > lineW) {
                 px = 0;
@@ -840,6 +842,7 @@ public:
             charStr[0] = ' ';
             dblStr[0] = dblStr[1] = ' ';
             int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+            if (adv < 1) adv = 1;  // Minimum advance (rounding fix for proportional fonts)
             if (px + adv > lineW) {
               px = 0;
               linesForThisMsg++;
@@ -857,6 +860,7 @@ public:
             charStr[0] = (char)b;
             dblStr[0] = dblStr[1] = (char)b;
             int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+            if (adv < 1) adv = 1;  // Minimum advance (rounding fix for proportional fonts)
             if (px + adv > lineW) {
               px = 0;
               linesForThisMsg++;

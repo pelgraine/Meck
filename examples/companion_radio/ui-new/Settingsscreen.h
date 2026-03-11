@@ -6,6 +6,13 @@
 #include <MeshCore.h>
 #include "../NodePrefs.h"
 
+// Inline edit hint shown next to values being adjusted
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #define EDIT_ADJ_HINT "<Swipe>"
+#else
+  #define EDIT_ADJ_HINT "<W/S>"
+#endif
+
 #ifdef HAS_4G_MODEM
   #include "ModemManager.h"
 #endif
@@ -640,7 +647,7 @@ public:
 
         case ROW_BW:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "BW: %.1f <W/S>", _editFloat);
+            snprintf(tmp, sizeof(tmp), "BW: %.1f " EDIT_ADJ_HINT, _editFloat);
           } else {
             snprintf(tmp, sizeof(tmp), "BW: %.1f kHz", _prefs->bw);
           }
@@ -649,7 +656,7 @@ public:
 
         case ROW_SF:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "SF: %d <W/S>", _editInt);
+            snprintf(tmp, sizeof(tmp), "SF: %d " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "SF: %d", _prefs->sf);
           }
@@ -658,7 +665,7 @@ public:
 
         case ROW_CR:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "CR: %d <W/S>", _editInt);
+            snprintf(tmp, sizeof(tmp), "CR: %d " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "CR: %d", _prefs->cr);
           }
@@ -667,7 +674,7 @@ public:
 
         case ROW_TX_POWER:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "TX: %d dBm <W/S>", _editInt);
+            snprintf(tmp, sizeof(tmp), "TX: %d dBm " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "TX: %d dBm", _prefs->tx_power_dbm);
           }
@@ -676,7 +683,7 @@ public:
 
         case ROW_UTC_OFFSET:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "UTC: %+d <W/S>", _editInt);
+            snprintf(tmp, sizeof(tmp), "UTC: %+d " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "UTC Offset: %+d", _prefs->utc_offset_hours);
           }
@@ -691,7 +698,7 @@ public:
 
         case ROW_PATH_HASH_SIZE:
           if (editing && _editMode == EDIT_NUMBER) {
-            snprintf(tmp, sizeof(tmp), "Path Hash Size: %d-byte <W/S>", _editInt);
+            snprintf(tmp, sizeof(tmp), "Path Hash Size: %d-byte " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "Path Hash Size: %d-byte", _prefs->path_hash_mode + 1);
           }
@@ -1002,8 +1009,22 @@ public:
     display.setTextSize(0);
     if (_editMode == EDIT_NONE) {
       display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Hold: Edit   Boot: Home");
+    } else if (_editMode == EDIT_NUMBER) {
+      display.drawTextCentered(display.width() / 2, footerY, "Swipe Up/Down: Adjust   Tap: OK   Boot: Cancel");
+    } else if (_editMode == EDIT_PICKER) {
+      display.drawTextCentered(display.width() / 2, footerY, "Swipe Left/Right: Choose   Tap: OK");
+    } else if (_editMode == EDIT_CONFIRM) {
+      display.drawTextCentered(display.width() / 2, footerY, "Tap: Confirm   Boot: Cancel");
+    #ifdef MECK_WIFI_COMPANION
+    } else if (_editMode == EDIT_WIFI) {
+      if (_wifiPhase == WIFI_PHASE_SELECT) {
+        display.drawTextCentered(display.width() / 2, footerY, "Swipe: Pick   Tap: Select   Boot: Back");
+      } else {
+        display.drawTextCentered(display.width() / 2, footerY, "Please wait...");
+      }
+    #endif
     } else {
-      display.print("Editing...");
+      display.drawTextCentered(display.width() / 2, footerY, "Editing...");
     }
 #else
     if (_editMode == EDIT_TEXT) {

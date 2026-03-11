@@ -1101,9 +1101,9 @@ void setup() {
   }
   #endif
 
-  // T-Deck Pro: BLE starts disabled for standalone-first operation
-  // User can toggle it on from the Bluetooth home page (Enter or long-press)
-  #if defined(LilyGo_TDeck_Pro) && defined(BLE_PIN_CODE)
+  // BLE starts disabled for standalone-first operation
+  // User can toggle it from the Bluetooth home page (Enter or long-press)
+  #if (defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)) && defined(BLE_PIN_CODE)
     serial_interface.disable();
     MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif

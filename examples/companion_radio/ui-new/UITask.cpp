@@ -31,6 +31,8 @@
 
 #if UI_HAS_JOYSTICK
   #define PRESS_LABEL "press Enter"
+#elif defined(LilyGo_T5S3_EPaper_Pro)
+  #define PRESS_LABEL "hold Boot btn"
 #else
   #define PRESS_LABEL "long press"
 #endif
@@ -156,7 +158,11 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     // layout: [icon 16px][cap 2px][gap 2px][text][margin 2px]
     int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
     int iconX = display.width() - totalWidth;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    int iconY = 4;  // Shift down to match header text offset
+#else
     int iconY = 0;  // vertically align with node name text
+#endif
 
     if (outIconX) *outIconX = iconX;
 
@@ -253,7 +259,14 @@ public:
     display.setColor(DisplayDriver::GREEN);
     char filtered_name[sizeof(_node_prefs->node_name)];
     display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
-    display.setCursor(0, -3);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    // T5S3: FreeSans12pt ascenders need more room than built-in font.
+    // Shift header elements down by 4 virtual units (~17px physical).
+    #define HOME_HDR_Y 1
+#else
+    #define HOME_HDR_Y -3
+#endif
+    display.setCursor(0, HOME_HDR_Y);
     display.print(filtered_name);
 
     // battery voltage
@@ -285,13 +298,17 @@ public:
         display.setColor(DisplayDriver::LIGHT);
         uint16_t tw = display.getTextWidth(timeBuf);
         int clockX = (display.width() - tw) / 2;
-        display.setCursor(clockX, -3);  // align with battery text Y
+        display.setCursor(clockX, HOME_HDR_Y);  // align with node name Y
         display.print(timeBuf);
         display.setTextSize(1);  // restore
       }
     }
     // curr page indicator
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    int y = 18;
+#else
     int y = 14;
+#endif
     int x = display.width() / 2 - 5 * (HomePage::Count-1);
     for (uint8_t i = 0; i < HomePage::Count; i++, x += 10) {
       if (i == _page) {
@@ -305,7 +322,11 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       _task->setHomeShowingTiles(true);
 #endif
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      int y = 24;
+#else
       int y = 20;
+#endif
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
@@ -1093,10 +1114,9 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
   }
   
-#if defined(LilyGo_TDeck_Pro)
-  // T-Deck Pro: Don't interrupt user with popup - just show brief notification
-  // Messages are stored in channel history, accessible via 'M' key
-  // Suppress alert entirely on admin screen - it needs focused interaction
+#if defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
+  // Don't interrupt user with popup - just show brief notification
+  // Messages are stored in channel history, accessible via tile/key
   if (!isOnRepeaterAdmin()) {
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
@@ -1470,7 +1490,7 @@ char UITask::handleTripleClick(char c) {
   if (board.isBacklightOn()) {
     board.setBacklight(false);  // If already on, turn off
   } else {
-    board.setBacklightBrightness(4);
+    board.setBacklightBrightness(40);
     board.setBacklight(true);
   }
 #else
