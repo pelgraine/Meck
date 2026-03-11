@@ -926,7 +926,7 @@ private:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(0);
-    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: Home");
+    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   boot: home");
 #else
     display.setCursor(0, footerY);
     display.print("Q:Back W/S:Nav");
@@ -960,6 +960,7 @@ private:
       display.setCursor(0, y);
       // Print line with UTF-8 decoding: multi-byte sequences are decoded
       // to Unicode codepoints, then mapped to CP437 for the built-in font.
+      bool lineHasContent = false;
       char charStr[2] = {0, 0};
       int j = pos;
       while (j < wrap.lineEnd && j < _pageBufLen) {
@@ -975,6 +976,7 @@ private:
           // Plain ASCII — print directly
           charStr[0] = (char)b;
           display.print(charStr);
+          lineHasContent = true;
           j++;
         } else if (b >= 0xC0) {
           // UTF-8 lead byte — decode full sequence and map to CP437
@@ -984,6 +986,7 @@ private:
           if (glyph) {
             charStr[0] = (char)glyph;
             display.print(charStr);
+            lineHasContent = true;
           }
           // If unmappable (glyph==0), just skip the character
         } else {
@@ -991,11 +994,20 @@ private:
           // Treat as CP437 pass-through (e.g. from EPUB numeric entity decoding).
           charStr[0] = (char)b;
           display.print(charStr);
+          lineHasContent = true;
           j++;
         }
       }
 
-      y += _lineHeight;
+      // Blank lines (paragraph breaks) get reduced height for compact layout.
+      // Full _lineHeight for blank lines wastes too much space — on T5S3 each
+      // blank line is ~34px, making paragraph gaps 7-8× the normal line spacing.
+      // Using 40% height gives a visible paragraph break without wasting space.
+      if (lineHasContent) {
+        y += _lineHeight;
+      } else {
+        y += max(2, _lineHeight * 2 / 5);  // ~40% height for blank lines
+      }
       lineCount++;
       pos = wrap.nextStart;
       if (pos >= _pageBufLen) break;

@@ -32,7 +32,7 @@
 #if UI_HAS_JOYSTICK
   #define PRESS_LABEL "press Enter"
 #elif defined(LilyGo_T5S3_EPaper_Pro)
-  #define PRESS_LABEL "hold Boot btn"
+  #define PRESS_LABEL "hold boot btn"
 #else
   #define PRESS_LABEL "long press"
 #endif
@@ -159,9 +159,11 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
     int iconX = display.width() - totalWidth;
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    int iconY = 4;  // Shift down to match header text offset
+    int iconY = 6;   // Align with FreeSans12pt text baseline
+    int textY = 1;   // Percentage text — setCursor adds +5 → baseline at (6)*scale_y
 #else
-    int iconY = 0;  // vertically align with node name text
+    int iconY = 0;   // vertically align with node name text
+    int textY = iconY - 3;  // offset up to vertically center with icon
 #endif
 
     if (outIconX) *outIconX = iconX;
@@ -179,7 +181,6 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     // draw percentage text after the battery cap, offset upward to center with icon
     // (setCursor adds +5 internally for baseline, so compensate for the tiny font)
     int textX = iconX + iconWidth + 2 + 2;  // after cap + gap
-    int textY = iconY - 3;  // offset up to vertically center with icon
     display.setCursor(textX, textY);
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
@@ -490,22 +491,38 @@ public:
 #ifdef BLE_PIN_CODE
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawXbm((display.width() - 32) / 2, 28,
+#else
       display.drawXbm((display.width() - 32) / 2, 18,
+#endif
           _task->isSerialEnabled() ? bluetooth_on : bluetooth_off,
           32, 32);
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(1);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.drawTextCentered(display.width() / 2, 64, "< Connected >");
+#else
         display.drawTextCentered(display.width() / 2, 53, "< Connected >");
+#endif
       } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.drawTextCentered(display.width() / 2, 64, tmp);
+#else
         display.drawTextCentered(display.width() / 2, 53, tmp);
+#endif
       }
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, 80, "toggle: " PRESS_LABEL);
+#else
       display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
+#endif
 #endif
 #ifdef MECK_WIFI_COMPANION
     } else if (_page == HomePage::WIFI_STATUS) {
@@ -547,8 +564,16 @@ public:
 #endif
     } else if (_page == HomePage::ADVERT) {
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawXbm((display.width() - 32) / 2, 28, advert_icon, 32, 32);
+#else
       display.drawXbm((display.width() - 32) / 2, 18, advert_icon, 32, 32);
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, 64, "advert: " PRESS_LABEL);
+#else
       display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
+#endif
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
       extern GPSStreamCounter gpsStream;
@@ -773,10 +798,21 @@ public:
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
       if (_shutdown_init) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        board.setBacklight(false);  // Turn off backlight on hibernate
+#endif
         display.drawTextCentered(display.width() / 2, 34, "hibernating...");
       } else {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.drawXbm((display.width() - 32) / 2, 28, power_icon, 32, 32);
+#else
         display.drawXbm((display.width() - 32) / 2, 18, power_icon, 32, 32);
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.drawTextCentered(display.width() / 2, 64, "hibernate:" PRESS_LABEL);
+#else
         display.drawTextCentered(display.width() / 2, 64 - 11, "hibernate:" PRESS_LABEL);
+#endif
       }
     }
     return _editing_utc ? 700 : 5000;   // match e-ink refresh cycle while editing UTC
@@ -1490,7 +1526,7 @@ char UITask::handleTripleClick(char c) {
   if (board.isBacklightOn()) {
     board.setBacklight(false);  // If already on, turn off
   } else {
-    board.setBacklightBrightness(40);
+    board.setBacklightBrightness(4);
     board.setBacklight(true);
   }
 #else

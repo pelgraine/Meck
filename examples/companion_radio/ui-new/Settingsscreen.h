@@ -1008,17 +1008,17 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(0);
     if (_editMode == EDIT_NONE) {
-      display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Hold: Edit   Boot: Home");
+      display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Hold: Edit   boot: home");
     } else if (_editMode == EDIT_NUMBER) {
-      display.drawTextCentered(display.width() / 2, footerY, "Swipe Up/Down: Adjust   Tap: OK   Boot: Cancel");
+      display.drawTextCentered(display.width() / 2, footerY, "Swipe Up/Down: Adjust   Tap: OK   boot: cancel");
     } else if (_editMode == EDIT_PICKER) {
       display.drawTextCentered(display.width() / 2, footerY, "Swipe Left/Right: Choose   Tap: OK");
     } else if (_editMode == EDIT_CONFIRM) {
-      display.drawTextCentered(display.width() / 2, footerY, "Tap: Confirm   Boot: Cancel");
+      display.drawTextCentered(display.width() / 2, footerY, "Tap: Confirm   boot: cancel");
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {
       if (_wifiPhase == WIFI_PHASE_SELECT) {
-        display.drawTextCentered(display.width() / 2, footerY, "Swipe: Pick   Tap: Select   Boot: Back");
+        display.drawTextCentered(display.width() / 2, footerY, "Swipe: Pick   Tap: Select   boot: back");
       } else {
         display.drawTextCentered(display.width() / 2, footerY, "Please wait...");
       }

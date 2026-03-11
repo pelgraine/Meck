@@ -15,8 +15,7 @@ T5S3Board board;
 
 WRAPPER_CLASS radio_driver(radio, board);
 
-ESP32RTCClock fallback_clock;
-AutoDiscoverRTCClock rtc_clock(fallback_clock);
+PCF85063Clock rtc_clock;
 
 // No GPS on H752-B
 #if HAS_GPS
@@ -39,13 +38,10 @@ bool radio_init() {
   // NOTE: board.begin() is called by main.cpp setup() before radio_init()
   // I2C is already initialized there with correct pins
 
-  fallback_clock.begin();
-  MESH_DEBUG_PRINTLN("radio_init() - fallback_clock started");
-
-  // Use existing Wire for RTC discovery
-  // AutoDiscoverRTCClock will find PCF85063 at 0x51 if present
+  // PCF85063 hardware RTC — reads correct registers (0x04–0x0A)
+  // Unlike AutoDiscoverRTCClock which uses RTClib's PCF8563 driver (wrong registers)
   rtc_clock.begin(Wire);
-  MESH_DEBUG_PRINTLN("radio_init() - rtc_clock started");
+  MESH_DEBUG_PRINTLN("radio_init() - PCF85063 RTC started");
 
 #if defined(P_LORA_SCLK)
   MESH_DEBUG_PRINTLN("radio_init() - initializing LoRa SPI (SCLK=%d, MISO=%d, MOSI=%d, NSS=%d)...",

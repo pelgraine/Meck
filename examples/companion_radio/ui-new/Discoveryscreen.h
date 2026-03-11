@@ -79,7 +79,11 @@ public:
       display.print(active ? "Listening for adverts..." : "No nodes found");
       if (!active) {
         display.setCursor(4, 38);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Long press: Rescan");
+#else
         display.print("F: Scan again  Q: Back");
+#endif
       }
     } else {
       // Center visible window around selected item
@@ -158,6 +162,17 @@ public:
     display.setColor(DisplayDriver::YELLOW);
 
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Swipe:Scroll");
+
+    const char* mid = "Tap:Add";
+    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
+    display.print(mid);
+
+    const char* right = "Hold:Rescan";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
+#else
     display.print("Q:Back");
 
     const char* mid = "Ent:Add";
@@ -167,6 +182,7 @@ public:
     const char* right = "F:Rescan";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
+#endif
 
     // Faster refresh while actively scanning
     return active ? 1000 : 5000;

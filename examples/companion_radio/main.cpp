@@ -614,6 +614,25 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       return KEY_ENTER;  // file list: open
     }
 
+    // Discovery screen: long press = rescan
+    if (ui_task.isOnDiscoveryScreen()) {
+      return 'f';
+    }
+
+    // Contacts screen: long press = open repeater admin (if on a repeater contact)
+    if (ui_task.isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+      if (cs) {
+        int idx = cs->getSelectedContactIdx();
+        ContactInfo ci;
+        if (the_mesh.getContactByIdx(idx, ci) && ci.type == ADV_TYPE_REPEATER) {
+          ui_task.gotoRepeaterAdmin(idx);
+          return 0;
+        }
+      }
+      return KEY_ENTER;  // non-repeater: normal select
+    }
+
     // Default: enter/select (settings toggle, etc.)
     return KEY_ENTER;
   }
@@ -959,9 +978,10 @@ void setup() {
   #endif
 
   // Initialize GT911 touch (T5S3 E-Paper Pro)
+  // Wire is already initialized by T5S3Board::begin(). The 4-arg begin() re-calls
+  // Wire.begin() which logs "bus already initialized" — cosmetic only, not harmful.
   #if defined(LilyGo_T5S3_EPaper_Pro)
     gt911Touch.setPins(GT911_PIN_RST, GT911_PIN_INT);
-    pinMode(GT911_PIN_INT, INPUT_PULLUP);  // Ensure INT pin has pullup for clean transitions
     if (gt911Touch.begin(Wire, GT911_SLAVE_ADDRESS_L, GT911_PIN_SDA, GT911_PIN_SCL)) {
       gt911Ready = true;
       Serial.println("setup() - GT911 touch initialized");
@@ -970,8 +990,17 @@ void setup() {
     }
   #endif
 
-  // ---------------------------------------------------------------------------
-  // SD card is already initialized (early init above).
+  // RTC diagnostic — verify the auto-discovered RTC is working
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+  {
+    uint32_t rtcTime = rtc_clock.getCurrentTime();
+    Serial.printf("setup() - RTC time: %lu (valid=%s)\n", rtcTime, 
+                  rtcTime > 1700000000 ? "YES" : "NO");
+    if (rtcTime < 1700000000) {
+      Serial.println("setup() - RTC has no valid time (will be set by companion app)");
+    }
+  }
+  #endif
   // Now set up SD-dependent features: message history + text reader.
   // ---------------------------------------------------------------------------
   #if defined(LilyGo_TDeck_Pro) && defined(HAS_SDCARD)

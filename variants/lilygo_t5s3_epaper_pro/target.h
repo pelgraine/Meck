@@ -8,7 +8,7 @@
 #include <helpers/radiolib/RadioLibWrappers.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <T5S3Board.h>
-#include <helpers/AutoDiscoverRTCClock.h>
+#include "PCF85063Clock.h"
 
 // Display support — FastEPDDisplay for parallel e-ink (not GxEPD2)
 #ifdef DISPLAY_CLASS
@@ -28,7 +28,7 @@
 
 extern T5S3Board board;
 extern WRAPPER_CLASS radio_driver;
-extern AutoDiscoverRTCClock rtc_clock;
+extern PCF85063Clock rtc_clock;
 
 #if HAS_GPS
   extern GPSStreamCounter gpsStream;
