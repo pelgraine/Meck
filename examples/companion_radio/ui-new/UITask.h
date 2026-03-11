@@ -121,7 +121,9 @@ public:
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
+#if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
+#endif
 #ifdef MECK_WEB_READER
   void gotoWebReader();         // Navigate to web reader (browser)
 #endif

@@ -1,5 +1,11 @@
 #pragma once
 
+// T5S3 E-Paper Pro uses parallel e-ink (FastEPD), not SPI (GxEPD2)
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #include "FastEPDDisplay.h"
+  using GxEPDDisplay = FastEPDDisplay;
+#else
+
 #include <SPI.h>
 #include <Wire.h>
 
@@ -105,3 +111,5 @@ public:
   // (needed because drawPixelRaw bypasses CRC tracking)
   void invalidateFrameCRC() { last_display_crc_value = 0; }
 };
+
+#endif // !LilyGo_T5S3_EPaper_Pro

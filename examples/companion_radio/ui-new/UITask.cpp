@@ -4,7 +4,9 @@
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
 #include "DiscoveryScreen.h"
-#include "MapScreen.h"
+#if HAS_GPS
+  #include "MapScreen.h"
+#endif
 #include "target.h"
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
   #include <WiFi.h>
@@ -340,7 +342,11 @@ public:
       y += 10;
       display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
       y += 10;
+#if HAS_GPS
       display.drawTextCentered(display.width() / 2, y, "[E] Reader      [G] Maps      ");
+#else
+      display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
+#endif
       y += 10;
 #if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
@@ -359,7 +365,11 @@ public:
 
       // Nav hint
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, y, "Tap screen to cycle home views");
+#else
       display.drawTextCentered(display.width() / 2, y, "Press A/D to cycle home views");
+#endif
       display.setTextSize(1);  // restore
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
@@ -952,7 +962,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this);
 #endif
+#if HAS_GPS
   map_screen = new MapScreen(this);
+#else
+  map_screen = nullptr;
+#endif
   setCurrScreen(splash);
 }
 
@@ -1362,6 +1376,16 @@ char UITask::handleLongPress(char c) {
 
 char UITask::handleDoubleClick(char c) {
   MESH_DEBUG_PRINTLN("UITask: double click triggered");
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Double-click boot button → full brightness backlight toggle
+  if (board.isBacklightOn()) {
+    board.setBacklight(false);
+  } else {
+    board.setBacklightBrightness(153);
+    board.setBacklight(true);
+  }
+  c = 0;  // consume event — don't pass through as navigation
+#endif
   checkDisplayOn(c);
   return c;
 }
@@ -1369,7 +1393,17 @@ char UITask::handleDoubleClick(char c) {
 char UITask::handleTripleClick(char c) {
   MESH_DEBUG_PRINTLN("UITask: triple click triggered");
   checkDisplayOn(c);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Triple-click → half brightness backlight (comfortable reading)
+  if (board.isBacklightOn()) {
+    board.setBacklight(false);  // If already on, turn off
+  } else {
+    board.setBacklightBrightness(80);
+    board.setBacklight(true);
+  }
+#else
   toggleBuzzer();
+#endif
   c = 0;
   return c;
 }
@@ -1643,6 +1677,7 @@ void UITask::gotoWebReader() {
 }
 #endif
 
+#if HAS_GPS
 void UITask::gotoMapScreen() {
   MapScreen* map = (MapScreen*)map_screen;
   if (_display != NULL) {
@@ -1655,6 +1690,7 @@ void UITask::gotoMapScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
 }
+#endif
 
 void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
   if (repeater_admin && isOnRepeaterAdmin()) {

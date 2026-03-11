@@ -4,6 +4,10 @@
 #include <Mesh.h>
 #include "RadioPresets.h"        // Shared radio presets (serial CLI + settings screen)
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #include "target.h"            // for board.setBacklight() CLI command
+#endif
+
 #ifdef HAS_4G_MODEM
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
@@ -2662,6 +2666,30 @@ void MyMesh::checkCLIRescueCmd() {
           Serial.println("  Error: use 0 (default), 4800, 9600, 19200, 38400, 57600, or 115200");
         }
 
+      // Backlight control (T5S3 E-Paper Pro only)
+      } else if (memcmp(config, "backlight ", 10) == 0) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        const char* val = &config[10];
+        if (strcmp(val, "on") == 0) {
+          board.setBacklight(true);
+          Serial.println("  > backlight ON");
+        } else if (strcmp(val, "off") == 0) {
+          board.setBacklight(false);
+          Serial.println("  > backlight OFF");
+        } else {
+          int brightness = atoi(val);
+          if (brightness >= 0 && brightness <= 255) {
+            board.setBacklightBrightness((uint8_t)brightness);
+            board.setBacklight(brightness > 0);
+            Serial.printf("  > backlight brightness = %d\n", brightness);
+          } else {
+            Serial.println("  Error: use 'on', 'off', or 0-255");
+          }
+        }
+#else
+        Serial.println("  Error: backlight not available on this device");
+#endif
+
       } else {
         Serial.printf("  Error: unknown setting '%s' (try 'help')\n", config);
       }
@@ -2707,6 +2735,11 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    erase     Format filesystem");
       Serial.println("    reboot    Restart device");
       Serial.println("    ls / cat / rm   File operations");
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      Serial.println("");
+      Serial.println("  Display:");
+      Serial.println("    set backlight on/off/0-255  Control front-light");
+#endif
 
     // =====================================================================
     // Existing system commands (unchanged)

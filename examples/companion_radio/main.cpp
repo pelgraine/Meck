@@ -49,10 +49,6 @@
   static bool webReaderNeedsRefresh = false;
   static bool webReaderTextEntry = false;  // True when URL/password entry active
   #endif
-   // AGC reset - periodically re-assert RX boosted gain to prevent sensitivity drift
-  #define AGC_RESET_INTERVAL_MS 500
-  static unsigned long lastAGCReset = 0;
-
   // Emoji picker state
   #include "EmojiPicker.h"
   static bool emojiPickerMode = false;
@@ -90,8 +86,6 @@
     TouchInput touchInput(&Wire);
   #endif
 
-  CPUPowerManager cpuPower;
-  
   void initKeyboard();
   void handleKeyboardInput();
   void drawComposeScreen();
@@ -343,6 +337,11 @@
   }
 #endif
 
+// Board-agnostic: CPU frequency scaling and AGC reset
+CPUPowerManager cpuPower;
+#define AGC_RESET_INTERVAL_MS 500
+static unsigned long lastAGCReset = 0;
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -436,7 +435,9 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #include "MapScreen.h"  // After BLE — PNGdec headers conflict with BLE if included earlier
+  #if HAS_GPS
+    #include "MapScreen.h"  // After BLE — PNGdec headers conflict with BLE if included earlier
+  #endif
   UITask ui_task(&board, &serial_interface);
 #endif
 
@@ -749,8 +750,8 @@ void setup() {
     initKeyboard();
   #endif
 
-  // Initialize touch input (CST328)
-  #ifdef HAS_TOUCHSCREEN
+  // Initialize touch input (CST328 on T-Deck Pro)
+  #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
     if (touchInput.begin(CST328_PIN_INT)) {
       MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
     } else {
@@ -880,6 +881,7 @@ void loop() {
   sensors.loop();
 
   // Map screen: periodically update own GPS position and contact markers
+  #if HAS_GPS
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
     if (millis() - lastMapUpdate > 30000) {  // Every 30 seconds
@@ -887,9 +889,7 @@ void loop() {
       MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
       if (ms) {
         // Update own GPS position when GPS is enabled
-        #if HAS_GPS
         ms->updateGPSPosition(sensors.node_lat, sensors.node_lon);
-        #endif
 
         // Always refresh contact markers (new contacts arrive via radio)
         ms->clearMarkers();
@@ -905,12 +905,13 @@ void loop() {
       }
     }
   }
+  #endif
 
   // CPU frequency auto-timeout back to idle
   cpuPower.loop();
 
   // Audiobook: service audio decode regardless of which screen is active
-  #ifndef HAS_4G_MODEM
+  #if defined(LilyGo_TDeck_Pro) && !defined(HAS_4G_MODEM)
   {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
