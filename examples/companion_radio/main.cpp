@@ -519,7 +519,7 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
-      const int tileW = 40, tileH = 32, gapX = 1, gapY = 2;
+      const int tileW = 40, tileH = 28, gapX = 1, gapY = 1;
       const int gridW = tileW * 3 + gapX * 2;
       const int gridX = (128 - gridW) / 2;  // =3
       int gridY = ui_task.getTileGridVY();
@@ -539,13 +539,14 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         if (row == 1 && col == 1) { ui_task.gotoNotesScreen(); return 0; }
         if (row == 1 && col == 2) { ui_task.gotoDiscoveryScreen(); return 0; }
       }
-      // Tap outside tiles — cycle home pages
-      return (char)KEY_NEXT;
+      // Tap outside tiles — left half backward, right half forward
+      return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
-    // Home screen (non-tile pages): tap cycles pages
+    // Home screen (non-tile pages): left half taps backward, right half forward
     if (ui_task.isOnHomeScreen()) {
-      return (char)KEY_NEXT;
+      int vx = (int)(x / 7.5f);
+      return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
     // Reader (reading mode): tap = next page
@@ -586,9 +587,12 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
     }
 
-    // Home screen: horizontal swipe cycles pages
+    // Home screen: swipe left = next page, swipe right = previous page
     if (ui_task.isOnHomeScreen()) {
-      return (char)KEY_NEXT;
+      if (horizontal) {
+        return (dx < 0) ? (char)KEY_NEXT : (char)KEY_PREV;
+      }
+      return (char)KEY_NEXT;  // vertical swipe = next (default)
     }
 
     // Settings: horizontal swipe → a/d for picker/number editing

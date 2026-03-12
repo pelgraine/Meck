@@ -854,7 +854,7 @@ private:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print("Back:Cancel");
+    display.print("Boot:Cancel");
     const char* right = "Tap:Confirm";
 #else
     display.print("Q:Cancel");
@@ -893,7 +893,7 @@ private:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print("Back:Cancel");
+    display.print("Boot:Cancel");
     const char* right = "Tap:Delete";
 #else
     display.print("Q:Cancel");

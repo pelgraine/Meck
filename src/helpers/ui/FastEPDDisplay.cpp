@@ -22,7 +22,7 @@
 // CLEAR_FAST, CLEAR_SLOW — full refresh modes
 
 // Periodic slow (deep) refresh to clear ghosting
-#define FULL_SLOW_PERIOD 20  // every 20 fast-refreshes, do a slow refresh
+#define FULL_SLOW_PERIOD 2  // every 2 partial-refreshes, do a full cleanup
 
 FastEPDDisplay::~FastEPDDisplay() {
   delete _canvas;
@@ -282,7 +282,6 @@ void FastEPDDisplay::endFrame() {
 
   // Copy GFXcanvas1 buffer to FastEPD's current buffer — direct copy.
   // Both use same polarity: bit 1 = white, bit 0 = black.
-  // (Meshtastic inverts because OLEDDisplay uses opposite convention — not us.)
   uint8_t* src = _canvas->getBuffer();
   uint8_t* dst = _epd->currentBuffer();
   size_t bufSize = ((uint32_t)EPD_WIDTH * EPD_HEIGHT) / 8;
@@ -291,9 +290,19 @@ void FastEPDDisplay::endFrame() {
 
   memcpy(dst, src, bufSize);
 
-  // fullUpdate(true) is the only refresh mode that gives clean transitions
-  // on the ED047TC1 panel. CLEAR_FAST causes ghosting/mashing on this hardware.
-  // The brief white flash between frames is inherent to this panel's waveform.
-  _epd->fullUpdate(true);
+  // Refresh strategy:
+  //   partialUpdate(true) — no flash, differential, keeps previous buffer
+  //   fullUpdate(false)   — brief flash, clears ghosting (CLEAR_FAST)
+  //   fullUpdate(true)    — full white flash, cleanest (boot only)
+  //
+  // Use partial for most frames. Periodic full refresh every N frames
+  // to clear accumulated ghosting artifacts.
+  _fullRefreshCount++;
+  if (_fullRefreshCount >= FULL_SLOW_PERIOD) {
+    _fullRefreshCount = 0;
+    _epd->fullUpdate(true);   // Full clean refresh — clears all ghosting
+  } else {
+    _epd->partialUpdate(true);  // No flash — differential
+  }
   _epd->backupPlane();
 }

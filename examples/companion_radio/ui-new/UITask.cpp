@@ -26,7 +26,11 @@
 #define LONG_PRESS_MILLIS   1200
 
 #ifndef UI_RECENT_LIST_SIZE
-  #define UI_RECENT_LIST_SIZE 4
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+    #define UI_RECENT_LIST_SIZE 8
+  #else
+    #define UI_RECENT_LIST_SIZE 4
+  #endif
 #endif
 
 #if UI_HAS_JOYSTICK
@@ -145,9 +149,19 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
 
     display.setColor(DisplayDriver::GREEN);
 
-    // battery icon dimensions (smaller to match tiny percentage text)
+    // battery icon dimensions
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    int iconWidth = 10;   // Narrower — non-square scaling stretches width
+#else
     int iconWidth = 16;
+#endif
     int iconHeight = 6;
+    int iconY = 0;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    int textY = 0;    // T5S3: percentage beside icon, same baseline
+#else
+    int textY = iconY - 3;  // T-Deck Pro: offset up to center with icon
+#endif
 
     // measure percentage text width to position icon + text together at right edge
     display.setTextSize(0);
@@ -155,16 +169,9 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     sprintf(pctStr, "%d%%", batteryPercentage);
     uint16_t textWidth = display.getTextWidth(pctStr);
 
-    // layout: [icon 16px][cap 2px][gap 2px][text][margin 2px]
+    // layout: [icon][cap 2px][gap 2px][text][margin 2px]
     int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
     int iconX = display.width() - totalWidth;
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    int iconY = 6;   // Align with FreeSans12pt text baseline
-    int textY = 1;   // Percentage text — setCursor adds +5 → baseline at (6)*scale_y
-#else
-    int iconY = 0;   // vertically align with node name text
-    int textY = iconY - 3;  // offset up to vertically center with icon
-#endif
 
     if (outIconX) *outIconX = iconX;
 
@@ -178,8 +185,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     int fillWidth = (batteryPercentage * (iconWidth - 4)) / 100;
     display.fillRect(iconX + 2, iconY + 2, fillWidth, iconHeight - 4);
 
-    // draw percentage text after the battery cap, offset upward to center with icon
-    // (setCursor adds +5 internally for baseline, so compensate for the tiny font)
+    // draw percentage text after the battery cap
     int textX = iconX + iconWidth + 2 + 2;  // after cap + gap
     display.setCursor(textX, textY);
     display.print(pctStr);
@@ -306,7 +312,7 @@ public:
     }
     // curr page indicator
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    int y = 18;
+    int y = 14;  // Closer to header
 #else
     int y = 14;
 #endif
@@ -324,7 +330,7 @@ public:
       _task->setHomeShowingTiles(true);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      int y = 24;
+      int y = 18;  // Tighter spacing
 #else
       int y = 20;
 #endif
@@ -332,23 +338,23 @@ public:
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
       display.drawTextCentered(display.width() / 2, y, tmp);
-      y += 18;
+      y += 14;  // Reduced from 18
 
       #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
         IPAddress ip = WiFi.localIP();
         if (ip != IPAddress(0,0,0,0)) {
           snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
-          display.setTextSize(1);
+          display.setTextSize(0);  // Tiny font for IP
           display.drawTextCentered(display.width() / 2, y, tmp);
-          y += 12;
+          y += 8;
         }
       #endif
       #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
-        display.setTextSize(1);
+        display.setTextSize(0);  // Tiny font for Connected
         display.drawTextCentered(display.width() / 2, y, "< Connected >");
-        y += 12;
+        y += 8;  // Reduced from 12
 #ifdef BLE_PIN_CODE
       } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
@@ -372,9 +378,9 @@ public:
         };
 
         const int tileW = 40;
-        const int tileH = 32;
+        const int tileH = 28;   // Reduced from 32 to fit with Connected text
         const int gapX = 1;
-        const int gapY = 2;
+        const int gapY = 1;     // Reduced from 2
         const int gridW = tileW * 3 + gapX * 2;
         const int gridX = (display.width() - gridW) / 2;
         const int gridY = y + 2;
@@ -391,11 +397,11 @@ public:
 
             // Letter centered in tile (pushed down for vertical centering)
             display.setTextSize(2);
-            display.drawTextCentered(tx + tileW / 2, ty + 10, tiles[row][col].letter);
+            display.drawTextCentered(tx + tileW / 2, ty + 8, tiles[row][col].letter);
 
             // Label centered below letter
             display.setTextSize(0);
-            display.drawTextCentered(tx + tileW / 2, ty + 20, tiles[row][col].label);
+            display.drawTextCentered(tx + tileW / 2, ty + 18, tiles[row][col].label);
           }
         }
 

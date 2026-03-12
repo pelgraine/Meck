@@ -599,7 +599,7 @@ public:
     switch (_state) {
       case STATE_PASSWORD_ENTRY:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Exit");
+        display.print("Boot:Exit");
         renderFooterRight(display, footerY, "Hold:Type");
 #else
         display.print("Sh+Del:Exit");
@@ -610,7 +610,7 @@ public:
       case STATE_LOGGING_IN:
       case STATE_COMMAND_PENDING:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Cancel");
+        display.print("Boot:Cancel");
 #else
         display.print("Sh+Del:Cancel");
 #endif
@@ -618,7 +618,7 @@ public:
 
       case STATE_CATEGORY_MENU:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Exit");
+        display.print("Boot:Exit");
         renderFooterMidRight(display, footerY, "Back:Exit", "Tap:Open", "Swipe:Sel");
 #else
         display.print("Sh+Del:Exit");
@@ -628,7 +628,7 @@ public:
 
       case STATE_COMMAND_MENU:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Back");
+        display.print("Boot:Back");
         renderFooterMidRight(display, footerY, "Back:Back", "Tap:Run", "Swipe:Sel");
 #else
         display.print("Sh+Del:Back");
@@ -638,7 +638,7 @@ public:
 
       case STATE_PARAM_ENTRY:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Cancel");
+        display.print("Boot:Cancel");
         renderFooterRight(display, footerY, "Tap:Send");
 #else
         display.print("Sh+Del:Cancel");
@@ -648,7 +648,7 @@ public:
 
       case STATE_CONFIRM:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:No");
+        display.print("Boot:No");
         renderFooterRight(display, footerY, "Tap:Yes");
 #else
         display.print("Sh+Del:No");
@@ -659,7 +659,7 @@ public:
       case STATE_RESPONSE_VIEW:
       case STATE_ERROR:
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.print("Back:Back");
+        display.print("Boot:Back");
         if (_responseTotalLines > bodyHeight / 9) {
           renderFooterRight(display, footerY, "Swipe:Scroll");
         }
@@ -1160,7 +1160,11 @@ private:
                       bool selected, const char* label, bool warn) {
     if (selected) {
       display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.fillRect(0, y, display.width(), lineHeight);
+#else
       display.fillRect(0, y + 5, display.width(), lineHeight);
+#endif
       display.setColor(DisplayDriver::DARK);
     } else if (warn) {
       display.setColor(DisplayDriver::YELLOW);
