@@ -22,7 +22,7 @@
 // CLEAR_FAST, CLEAR_SLOW — full refresh modes
 
 // Periodic slow (deep) refresh to clear ghosting
-#define FULL_SLOW_PERIOD 2  // every 2 partial-refreshes, do a full cleanup
+#define FULL_SLOW_PERIOD 1  // every frame — eliminates ghosting (increase to 2+ for less flashing)
 
 FastEPDDisplay::~FastEPDDisplay() {
   delete _canvas;
