@@ -8,6 +8,9 @@
   #include "MapScreen.h"
 #endif
 #include "target.h"
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #include "HomeIcons.h"
+#endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
   #include <WiFi.h>
 #endif
@@ -371,16 +374,16 @@ public:
       // 3×2 grid of tiles below MSG count
       // Virtual coords (128×128), scaled by DisplayDriver
       {
-        struct Tile { const char* letter; const char* label; };
+        struct Tile { const uint8_t* icon; const char* label; };
         const Tile tiles[2][3] = {
-          { {"M", "Messages"}, {"C", "Contacts"}, {"S", "Settings"} },
-          { {"E", "Reader"},   {"N", "Notes"},     {"D", "Discover"} }
+          { {icon_envelope, "Messages"}, {icon_people, "Contacts"}, {icon_gear, "Settings"} },
+          { {icon_book, "Reader"},       {icon_notepad, "Notes"},   {icon_search, "Discover"} }
         };
 
         const int tileW = 40;
-        const int tileH = 28;   // Reduced from 32 to fit with Connected text
+        const int tileH = 28;
         const int gapX = 1;
-        const int gapY = 1;     // Reduced from 2
+        const int gapY = 1;
         const int gridW = tileW * 3 + gapX * 2;
         const int gridX = (display.width() - gridW) / 2;
         const int gridY = y + 2;
@@ -395,11 +398,12 @@ public:
             display.setColor(DisplayDriver::LIGHT);
             display.drawRect(tx, ty, tileW, tileH);
 
-            // Letter centered in tile (pushed down for vertical centering)
-            display.setTextSize(2);
-            display.drawTextCentered(tx + tileW / 2, ty + 8, tiles[row][col].letter);
+            // Icon centered in tile
+            int iconX = tx + (tileW - HOME_ICON_W) / 2;
+            int iconY = ty + 4;
+            display.drawXbm(iconX, iconY, tiles[row][col].icon, HOME_ICON_W, HOME_ICON_H);
 
-            // Label centered below letter
+            // Label centered below icon
             display.setTextSize(0);
             display.drawTextCentered(tx + tileW / 2, ty + 18, tiles[row][col].label);
           }

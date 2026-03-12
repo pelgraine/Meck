@@ -1006,25 +1006,44 @@ public:
     display.setCursor(0, footerY);
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.setTextSize(0);
     if (_editMode == EDIT_NONE) {
-      display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   Hold: Edit   boot: home");
+      display.print("Swipe:Scroll");
+      const char* r = "Tap:Toggle  Hold:Edit";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
     } else if (_editMode == EDIT_NUMBER) {
-      display.drawTextCentered(display.width() / 2, footerY, "Swipe Up/Down: Adjust   Tap: OK   boot: cancel");
+      display.print("Swipe:Adjust");
+      const char* r = "Tap:OK  Boot:Cancel";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
     } else if (_editMode == EDIT_PICKER) {
-      display.drawTextCentered(display.width() / 2, footerY, "Swipe Left/Right: Choose   Tap: OK");
+      display.print("Swipe:Choose");
+      const char* r = "Tap:OK  Boot:Cancel";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
     } else if (_editMode == EDIT_CONFIRM) {
-      display.drawTextCentered(display.width() / 2, footerY, "Tap: Confirm   boot: cancel");
+      display.print("Boot:Cancel");
+      const char* r = "Tap:Confirm";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {
       if (_wifiPhase == WIFI_PHASE_SELECT) {
-        display.drawTextCentered(display.width() / 2, footerY, "Swipe: Pick   Tap: Select   boot: back");
+        display.print("Swipe:Pick");
+        const char* r = "Tap:Select  Boot:Back";
+        display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+        display.print(r);
       } else {
-        display.drawTextCentered(display.width() / 2, footerY, "Please wait...");
+        display.print("Please wait...");
       }
     #endif
+    } else if (_editMode == EDIT_TEXT) {
+      display.print("Hold:Type");
+      const char* r = "Tap:OK  Boot:Cancel";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
     } else {
-      display.drawTextCentered(display.width() / 2, footerY, "Editing...");
+      display.print("Editing...");
     }
 #else
     if (_editMode == EDIT_TEXT) {

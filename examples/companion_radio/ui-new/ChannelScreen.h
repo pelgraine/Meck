@@ -969,6 +969,9 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setCursor(0, footerY);
     display.print("Swipe:Ch/Scroll");
+    const char* midCh = "Tap:Path";
+    display.setCursor((display.width() - display.getTextWidth(midCh)) / 2, footerY);
+    display.print(midCh);
     const char* rtCh = "Hold:Compose";
     display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
     display.print(rtCh);

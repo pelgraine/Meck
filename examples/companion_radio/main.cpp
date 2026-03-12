@@ -567,6 +567,20 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
     }
 
+    // Channel screen: tap footer area → hop path, tap elsewhere → no action
+    if (ui_task.isOnChannelScreen()) {
+      int vy = (int)(y / 4.21875f);
+      ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+      if (chScr && chScr->isShowingPathOverlay()) {
+        return 'q';  // Dismiss overlay on any tap
+      }
+      // Footer zone: bottom ~15 virtual units (≈63 physical pixels)
+      if (vy >= 113) {
+        return 'v';  // Show path overlay
+      }
+      return 0;  // Tap on message area — consumed, no action
+    }
+
     // All other screens: tap = select
     return KEY_ENTER;
   }
