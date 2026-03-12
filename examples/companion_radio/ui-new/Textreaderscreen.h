@@ -15,7 +15,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     5  // v5: UTF-8 aware word wrap (accented char support)
+#define INDEX_VERSION     7  // v7: UTF-8→CP437 in pixel measurement (fixes proportional font overflow)
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -98,6 +98,149 @@ inline WrapResult findLineBreak(const char* buffer, int bufLen, int lineStart, i
 }
 
 // ============================================================================
+// Pixel-width line breaking for proportional fonts (T5S3)
+//
+// Measures actual rendered text width via DisplayDriver::getTextWidth() at
+// each word boundary. This gives correct line breaks regardless of character
+// width variation in proportional fonts like FreeSans12pt.
+// maxChars is a safety upper bound to prevent runaway on spaceless lines.
+// ============================================================================
+#if defined(LilyGo_T5S3_EPaper_Pro)
+#include <helpers/ui/DisplayDriver.h>
+
+inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineStart,
+                                      DisplayDriver* display, int maxChars) {
+  WrapResult result;
+  result.lineEnd = lineStart;
+  result.nextStart = lineStart;
+  if (lineStart >= bufLen || !display) return result;
+
+  int displayW = display->width() - 1;  // 1-unit right margin for safety
+  char measBuf[300];                // temp buffer for pixel measurement
+  int measLen = 0;
+  int lastBreakPoint = -1;
+  bool inWord = false;
+  int charCount = 0;
+
+  for (int i = lineStart; i < bufLen; i++) {
+    char c = buffer[i];
+
+    // Newline handling (identical to char-count version)
+    if (c == '\n') {
+      result.lineEnd = i;
+      result.nextStart = i + 1;
+      if (result.nextStart < bufLen && buffer[result.nextStart] == '\r')
+        result.nextStart++;
+      return result;
+    }
+    if (c == '\r') {
+      result.lineEnd = i;
+      result.nextStart = i + 1;
+      if (result.nextStart < bufLen && buffer[result.nextStart] == '\n')
+        result.nextStart++;
+      return result;
+    }
+
+    if ((uint8_t)c >= 32) {
+      // UTF-8 handling: decode multi-byte sequences to CP437 for accurate
+      // width measurement.  The renderer (renderPage) does this same conversion,
+      // so the measurement must match or it underestimates line width.
+      if ((uint8_t)c >= 0xC0) {
+        // UTF-8 lead byte — decode full sequence to CP437
+        int decPos = i;
+        uint32_t cp = decodeUtf8Char(buffer, bufLen, &decPos);
+        uint8_t glyph = unicodeToCP437(cp);
+        if (glyph >= 32 && measLen < 298) {
+          measBuf[measLen++] = (char)glyph;
+          charCount++;
+        }
+        i = decPos - 1;  // -1 because the for loop will i++
+        inWord = true;
+        continue;
+      }
+      if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) {
+        // Orphan continuation byte — treat as CP437 pass-through (same as renderer)
+        if (measLen < 298) measBuf[measLen++] = c;
+        charCount++;
+        inWord = true;
+        continue;
+      }
+
+      // Plain ASCII
+      charCount++;
+      if (measLen < 298) measBuf[measLen++] = c;
+
+      if (c == ' ' || c == '\t') {
+        if (inWord) {
+          // Measure pixel width at this word boundary
+          measBuf[measLen] = '\0';
+          int pw = display->getTextWidth(measBuf);
+          if (pw >= displayW) {
+            // Current word pushes past edge — break at previous word boundary
+            if (lastBreakPoint > lineStart) {
+              result.lineEnd = lastBreakPoint;
+              result.nextStart = lastBreakPoint;
+              while (result.nextStart < bufLen &&
+                     (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
+                result.nextStart++;
+            } else {
+              result.lineEnd = i;
+              result.nextStart = i;
+            }
+            return result;
+          }
+          lastBreakPoint = i;
+          inWord = false;
+        }
+      } else if (c == '-') {
+        if (inWord) {
+          // Measure at hyphen break point
+          measBuf[measLen] = '\0';
+          int pw = display->getTextWidth(measBuf);
+          if (pw >= displayW) {
+            if (lastBreakPoint > lineStart) {
+              result.lineEnd = lastBreakPoint;
+              result.nextStart = lastBreakPoint;
+              while (result.nextStart < bufLen &&
+                     (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
+                result.nextStart++;
+            } else {
+              result.lineEnd = i;
+              result.nextStart = i;
+            }
+            return result;
+          }
+          lastBreakPoint = i + 1;
+        }
+        inWord = true;
+      } else {
+        inWord = true;
+      }
+
+      // Safety: hard char limit (handles spaceless lines, URLs, etc.)
+      if (charCount >= maxChars) {
+        if (lastBreakPoint > lineStart) {
+          result.lineEnd = lastBreakPoint;
+          result.nextStart = lastBreakPoint;
+          while (result.nextStart < bufLen &&
+                 (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
+            result.nextStart++;
+        } else {
+          result.lineEnd = i;
+          result.nextStart = i;
+        }
+        return result;
+      }
+    }
+  }
+
+  result.lineEnd = bufLen;
+  result.nextStart = bufLen;
+  return result;
+}
+#endif // LilyGo_T5S3_EPaper_Pro
+
+// ============================================================================
 // Page Indexer (word-wrap aware, matches display rendering)
 // ============================================================================
 inline int indexPagesWordWrap(File& file, long startPos,
@@ -147,6 +290,63 @@ inline int indexPagesWordWrap(File& file, long startPos,
 
   return pagesAdded;
 }
+
+// ============================================================================
+// Pixel-based Page Indexer for T5S3 (proportional font word wrap)
+// ============================================================================
+#if defined(LilyGo_T5S3_EPaper_Pro)
+inline int indexPagesWordWrapPixel(File& file, long startPos,
+                                    std::vector<long>& pagePositions,
+                                    int linesPerPage, int maxChars,
+                                    DisplayDriver* display, int maxPages) {
+  const int BUF_SIZE = 2048;
+  char buffer[BUF_SIZE];
+
+  // Ensure body font is active for pixel measurement
+  display->setTextSize(0);
+
+  file.seek(startPos);
+  int pagesAdded = 0;
+  int lineCount = 0;
+  int leftover = 0;
+  long chunkFileStart = startPos;
+
+  while (file.available() && (maxPages <= 0 || pagesAdded < maxPages)) {
+    int bytesRead = file.readBytes(buffer + leftover, BUF_SIZE - leftover);
+    int bufLen = leftover + bytesRead;
+    if (bufLen == 0) break;
+
+    int pos = 0;
+    while (pos < bufLen) {
+      WrapResult wrap = findLineBreakPixel(buffer, bufLen, pos, display, maxChars);
+      if (wrap.nextStart <= pos && wrap.lineEnd >= bufLen) break;
+
+      lineCount++;
+      pos = wrap.nextStart;
+
+      if (lineCount >= linesPerPage) {
+        long pageFilePos = chunkFileStart + pos;
+        pagePositions.push_back(pageFilePos);
+        pagesAdded++;
+        lineCount = 0;
+        if (maxPages > 0 && pagesAdded >= maxPages) break;
+      }
+      if (pos >= bufLen) break;
+    }
+
+    leftover = bufLen - pos;
+    if (leftover > 0 && leftover < BUF_SIZE) {
+      memmove(buffer, buffer + pos, leftover);
+    } else {
+      leftover = 0;
+    }
+    chunkFileStart = file.position() - leftover;
+  }
+
+  display->setTextSize(1);  // Restore
+  return pagesAdded;
+}
+#endif // LilyGo_T5S3_EPaper_Pro
 
 // ============================================================================
 // TextReaderScreen
@@ -699,12 +899,22 @@ private:
       if (_pagePositions.empty()) {
         // Cache had no pages (e.g. dummy entry) â€” full index from scratch
         _pagePositions.push_back(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        indexPagesWordWrapPixel(_file, 0, _pagePositions,
+                                _linesPerPage, _charsPerLine, _display, 0);
+#else
         indexPagesWordWrap(_file, 0, _pagePositions,
                            _linesPerPage, _charsPerLine, 0);
+#endif
       } else {
         long lastPos = cache->pagePositions.back();
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        indexPagesWordWrapPixel(_file, lastPos, _pagePositions,
+                                _linesPerPage, _charsPerLine, _display, 0);
+#else
         indexPagesWordWrap(_file, lastPos, _pagePositions,
                            _linesPerPage, _charsPerLine, 0);
+#endif
       }
     } else {
       // No cache â€” full index from scratch
@@ -722,8 +932,13 @@ private:
       drawSplash("Indexing...", "Please wait", shortName);
 
       _pagePositions.push_back(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      indexPagesWordWrapPixel(_file, 0, _pagePositions,
+                              _linesPerPage, _charsPerLine, _display, 0);
+#else
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0);
+#endif
     }
 
     // Save complete index
@@ -952,7 +1167,11 @@ private:
     // so we render everything in it.
     while (pos < _pageBufLen && lineCount < _linesPerPage && y <= maxY) {
       int oldPos = pos;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      WrapResult wrap = findLineBreakPixel(_pageBuf, _pageBufLen, pos, &display, _charsPerLine);
+#else
       WrapResult wrap = findLineBreak(_pageBuf, _pageBufLen, pos, _charsPerLine);
+#endif
 
       // Safety: stop if findLineBreak made no progress (stuck at end of buffer)
       if (wrap.nextStart <= oldPos && wrap.lineEnd >= _pageBufLen) break;
@@ -1069,19 +1288,10 @@ public:
       _charsPerLine = (display.width() * 10) / tenCharsW;
     }
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    // FreeSans12pt is proportional — "M" is the widest character.
-    // Re-measure with representative lowercase text, then apply 1.5× multiplier
-    // because real English text averages much narrower than the sample string.
-    // With proportional fonts, character-count-based wrapping is inherently
-    // approximate — some lines will be shorter, but none should overflow.
-    {
-      uint16_t sampleW = display.getTextWidth("abcdefghijklmno");  // 15 chars
-      if (sampleW > 0) {
-        _charsPerLine = (display.width() * 15 * 3) / (sampleW * 2);  // ×1.5
-      }
-    }
-    if (_charsPerLine < 15) _charsPerLine = 15;
-    if (_charsPerLine > 120) _charsPerLine = 120;
+    // T5S3 uses pixel-based line breaking (findLineBreakPixel) which measures
+    // actual text width via getTextWidth(). _charsPerLine serves only as a
+    // safety upper bound for lines without word breaks (URLs, etc.).
+    _charsPerLine = 120;
 #else
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 60) _charsPerLine = 60;
@@ -1229,9 +1439,15 @@ public:
         cache.pagePositions.clear();
         cache.pagePositions.push_back(0);
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        int added = indexPagesWordWrapPixel(file, 0, cache.pagePositions,
+                                            _linesPerPage, _charsPerLine,
+                                            _display, PREINDEX_PAGES - 1);
+#else
         int added = indexPagesWordWrap(file, 0, cache.pagePositions,
                                        _linesPerPage, _charsPerLine,
                                        PREINDEX_PAGES - 1);
+#endif
         cache.fullyIndexed = !file.available();
         file.close();
 
@@ -1390,9 +1606,15 @@ public:
             cache.lastReadPage = 0;
             cache.pagePositions.clear();
             cache.pagePositions.push_back(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            indexPagesWordWrapPixel(file, 0, cache.pagePositions,
+                                    _linesPerPage, _charsPerLine,
+                                    _display, PREINDEX_PAGES - 1);
+#else
             indexPagesWordWrap(file, 0, cache.pagePositions,
                                _linesPerPage, _charsPerLine,
                                PREINDEX_PAGES - 1);
+#endif
             cache.fullyIndexed = !file.available();
             file.close();
             saveIndex(cache.filename, cache.pagePositions, cache.fileSize,

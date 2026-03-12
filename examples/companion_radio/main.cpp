@@ -512,7 +512,14 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
     int vy = (int)(y / 4.21875f);
 
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
+    // Exception: text reader reading mode uses full screen for content (no header)
     if (vy < 18 && !ui_task.isOnHomeScreen()) {
+      if (ui_task.isOnTextReader()) {
+        TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
+        if (reader && reader->isReading()) {
+          return 'd';  // reading mode: treat as next page
+        }
+      }
       ui_task.gotoHomeScreen();
       return 0;
     }
