@@ -537,7 +537,11 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         if (row == 0 && col == 2) { ui_task.gotoSettingsScreen(); return 0; }
         if (row == 1 && col == 0) { ui_task.gotoTextReader(); return 0; }
         if (row == 1 && col == 1) { ui_task.gotoNotesScreen(); return 0; }
+#ifdef MECK_WEB_READER
+        if (row == 1 && col == 2) { ui_task.gotoWebReader(); return 0; }
+#else
         if (row == 1 && col == 2) { ui_task.gotoDiscoveryScreen(); return 0; }
+#endif
       }
       // Tap outside tiles — left half backward, right half forward
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;

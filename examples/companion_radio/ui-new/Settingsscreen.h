@@ -173,6 +173,9 @@ private:
   char _wifiPassBuf[64];
   int _wifiPassLen;
   unsigned long _wifiFormLastChar;  // For brief password reveal
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  bool _wifiNeedsVKB;              // T5S3: signal UITask to open VKB for password
+#endif
   #endif
 
   // ---------------------------------------------------------------------------
@@ -447,6 +450,9 @@ public:
     _wifiPassLen = 0;
     memset(_wifiPassBuf, 0, sizeof(_wifiPassBuf));
     _wifiFormLastChar = 0;
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+    _wifiNeedsVKB = false;
+  #endif
     #endif
     rebuildRows();
   }
@@ -519,6 +525,60 @@ public:
       digitalWrite(SDCARD_CS, HIGH);
     }
   }
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // T5S3 VKB integration — UITask polls this to open the virtual keyboard
+  // when settings enters WiFi password phase (no physical keyboard available).
+  bool needsWifiVKB() const { return _wifiNeedsVKB; }
+  void clearWifiNeedsVKB() { _wifiNeedsVKB = false; }
+
+  // Called by UITask::onVKBSubmit with the password text from VKB.
+  // Fills the password buffer and triggers the WiFi connect sequence.
+  void submitWifiPassword(const char* pass) {
+    _wifiNeedsVKB = false;
+    int len = strlen(pass);
+    if (len > 63) len = 63;
+    memcpy(_wifiPassBuf, pass, len);
+    _wifiPassBuf[len] = '\0';
+    _wifiPassLen = len;
+
+    // Trigger the same connect sequence as pressing Enter in password phase
+    _wifiPhase = WIFI_PHASE_CONNECTING;
+
+    // Save credentials to SD (so web reader can reuse them)
+    if (SD.exists("/web") || SD.mkdir("/web")) {
+      File f = SD.open("/web/wifi.cfg", FILE_WRITE);
+      if (f) {
+        f.println(_wifiSSIDs[_wifiSSIDSelected]);
+        f.println(_wifiPassBuf);
+        f.close();
+      }
+      digitalWrite(SDCARD_CS, HIGH);
+    }
+
+    WiFi.disconnect(false);
+    WiFi.begin(_wifiSSIDs[_wifiSSIDSelected].c_str(), _wifiPassBuf);
+
+    // Brief blocking wait — fine for e-ink
+    unsigned long timeout = millis() + 8000;
+    while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
+      delay(100);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("Settings VKB: WiFi connected to %s, IP: %s\n",
+                    _wifiSSIDs[_wifiSSIDSelected].c_str(),
+                    WiFi.localIP().toString().c_str());
+      _editMode = EDIT_NONE;
+      _wifiPhase = WIFI_PHASE_IDLE;
+      if (_onboarding) _onboarding = false;
+    } else {
+      Serial.println("Settings VKB: WiFi connection failed");
+      _wifiPhase = WIFI_PHASE_SELECT;  // Back to SSID list to retry
+    }
+  }
+#endif
+
   #endif
 
   // ---------------------------------------------------------------------------
@@ -955,7 +1015,11 @@ public:
           bool sel = (wi == _wifiSSIDSelected);
           if (sel) {
             display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(bx + 2, wy, bw - 4, 8);
+#else
             display.fillRect(bx + 2, wy + 5, bw - 4, 8);
+#endif
             display.setColor(DisplayDriver::DARK);
           } else {
             display.setColor(DisplayDriver::LIGHT);
@@ -1136,6 +1200,9 @@ public:
           _wifiPassLen = 0;
           memset(_wifiPassBuf, 0, sizeof(_wifiPassBuf));
           _wifiFormLastChar = 0;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          _wifiNeedsVKB = true;  // Signal UITask to open virtual keyboard
+#endif
           return true;
         }
         if (c == 'q' || c == 'Q') {

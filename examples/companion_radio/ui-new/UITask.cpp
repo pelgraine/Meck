@@ -377,7 +377,11 @@ public:
         struct Tile { const uint8_t* icon; const char* label; };
         const Tile tiles[2][3] = {
           { {icon_envelope, "Messages"}, {icon_people, "Contacts"}, {icon_gear, "Settings"} },
+#ifdef MECK_WEB_READER
+          { {icon_book, "Reader"},       {icon_notepad, "Notes"},   {icon_search, "Browser"} }
+#else
           { {icon_book, "Reader"},       {icon_notepad, "Notes"},   {icon_search, "Discover"} }
+#endif
         };
 
         const int tileW = 40;
@@ -1527,6 +1531,18 @@ if (curr) curr->poll();
         }
       } else {
         int delay_millis = curr->render(*_display);
+
+        // Check if settings screen needs VKB for WiFi password entry
+#ifdef MECK_WIFI_COMPANION
+        if (isOnSettingsScreen() && !_vkbActive) {
+          SettingsScreen* ss = (SettingsScreen*)settings_screen;
+          if (ss->needsWifiVKB()) {
+            ss->clearWifiNeedsVKB();
+            showVirtualKeyboard(VKB_WIFI_PASSWORD, "WiFi Password", "", 63);
+          }
+        }
+#endif
+
         if (millis() < _alert_expiry) {
           _display->setTextSize(1);
           int y = _display->height() / 3;
@@ -1785,6 +1801,19 @@ void UITask::onVKBSubmit() {
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
+#ifdef MECK_WIFI_COMPANION
+    case VKB_WIFI_PASSWORD: {
+      SettingsScreen* ss = (SettingsScreen*)settings_screen;
+      ss->submitWifiPassword(text);
+      if (WiFi.status() == WL_CONNECTED) {
+        showAlert("WiFi connected!", 2000);
+      } else {
+        showAlert("WiFi failed", 2000);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+#endif
   }
   _screenBeforeVKB = nullptr;
   _next_refresh = 0;

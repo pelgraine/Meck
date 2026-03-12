@@ -28,7 +28,8 @@ enum VKBPurpose {
   VKB_ADMIN_PASSWORD, // Repeater admin login
   VKB_ADMIN_CLI,      // Repeater admin CLI command
   VKB_NOTES,          // Insert text into notes
-  VKB_SETTINGS_NAME   // Edit node name
+  VKB_SETTINGS_NAME,  // Edit node name
+  VKB_WIFI_PASSWORD   // WiFi password entry (settings screen)
 };
 
 class VirtualKeyboard {
