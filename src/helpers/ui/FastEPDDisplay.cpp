@@ -115,6 +115,8 @@ void FastEPDDisplay::startFrame(Color bkg) {
   _canvas->setTextColor(0);  // Black text
   _curr_color = GxEPD_BLACK;
   _frameCRC.reset();
+  _frameCRC.update<bool>(_darkMode);
+  _frameCRC.update<bool>(_portraitMode);
 }
 
 void FastEPDDisplay::setTextSize(int sz) {
@@ -290,6 +292,11 @@ void FastEPDDisplay::endFrame() {
 
   memcpy(dst, src, bufSize);
 
+  // Dark mode: invert every byte in the buffer (white↔black)
+  if (_darkMode) {
+    for (size_t i = 0; i < bufSize; i++) dst[i] = ~dst[i];
+  }
+
   // Refresh strategy:
   //   partialUpdate(true) — no flash, differential, keeps previous buffer
   //   fullUpdate(false)   — brief flash, clears ghosting (CLEAR_FAST)
@@ -298,11 +305,43 @@ void FastEPDDisplay::endFrame() {
   // Use partial for most frames. Periodic full refresh every N frames
   // to clear accumulated ghosting artifacts.
   _fullRefreshCount++;
-  if (_fullRefreshCount >= FULL_SLOW_PERIOD) {
+  if (_forcePartial) {
+    // VKB typing mode — no flash, fast differential update
+    _epd->partialUpdate(true);
+    _fullRefreshCount = 0;  // Reset so next non-partial frame does full refresh
+  } else if (_fullRefreshCount >= FULL_SLOW_PERIOD) {
     _fullRefreshCount = 0;
     _epd->fullUpdate(true);   // Full clean refresh — clears all ghosting
   } else {
     _epd->partialUpdate(true);  // No flash — differential
   }
   _epd->backupPlane();
+}
+
+void FastEPDDisplay::setDarkMode(bool dark) {
+  _darkMode = dark;
+  _lastCRC = 0;  // Force redraw
+  Serial.printf("[FastEPD] Dark mode: %s\n", dark ? "ON" : "OFF");
+}
+
+void FastEPDDisplay::setPortraitMode(bool portrait) {
+  if (_portraitMode == portrait) return;
+  _portraitMode = portrait;
+
+  if (!_canvas) return;
+
+  if (portrait) {
+    _canvas->setRotation(3);  // 270° CW — USB-C on right when held portrait
+    scale_x = (float)EPD_HEIGHT / 128.0f;  // 540 / 128 = 4.21875
+    scale_y = (float)EPD_WIDTH / 128.0f;   // 960 / 128 = 7.5
+    Serial.printf("[FastEPD] Portrait mode: ON (logical %dx%d, scale %.2f x %.2f)\n",
+                  EPD_HEIGHT, EPD_WIDTH, scale_x, scale_y);
+  } else {
+    _canvas->setRotation(0);  // Normal landscape
+    scale_x = (float)EPD_WIDTH / 128.0f;   // 960 / 128 = 7.5
+    scale_y = (float)EPD_HEIGHT / 128.0f;  // 540 / 128 = 4.21875
+    Serial.printf("[FastEPD] Portrait mode: OFF (logical %dx%d, scale %.2f x %.2f)\n",
+                  EPD_WIDTH, EPD_HEIGHT, scale_x, scale_y);
+  }
+  _lastCRC = 0;  // Force redraw
 }

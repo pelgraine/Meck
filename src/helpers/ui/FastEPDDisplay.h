@@ -73,11 +73,13 @@ class FastEPDDisplay : public DisplayDriver {
   uint32_t _lastCRC = 0;
   int _fullRefreshCount = 0;  // Track for periodic slow refresh
   uint32_t _lastUpdateMs = 0; // Rate limiting — minimum interval between refreshes
+  bool _forcePartial = false; // When true, use partial updates (VKB typing)
+  bool _darkMode = false;     // Invert all pixels (black bg, white text)
+  bool _portraitMode = false; // Rotated 90° (540×960 logical)
 
-  // Virtual 128×128 → physical 960×540 mapping
-  // Non-square scaling (1.78:1 aspect stretch) — acceptable for initial bringup
-  static constexpr float scale_x  = 7.5f;       // 960 / 128
-  static constexpr float scale_y  = 4.21875f;    // 540 / 128
+  // Virtual 128×128 → physical canvas mapping (runtime, changes with portrait)
+  float scale_x  = 7.5f;       // 960 / 128 (landscape default)
+  float scale_y  = 4.21875f;   // 540 / 128 (landscape default)
   static constexpr float offset_x = 0.0f;
   static constexpr float offset_y = 0.0f;
 
@@ -119,4 +121,16 @@ public:
   }
 
   void invalidateFrameCRC() { _lastCRC = 0; }
+
+  // Temporarily force partial (no-flash) updates — use during VKB typing
+  void setForcePartial(bool partial) { _forcePartial = partial; }
+  bool isForcePartial() const { return _forcePartial; }
+
+  // Dark mode — invert all pixels in endFrame (black bg, white text)
+  void setDarkMode(bool dark);
+  bool isDarkMode() const { return _darkMode; }
+
+  // Portrait mode — rotate canvas 90° (540×960 logical), swap scale factors
+  void setPortraitMode(bool portrait);
+  bool isPortraitMode() const { return _portraitMode; }
 };

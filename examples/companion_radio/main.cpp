@@ -387,6 +387,30 @@
     }
     return false;
   }
+
+  // Read GT911 in portrait orientation (540×960, rotation 3)
+  // Maps GT911 native coords to portrait logical space
+  // Read GT911 in portrait orientation (540×960, canvas rotation 3)
+  // Rotation 3 maps logical(lx,ly) → physical(ly, 539-lx).
+  // Inverting: logical_x = raw_x, logical_y = raw_y (GT911 native = portrait).
+  static bool readTouchPortrait(int16_t* outX, int16_t* outY) {
+    if (!gt911Ready) return false;
+    int16_t raw_x, raw_y;
+    if (gt911Touch.getPoint(&raw_x, &raw_y)) {
+      *outX = raw_x;
+      *outY = raw_y;
+      return true;
+    }
+    return false;
+  }
+
+  // Unified touch reader — picks landscape or portrait based on display mode
+  static bool readTouch(int16_t* outX, int16_t* outY) {
+    if (display.isPortraitMode()) {
+      return readTouchPortrait(outX, outY);
+    }
+    return readTouchLandscape(outX, outY);
+  }
 #endif
 
 // Board-agnostic: CPU frequency scaling and AGC reset
@@ -507,9 +531,12 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 #if defined(LilyGo_T5S3_EPaper_Pro)
   // Map a single tap based on current screen context
   static char mapTouchTap(int16_t x, int16_t y) {
-    // Convert physical (960×540) to virtual (128×128) coordinates
-    int vx = (int)(x / 7.5f);
-    int vy = (int)(y / 4.21875f);
+    // Convert physical screen coords to virtual (128×128) using current scale
+    // Scale factors change between landscape (7.5, 4.22) and portrait (4.22, 7.5)
+    float sx = display.isPortraitMode() ? ((float)EPD_HEIGHT / 128.0f) : ((float)EPD_WIDTH / 128.0f);
+    float sy = display.isPortraitMode() ? ((float)EPD_WIDTH / 128.0f) : ((float)EPD_HEIGHT / 128.0f);
+    int vx = (int)(x / sx);
+    int vy = (int)(y / sy);
 
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
     // Exception: text reader reading mode uses full screen for content (no header)
@@ -556,7 +583,6 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
     // Home screen (non-tile pages): left half taps backward, right half forward
     if (ui_task.isOnHomeScreen()) {
-      int vx = (int)(x / 7.5f);
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
@@ -580,7 +606,6 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
     // Channel screen: tap footer area → hop path, tap elsewhere → no action
     if (ui_task.isOnChannelScreen()) {
-      int vy = (int)(y / 4.21875f);
       ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
       if (chScr && chScr->isShowingPathOverlay()) {
         return 'q';  // Dismiss overlay on any tap
@@ -1488,7 +1513,7 @@ void loop() {
   if (!ui_task.isLocked() && !ui_task.isVKBActive())
   {
     int16_t tx, ty;
-    bool gotPoint = readTouchLandscape(&tx, &ty);
+    bool gotPoint = readTouch(&tx, &ty);
     unsigned long now = millis();
 
     if (gotPoint) {
@@ -1580,7 +1605,7 @@ void loop() {
 
     if (ui_task.isVKBActive()) {
       int16_t tx, ty;
-      bool gotPt = readTouchLandscape(&tx, &ty);
+      bool gotPt = readTouch(&tx, &ty);
 
       if (!gotPt) {
         vkbNeedLift = false;  // Finger lifted
@@ -1589,8 +1614,10 @@ void loop() {
       bool cooldownOk = (millis() - ui_task.vkbOpenedAt()) > 2000;
 
       if (gotPt && !vkbNeedLift && cooldownOk) {
-        int vx = (int)(tx / 7.5f);
-        int vy = (int)(ty / 4.21875f);
+        float sx = display.isPortraitMode() ? ((float)EPD_HEIGHT / 128.0f) : ((float)EPD_WIDTH / 128.0f);
+        float sy = display.isPortraitMode() ? ((float)EPD_WIDTH / 128.0f) : ((float)EPD_HEIGHT / 128.0f);
+        int vx = (int)(tx / sx);
+        int vy = (int)(ty / sy);
         if (ui_task.getVKB().handleTap(vx, vy)) {
           ui_task.forceRefresh();
         }

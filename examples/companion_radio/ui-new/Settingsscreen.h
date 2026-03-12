@@ -64,6 +64,10 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  ROW_DARK_MODE,      // Dark mode toggle (inverted display)
+  ROW_PORTRAIT_MODE,  // Portrait orientation toggle
+#endif
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
   #ifdef MECK_WIFI_COMPANION
   ROW_WIFI_SETUP,     // WiFi SSID/password configuration
@@ -246,6 +250,10 @@ private:
     addRow(ROW_UTC_OFFSET);
     addRow(ROW_MSG_NOTIFY);
     addRow(ROW_PATH_HASH_SIZE);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    addRow(ROW_DARK_MODE);
+    addRow(ROW_PORTRAIT_MODE);
+#endif
     #ifdef MECK_WIFI_COMPANION
     addRow(ROW_WIFI_SETUP);
     addRow(ROW_WIFI_TOGGLE);
@@ -764,6 +772,20 @@ public:
           }
           display.print(tmp);
           break;
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        case ROW_DARK_MODE:
+          snprintf(tmp, sizeof(tmp), "Dark Mode: %s",
+                   _prefs->dark_mode ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_PORTRAIT_MODE:
+          snprintf(tmp, sizeof(tmp), "Portrait Mode: %s",
+                   _prefs->portrait_mode ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+#endif
 
         #ifdef MECK_WIFI_COMPANION
         case ROW_WIFI_SETUP:
@@ -1561,6 +1583,20 @@ public:
         case ROW_PATH_HASH_SIZE:
           startEditInt(_prefs->path_hash_mode + 1);  // display as 1-3
           break;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        case ROW_DARK_MODE:
+          _prefs->dark_mode = _prefs->dark_mode ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Dark mode = %s\n",
+                        _prefs->dark_mode ? "ON" : "OFF");
+          break;
+        case ROW_PORTRAIT_MODE:
+          _prefs->portrait_mode = _prefs->portrait_mode ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Portrait mode = %s\n",
+                        _prefs->portrait_mode ? "ON" : "OFF");
+          break;
+#endif
         #ifdef MECK_WIFI_COMPANION
         case ROW_WIFI_SETUP: {
           // Launch WiFi scan → select → password → connect flow

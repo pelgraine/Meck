@@ -1167,6 +1167,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
   map_screen = nullptr;
 #endif
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Apply saved display preferences before first render
+  if (_node_prefs->dark_mode) {
+    ::display.setDarkMode(true);
+  }
+  if (_node_prefs->portrait_mode) {
+    ::display.setPortraitMode(true);
+  }
+#endif
+
   setCurrScreen(splash);
 }
 
@@ -1523,9 +1534,19 @@ if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // Sync display modes with prefs (settings toggles take effect here)
+      if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
+        display.setDarkMode(_node_prefs->dark_mode != 0);
+      }
+      if (_node_prefs && display.isPortraitMode() != (_node_prefs->portrait_mode != 0)) {
+        display.setPortraitMode(_node_prefs->portrait_mode != 0);
+      }
+#endif
       _display->startFrame();
 #if defined(LilyGo_T5S3_EPaper_Pro)
       if (_vkbActive) {
+        display.setForcePartial(true);  // No flash while typing
         _vkb.render(*_display);
         _next_refresh = millis() + 500;  // Moderate refresh for cursor blink
         // Check if keyboard was submitted or cancelled during render cycle
@@ -1822,6 +1843,7 @@ void UITask::onVKBSubmit() {
   }
   _screenBeforeVKB = nullptr;
   _next_refresh = 0;
+  display.setForcePartial(false);  // Next frame does full refresh to clear VKB ghosts
   display.invalidateFrameCRC();
 }
 
@@ -1830,6 +1852,7 @@ void UITask::onVKBCancel() {
   if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
   _screenBeforeVKB = nullptr;
   _next_refresh = 0;
+  display.setForcePartial(false);  // Next frame does full refresh to clear VKB ghosts
   display.invalidateFrameCRC();
   Serial.println("[UI] VKB cancelled");
 }

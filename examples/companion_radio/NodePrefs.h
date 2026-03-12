@@ -35,4 +35,6 @@ struct NodePrefs {  // persisted to file
   uint8_t autoadd_max_hops;  // 0=no limit, N=up to N-1 hops (max 64)
   uint32_t gps_baudrate;     // GPS baud rate (0 = use compile-time GPS_BAUDRATE default)
   uint8_t interference_threshold; // Interference threshold in dB (0=disabled, 14+=enabled)
+  uint8_t dark_mode;              // 0=off (white bg), 1=on (black bg) — T5S3 only
+  uint8_t portrait_mode;          // 0=landscape, 1=portrait — T5S3 only
 };
