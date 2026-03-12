@@ -15,7 +15,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     7  // v7: UTF-8→CP437 in pixel measurement (fixes proportional font overflow)
+#define INDEX_VERSION     8  // v8: wider right margin in pixel wrapping
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -115,7 +115,7 @@ inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineSta
   result.nextStart = lineStart;
   if (lineStart >= bufLen || !display) return result;
 
-  int displayW = display->width() - 1;  // 1-unit right margin for safety
+  int displayW = display->width() - 3;  // 3-unit right margin (rounding safety for proportional fonts)
   char measBuf[300];                // temp buffer for pixel measurement
   int measLen = 0;
   int lastBreakPoint = -1;
