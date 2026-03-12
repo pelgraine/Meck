@@ -1543,26 +1543,28 @@ void loop() {
     }
   }
 
-  // Virtual keyboard touch routing (separate state machine, simple tap-only)
-  // vkbNeedLift: true after VKB opens, requires finger lift before accepting taps.
-  // This prevents the long press that opened VKB from registering as a keystroke.
+  // Virtual keyboard touch routing.
+  // Guard: require finger lift AND 2s after VKB opened before accepting taps.
+  // The 2s covers the ~1s blocking e-ink refresh plus margin for finger lift.
   {
     static bool vkbNeedLift = true;
-    static unsigned long vkbLastTap = 0;
 
     if (ui_task.isVKBActive()) {
       int16_t tx, ty;
       bool gotPt = readTouchLandscape(&tx, &ty);
 
       if (!gotPt) {
-        vkbNeedLift = false;  // Finger lifted — now taps are allowed
-      } else if (!vkbNeedLift && (millis() - vkbLastTap >= 300)) {
+        vkbNeedLift = false;  // Finger lifted
+      }
+
+      bool cooldownOk = (millis() - ui_task.vkbOpenedAt()) > 2000;
+
+      if (gotPt && !vkbNeedLift && cooldownOk) {
         int vx = (int)(tx / 7.5f);
         int vy = (int)(ty / 4.21875f);
         if (ui_task.getVKB().handleTap(vx, vy)) {
           ui_task.forceRefresh();
         }
-        vkbLastTap = millis();
         vkbNeedLift = true;  // Require lift before next tap
       }
     } else {

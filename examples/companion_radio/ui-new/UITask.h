@@ -99,6 +99,7 @@ class UITask : public AbstractUITask {
   VirtualKeyboard _vkb;
   bool _vkbActive = false;
   UIScreen* _screenBeforeVKB = nullptr;
+  unsigned long _vkbOpenedAt = 0;
 #endif
 
   void userLedHandler();
@@ -178,6 +179,7 @@ public:
   void lockScreen();
   void unlockScreen();
   bool isVKBActive() const { return _vkbActive; }
+  unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }
   void showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx = 0);
   void onVKBSubmit();

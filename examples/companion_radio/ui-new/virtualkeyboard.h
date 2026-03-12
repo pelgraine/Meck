@@ -36,8 +36,7 @@ public:
   static const int MAX_TEXT = 140;
 
   VirtualKeyboard() : _status(VKB_CANCELLED), _purpose(VKB_CHANNEL_MSG),
-                      _contextIdx(0), _textLen(0), _shifted(false), _symbols(false),
-                      _rendered(false), _acceptTapsAfter(0) {
+                      _contextIdx(0), _textLen(0), _shifted(false), _symbols(false) {
     _text[0] = '\0';
     _label[0] = '\0';
   }
@@ -48,8 +47,6 @@ public:
     _status = VKB_EDITING;
     _shifted = false;
     _symbols = false;
-    _rendered = false;       // Not yet drawn
-    _acceptTapsAfter = 0;    // Set after first render completes
     _maxLen = (maxLen > 0 && maxLen < MAX_TEXT) ? maxLen : MAX_TEXT;
 
     strncpy(_label, label, sizeof(_label) - 1);
@@ -74,9 +71,6 @@ public:
 
   // --- Render keyboard + input field ---
   void render(DisplayDriver& display) {
-    // Mark as rendered — touch cooldown starts from first handleTap after this
-    _rendered = true;
-
     // Header label (To: channel, DM: name, etc.)
     display.setTextSize(0);
     display.setColor(DisplayDriver::GREEN);
@@ -180,18 +174,6 @@ public:
   bool handleTap(int vx, int vy) {
     if (_status != VKB_EDITING) return false;
 
-    // Don't accept taps until keyboard has been rendered at least once
-    if (!_rendered) return true;
-
-    // Start cooldown timer on first call after render — this runs AFTER
-    // endFrame()'s blocking e-ink refresh, so the timer counts real
-    // post-render time (not time spent refreshing the display)
-    if (_acceptTapsAfter == 0) {
-      _acceptTapsAfter = millis() + 500;
-      return true;  // consume this tap (residual from long press)
-    }
-    if (millis() < _acceptTapsAfter) return true;  // still in cooldown
-
     // Check keyboard rows 0-2
     const char* const* layout = getLayout();
 
@@ -236,8 +218,6 @@ private:
   char _label[40];
   bool _shifted;
   bool _symbols;
-  bool _rendered;
-  unsigned long _acceptTapsAfter;
 
   // Layout constants (virtual coords)
   static const int KEY_W = 11;

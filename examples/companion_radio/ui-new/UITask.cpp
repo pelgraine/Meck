@@ -1684,9 +1684,9 @@ void UITask::unlockScreen() {
 void UITask::showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx) {
   _vkb.open(purpose, label, initial, maxLen, contextIdx);
   _vkbActive = true;
+  _vkbOpenedAt = millis();
   _screenBeforeVKB = curr;
   _next_refresh = 0;
-  display.invalidateFrameCRC();  // Force e-ink redraw (VKB may look same as last open)
   _auto_off = millis() + 120000;  // 2min timeout while typing
   Serial.printf("[UI] VKB opened: %s\n", label);
 }
