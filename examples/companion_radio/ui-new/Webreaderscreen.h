@@ -2668,7 +2668,11 @@ private:
         bool selected = (i == _selectedSSID);
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width(), listLineH);
+#else
           display.fillRect(0, y + 5, display.width(), listLineH);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
@@ -2736,7 +2740,11 @@ private:
       }
       display.setCursor(0, 80);
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap: Retry");
+#else
       display.print("Enter: Retry  Q: Back");
+#endif
     }
 
     // Footer
@@ -2745,7 +2753,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Swipe:Nav  Tap:Select");
+#else
     display.print("Q:Back W/S:Nav Ent:Select");
+#endif
   }
 
   void renderHome(DisplayDriver& display) {
@@ -2877,7 +2889,11 @@ private:
       if (HOME_VISIBLE(y, ircH)) {
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#else
           display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::GREEN);
@@ -2912,7 +2928,11 @@ private:
       if (HOME_VISIBLE(y, urlBarH)) {
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#else
           display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
@@ -2945,7 +2965,11 @@ private:
       if (HOME_VISIBLE(y, searchBarH)) {
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#else
           display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);
@@ -2994,7 +3018,11 @@ private:
           int contentW = display.width() - (needsScroll ? scrollbarW + 1 : 0);
           if (selected) {
             display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(0, y, contentW, itemH);
+#else
             display.fillRect(0, y + 5, contentW, itemH);
+#endif
             display.setColor(DisplayDriver::DARK);
           } else {
             display.setColor(DisplayDriver::LIGHT);
@@ -3042,7 +3070,11 @@ private:
           int contentW = display.width() - (needsScroll ? scrollbarW + 1 : 0);
           if (selected) {
             display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(0, y, contentW, itemH);
+#else
             display.fillRect(0, y + 5, contentW, itemH);
+#endif
             display.setColor(DisplayDriver::DARK);
           } else {
             display.setColor(DisplayDriver::LIGHT);
@@ -3108,6 +3140,13 @@ private:
       display.print("Type query Ent:Search");
     } else {
       char footerBuf[48];
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
+      if (onBookmark)
+        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go Hold:Del");
+      else
+        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go");
+#else
       bool hasData = (_cookieCount > 0 || !_history.empty());
       bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
       if (onBookmark && hasData)
@@ -3118,6 +3157,7 @@ private:
         snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S Ent:Go X:Clr Ckies");
       else
         snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go");
+#endif
       display.print(footerBuf);
     }
 
@@ -3206,9 +3246,13 @@ private:
 
       display.setCursor(0, y + 6);
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap: Open in Reader");
+#else
       display.print("Ent: Open in Reader");
       display.setCursor(0, y + 16);
       display.print("Q:   Back to browser");
+#endif
     } else {
       display.setColor(DisplayDriver::YELLOW);
       display.print("Download Failed");
@@ -3223,7 +3267,11 @@ private:
 
       display.setCursor(0, 56);
       display.setColor(DisplayDriver::GREEN);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap: Back to browser");
+#else
       display.print("Q: Back to browser");
+#endif
     }
 
     // Footer
@@ -3232,7 +3280,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print(_downloadOk ? "Tap:Read" : "Tap:Back");
+#else
     display.print(_downloadOk ? "Ent:Read  Q:Back" : "Q:Back");
+#endif
   }
 
   void renderReading(DisplayDriver& display) {
@@ -3360,6 +3412,15 @@ private:
     if (_linkInputActive) {
       snprintf(linkBuf, sizeof(linkBuf), "#%d_ Ent:Go", _linkInput);
       hint = linkBuf;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    } else if (_formCount > 0 && _linkCount > 0) {
+      hint = "Swipe:Pg Hold:Bk";
+    } else if (_linkCount > 0) {
+      hint = "Swipe:Pg Hold:Bk";
+    } else {
+      hint = "Swipe:Pg Hold:Bk";
+    }
+#else
     } else if (_formCount > 0 && _linkCount > 0) {
       hint = "L:Lnk F:Frm B:Bk Q:X";
     } else if (_formCount > 0) {
@@ -3369,6 +3430,7 @@ private:
     } else {
       hint = "B:Bk Q:X";
     }
+#endif
     display.setCursor(display.width() - display.getTextWidth(hint) - 2, footerY);
     display.print(hint);
 
@@ -3965,10 +4027,14 @@ private:
       display.print("Type text  Ent:Next Q:Undo");
     } else {
       const char* hint;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      hint = "Swipe:Nav Tap:Edit Hold:Bk";
+#else
       if (_formCount > 1)
         hint = "W/S:Nav Ent:Edit </>:Form Q:Back";
       else
         hint = "W/S:Nav Ent:Edit/Go Q:Back";
+#endif
       display.print(hint);
     }
   }
@@ -4637,7 +4703,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Swipe:Nav Tap:Edit Hold:Bk");
+#else
     display.print("W/S:Nav Ent:Edit/Go Q:Back");
+#endif
   }
 
   bool handleIRCSetupInput(char c) {
@@ -4767,11 +4837,19 @@ private:
       display.setTextSize(1);
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap:Send Hold:Exit");
+#else
       display.print("Ent:Send Del:Exit");
+#endif
     } else {
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap:Msg Swipe:Scrl Hold:Bk");
+#else
       display.print("Ent:Msg W/S:Scrl Q:Bk");
+#endif
     }
 
     // Message area
