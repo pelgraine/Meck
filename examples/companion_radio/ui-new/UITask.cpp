@@ -151,23 +151,27 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     }
 
     display.setColor(DisplayDriver::GREEN);
+    display.setTextSize(0);
 
-    // battery icon dimensions
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    int iconWidth = 10;   // Narrower — non-square scaling stretches width
+    // T5S3: text-only battery indicator — "Batt 99% 4.1v"
+    char battStr[20];
+    float volts = batteryMilliVolts / 1000.0f;
+    snprintf(battStr, sizeof(battStr), "Batt %d%% %.1fv", batteryPercentage, volts);
+    uint16_t textWidth = display.getTextWidth(battStr);
+    int textX = display.width() - textWidth - 2;
+    if (outIconX) *outIconX = textX;
+    display.setCursor(textX, 0);
+    display.print(battStr);
+    display.setTextSize(1);  // restore default text size
 #else
+    // T-Deck Pro: icon + percentage text
     int iconWidth = 16;
-#endif
     int iconHeight = 6;
     int iconY = 0;
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    int textY = 0;    // T5S3: percentage beside icon, same baseline
-#else
-    int textY = iconY - 3;  // T-Deck Pro: offset up to center with icon
-#endif
+    int textY = iconY - 3;
 
     // measure percentage text width to position icon + text together at right edge
-    display.setTextSize(0);
     char pctStr[5];
     sprintf(pctStr, "%d%%", batteryPercentage);
     uint16_t textWidth = display.getTextWidth(pctStr);
@@ -193,6 +197,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.setCursor(textX, textY);
     display.print(pctStr);
     display.setTextSize(1);  // restore default text size
+#endif
   }
 
 #ifdef MECK_AUDIO_VARIANT
