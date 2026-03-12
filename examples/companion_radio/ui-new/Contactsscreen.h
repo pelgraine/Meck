@@ -219,7 +219,11 @@ public:
       display.setCursor(0, y);
       display.print("No contacts");
       display.setCursor(0, y + lineHeight);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Swipe to change filter");
+#else
       display.print("A/D: Change filter");
+#endif
     } else {
       // Center visible window around selected item (TextReaderScreen pattern)
       int maxVisible = (maxY - headerHeight) / lineHeight;
@@ -302,8 +306,11 @@ public:
     display.setColor(DisplayDriver::YELLOW);
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.setTextSize(0);
-    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   boot: home");
+    display.setCursor(0, footerY);
+    display.print("Swipe:Filter");
+    const char* right = "Hold:DM/Admin";
+    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+    display.print(right);
 #else
     // Left: Q:Bk
     display.setCursor(0, footerY);

@@ -496,7 +496,11 @@ private:
     int rightX = display.width() - display.getTextWidth(tmp) - 2;
 
     if (_selectedFile >= 1 && _selectedFile <= (int)_fileList.size()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      const char* hint = "[Hold:Rename]";
+#else
       const char* hint = "[R:Rename]";
+#endif
       int hintX = rightX - display.getTextWidth(hint) - 4;
       display.setCursor(hintX, 0);
       display.setColor(DisplayDriver::YELLOW);
@@ -511,7 +515,7 @@ private:
 
     // File list with "+ New Note" at index 0
     display.setTextSize(0);
-    int listLineH = 8;
+    int listLineH = 9;   // Match contacts/discovery for consistent selection highlight
     int startY = 14;
     int totalItems = 1 + (int)_fileList.size();
     int maxVisible = (display.height() - startY - _footerHeight) / listLineH;
@@ -528,7 +532,11 @@ private:
 
       if (selected) {
         display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.fillRect(0, y, display.width(), listLineH);
+#else
         display.fillRect(0, y + 5, display.width(), listLineH);
+#endif
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
@@ -558,9 +566,13 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Swipe:Nav");
+    const char* right = "Tap:Open";
+#else
     display.print("Q:Back W/S:Nav");
-
     const char* right = "Ent:Open";
+#endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
   }
@@ -576,9 +588,13 @@ private:
       display.drawRect(0, footerY - 2, display.width(), 1);
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap:Edit");
+      const char* right = "Hold:Delete";
+#else
       display.print("Q:Bck Ent:Edit");
-
       const char* right = "Sh+Del:Del";
+#endif
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
       return;
@@ -663,9 +679,15 @@ private:
     display.setColor(DisplayDriver::YELLOW);
 
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Swipe:Page");
+
+    const char* right = "Tap:Edit";
+#else
     display.print("Q:Bck Ent:Edit");
 
     const char* right = "Sh+Del:Del";
+#endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
   }
@@ -766,11 +788,25 @@ private:
     snprintf(status, sizeof(status), "Pg %d/%d", curPage, totalPg);
     display.print(status);
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const char* mid = "Tap:Type";
+    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
+    display.print(mid);
+#endif
+
     const char* right;
     if (_bufLen == 0 || !_dirty) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      right = "Back";
+#else
       right = "Q:Back";
+#endif
     } else {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      right = "Hold:Save";
+#else
       right = "Sh+Del:Save";
+#endif
     }
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -817,9 +853,13 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Back:Cancel");
+    const char* right = "Tap:Confirm";
+#else
     display.print("Q:Cancel");
-
     const char* right = "Ent:Confirm";
+#endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
   }
@@ -852,9 +892,13 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Back:Cancel");
+    const char* right = "Tap:Delete";
+#else
     display.print("Q:Cancel");
-
     const char* right = "Ent:Delete";
+#endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
   }
@@ -1124,6 +1168,8 @@ public:
 
   void setSDReady(bool ready) { _sdReady = ready; }
   bool isSDReady() const { return _sdReady; }
+  bool isDirty() const { return _dirty; }
+  void triggerSaveAndExit() { saveAndExit(); }
 
   void setTimestamp(uint32_t rtcTime, int8_t utcOffset) {
     _rtcTime = rtcTime;
@@ -1145,7 +1191,6 @@ public:
   bool isInFileList() const { return _mode == FILE_LIST; }
   bool isRenaming() const { return _mode == RENAMING; }
   bool isConfirmingDelete() const { return _mode == CONFIRM_DELETE; }
-  bool isDirty() const { return _dirty; }
   bool isEmpty() const { return _bufLen == 0; }
 
   // ---- Cursor Navigation (called from main.cpp) ----

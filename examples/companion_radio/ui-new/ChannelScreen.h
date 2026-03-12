@@ -639,6 +639,10 @@ public:
       display.drawRect(0, footerY - 2, display.width(), 1);
       display.setCursor(0, footerY);
       display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Back");
+      const char* copyHint = "Tap:Dismiss";
+#else
       display.print("Q:Back");
       // Show scroll hint if path is scrollable
       if (msg && (msg->path_len & 63) > _pathHopsVisible && msg->path_len != 0xFF) {
@@ -648,6 +652,7 @@ public:
         display.print(scrollHint);
       }
       const char* copyHint = "Ent:Copy";
+#endif
       display.setCursor(display.width() - display.getTextWidth(copyHint) - 2, footerY);
       display.print(copyHint);
 
@@ -664,9 +669,15 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.print("No messages yet");
       display.setCursor(0, 30);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Swipe: Switch channel");
+      display.setCursor(0, 40);
+      display.print("Long press: Compose");
+#else
       display.print("A/D: Switch channel");
       display.setCursor(0, 40);
       display.print("C: Compose message");
+#endif
       display.setTextSize(1);  // Restore for footer
     } else {
       display.setTextSize(0);  // Tiny font for message body
@@ -956,8 +967,11 @@ public:
     display.setColor(DisplayDriver::YELLOW);
     
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.setTextSize(0);
-    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Select   boot: home");
+    display.setCursor(0, footerY);
+    display.print("Swipe:Ch/Scroll");
+    const char* rtCh = "Hold:Compose";
+    display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
+    display.print(rtCh);
 #else
     // Left side: abbreviated controls
     if (_replySelectMode) {

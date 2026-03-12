@@ -30,6 +30,10 @@
   #include "WebReaderScreen.h"
 #endif
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  #include "VirtualKeyboard.h"
+#endif
+
 // MapScreen.h included in UITask.cpp and main.cpp only (PNGdec headers
 // conflict with BLE if pulled into the global include chain)
 
@@ -86,10 +90,15 @@ class UITask : public AbstractUITask {
   UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
+  int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
 #if defined(LilyGo_T5S3_EPaper_Pro)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
+
+  VirtualKeyboard _vkb;
+  bool _vkbActive = false;
+  UIScreen* _screenBeforeVKB = nullptr;
 #endif
 
   void userLedHandler();
@@ -156,6 +165,8 @@ public:
   bool isOnHomeScreen() const { return curr == home; }
   bool isHomeShowingTiles() const { return _homeShowingTiles; }
   void setHomeShowingTiles(bool v) { _homeShowingTiles = v; }
+  int  getTileGridVY() const { return _tileGridVY; }
+  void setTileGridVY(int vy) { _tileGridVY = vy; }
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
@@ -166,6 +177,11 @@ public:
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
+  bool isVKBActive() const { return _vkbActive; }
+  VirtualKeyboard& getVKB() { return _vkb; }
+  void showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx = 0);
+  void onVKBSubmit();
+  void onVKBCancel();
 #endif
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }

@@ -100,7 +100,11 @@ public:
         // Highlight selected row
         if (selected) {
           display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          display.fillRect(0, y, display.width(), lineHeight);
+#else
           display.fillRect(0, y + 5, display.width(), lineHeight);
+#endif
           display.setColor(DisplayDriver::DARK);
         } else {
           display.setColor(DisplayDriver::LIGHT);

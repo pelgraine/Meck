@@ -505,26 +505,33 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
 // T5S3 touch mapping — must be after ui_task declaration
 #if defined(LilyGo_T5S3_EPaper_Pro)
-  // Home screen tile grid — physical touch zones (960×540)
-  #define TILE_Y_START  150
-  #define TILE_Y_MID    300
-  #define TILE_Y_END    460
-  #define TILE_COL1     325
-  #define TILE_COL2     640
-
   // Map a single tap based on current screen context
   static char mapTouchTap(int16_t x, int16_t y) {
-    // --- Status bar tap (top ~80px) → go home from any non-home screen ---
-    if (y < 80 && !ui_task.isOnHomeScreen()) {
+    // Convert physical (960×540) to virtual (128×128) coordinates
+    int vx = (int)(x / 7.5f);
+    int vy = (int)(y / 4.21875f);
+
+    // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
+    if (vy < 18 && !ui_task.isOnHomeScreen()) {
       ui_task.gotoHomeScreen();
       return 0;
     }
 
-    // Home screen FIRST page: tile taps
+    // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
-      if (y >= TILE_Y_START && y < TILE_Y_END) {
-        int col = (x < TILE_COL1) ? 0 : (x < TILE_COL2) ? 1 : 2;
-        int row = (y < TILE_Y_MID) ? 0 : 1;
+      const int tileW = 40, tileH = 32, gapX = 1, gapY = 2;
+      const int gridW = tileW * 3 + gapX * 2;
+      const int gridX = (128 - gridW) / 2;  // =3
+      int gridY = ui_task.getTileGridVY();
+
+      // Check if tap is within the tile grid area
+      if (vx >= gridX && vx < gridX + gridW &&
+          vy >= gridY && vy < gridY + 2 * (tileH + gapY)) {
+        int col = (vx - gridX) / (tileW + gapX);
+        if (col > 2) col = 2;
+        int row = (vy - gridY) / (tileH + gapY);
+        if (row > 1) row = 1;
+
         if (row == 0 && col == 0) { ui_task.gotoChannelScreen(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen(); return 0; }
         if (row == 0 && col == 2) { ui_task.gotoSettingsScreen(); return 0; }
@@ -548,6 +555,15 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         return 'd';  // next page
       }
       return KEY_ENTER;  // file list: open selected
+    }
+
+    // Notes editing: tap → open keyboard for typing
+    if (ui_task.isOnNotesScreen()) {
+      NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
+      if (notes && notes->isEditing()) {
+        ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
+        return 0;
+      }
     }
 
     // All other screens: tap = select
@@ -600,9 +616,10 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
   // Map a long press to a key
   static char mapTouchLongPress(int16_t x, int16_t y) {
-    // Home screen: long press cycles pages
+    // Home screen: long press = activate current page action
+    // (BLE toggle, send advert, hibernate, GPS toggle, etc.)
     if (ui_task.isOnHomeScreen()) {
-      return (char)KEY_NEXT;
+      return (char)KEY_ENTER;
     }
 
     // Reader reading: long press = close book
@@ -614,23 +631,63 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       return KEY_ENTER;  // file list: open
     }
 
+    // Channel screen: long press → compose to current channel
+    if (ui_task.isOnChannelScreen()) {
+      uint8_t chIdx = ui_task.getChannelScreenViewIdx();
+      ChannelDetails ch;
+      if (the_mesh.getChannel(chIdx, ch)) {
+        char label[40];
+        snprintf(label, sizeof(label), "To: %s", ch.name);
+        ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+      }
+      return 0;
+    }
+
+    // Contacts screen: long press → DM for chat contacts, admin for repeaters
+    if (ui_task.isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+      if (cs) {
+        int idx = cs->getSelectedContactIdx();
+        uint8_t ctype = cs->getSelectedContactType();
+        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+          char dname[32];
+          cs->getSelectedContactName(dname, sizeof(dname));
+          char label[40];
+          snprintf(label, sizeof(label), "DM: %s", dname);
+          ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+          return 0;
+        } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+          ui_task.gotoRepeaterAdmin(idx);
+          return 0;
+        }
+      }
+      return KEY_ENTER;
+    }
+
     // Discovery screen: long press = rescan
     if (ui_task.isOnDiscoveryScreen()) {
       return 'f';
     }
 
-    // Contacts screen: long press = open repeater admin (if on a repeater contact)
-    if (ui_task.isOnContactsScreen()) {
-      ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
-      if (cs) {
-        int idx = cs->getSelectedContactIdx();
-        ContactInfo ci;
-        if (the_mesh.getContactByIdx(idx, ci) && ci.type == ADV_TYPE_REPEATER) {
-          ui_task.gotoRepeaterAdmin(idx);
+    // Repeater admin: long press → open keyboard for password or CLI
+    if (ui_task.isOnRepeaterAdmin()) {
+      RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
+      if (admin) {
+        RepeaterAdminScreen::AdminState astate = admin->getState();
+        if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+          ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
           return 0;
         }
       }
-      return KEY_ENTER;  // non-repeater: normal select
+    }
+
+    // Notes screen: long press in editor → save and exit
+    if (ui_task.isOnNotesScreen()) {
+      NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
+      if (notes && notes->isEditing()) {
+        notes->triggerSaveAndExit();
+        return 0;
+      }
     }
 
     // Default: enter/select (settings toggle, etc.)
@@ -1396,9 +1453,10 @@ void loop() {
   //   Long press = finger held > 500ms without moving → edit/enter
   // After processing an event, cooldown waits for finger lift before next event.
   // Touch is disabled while lock screen is active.
+  // When virtual keyboard is active, taps route to keyboard.
   // ---------------------------------------------------------------------------
   #if defined(LilyGo_T5S3_EPaper_Pro)
-  if (!ui_task.isLocked())
+  if (!ui_task.isLocked() && !ui_task.isVKBActive())
   {
     int16_t tx, ty;
     bool gotPoint = readTouchLandscape(&tx, &ty);
@@ -1482,6 +1540,33 @@ void loop() {
         lastTouchEventMs = now;
         touchCooldown = true;
       }
+    }
+  }
+
+  // Virtual keyboard touch routing (separate state machine, simple tap-only)
+  // vkbNeedLift: true after VKB opens, requires finger lift before accepting taps.
+  // This prevents the long press that opened VKB from registering as a keystroke.
+  {
+    static bool vkbNeedLift = true;
+    static unsigned long vkbLastTap = 0;
+
+    if (ui_task.isVKBActive()) {
+      int16_t tx, ty;
+      bool gotPt = readTouchLandscape(&tx, &ty);
+
+      if (!gotPt) {
+        vkbNeedLift = false;  // Finger lifted — now taps are allowed
+      } else if (!vkbNeedLift && (millis() - vkbLastTap >= 300)) {
+        int vx = (int)(tx / 7.5f);
+        int vy = (int)(ty / 4.21875f);
+        if (ui_task.getVKB().handleTap(vx, vy)) {
+          ui_task.forceRefresh();
+        }
+        vkbLastTap = millis();
+        vkbNeedLift = true;  // Require lift before next tap
+      }
+    } else {
+      vkbNeedLift = true;  // Reset for next VKB open
     }
   }
   #endif

@@ -926,7 +926,7 @@ private:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(0);
-    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   boot: home");
+    display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: home");
 #else
     display.setCursor(0, footerY);
     display.print("Q:Back W/S:Nav");

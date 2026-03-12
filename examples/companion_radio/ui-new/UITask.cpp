@@ -32,7 +32,7 @@
 #if UI_HAS_JOYSTICK
   #define PRESS_LABEL "press Enter"
 #elif defined(LilyGo_T5S3_EPaper_Pro)
-  #define PRESS_LABEL "hold boot btn"
+  #define PRESS_LABEL "long press"
 #else
   #define PRESS_LABEL "long press"
 #endif
@@ -378,6 +378,7 @@ public:
         const int gridW = tileW * 3 + gapX * 2;
         const int gridX = (display.width() - gridW) / 2;
         const int gridY = y + 2;
+        _task->setTileGridVY(gridY);  // Store for touch hit testing
 
         for (int row = 0; row < 2; row++) {
           for (int col = 0; col < 3; col++) {
@@ -1372,6 +1373,9 @@ void UITask::loop() {
     // Ignored while locked — long press required to unlock
     if (_locked) {
       c = 0;
+    } else if (_vkbActive) {
+      onVKBCancel();
+      c = 0;
     } else if (curr == home) {
       c = checkDisplayOn(KEY_NEXT);
     } else {
@@ -1501,6 +1505,33 @@ if (curr) curr->poll();
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
       _display->startFrame();
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      if (_vkbActive) {
+        _vkb.render(*_display);
+        _next_refresh = millis() + 500;  // Moderate refresh for cursor blink
+        // Check if keyboard was submitted or cancelled during render cycle
+        if (_vkb.status() == VKB_SUBMITTED) {
+          onVKBSubmit();
+        } else if (_vkb.status() == VKB_CANCELLED) {
+          onVKBCancel();
+        }
+      } else {
+        int delay_millis = curr->render(*_display);
+        if (millis() < _alert_expiry) {
+          _display->setTextSize(1);
+          int y = _display->height() / 3;
+          int p = _display->height() / 32;
+          _display->setColor(DisplayDriver::DARK);
+          _display->fillRect(p, y, _display->width() - p*2, y);
+          _display->setColor(DisplayDriver::LIGHT);
+          _display->drawRect(p, y, _display->width() - p*2, y);
+          _display->drawTextCentered(_display->width() / 2, y + p*3, _alert);
+          _next_refresh = _alert_expiry;
+        } else {
+          _next_refresh = millis() + delay_millis;
+        }
+      }
+#else
       int delay_millis = curr->render(*_display);
       if (millis() < _alert_expiry) {  // render alert popup
         _display->setTextSize(1);
@@ -1515,6 +1546,7 @@ if (curr) curr->poll();
       } else {
         _next_refresh = millis() + delay_millis;
       }
+#endif
       _display->endFrame();
     }
 #if AUTO_OFF_MILLIS > 0
@@ -1575,7 +1607,10 @@ char UITask::handleLongPress(char c) {
     c = 0;   // consume event
   }
 #if defined(LilyGo_T5S3_EPaper_Pro)
-  else if (_locked) {
+  else if (_vkbActive) {
+    onVKBCancel();  // Long press while VKB → cancel
+    c = 0;
+  } else if (_locked) {
     unlockScreen();
     c = 0;
   } else {
@@ -1644,6 +1679,115 @@ void UITask::unlockScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 0;
   Serial.println("[UI] Screen unlocked");
+}
+
+void UITask::showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx) {
+  _vkb.open(purpose, label, initial, maxLen, contextIdx);
+  _vkbActive = true;
+  _screenBeforeVKB = curr;
+  _next_refresh = 0;
+  display.invalidateFrameCRC();  // Force e-ink redraw (VKB may look same as last open)
+  _auto_off = millis() + 120000;  // 2min timeout while typing
+  Serial.printf("[UI] VKB opened: %s\n", label);
+}
+
+void UITask::onVKBSubmit() {
+  _vkbActive = false;
+  const char* text = _vkb.getText();
+  VKBPurpose purpose = _vkb.purpose();
+  int idx = _vkb.contextIdx();
+
+  Serial.printf("[UI] VKB submit: purpose=%d idx=%d text='%s'\n", purpose, idx, text);
+
+  switch (purpose) {
+    case VKB_CHANNEL_MSG: {
+      if (strlen(text) == 0) break;
+
+      ChannelDetails channel;
+      if (the_mesh.getChannel(idx, channel)) {
+        uint32_t timestamp = rtc_clock.getCurrentTime();
+        int textLen = strlen(text);
+        if (the_mesh.sendGroupMessage(timestamp, channel.channel,
+                                       the_mesh.getNodePrefs()->node_name,
+                                       text, textLen)) {
+          addSentChannelMessage(idx, the_mesh.getNodePrefs()->node_name, text);
+          the_mesh.queueSentChannelMessage(idx, timestamp,
+                                            the_mesh.getNodePrefs()->node_name, text);
+          showAlert("Sent!", 1500);
+        } else {
+          showAlert("Send failed!", 1500);
+        }
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_DM: {
+      if (strlen(text) == 0) break;
+
+      if (the_mesh.uiSendDirectMessage((uint32_t)idx, text)) {
+        showAlert("DM sent!", 1500);
+      } else {
+        showAlert("DM failed!", 1500);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_ADMIN_PASSWORD: {
+      // Feed each character to the admin screen, then Enter
+      RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
+      if (admin) {
+        for (int i = 0; text[i]; i++) {
+          admin->handleInput(text[i]);
+        }
+        admin->handleInput('\r');
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_ADMIN_CLI: {
+      RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
+      if (admin) {
+        for (int i = 0; text[i]; i++) {
+          admin->handleInput(text[i]);
+        }
+        admin->handleInput('\r');
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_SETTINGS_NAME: {
+      if (strlen(text) > 0) {
+        strncpy(_node_prefs->node_name, text, sizeof(_node_prefs->node_name) - 1);
+        _node_prefs->node_name[sizeof(_node_prefs->node_name) - 1] = '\0';
+        the_mesh.savePrefs();
+        showAlert("Name saved", 1000);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_NOTES: {
+      NotesScreen* notes = (NotesScreen*)getNotesScreen();
+      if (notes && strlen(text) > 0) {
+        for (int i = 0; text[i]; i++) {
+          notes->handleInput(text[i]);
+        }
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+  }
+  _screenBeforeVKB = nullptr;
+  _next_refresh = 0;
+  display.invalidateFrameCRC();
+}
+
+void UITask::onVKBCancel() {
+  _vkbActive = false;
+  if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+  _screenBeforeVKB = nullptr;
+  _next_refresh = 0;
+  display.invalidateFrameCRC();
+  Serial.println("[UI] VKB cancelled");
 }
 #endif
 

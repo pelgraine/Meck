@@ -598,41 +598,77 @@ public:
 
     switch (_state) {
       case STATE_PASSWORD_ENTRY:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Exit");
+        renderFooterRight(display, footerY, "Hold:Type");
+#else
         display.print("Sh+Del:Exit");
         renderFooterRight(display, footerY, "Ent:Login");
+#endif
         break;
 
       case STATE_LOGGING_IN:
       case STATE_COMMAND_PENDING:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Cancel");
+#else
         display.print("Sh+Del:Cancel");
+#endif
         break;
 
       case STATE_CATEGORY_MENU:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Exit");
+        renderFooterMidRight(display, footerY, "Back:Exit", "Tap:Open", "Swipe:Sel");
+#else
         display.print("Sh+Del:Exit");
         renderFooterMidRight(display, footerY, "Sh+Del:Exit", "Ent:Open", "W/S:Sel");
+#endif
         break;
 
       case STATE_COMMAND_MENU:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Back");
+        renderFooterMidRight(display, footerY, "Back:Back", "Tap:Run", "Swipe:Sel");
+#else
         display.print("Sh+Del:Back");
         renderFooterMidRight(display, footerY, "Sh+Del:Back", "Ent:Run", "W/S:Sel");
+#endif
         break;
 
       case STATE_PARAM_ENTRY:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Cancel");
+        renderFooterRight(display, footerY, "Tap:Send");
+#else
         display.print("Sh+Del:Cancel");
         renderFooterRight(display, footerY, "Ent:Send");
+#endif
         break;
 
       case STATE_CONFIRM:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:No");
+        renderFooterRight(display, footerY, "Tap:Yes");
+#else
         display.print("Sh+Del:No");
         renderFooterRight(display, footerY, "Ent:Yes");
+#endif
         break;
 
       case STATE_RESPONSE_VIEW:
       case STATE_ERROR:
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Back:Back");
+        if (_responseTotalLines > bodyHeight / 9) {
+          renderFooterRight(display, footerY, "Swipe:Scroll");
+        }
+#else
         display.print("Sh+Del:Back");
         if (_responseTotalLines > bodyHeight / 9) {
           renderFooterRight(display, footerY, "W/S:Scrll");
         }
+#endif
         break;
     }
 
@@ -1001,7 +1037,11 @@ private:
     if (_pendingCmd && (_pendingCmd->flags & CMDF_EXPECT_TIMEOUT)) {
       display.print("Timeout response is normal.");
     } else {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap=Yes  Back=No");
+#else
       display.print("Enter=Yes  Sh+Del=No");
+#endif
     }
 
     display.setTextSize(1);
