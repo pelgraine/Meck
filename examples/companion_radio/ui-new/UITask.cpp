@@ -1541,6 +1541,10 @@ if (curr) curr->poll();
       }
       if (_node_prefs && display.isPortraitMode() != (_node_prefs->portrait_mode != 0)) {
         display.setPortraitMode(_node_prefs->portrait_mode != 0);
+        // Text reader layout depends on orientation — force recalculation
+        if (text_reader) {
+          ((TextReaderScreen*)text_reader)->invalidateLayout();
+        }
       }
 #endif
       _display->startFrame();

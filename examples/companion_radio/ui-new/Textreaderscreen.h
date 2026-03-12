@@ -15,7 +15,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     8  // v8: wider right margin in pixel wrapping
+#define INDEX_VERSION     9  // v9: indexer buffer matches page buffer (fixes chunk boundary gaps)
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -247,7 +247,7 @@ inline int indexPagesWordWrap(File& file, long startPos,
                               std::vector<long>& pagePositions,
                               int linesPerPage, int charsPerLine,
                               int maxPages) {
-  const int BUF_SIZE = 2048;
+  const int BUF_SIZE = READER_BUF_SIZE;  // Match page buffer to avoid chunk boundary wrap mismatches
   char buffer[BUF_SIZE];
 
   file.seek(startPos);
@@ -299,7 +299,7 @@ inline int indexPagesWordWrapPixel(File& file, long startPos,
                                     std::vector<long>& pagePositions,
                                     int linesPerPage, int maxChars,
                                     DisplayDriver* display, int maxPages) {
-  const int BUF_SIZE = 2048;
+  const int BUF_SIZE = READER_BUF_SIZE;  // Match page buffer to avoid chunk boundary wrap mismatches
   char buffer[BUF_SIZE];
 
   // Ensure body font is active for pixel measurement
@@ -1272,6 +1272,20 @@ public:
       _pageBufLen(0), _contentDirty(true) {
   }
 
+  // Reset layout so it recalculates on next render (orientation change).
+  // If a book is open, forces full reindex with new layout params.
+  void invalidateLayout() {
+    _initialized = false;
+    if (_fileOpen) {
+      _pagePositions.clear();
+      _totalPages = 0;
+      _currentPage = 0;
+      _pageBufLen = 0;
+      _contentDirty = true;
+      Serial.println("TextReader: Layout invalidated, will reindex on next enter");
+    }
+  }
+
   // Call once after display is available to calculate layout metrics
   void initLayout(DisplayDriver& display) {
     if (_initialized) return;
@@ -1312,9 +1326,13 @@ public:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // T5S3 uses FreeSans12pt/FreeSerif12pt for size 0 (yAdvance=29px).
-    // Line height in virtual coords: 29px / scale_y(4.22) ≈ 7 units.
-    // Add 1 unit for comfortable spacing.
-    _lineHeight = 8;
+    // Line height in virtual coords depends on orientation:
+    //   Landscape: 29px / scale_y(4.22) ≈ 7 + 1 spacing = 8
+    //   Portrait:  29px / scale_y(7.50) ≈ 4 + 1 spacing = 5
+    {
+      extern DISPLAY_CLASS display;
+      _lineHeight = display.isPortraitMode() ? 5 : 8;
+    }
 #endif
 
     _headerHeight = 0;  // No header in reading mode (maximize text area)
@@ -1486,6 +1504,21 @@ public:
     if (!_fileOpen) {
       _selectedFile = 0;
       _mode = FILE_LIST;
+    } else if (_pagePositions.empty()) {
+      // Layout was invalidated (orientation change) — reindex the open book
+      Serial.println("TextReader: Reindexing after layout change");
+      _pagePositions.push_back(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      indexPagesWordWrapPixel(_file, 0, _pagePositions,
+                              _linesPerPage, _charsPerLine, _display, 0);
+#else
+      indexPagesWordWrap(_file, 0, _pagePositions,
+                         _linesPerPage, _charsPerLine, 0);
+#endif
+      _totalPages = _pagePositions.size();
+      if (_currentPage >= _totalPages) _currentPage = 0;
+      _mode = READING;
+      loadPageContent();
     } else {
       _mode = READING;
       loadPageContent();
