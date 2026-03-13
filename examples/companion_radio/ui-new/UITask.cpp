@@ -4,6 +4,9 @@
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
 #include "DiscoveryScreen.h"
+#ifdef MECK_WEB_READER
+  #include "WebReaderScreen.h"
+#endif
 #if HAS_GPS
   #include "MapScreen.h"
 #endif
@@ -1839,6 +1842,50 @@ void UITask::onVKBSubmit() {
         showAlert("WiFi connected!", 2000);
       } else {
         showAlert("WiFi failed", 2000);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+#endif
+#ifdef MECK_WEB_READER
+    case VKB_WEB_URL: {
+      WebReaderScreen* wr = (WebReaderScreen*)getWebReaderScreen();
+      if (wr && strlen(text) > 0) {
+        wr->setUrlText(text);     // Copy text + set _urlEditing = true
+        wr->handleInput('\r');    // Triggers auto-prefix + fetch
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_WEB_SEARCH: {
+      WebReaderScreen* wr = (WebReaderScreen*)getWebReaderScreen();
+      if (wr && strlen(text) > 0) {
+        wr->setSearchText(text);  // Copy text + set _searchEditing = true
+        wr->handleInput('\r');    // Triggers DDG search URL build + fetch
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_WEB_WIFI_PASS: {
+      WebReaderScreen* wr = (WebReaderScreen*)getWebReaderScreen();
+      if (wr && strlen(text) > 0) {
+        wr->setWifiPassText(text);  // Copy password text
+        wr->handleInput('\r');      // Triggers WiFi connect
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_WEB_LINK: {
+      WebReaderScreen* wr = (WebReaderScreen*)getWebReaderScreen();
+      if (wr && strlen(text) > 0) {
+        // Activate link input mode, feed digits, then submit
+        wr->handleInput('l');  // Enter link selection mode
+        for (int i = 0; text[i]; i++) {
+          if (text[i] >= '0' && text[i] <= '9') {
+            wr->handleInput(text[i]);
+          }
+        }
+        wr->handleInput('\r');  // Confirm link number → navigate
       }
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;

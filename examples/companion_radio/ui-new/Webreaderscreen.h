@@ -2754,7 +2754,10 @@ private:
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print("Swipe:Nav  Tap:Select");
+    if (_wifiState == WIFI_ENTERING_PASS)
+      display.print("Tap:Type Pass Hold:Bk");
+    else
+      display.print("Swipe:Nav  Tap:Select");
 #else
     display.print("Q:Back W/S:Nav Ent:Select");
 #endif
@@ -3142,10 +3145,16 @@ private:
       char footerBuf[48];
 #if defined(LilyGo_T5S3_EPaper_Pro)
       bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
-      if (onBookmark)
+      bool onUrl = (_homeSelected == 1);
+      bool onSearch = (_homeSelected == 2);
+      if (onUrl)
+        snprintf(footerBuf, sizeof(footerBuf), "Tap:Enter URL Hold:Bk");
+      else if (onSearch)
+        snprintf(footerBuf, sizeof(footerBuf), "Tap:Search Hold:Bk");
+      else if (onBookmark)
         snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go Hold:Del");
       else
-        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go");
+        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go Hold:Bk");
 #else
       bool hasData = (_cookieCount > 0 || !_history.empty());
       bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
@@ -3413,12 +3422,10 @@ private:
       snprintf(linkBuf, sizeof(linkBuf), "#%d_ Ent:Go", _linkInput);
       hint = linkBuf;
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    } else if (_formCount > 0 && _linkCount > 0) {
-      hint = "Swipe:Pg Hold:Bk";
     } else if (_linkCount > 0) {
-      hint = "Swipe:Pg Hold:Bk";
+      hint = "Tap:Pg/Lnk Hold:Bk";
     } else {
-      hint = "Swipe:Pg Hold:Bk";
+      hint = "Tap:Pg Hold:Bk";
     }
 #else
     } else if (_formCount > 0 && _linkCount > 0) {
@@ -5236,6 +5243,33 @@ public:
   bool isIRCTextEntry() const {
     return (_mode == IRC_CHAT && _ircComposing) ||
            (_mode == IRC_SETUP && _ircSetupEditing);
+  }
+
+  // ---- Accessors for T5S3 touch mapping and VKB integration ----
+  int getHomeSelected() const { return _homeSelected; }
+  int getLinkCount() const { return _linkCount; }
+  int getBookmarkCount() const { return (int)_bookmarks.size(); }
+  const char* getUrlText() const { return _urlBuffer; }
+
+  // Set URL text and activate editing mode (for VKB submit)
+  void setUrlText(const char* text) {
+    strncpy(_urlBuffer, text, WEB_MAX_URL_LEN - 1);
+    _urlBuffer[WEB_MAX_URL_LEN - 1] = '\0';
+    _urlLen = strlen(_urlBuffer);
+    _urlEditing = true;
+  }
+  // Set search text and activate editing mode (for VKB submit)
+  void setSearchText(const char* text) {
+    strncpy(_searchBuffer, text, sizeof(_searchBuffer) - 1);
+    _searchBuffer[sizeof(_searchBuffer) - 1] = '\0';
+    _searchLen = strlen(_searchBuffer);
+    _searchEditing = true;
+  }
+  // Set WiFi password text (for VKB submit)
+  void setWifiPassText(const char* text) {
+    strncpy(_wifiPass, text, WEB_WIFI_PASS_LEN - 1);
+    _wifiPass[WEB_WIFI_PASS_LEN - 1] = '\0';
+    _wifiPassLen = strlen(_wifiPass);
   }
   // Returns true if a password reveal is active and needs a refresh after expiry
   bool needsRevealRefresh() const {

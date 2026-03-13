@@ -604,6 +604,49 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
     }
 
+#ifdef MECK_WEB_READER
+    // Web reader: context-dependent taps (VKB for text fields, navigation elsewhere)
+    if (ui_task.isOnWebReader()) {
+      WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
+      if (wr) {
+        if (wr->isReading()) {
+          // Footer zone tap → open link VKB (if links exist)
+          if (vy >= 113 && wr->getLinkCount() > 0) {
+            ui_task.showVirtualKeyboard(VKB_WEB_LINK, "Link #", "", 3);
+            return 0;
+          }
+          return 'd';  // Tap reading area → next page
+        }
+
+        if (wr->isHome()) {
+          int sel = wr->getHomeSelected();
+          if (sel == 1) {
+            // URL bar → open VKB for URL entry
+            ui_task.showVirtualKeyboard(VKB_WEB_URL, "Enter URL",
+                                         wr->getUrlText(), WEB_MAX_URL_LEN - 1);
+            return 0;
+          }
+          if (sel == 2) {
+            // Search → open VKB for DuckDuckGo search
+            ui_task.showVirtualKeyboard(VKB_WEB_SEARCH, "Search DuckDuckGo", "", 127);
+            return 0;
+          }
+          return KEY_ENTER;  // IRC, bookmarks, history: select
+        }
+
+        if (wr->isWifiSetup()) {
+          if (wr->isPasswordEntry()) {
+            // Open VKB for WiFi password entry
+            ui_task.showVirtualKeyboard(VKB_WEB_WIFI_PASS, "WiFi Password", "", 63);
+            return 0;
+          }
+          return KEY_ENTER;  // SSID list: select, failed: retry
+        }
+      }
+      return KEY_ENTER;
+    }
+#endif
+
     // Channel screen: tap footer area → hop path, tap elsewhere → no action
     if (ui_task.isOnChannelScreen()) {
       ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
@@ -636,6 +679,24 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         return (dy > 0) ? 'd' : 'a';  // swipe down=next, up=prev
       }
     }
+
+#ifdef MECK_WEB_READER
+    // Web reader: page turn in reading mode, list scroll elsewhere
+    if (ui_task.isOnWebReader()) {
+      WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
+      if (wr && wr->isReading()) {
+        if (horizontal) {
+          return (dx < 0) ? 'd' : 'a';  // swipe left=next page, right=prev
+        }
+        return (dy > 0) ? 'd' : 'a';  // swipe down=next, up=prev
+      }
+      // HOME / WIFI_SETUP / other: vertical swipe = scroll list
+      if (!horizontal) {
+        return (dy > 0) ? 's' : 'w';
+      }
+      return 0;  // Ignore horizontal swipes on non-reading modes
+    }
+#endif
 
     // Home screen: swipe left = next page, swipe right = previous page
     if (ui_task.isOnHomeScreen()) {
@@ -684,6 +745,33 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
       return KEY_ENTER;  // file list: open
     }
+
+#ifdef MECK_WEB_READER
+    // Web reader: long press for back navigation
+    if (ui_task.isOnWebReader()) {
+      WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
+      if (wr) {
+        if (wr->isReading()) {
+          return 'b';  // Back to previous page, or HOME if no history
+        }
+        if (wr->isHome()) {
+          int sel = wr->getHomeSelected();
+          int bmEnd = 3 + wr->getBookmarkCount();
+          if (sel >= 3 && sel < bmEnd) {
+            return '\b';  // Long press on bookmark → delete
+          }
+          return 'q';  // All others: exit web reader
+        }
+        if (wr->isWifiSetup()) {
+          return 'q';  // Back from WiFi setup
+        }
+        if (wr->isIRCMode()) {
+          return 'q';  // Back from IRC
+        }
+      }
+      return 'q';  // Default: back out
+    }
+#endif
 
     // Channel screen: long press → compose to current channel
     if (ui_task.isOnChannelScreen()) {

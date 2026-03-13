@@ -29,7 +29,13 @@ enum VKBPurpose {
   VKB_ADMIN_CLI,      // Repeater admin CLI command
   VKB_NOTES,          // Insert text into notes
   VKB_SETTINGS_NAME,  // Edit node name
-  VKB_WIFI_PASSWORD   // WiFi password entry (settings screen)
+  VKB_WIFI_PASSWORD,  // WiFi password entry (settings screen)
+#ifdef MECK_WEB_READER
+  VKB_WEB_URL,        // Web reader URL entry
+  VKB_WEB_SEARCH,     // Web reader DuckDuckGo search query
+  VKB_WEB_WIFI_PASS,  // Web reader WiFi password
+  VKB_WEB_LINK,       // Web reader link number entry
+#endif
 };
 
 class VirtualKeyboard {

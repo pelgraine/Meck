@@ -1213,9 +1213,10 @@ inline bool RepeaterAdminScreen::doLogin() {
   if (the_mesh.uiLoginToRepeater(_contactIdx, _password, timeout_ms)) {
     _state = STATE_LOGGING_IN;
     _cmdSentAt = millis();
-    // Add a 1.5s buffer over the mesh estimate; fall back to ADMIN_TIMEOUT_MS
-    // if the estimate came back zero for any reason.
-    _loginTimeoutMs = (timeout_ms > 0) ? timeout_ms + 1500 : ADMIN_TIMEOUT_MS;
+    // Add a 5s buffer over the mesh estimate to account for blocking e-ink
+    // refreshes (FastEPD ~1-2s per frame, VKB dismiss + login render = 2-3 frames).
+    // Fall back to ADMIN_TIMEOUT_MS if the estimate came back zero.
+    _loginTimeoutMs = (timeout_ms > 0) ? timeout_ms + 5000 : ADMIN_TIMEOUT_MS;
     _waitingForLogin = true;
     return true;
   } else {
