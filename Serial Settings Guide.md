@@ -69,6 +69,7 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get presets` | List all radio presets with parameters |
 | `get pubkey` | Device public key (hex) |
 | `get firmware` | Firmware version string |
+| `clock` | Current RTC time (UTC + epoch) |
 
 **4G variant only:**
 
@@ -292,6 +293,68 @@ To clear a custom APN and revert to auto-detection on next boot:
 
 ```
 set apn
+```
+
+### Clock Sync
+
+Set the device's real-time clock from a Unix timestamp. This is especially important for the T5S3 E-Paper Pro which has no GPS to auto-set the clock. These are standalone commands (not `get`/`set` prefixed) — matching the same `clock sync` command used on MeshCore repeaters.
+
+#### View Current Time
+
+```
+clock
+```
+
+Output:
+
+```
+  > 2026-03-13 04:22:15 UTC (epoch: 1773554535)
+```
+
+If the clock has never been set:
+
+```
+  > not set (epoch: 0)
+```
+
+#### Sync Clock from Serial
+
+```
+clock sync 1773554535
+```
+
+The value must be a Unix epoch timestamp in the 2024–2036 range.
+
+**Quick one-liner from your terminal (macOS / Linux / WSL):**
+
+```
+echo "clock sync $(date +%s)" > /dev/ttyACM0
+```
+
+Or paste directly into the Arduino IDE Serial Monitor:
+
+```
+clock sync 1773554535
+```
+
+**Tip:** On macOS/Linux, run `date +%s` to get the current epoch. On Windows PowerShell: `[int](Get-Date -UFormat %s)`.
+
+#### Boot-Time Auto-Sync (T5S3)
+
+When the T5S3 boots with no valid RTC time and detects a USB serial host is connected, it sends a `MECK_CLOCK_REQ` handshake over serial. If you're using PlatformIO's serial monitor (`pio device monitor`), the built-in `clock_sync` monitor filter responds automatically with the host computer's current time — no user action required. The sync appears transparently in the boot log:
+
+```
+MECK_CLOCK_REQ
+  (Waiting 3s for clock sync from host...)
+  > Clock synced to 1773554535
+```
+
+If no USB host is connected (e.g. running on battery), the sync window is skipped entirely with no boot delay.
+
+**Manual fallback:** If you're using a serial terminal that doesn't have the filter (e.g. `screen`, PuTTY), you can paste a `clock sync` command during the 3-second window, or any time after boot:
+
+```
+clock sync $(date +%s)
 ```
 
 ### System Commands

@@ -2290,6 +2290,14 @@ void MyMesh::checkCLIRescueCmd() {
         char hex[PUB_KEY_SIZE * 2 + 1];
         mesh::Utils::toHex(hex, self_id.pub_key, PUB_KEY_SIZE);
         Serial.printf("  pubkey:     %s\n", hex);
+        {
+          uint32_t clk = getRTCClock()->getCurrentTime();
+          if (clk > 1704067200UL) {
+            Serial.printf("  clock:      %lu (valid)\n", (unsigned long)clk);
+          } else {
+            Serial.printf("  clock:      not set\n");
+          }
+        }
         // List channels
         Serial.println("  channels:");
         bool chFound = false;
@@ -2695,6 +2703,45 @@ void MyMesh::checkCLIRescueCmd() {
       }
 
     // =====================================================================
+    // CLOCK commands (standalone — matches repeater admin convention)
+    // =====================================================================
+    } else if (memcmp(cli_command, "clock sync ", 11) == 0) {
+      uint32_t epoch = (uint32_t)strtoul(&cli_command[11], nullptr, 10);
+      if (epoch > 1704067200UL && epoch < 2082758400UL) {
+        getRTCClock()->setCurrentTime(epoch);
+        Serial.printf("  > clock synced to %lu\n", (unsigned long)epoch);
+      } else {
+        Serial.println("  Error: invalid epoch (must be 2024-2036 range)");
+        Serial.println("  Hint: on macOS/Linux run: date +%s");
+      }
+    } else if (strcmp(cli_command, "clock sync") == 0) {
+      // Bare "clock sync" without a value — show usage
+      Serial.println("  Usage: clock sync <unix_epoch>");
+      Serial.println("  Hint:  clock sync $(date +%s)");
+    } else if (strcmp(cli_command, "clock") == 0) {
+      uint32_t t = getRTCClock()->getCurrentTime();
+      if (t > 1704067200UL) {
+        // Break epoch into human-readable UTC
+        uint32_t ep = t;
+        int s = ep % 60; ep /= 60;
+        int mi = ep % 60; ep /= 60;
+        int h  = ep % 24; ep /= 24;
+        int yr = 1970;
+        while (true) { int d = ((yr%4==0&&yr%100!=0)||yr%400==0)?366:365; if(ep<(uint32_t)d) break; ep-=d; yr++; }
+        int mo = 1;
+        while (true) {
+          static const uint8_t dm[]={31,28,31,30,31,30,31,31,30,31,30,31};
+          int d = (mo==2&&((yr%4==0&&yr%100!=0)||yr%400==0))?29:dm[mo-1];
+          if(ep<(uint32_t)d) break; ep-=d; mo++;
+        }
+        int dy = ep + 1;
+        Serial.printf("  > %04d-%02d-%02d %02d:%02d:%02d UTC (epoch: %lu)\n",
+                      yr, mo, dy, h, mi, s, (unsigned long)t);
+      } else {
+        Serial.printf("  > not set (epoch: %lu)\n", (unsigned long)t);
+      }
+
+    // =====================================================================
     // HELP command
     // =====================================================================
     } else if (strcmp(cli_command, "help") == 0) {
@@ -2712,6 +2759,11 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    multi.acks <0|1>       Redundant ACKs (default: 1)");
       Serial.println("    int.thresh <0|14+>     Interference threshold dB (0=off, 14=typical)");
       Serial.println("    gps.baud <rate>        GPS baud (0=default, reboot to apply)");
+      Serial.println("");
+      Serial.println("  Clock:");
+      Serial.println("    clock                  Show current RTC time (UTC)");
+      Serial.println("    clock sync <epoch>     Set RTC from Unix timestamp");
+      Serial.println("    Hint: clock sync $(date +%s)");
       Serial.println("");
       Serial.println("  Compound commands:");
       Serial.println("    get all                Dump all settings");

@@ -56,6 +56,14 @@ void BaseChatMesh::sendAckTo(const ContactInfo& dest, uint32_t ack_hash) {
 }
 
 void BaseChatMesh::bootstrapRTCfromContacts() {
+  // If the RTC already has a sane time (e.g. hardware RTC like PCF8563, or
+  // GPS-synced), don't overwrite it with a potentially stale contact lastmod.
+  // This bootstrap is only useful for boards with no hardware RTC at all.
+  uint32_t current = getRTCClock()->getCurrentTime();
+  if (current > 1704067200UL) {  // Jan 1 2024 — matches EPOCH_MIN_SANE
+    return;
+  }
+
   uint32_t latest = 0;
   for (int i = 0; i < num_contacts; i++) {
     if (contacts[i].lastmod > latest) {

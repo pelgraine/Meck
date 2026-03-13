@@ -1189,14 +1189,57 @@ void setup() {
     }
   #endif
 
-  // RTC diagnostic — verify the auto-discovered RTC is working
+  // RTC diagnostic + boot-time serial clock sync (T5S3 has no GPS)
   #if defined(LilyGo_T5S3_EPaper_Pro)
   {
     uint32_t rtcTime = rtc_clock.getCurrentTime();
     Serial.printf("setup() - RTC time: %lu (valid=%s)\n", rtcTime, 
                   rtcTime > 1700000000 ? "YES" : "NO");
     if (rtcTime < 1700000000) {
-      Serial.println("setup() - RTC has no valid time (will be set by companion app)");
+      // No valid time.  If a USB host has the serial port open (Serial
+      // evaluates true on ESP32-S3 native CDC), request an automatic
+      // clock sync.  The PlatformIO monitor filter "clock_sync" watches
+      // for MECK_CLOCK_REQ and responds immediately with the host time.
+      // Manual sync is also accepted: type "clock sync <epoch>" in any
+      // serial terminal.
+      if (Serial) {
+        Serial.println("MECK_CLOCK_REQ");
+        Serial.println("  (Waiting 3s for clock sync from host...)");
+
+        char syncBuf[64];
+        int syncPos = 0;
+        unsigned long syncDeadline = millis() + 3000;
+        bool synced = false;
+
+        while (millis() < syncDeadline && !synced) {
+          while (Serial.available() && syncPos < (int)sizeof(syncBuf) - 1) {
+            char c = Serial.read();
+            if (c == '\r' || c == '\n') {
+              if (syncPos > 0) {
+                syncBuf[syncPos] = '\0';
+                if (memcmp(syncBuf, "clock sync ", 11) == 0) {
+                  uint32_t epoch = (uint32_t)strtoul(&syncBuf[11], nullptr, 10);
+                  if (epoch > 1704067200UL && epoch < 2082758400UL) {
+                    rtc_clock.setCurrentTime(epoch);
+                    Serial.printf("  > Clock synced to %lu\n", (unsigned long)epoch);
+                    synced = true;
+                  }
+                }
+                syncPos = 0;
+              }
+              break;
+            }
+            syncBuf[syncPos++] = c;
+          }
+          if (!synced) delay(10);
+        }
+        if (!synced) {
+          Serial.println("  > No clock sync received, continuing boot");
+          Serial.println("  > Use 'clock sync <epoch>' any time to sync later");
+        }
+      } else {
+        Serial.println("setup() - RTC not set, no serial host detected (skipping sync window)");
+      }
     }
   }
   #endif
