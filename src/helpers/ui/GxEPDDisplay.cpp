@@ -70,14 +70,24 @@ void GxEPDDisplay::turnOff() {
 }
 
 void GxEPDDisplay::clear() {
-  display.fillScreen(GxEPD_WHITE);
-  display.setTextColor(GxEPD_BLACK);
+  if (_darkMode) {
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(GxEPD_WHITE);
+  } else {
+    display.fillScreen(GxEPD_WHITE);
+    display.setTextColor(GxEPD_BLACK);
+  }
   display_crc.reset();
 }
 
 void GxEPDDisplay::startFrame(Color bkg) {
-  display.fillScreen(GxEPD_WHITE);
-  display.setTextColor(_curr_color = GxEPD_BLACK);
+  if (_darkMode) {
+    display.fillScreen(GxEPD_BLACK);
+    display.setTextColor(_curr_color = GxEPD_WHITE);
+  } else {
+    display.fillScreen(GxEPD_WHITE);
+    display.setTextColor(_curr_color = GxEPD_BLACK);
+  }
   display_crc.reset();
 }
 
@@ -105,11 +115,20 @@ void GxEPDDisplay::setTextSize(int sz) {
 
 void GxEPDDisplay::setColor(Color c) {
   display_crc.update<Color> (c);
-  // colours need to be inverted for epaper displays
-  if (c == DARK) {
-    display.setTextColor(_curr_color = GxEPD_WHITE);
+  if (_darkMode) {
+    // Dark mode: DARK = black (background), LIGHT/GREEN/YELLOW = white (foreground)
+    if (c == DARK) {
+      display.setTextColor(_curr_color = GxEPD_BLACK);
+    } else {
+      display.setTextColor(_curr_color = GxEPD_WHITE);
+    }
   } else {
-    display.setTextColor(_curr_color = GxEPD_BLACK);
+    // Normal e-paper: DARK = white (background), LIGHT/GREEN/YELLOW = black (foreground)
+    if (c == DARK) {
+      display.setTextColor(_curr_color = GxEPD_WHITE);
+    } else {
+      display.setTextColor(_curr_color = GxEPD_BLACK);
+    }
   }
 }
 

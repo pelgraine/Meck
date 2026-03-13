@@ -63,6 +63,7 @@ class GxEPDDisplay : public DisplayDriver {
 #endif
   bool _init = false;
   bool _isOn = false;
+  bool _darkMode = false;
   uint16_t _curr_color;
   FrameCRC32 display_crc;
   int last_display_crc_value = 0;
@@ -79,6 +80,11 @@ public:
   bool isOn() override {return _isOn;};
   void turnOn() override;
   void turnOff() override;
+
+  // Dark mode — inverts background/foreground for e-ink
+  bool isDarkMode() const { return _darkMode; }
+  void setDarkMode(bool on) { _darkMode = on; }
+
   void clear() override;
   void startFrame(Color bkg = DARK) override;
   void setTextSize(int sz) override;
