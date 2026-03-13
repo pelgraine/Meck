@@ -2755,9 +2755,9 @@ private:
     display.setColor(DisplayDriver::YELLOW);
 #if defined(LilyGo_T5S3_EPaper_Pro)
     if (_wifiState == WIFI_ENTERING_PASS)
-      display.print("Tap:Type Pass Hold:Bk");
+      display.print("Tap: Enter Password  Hold: Back");
     else
-      display.print("Swipe:Nav  Tap:Select");
+      display.print("Swipe: Navigate  Tap: Select");
 #else
     display.print("Q:Back W/S:Nav Ent:Select");
 #endif
@@ -3148,13 +3148,13 @@ private:
       bool onUrl = (_homeSelected == 1);
       bool onSearch = (_homeSelected == 2);
       if (onUrl)
-        snprintf(footerBuf, sizeof(footerBuf), "Tap:Enter URL Hold:Bk");
+        snprintf(footerBuf, sizeof(footerBuf), "Tap: Enter URL  Hold: Back");
       else if (onSearch)
-        snprintf(footerBuf, sizeof(footerBuf), "Tap:Search Hold:Bk");
+        snprintf(footerBuf, sizeof(footerBuf), "Tap: Search  Hold: Back");
       else if (onBookmark)
-        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go Hold:Del");
+        snprintf(footerBuf, sizeof(footerBuf), "Swipe: Navigate  Tap: Open  Hold: Delete");
       else
-        snprintf(footerBuf, sizeof(footerBuf), "Swipe:Nav Tap:Go Hold:Bk");
+        snprintf(footerBuf, sizeof(footerBuf), "Swipe: Navigate  Tap: Open  Hold: Exit");
 #else
       bool hasData = (_cookieCount > 0 || !_history.empty());
       bool onBookmark = (_homeSelected >= 3 && _homeSelected < 3 + (int)_bookmarks.size());
@@ -3198,17 +3198,27 @@ private:
     display.setCursor(10, 20);
     display.print("Loading...");
 
-    display.setTextSize(1);
+    display.setTextSize(0);
     display.setColor(DisplayDriver::LIGHT);
-    display.setCursor(10, 45);
 
-    // Show truncated URL
-    char urlDisp[40];
-    strncpy(urlDisp, _urlBuffer, 38);
-    urlDisp[38] = '\0';
-    display.print(urlDisp);
+    // Word-wrap the URL across multiple lines
+    int urlLen = strlen(_urlBuffer);
+    int y = 45;
+    int off = 0;
+    int maxChars = _charsPerLine > 2 ? _charsPerLine - 2 : 30;  // small margin
+    while (off < urlLen && y < 85) {
+      int lineLen = urlLen - off;
+      if (lineLen > maxChars) lineLen = maxChars;
+      char lineBuf[128];
+      snprintf(lineBuf, sizeof(lineBuf), "%.*s", lineLen, _urlBuffer + off);
+      display.setCursor(10, y);
+      display.print(lineBuf);
+      off += lineLen;
+      y += 8;
+    }
 
-    display.setCursor(10, 60);
+    display.setCursor(10, y + 4);
+    display.setTextSize(1);
     char progBuf[48];
     int elapsed = (int)((millis() - _fetchStartTime) / 1000);
     if (_fetchRetryCount > 0) {
@@ -3290,7 +3300,7 @@ private:
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print(_downloadOk ? "Tap:Read" : "Tap:Back");
+    display.print(_downloadOk ? "Tap: Open in Reader" : "Tap: Back");
 #else
     display.print(_downloadOk ? "Ent:Read  Q:Back" : "Q:Back");
 #endif
@@ -3423,9 +3433,9 @@ private:
       hint = linkBuf;
 #if defined(LilyGo_T5S3_EPaper_Pro)
     } else if (_linkCount > 0) {
-      hint = "Tap:Pg/Lnk Hold:Bk";
+      hint = "Tap: Page | Tap Footer Bar: Enter Link # | Hold: Back";
     } else {
-      hint = "Tap:Pg Hold:Bk";
+      hint = "Tap: Page  Hold: Back";
     }
 #else
     } else if (_formCount > 0 && _linkCount > 0) {
@@ -3964,7 +3974,11 @@ private:
       // Field value
       if (isActive) {
         display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.fillRect(0, y, display.width(), 9);
+#else
         display.fillRect(0, y + 4, display.width(), 9);
+#endif
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
@@ -4035,7 +4049,7 @@ private:
     } else {
       const char* hint;
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      hint = "Swipe:Nav Tap:Edit Hold:Bk";
+      hint = "Swipe: Navigate  Tap: Edit  Hold: Back";
 #else
       if (_formCount > 1)
         hint = "W/S:Nav Ent:Edit </>:Form Q:Back";
@@ -4662,7 +4676,11 @@ private:
       bool sel = (_ircSetupField == i);
       if (sel) {
         display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.fillRect(0, y, display.width(), lineH);
+#else
         display.fillRect(0, y + 4, display.width(), lineH);
+#endif
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
@@ -4711,7 +4729,7 @@ private:
     display.setCursor(0, footerY);
     display.setColor(DisplayDriver::YELLOW);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print("Swipe:Nav Tap:Edit Hold:Bk");
+    display.print("Swipe: Navigate  Tap: Edit  Hold: Back");
 #else
     display.print("W/S:Nav Ent:Edit/Go Q:Back");
 #endif
@@ -4845,7 +4863,7 @@ private:
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      display.print("Tap:Send Hold:Exit");
+      display.print("Tap: Send  Hold: Exit");
 #else
       display.print("Ent:Send Del:Exit");
 #endif
@@ -4853,7 +4871,7 @@ private:
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      display.print("Tap:Msg Swipe:Scrl Hold:Bk");
+      display.print("Tap: Compose  Swipe: Scroll  Hold: Back");
 #else
       display.print("Ent:Msg W/S:Scrl Q:Bk");
 #endif
