@@ -1,10 +1,19 @@
-## Meshcore + Fork = Meck 
-This fork was created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro. Created with the assistance of Claude AI using Meshcore v1.11 code. 
+## Meshcore + Fork = Meck
+
+A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro & LilyGo T5 E-Paper S3 Pro. Created with the assistance of Claude AI using Meshcore v1.11 code.
 
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
 ### Contents
-- [T-Deck Pro Keyboard Controls](#t-deck-pro-keyboard-controls)
+- [Supported Devices](#supported-devices)
+- [Flashing Firmware](#flashing-firmware)
+  - [First-Time Flash (Merged Firmware)](#first-time-flash-merged-firmware)
+  - [Upgrading Firmware](#upgrading-firmware)
+  - [SD Card Launcher](#sd-card-launcher)
+- [Path Hash Mode (v0.9.9+)](#path-hash-mode-v099)
+- [T-Deck Pro](#t-deck-pro)
+  - [Build Variants](#t-deck-pro-build-variants)
+  - [Keyboard Controls](#t-deck-pro-keyboard-controls)
   - [Navigation (Home Screen)](#navigation-home-screen)
   - [Bluetooth (BLE)](#bluetooth-ble)
   - [Clock & Timezone](#clock--timezone)
@@ -13,18 +22,31 @@ This fork was created specifically to focus on enabling BLE & WiFi companion fir
   - [Sending a Direct Message](#sending-a-direct-message)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Settings Screen](#settings-screen)
-  - [Serial Settings (USB)](Serial_Settings_Guide.md)
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
   - [Emoji Picker](#emoji-picker)
   - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
   - [Web Browser & IRC](#web-browser--irc)
+- [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
+  - [Build Variants](#t5s3-build-variants)
+  - [Touch Navigation](#touch-navigation)
+  - [Home Screen](#t5s3-home-screen)
+  - [Boot Button Controls](#boot-button-controls)
+  - [Backlight](#backlight)
+  - [Lock Screen](#lock-screen)
+  - [Virtual Keyboard](#virtual-keyboard)
+  - [Display Settings](#display-settings)
+  - [Clock & RTC](#clock--rtc)
+  - [Touch Gestures by Screen](#touch-gestures-by-screen)
+- [Serial Settings (USB)](Serial_Settings_Guide.md)
+- [Text & EPUB Reader](TXT___EPUB_Reader_Guide.md)
+- [Web Browser & IRC Guide](Web_App_Guide.md)
+- [SMS & Phone App Guide](SMS___Phone_App_Guide.md)
 - [About MeshCore](#about-meshcore)
 - [What is MeshCore?](#what-is-meshcore)
 - [Key Features](#key-features)
 - [What Can You Use MeshCore For?](#what-can-you-use-meshcore-for)
 - [How to Get Started](#how-to-get-started)
-- [MeshCore Flasher](#meshcore-flasher)
 - [MeshCore Clients](#meshcore-clients)
 - [Hardware Compatibility](#-hardware-compatibility)
 - [Contributing](#contributing)
@@ -33,9 +55,109 @@ This fork was created specifically to focus on enabling BLE & WiFi companion fir
 - [License](#-license)
   - [Third-Party Libraries](#third-party-libraries)
 
-## T-Deck Pro Keyboard Controls
+---
 
-The T-Deck Pro companion firmware includes full keyboard support for standalone messaging without a phone.
+## Supported Devices
+
+Meck currently targets two LilyGo devices:
+
+| Device | Display | Input | LoRa | Battery | GPS | RTC |
+|--------|---------|-------|------|---------|-----|-----|
+| **T-Deck Pro** | 240×320 e-ink (GxEPD2) | TCA8418 keyboard + optional touch | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes | No (uses GPS time) |
+| **T5S3 E-Paper Pro** (V2, H752-B) | 960×540 e-ink (FastEPD, parallel) | GT911 capacitive touch (no keyboard) | SX1262 | BQ27220 fuel gauge, 1500 mAh | No (non-GPS variant) | Yes (PCF8563 hardware RTC) |
+
+Both devices use the ESP32-S3 with 16 MB flash and 8 MB PSRAM.
+
+---
+
+## Flashing Firmware
+
+Download the latest firmware from the [Releases](https://github.com/pelgraine/Meck/releases) page. Each release includes two types of `.bin` files per build variant:
+
+| File Type | When to Use |
+|-----------|-------------|
+| `*_merged.bin` | **First-time flash** — includes bootloader, partition table, and firmware in a single file. Flash at address `0x0`. |
+| `*.bin` (non-merged) | **Upgrading existing firmware** — firmware image only. Also used when loading firmware from an SD card via the Launcher. |
+
+### First-Time Flash (Merged Firmware)
+
+If the device has never had Meck firmware (or you want a clean start), use the **merged** `.bin` file. This contains the bootloader, partition table, and application firmware combined into a single image.
+
+**Using esptool.py:**
+
+```
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
+  write_flash 0x0 meck_t5s3_standalone_merged.bin
+```
+
+On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM port like `COM3`.
+
+**Using the MeshCore Flasher (web-based, T-Deck Pro only):**
+
+1. Go to https://flasher.meshcore.co.uk
+2. Select **Custom Firmware**
+3. Select the **merged** `.bin` file you downloaded
+4. Click **Flash**, select your device in the popup, and click **Connect**
+
+> **Note:** The MeshCore Flasher flashes at address `0x0` by default, so the merged file is the correct choice here for first-time flashes.
+
+### Upgrading Firmware
+
+If the device is already running Meck (or any MeshCore-based firmware with a valid bootloader), use the **non-merged** `.bin` file. This is smaller and faster to flash since it only contains the application firmware.
+
+**Using esptool.py:**
+
+```
+esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
+  write_flash 0x10000 meck_t5s3_standalone.bin
+```
+
+> **Tip:** If you're unsure whether the device already has a bootloader, it's always safe to use the merged file and flash at `0x0` — it will overwrite everything cleanly.
+
+### SD Card Launcher
+
+If you're loading firmware from an SD card via the LilyGo Launcher firmware, use the **non-merged** `.bin` file. The Launcher provides its own bootloader and only needs the application image.
+
+---
+
+## Path Hash Mode (v0.9.9+)
+
+Meck supports multibyte path hash, bringing it in line with MeshCore firmware v1.14. The path hash controls how many bytes each repeater uses to identify itself in forwarded flood packets. Larger hashes reduce the chance of identity collisions at the cost of fewer maximum hops per packet.
+
+You can configure the path hash size in the device settings (press **S** from the home screen on T-Deck Pro, or open Settings via the tile on T5S3) or set it via USB serial:
+
+```
+set path.hash.mode 1
+```
+
+| Mode | Bytes per hop | Max hops | Notes |
+|------|--------------|----------|-------|
+| 0 | 1 | 64 | Legacy — prone to hash collisions in larger networks |
+| 1 | 2 | 32 | Recommended — effectively eliminates collisions |
+| 2 | 3 | 21 | Maximum precision, rarely needed |
+
+Nodes with different path hash modes can coexist on the same network. The mode only affects packets your node originates — the hash size is encoded in each packet's header, so receiving nodes adapt automatically.
+
+For a detailed explanation of what multibyte path hash means and why it matters, see the [Path Diagnostics & Improvements write-up](https://buymeacoffee.com/ripplebiz/path-diagnostics-improvements).
+
+---
+
+## T-Deck Pro
+
+### T-Deck Pro Build Variants
+
+| Variant | Environment | BLE | WiFi | 4G Modem | Audio DAC | Web Reader | Max Contacts |
+|---------|------------|-----|------|----------|-----------|------------|-------------|
+| Audio + BLE | `meck_audio_ble` | Yes | Yes (via BLE stack) | — | PCM5102A | Yes | 500 |
+| Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 1,500 |
+| 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 500 |
+| 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 1,500 |
+
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive.
+
+### T-Deck Pro Keyboard Controls
+
+The T-Deck Pro firmware includes full keyboard support for standalone messaging without a phone.
 
 ### Navigation (Home Screen)
 
@@ -159,6 +281,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Coding Rate | W / S to adjust (5–8), Enter to confirm |
 | TX Power | W / S to adjust (1–20 dBm), Enter to confirm |
 | UTC Offset | W / S to adjust (-12 to +14), Enter to confirm |
+| Path Hash Mode | A / D to cycle (0 = 1-byte, 1 = 2-byte, 2 = 3-byte), Enter to confirm |
 | Channels | View existing channels, add hashtag channels, or delete non-primary channels (X) |
 | Device Info | Public key and firmware version (read-only) |
 
@@ -219,7 +342,7 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 
 Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts).
 
-For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS%20%26%20Phone%20App%20Guide.md).
+For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
 ### Web Browser & IRC
 
@@ -229,7 +352,218 @@ The web reader home screen provides access to the **IRC client**, the **URL bar*
 
 The browser is a text-centric reader best suited to text-heavy websites. It also includes basic web search via DuckDuckGo Lite, and can download EPUB files — follow a link to an `.epub` and it will be saved to the books folder on your SD card for reading later in the e-book reader.
 
-For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web%20App%20Guide.md).
+For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web_App_Guide.md).
+
+---
+
+## T5S3 E-Paper Pro
+
+The LilyGo T5S3 E-Paper Pro (V2, H752-B) is a 4.7-inch e-ink device with capacitive touch and no physical keyboard. All navigation is done via touch gestures and the Boot button (GPIO0). The larger 960×540 display provides significantly more screen real estate than the T-Deck Pro's 240×320 panel.
+
+### T5S3 Build Variants
+
+| Variant | Environment | BLE | WiFi | Web Reader | Max Contacts |
+|---------|------------|-----|------|------------|-------------|
+| Standalone | `meck_t5s3_standalone` | — | — | No | 1,500 |
+| BLE Companion | `meck_t5s3_ble` | Yes | — | No | 500 |
+| WiFi Companion | `meck_t5s3_wifi` | — | Yes (TCP:5000) | Yes | 1,500 |
+
+The WiFi variant connects to the MeshCore web app or meshcore.js over your local network. The web reader shares the same WiFi connection — no extra setup needed.
+
+### Touch Navigation
+
+The T5S3 uses a combination of touch gestures and the Boot button for all interaction. There is no physical keyboard — text entry uses an on-screen virtual keyboard that appears when needed.
+
+**Core gesture types:**
+
+| Gesture | Description |
+|---------|-------------|
+| **Tap** | Touch and release quickly. Context-dependent: opens tiles on home screen, selects items in lists, advances pages in readers. |
+| **Swipe** | Touch, drag at least 60 pixels, and release. Direction determines action (scroll, page turn, switch channel/filter). |
+| **Long press (touch)** | Touch and hold for 500ms+. Context-dependent: compose messages, open DMs, delete bookmarks. |
+
+### T5S3 Home Screen
+
+The home screen displays a 3×2 grid of tappable tiles:
+
+| | Column 1 | Column 2 | Column 3 |
+|---|----------|----------|----------|
+| **Row 1** | Messages | Contacts | Settings |
+| **Row 2** | Reader | Notes | Browser (WiFi) / Discover (other) |
+
+Tap a tile to open that screen. Tap outside the tile grid (or swipe left/right) to cycle between home pages. The additional home pages show BLE status, battery info, GPS status, and a hibernate option — same as the T-Deck Pro but navigated by swiping or tapping the left/right halves of the screen instead of pressing keys.
+
+### Boot Button Controls
+
+The Boot button (GPIO0, bottom of device) provides essential navigation and utility functions:
+
+| Action | Effect |
+|--------|--------|
+| **Single click** | On home screen: cycle to next page. On other screens: go back (same as pressing Q on T-Deck Pro). In text reader reading mode: close book and return to file list. |
+| **Double-click** | Toggle backlight at full brightness (comfortable for indoor reading). |
+| **Triple-click** | Toggle backlight at low brightness (dim nighttime reading). |
+| **Long press** | Lock or unlock the screen. While locked, touch is disabled and a lock screen shows the time, battery percentage, and unread message count. |
+| **Long press during first 8 seconds after boot** | Enter CLI rescue mode (serial settings interface). |
+
+### Backlight
+
+The T5S3 has a warm-tone front-light controlled by PWM on GPIO11. Brightness ranges from 0 (off) to 255 (maximum).
+
+- **Double-click Boot button** — toggle backlight on at 153/255 brightness (comfortable reading level)
+- **Triple-click Boot button** — toggle backlight on at low brightness (4/255, nighttime reading)
+- The backlight turns off automatically when the screen locks
+
+### Lock Screen
+
+Long press the Boot button to lock the device. The lock screen shows:
+- Current time in large text (HH:MM)
+- Battery percentage
+- Unread message count (if any)
+- "Hold button to unlock" hint
+
+Touch input is completely disabled while locked. Long press the Boot button again to unlock and return to whatever screen you were on.
+
+### Virtual Keyboard
+
+Since the T5S3 has no physical keyboard, a full-screen QWERTY virtual keyboard appears automatically when text input is needed (composing messages, entering WiFi passwords, editing settings, etc.).
+
+The virtual keyboard supports:
+- QWERTY letter layout with a symbol/number layer (tap the **123** key to switch)
+- Shift toggle for uppercase
+- Backspace and Enter keys
+- Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
+
+Tap keys to type. Tap **Enter** to submit, or press the **Boot button** to cancel and close the keyboard.
+
+### Display Settings
+
+The T5S3 Settings screen includes two additional options not available on the T-Deck Pro:
+
+| Setting | Description |
+|---------|-------------|
+| **Dark Mode** | Inverts the display — white text on black background. Tap to toggle on/off. |
+| **Portrait Mode** | Rotates the display 90° from landscape (960×540) to portrait (540×960). Touch coordinates are automatically remapped. Text reader layout recalculates on orientation change. |
+
+These settings are persisted and survive reboots.
+
+### Clock & RTC
+
+Unlike the T-Deck Pro (which relies on GPS for time), the T5S3 has a hardware RTC (PCF8563/BM8563) that maintains time across reboots as long as the battery has charge. On first use (or after a full battery drain), the clock needs to be set via USB serial:
+
+```
+clock sync 1773554535
+```
+
+Where the number is a Unix epoch timestamp. Quick one-liner from a macOS/Linux terminal:
+
+```
+echo "clock sync $(date +%s)" > /dev/ttyACM0
+```
+
+Once set, the RTC retains the time across reboots. See the [Serial Settings Guide](Serial_Settings_Guide.md) for full clock sync documentation including the PlatformIO auto-sync feature.
+
+The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is persisted to flash.
+
+### Touch Gestures by Screen
+
+#### Home Screen
+
+| Gesture | Action |
+|---------|--------|
+| Tap tile | Open that screen (Messages, Contacts, Settings, Reader, Notes, Browser/Discover) |
+| Tap outside tiles (left half) | Previous home page |
+| Tap outside tiles (right half) | Next home page |
+| Swipe left / right | Next / previous home page |
+| Long press (touch) | Activate current page action (toggle BLE, hibernate, etc.) |
+
+#### Channel Messages
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll messages |
+| Swipe left / right | Switch between channels |
+| Tap footer area | View relay path of last received message |
+| Tap path overlay | Dismiss overlay |
+| Long press (touch) | Open virtual keyboard to compose message to current channel |
+
+#### Contacts
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll through contacts |
+| Swipe left / right | Cycle contact filter (All → Chat → Repeater → Room → Sensor → Favourites) |
+| Tap | Select contact |
+| Long press on Chat contact | Open virtual keyboard to compose DM |
+| Long press on Repeater contact | Open repeater admin login |
+
+#### Text Reader (File List)
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll file list |
+| Tap | Open selected book |
+
+#### Text Reader (Reading)
+
+| Gesture | Action |
+|---------|--------|
+| Tap anywhere | Next page |
+| Swipe left | Next page |
+| Swipe right | Previous page |
+| Swipe up / down | Next / previous page |
+| Long press (touch) | Close book, return to file list |
+| Tap status bar | Go to home screen |
+
+#### Web Reader (WiFi variant)
+
+| Gesture | Action |
+|---------|--------|
+| Tap URL bar | Open virtual keyboard for URL entry |
+| Tap Search | Open virtual keyboard for DuckDuckGo search |
+| Tap reading area | Next page |
+| Tap footer (if links exist) | Open virtual keyboard to enter link number |
+| Swipe left / right (reading) | Next / previous page |
+| Swipe up / down (home/lists) | Scroll list |
+| Long press (reading) | Navigate back |
+| Long press on bookmark | Delete bookmark |
+| Long press on home | Exit web reader |
+
+#### Settings
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll through settings |
+| Swipe left / right | Adjust value (same as A/D keys on T-Deck Pro) |
+| Tap | Toggle or edit selected setting |
+
+#### Notes
+
+| Gesture | Action |
+|---------|--------|
+| Tap (while editing) | Open virtual keyboard for text entry |
+| Long press (while editing) | Save note and exit editor |
+
+#### Discovery
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll node list |
+| Long press | Rescan for nodes |
+
+#### Repeater Admin
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll menu / response |
+| Long press (password entry) | Open virtual keyboard for admin password |
+
+#### All Screens
+
+| Gesture | Action |
+|---------|--------|
+| Tap status bar (top of screen) | Return to home screen (except in text reader reading mode, where it advances the page) |
+
+---
 
 ## About MeshCore
 
@@ -237,8 +571,8 @@ MeshCore is a lightweight, portable C++ library that enables multi-hop packet ro
 
 ## What is MeshCore?
 
-MeshCore now supports a range of LoRa devices, allowing for easy flashing without the need to compile firmware manually. Users can flash a pre-built binary using tools like Adafruit ESPTool and interact with the network through a serial console.
-MeshCore provides the ability to create wireless mesh networks, similar to Meshtastic and Reticulum but with a focus on lightweight multi-hop packet routing for embedded projects. Unlike Meshtastic, which is tailored for casual LoRa communication, or Reticulum, which offers advanced networking, MeshCore balances simplicity with scalability, making it ideal for custom embedded solutions., where devices (nodes) can communicate over long distances by relaying messages through intermediate nodes. This is especially useful in off-grid, emergency, or tactical situations where traditional communication infrastructure is unavailable.
+MeshCore now supports a range of LoRa devices, allowing for easy flashing without the need to compile firmware manually. Users can flash a pre-built binary using tools like esptool.py and interact with the network through a serial console.
+MeshCore provides the ability to create wireless mesh networks, similar to Meshtastic and Reticulum but with a focus on lightweight multi-hop packet routing for embedded projects. Unlike Meshtastic, which is tailored for casual LoRa communication, or Reticulum, which offers advanced networking, MeshCore balances simplicity with scalability, making it ideal for custom embedded solutions, where devices (nodes) can communicate over long distances by relaying messages through intermediate nodes. This is especially useful in off-grid, emergency, or tactical situations where traditional communication infrastructure is unavailable.
 
 ## Key Features
 
@@ -263,33 +597,22 @@ MeshCore provides the ability to create wireless mesh networks, similar to Mesht
 
 - Watch the [MeshCore Intro Video](https://www.youtube.com/watch?v=t1qne8uJBAc) by Andy Kirby.
 - Read through our [Frequently Asked Questions](./docs/faq.md) section.
-- Flash the MeshCore firmware on a supported device.
+- Download firmware from the [Releases](https://github.com/pelgraine/Meck/releases) page and flash it using the instructions above.
 - Connect with a supported client.
 
-For developers;
+For developers:
 
 - Install [PlatformIO](https://docs.platformio.org) in [Visual Studio Code](https://code.visualstudio.com).
-- Clone and open the MeshCore repository in Visual Studio Code.
-- See the example applications you can modify and run:
-  - [Companion Radio](./examples/companion_radio) - For use with an external chat app, over BLE, USB or WiFi.
-
-## MeshCore Flasher
-
-Download a copy of the Meck firmware bin from https://github.com/pelgraine/Meck/releases, then:
-
-- Launch https://flasher.meshcore.co.uk
-- Select Custom Firmware
-- Select the .bin file you just downloaded, and click Open or press Enter.
-- Click Flash, then select your device in the popup window (eg. USB JTAG/serial debug unit cu.usbmodem101 as an example), then click Connect.
-- Once flashing is complete, you can connect with one of the MeshCore clients below.
+- Clone and open the Meck repository in Visual Studio Code.
+- Build for your target device using the environment names listed in the build variant tables above.
 
 ## MeshCore Clients
 
 **Companion Firmware**
 
-The companion firmware can be connected to via BLE.
+The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE variants) or WiFi (T5S3 WiFi variant, TCP port 5000).
 
-> **Note:** On the T-Deck Pro, BLE is disabled by default at boot. Navigate to the Bluetooth home page and press Enter to enable BLE before connecting with a companion app.
+> **Note:** On both the T-Deck Pro and T5S3, BLE is disabled by default at boot. On the T-Deck Pro, navigate to the Bluetooth home page and press Enter to enable BLE. On the T5S3, navigate to the Bluetooth home page and long-press the screen to toggle BLE on.
 
 - Web: https://app.meshcore.nz
 - Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
@@ -299,7 +622,7 @@ The companion firmware can be connected to via BLE.
 
 ## 🛠 Hardware Compatibility
 
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk)
+MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro and LilyGo T5S3 E-Paper Pro.
 
 ## Contributing
 
@@ -314,6 +637,8 @@ Here are some general principals you should try to adhere to:
 ## Road-Map / To-Do
 
 There are a number of fairly major features in the pipeline, with no particular time-frames attached yet. In partly chronological order:
+
+**T-Deck Pro:**
 - [X] Companion radio: BLE
 - [X] Text entry for Public channel messages Companion BLE firmware
 - [X] View and compose all channel messages Companion BLE firmware
@@ -323,12 +648,29 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] GPS time sync with on-device timezone setting
 - [X] Settings screen with radio presets, channel management, and first-boot onboarding
 - [X] Expand SMS app to enable phone calls
-- [X] Basic web reader app for text-centric websites
+- [X] Basic web reader app with IRC client
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
 - [ ] Map support with GPS
 - [ ] WiFi companion environment
+
+**T5S3 E-Paper Pro:**
+- [X] Core port: display, touch input, LoRa, battery, RTC
+- [X] Touch-navigable home screen with tappable tile grid
+- [X] Full virtual keyboard for text entry
+- [X] Lock screen with clock, battery, and unread count
+- [X] Backlight control (double/triple-click Boot button)
+- [X] Dark mode and portrait mode display settings
+- [X] Channel messages with swipe navigation and touch compose
+- [X] Contacts with filter cycling and long-press DM/admin
+- [X] Text reader with swipe page turns
+- [X] Web reader with virtual keyboard URL/search entry (WiFi variant)
+- [X] Settings screen with touch editing
+- [X] Serial clock sync for hardware RTC
+- [ ] Emoji sprites on home tiles
+- [ ] Portrait mode toggle via quadruple-click Boot button
+- [ ] Hibernate should auto-off backlight
 
 ## 📞 Get Support
 
@@ -346,10 +688,13 @@ However, this firmware links against libraries with different license terms. Bec
 |---------|---------|-----------------|
 | [MeshCore](https://github.com/meshcore-dev/MeshCore) | MIT | Scott Powell / rippleradios.com |
 | [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg |
+| [FastEPD](https://github.com/bitbank2/FastEPD) | Apache-2.0 | Larry Bank (bitbank2) |
 | [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 (Wolle) |
 | [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
 | [RadioLib](https://github.com/jgromes/RadioLib) | MIT | Jan Gromeš |
+| [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He |
 | [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank (bitbank2) |
+| [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank (bitbank2) |
 | [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
 | [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
 | [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
