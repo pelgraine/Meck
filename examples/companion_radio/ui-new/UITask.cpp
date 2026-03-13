@@ -341,7 +341,11 @@ public:
       _task->setHomeShowingTiles(true);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      int y = 18;  // Tighter spacing
+  #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
+      int y = 18;  // Tighter spacing — connectivity info fills gap below dots
+  #else
+      int y = 26;  // Standalone: extra line below dots (no IP/Connected row)
+  #endif
 #else
       int y = 20;
 #endif
