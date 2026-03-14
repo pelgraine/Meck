@@ -832,7 +832,16 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
     }
 
-    // Default: enter/select (settings toggle, etc.)
+    // Settings screen: long press on a deletable channel → trigger delete
+    if (ui_task.isOnSettingsScreen()) {
+      SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
+      if (ss && ss->isCursorOnDeletableChannel()) {
+        return 'x';  // Triggers existing X key → EDIT_CONFIRM delete flow
+      }
+      return KEY_ENTER;  // All other settings rows: toggle/edit as normal
+    }
+
+    // Default: enter/select
     return KEY_ENTER;
   }
 #endif

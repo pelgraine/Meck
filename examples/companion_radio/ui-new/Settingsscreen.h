@@ -477,6 +477,13 @@ public:
   bool isEditing() const { return _editMode != EDIT_NONE; }
   bool hasRadioChanges() const { return _radioChanged; }
 
+  // Returns true when cursor is on a non-public channel row (deletable)
+  bool isCursorOnDeletableChannel() const {
+    if (_cursor < 0 || _cursor >= _numRows) return false;
+    return _rows[_cursor].type == ROW_CHANNEL && _rows[_cursor].param > 0
+           && _editMode == EDIT_NONE;
+  }
+
   // ---------------------------------------------------------------------------
   // WiFi scan helpers
   // ---------------------------------------------------------------------------
@@ -881,7 +888,11 @@ public:
               snprintf(tmp, sizeof(tmp), " %s", ch.name);
               if (selected) {
                 // Show delete hint on right
+#if defined(LilyGo_T5S3_EPaper_Pro)
+                const char* hint = "Hold:Delete";
+#else
                 const char* hint = "Del:X";
+#endif
                 int hintW = display.getTextWidth(hint);
                 display.setCursor(display.width() - hintW - 2, y);
                 display.print(hint);
@@ -995,7 +1006,11 @@ public:
       } else if (_confirmAction == 2) {
         display.drawTextCentered(display.width() / 2, by + 4, "Apply radio changes?");
       }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, by + bh - 14, "Tap:Yes  Boot:No");
+#else
       display.drawTextCentered(display.width() / 2, by + bh - 14, "Enter:Yes  Q:No");
+#endif
       display.setTextSize(1);
     }
 
