@@ -832,11 +832,22 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       }
     }
 
-    // Settings screen: long press on a deletable channel → trigger delete
+    // Settings screen: context-dependent long press
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
-      if (ss && ss->isCursorOnDeletableChannel()) {
-        return 'x';  // Triggers existing X key → EDIT_CONFIRM delete flow
+      if (ss) {
+        if (ss->isEditingText()) {
+          // Open VKB pre-populated with current edit buffer
+          ui_task.showVirtualKeyboard(VKB_SETTINGS_TEXT, ss->getEditLabel(),
+                                       ss->getEditBuf(), SETTINGS_TEXT_BUF - 1);
+          return 0;
+        }
+        if (ss->isEditingNumOrPicker()) {
+          return 0;  // Consume — don't confirm prematurely
+        }
+        if (ss->isCursorOnDeletableChannel()) {
+          return 'x';  // Triggers existing X key → EDIT_CONFIRM delete flow
+        }
       }
       return KEY_ENTER;  // All other settings rows: toggle/edit as normal
     }

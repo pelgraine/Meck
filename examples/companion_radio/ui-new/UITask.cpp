@@ -842,7 +842,11 @@ public:
 #endif
       }
     }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    return _editing_utc ? 700 : 2000;   // Faster refresh for touch-only (no key to force update)
+#else
     return _editing_utc ? 700 : 5000;   // match e-ink refresh cycle while editing UTC
+#endif
   }
 
   bool handleInput(char c) override {
@@ -1274,9 +1278,16 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #endif
 
   if (_display != NULL) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    // E-ink: always wake — no backlight cost, and stale image shows wrong MSG count
+    if (!_display->isOn()) {
+      _display->turnOn();
+    }
+#else
     if (!_display->isOn() && !hasConnection()) {
       _display->turnOn();
     }
+#endif
     if (_display->isOn()) {
     _auto_off = millis() + AUTO_OFF_MILLIS;  // extend the auto-off timer
     _next_refresh = 100;  // trigger refresh
@@ -1824,6 +1835,14 @@ void UITask::onVKBSubmit() {
         _node_prefs->node_name[sizeof(_node_prefs->node_name) - 1] = '\0';
         the_mesh.savePrefs();
         showAlert("Name saved", 1000);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_SETTINGS_TEXT: {
+      SettingsScreen* ss = (SettingsScreen*)settings_screen;
+      if (ss) {
+        ss->submitEditText(text);  // Fills buffer + triggers Enter confirm
       }
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;

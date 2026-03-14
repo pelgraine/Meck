@@ -484,6 +484,35 @@ public:
            && _editMode == EDIT_NONE;
   }
 
+  // T5S3 VKB integration for text editing (channel name, device name, freq, APN)
+  bool isEditingText() const { return _editMode == EDIT_TEXT; }
+  bool isEditingNumOrPicker() const { return _editMode == EDIT_NUMBER || _editMode == EDIT_PICKER; }
+  const char* getEditBuf() const { return _editBuf; }
+
+  // Get a suitable VKB label for the current text edit field
+  const char* getEditLabel() const {
+    if (_cursor < 0 || _cursor >= _numRows) return "Edit";
+    switch (_rows[_cursor].type) {
+      case ROW_NAME:        return "Device Name";
+      case ROW_ADD_CHANNEL: return "Add Channel";
+      case ROW_FREQ:        return "Frequency";
+      #ifdef HAS_4G_MODEM
+      case ROW_APN:         return "Edit APN";
+      #endif
+      default:              return "Edit";
+    }
+  }
+
+  // Fill edit buffer with VKB result and confirm via Enter
+  void submitEditText(const char* text) {
+    int len = strlen(text);
+    if (len >= SETTINGS_TEXT_BUF) len = SETTINGS_TEXT_BUF - 1;
+    memcpy(_editBuf, text, len);
+    _editBuf[len] = '\0';
+    _editPos = len;
+    handleKeyInput('\r');  // trigger existing confirm logic
+  }
+
   // ---------------------------------------------------------------------------
   // WiFi scan helpers
   // ---------------------------------------------------------------------------
