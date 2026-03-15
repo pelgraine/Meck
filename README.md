@@ -266,8 +266,8 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Key | Action |
 |-----|--------|
 | W / S | Navigate up / down through settings |
-| Enter | Edit selected setting |
-| Q | Back to home screen |
+| Enter | Edit selected setting, or enter a sub-screen |
+| Q | Back one level (sub-screen → top level → home screen) |
 
 **Available settings:**
 
@@ -275,17 +275,24 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 |---------|-------------|
 | Device Name | Text entry — type a name, Enter to confirm |
 | Radio Preset | A / D to cycle presets (MeshCore Default, Long Range, Fast/Short, EU Default), Enter to apply |
-| Frequency | W / S to adjust, Enter to confirm |
+| Frequency | Text entry — type exact value (e.g. 916.575), Enter to confirm |
 | Bandwidth | W / S to cycle standard values (31.25 / 62.5 / 125 / 250 / 500 kHz), Enter to confirm |
 | Spreading Factor | W / S to adjust (5–12), Enter to confirm |
 | Coding Rate | W / S to adjust (5–8), Enter to confirm |
 | TX Power | W / S to adjust (1–20 dBm), Enter to confirm |
 | UTC Offset | W / S to adjust (-12 to +14), Enter to confirm |
-| Path Hash Mode | A / D to cycle (0 = 1-byte, 1 = 2-byte, 2 = 3-byte), Enter to confirm |
-| Channels | View existing channels, add hashtag channels, or delete non-primary channels (X) |
+| Msg Rcvd LED Pulse | Toggle keyboard backlight flash on new message (Enter to toggle) |
+| GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
+| Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
+| Contacts >> | Opens the Contacts sub-screen (see below) |
+| Channels >> | Opens the Channels sub-screen (see below) |
 | Device Info | Public key and firmware version (read-only) |
 
-The bottom of the settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
+**Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker (Auto All / Custom / Manual) and, when set to Custom, per-type toggles for Chat, Repeater, Room Server, Sensor, and an Overwrite Oldest option. Press Q to return to the top-level settings list.
+
+**Channels sub-screen** — press Enter on the `Channels >>` row to open. Lists all current channels, with an option to add hashtag channels or delete non-primary channels (X). Press Q to return to the top-level settings list.
+
+The top-level settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
 
 When adding a hashtag channel, type the channel name and press Enter. The channel secret is automatically derived from the name via SHA-256, matching the standard MeshCore hashtag convention.
 
