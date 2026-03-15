@@ -52,6 +52,25 @@ extern MyMesh the_mesh;
 #include "RadioPresets.h"
 
 // ---------------------------------------------------------------------------
+// GPS baud rate options (shared with UITask GPS home page overlay)
+// ---------------------------------------------------------------------------
+static const uint32_t GPS_BAUD_OPTIONS[] = { 0, 4800, 9600, 19200, 38400, 57600, 115200 };
+#define GPS_BAUD_OPTION_COUNT 7
+
+static inline const char* gpsBaudLabel(uint32_t baud, char* buf, int bufLen) {
+  if (baud == 0) return "Default (38400)";
+  snprintf(buf, bufLen, "%lu", (unsigned long)baud);
+  return buf;
+}
+
+static inline int findGpsBaudIndex(uint32_t baud) {
+  for (int i = 0; i < GPS_BAUD_OPTION_COUNT; i++) {
+    if (GPS_BAUD_OPTIONS[i] == baud) return i;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Settings row types
 // ---------------------------------------------------------------------------
 enum SettingsRowType : uint8_t {
@@ -64,10 +83,11 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
-  ROW_DARK_MODE,      // Dark mode toggle (inverted display)
 #if defined(LilyGo_T5S3_EPaper_Pro)
+  ROW_DARK_MODE,      // Dark mode toggle (inverted display)
   ROW_PORTRAIT_MODE,  // Portrait orientation toggle
 #endif
+  ROW_GPS_BAUD,       // GPS baud rate picker (requires reboot)
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
   #ifdef MECK_WIFI_COMPANION
   ROW_WIFI_SETUP,     // WiFi SSID/password configuration
@@ -84,6 +104,8 @@ enum SettingsRowType : uint8_t {
   ROW_AUTOADD_ROOM,    // Toggle: auto-add Room Servers
   ROW_AUTOADD_SENSOR,  // Toggle: auto-add Sensors
   ROW_AUTOADD_OVERWRITE, // Toggle: overwrite oldest non-favourite when full
+  ROW_CONTACTS_SUBMENU,  // Folder row → enters Contacts sub-screen
+  ROW_CHANNELS_SUBMENU,  // Folder row → enters Channels sub-screen
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
@@ -109,6 +131,15 @@ enum EditMode : uint8_t {
   #ifdef MECK_WIFI_COMPANION
   EDIT_WIFI,         // WiFi scan/select/password flow
   #endif
+};
+
+// ---------------------------------------------------------------------------
+// Settings sub-screens (collapsible sections)
+// ---------------------------------------------------------------------------
+enum SubScreen : uint8_t {
+  SUB_NONE,        // Top-level settings list
+  SUB_CONTACTS,    // Contacts settings sub-screen
+  SUB_CHANNELS,    // Channels management sub-screen
 };
 
 // Max rows in the settings list (increased for contact sub-toggles + WiFi)
@@ -152,6 +183,10 @@ private:
 
   // Onboarding mode
   bool _onboarding;
+
+  // Sub-screen navigation
+  SubScreen _subScreen;
+  int _savedTopCursor;  // cursor position to restore when leaving sub-screen
 
   // Dirty flag for radio params Ã¢â‚¬â€ prompt to apply
   bool _radioChanged;
@@ -240,65 +275,67 @@ private:
   void rebuildRows() {
     _numRows = 0;
 
-    addRow(ROW_NAME);
-    addRow(ROW_RADIO_PRESET);
-    addRow(ROW_FREQ);
-    addRow(ROW_BW);
-    addRow(ROW_SF);
-    addRow(ROW_CR);
-    addRow(ROW_TX_POWER);
-    addRow(ROW_UTC_OFFSET);
-    addRow(ROW_MSG_NOTIFY);
-    addRow(ROW_PATH_HASH_SIZE);
-    addRow(ROW_DARK_MODE);
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    addRow(ROW_PORTRAIT_MODE);
-#endif
-    #ifdef MECK_WIFI_COMPANION
-    addRow(ROW_WIFI_SETUP);
-    addRow(ROW_WIFI_TOGGLE);
-    #endif
-    #ifdef HAS_4G_MODEM
-    addRow(ROW_MODEM_TOGGLE);
-   // addRow(ROW_RINGTONE);
-    #endif
-
-    // --- Contacts section ---
-    addRow(ROW_CONTACT_HEADER);
-    addRow(ROW_CONTACT_MODE);
-
-    // Show per-type sub-toggles only in Custom mode
-    if (getContactMode() == CONTACT_MODE_CUSTOM) {
-      addRow(ROW_AUTOADD_CHAT);
-      addRow(ROW_AUTOADD_REPEATER);
-      addRow(ROW_AUTOADD_ROOM);
-      addRow(ROW_AUTOADD_SENSOR);
-      addRow(ROW_AUTOADD_OVERWRITE);
-    }
-
-    // --- Channels section ---
-    addRow(ROW_CH_HEADER);
-
-    // Enumerate current channels
-    for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
-      ChannelDetails ch;
-      if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
-        addRow(ROW_CHANNEL, i);
-      } else {
-        break;  // channels are contiguous
+    if (_subScreen == SUB_CONTACTS) {
+      // --- Contacts sub-screen: only contact-related rows ---
+      addRow(ROW_CONTACT_MODE);
+      if (getContactMode() == CONTACT_MODE_CUSTOM) {
+        addRow(ROW_AUTOADD_CHAT);
+        addRow(ROW_AUTOADD_REPEATER);
+        addRow(ROW_AUTOADD_ROOM);
+        addRow(ROW_AUTOADD_SENSOR);
+        addRow(ROW_AUTOADD_OVERWRITE);
       }
+    } else if (_subScreen == SUB_CHANNELS) {
+      // --- Channels sub-screen: only channel-related rows ---
+      for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+        ChannelDetails ch;
+        if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
+          addRow(ROW_CHANNEL, i);
+        } else {
+          break;
+        }
+      }
+      addRow(ROW_ADD_CHANNEL);
+    } else {
+      // --- Top-level settings list ---
+      addRow(ROW_NAME);
+      addRow(ROW_RADIO_PRESET);
+      addRow(ROW_FREQ);
+      addRow(ROW_BW);
+      addRow(ROW_SF);
+      addRow(ROW_CR);
+      addRow(ROW_TX_POWER);
+      addRow(ROW_UTC_OFFSET);
+      addRow(ROW_MSG_NOTIFY);
+      addRow(ROW_GPS_BAUD);
+      addRow(ROW_PATH_HASH_SIZE);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      addRow(ROW_DARK_MODE);
+      addRow(ROW_PORTRAIT_MODE);
+#endif
+      #ifdef MECK_WIFI_COMPANION
+      addRow(ROW_WIFI_SETUP);
+      addRow(ROW_WIFI_TOGGLE);
+      #endif
+      #ifdef HAS_4G_MODEM
+      addRow(ROW_MODEM_TOGGLE);
+      #endif
+
+      // Folder rows for sub-screens
+      addRow(ROW_CONTACTS_SUBMENU);
+      addRow(ROW_CHANNELS_SUBMENU);
+
+      // Info section (stays at top level)
+      addRow(ROW_INFO_HEADER);
+      addRow(ROW_PUB_KEY);
+      addRow(ROW_FIRMWARE);
+
+      #ifdef HAS_4G_MODEM
+      addRow(ROW_IMEI);
+      addRow(ROW_OPERATOR_INFO);
+      addRow(ROW_APN);
+      #endif
     }
-
-    addRow(ROW_ADD_CHANNEL);
-    addRow(ROW_INFO_HEADER);
-    addRow(ROW_PUB_KEY);
-    addRow(ROW_FIRMWARE);
-
-    #ifdef HAS_4G_MODEM
-    addRow(ROW_IMEI);
-    addRow(ROW_OPERATOR_INFO);
-    addRow(ROW_APN);
-    #endif
 
     // Clamp cursor
     if (_cursor >= _numRows) _cursor = _numRows - 1;
@@ -321,7 +358,7 @@ private:
     #ifdef HAS_4G_MODEM
       && t != ROW_IMEI && t != ROW_OPERATOR_INFO
     #endif
-    ;
+    ;  // ROW_CONTACTS_SUBMENU and ROW_CHANNELS_SUBMENU ARE selectable
   }
 
   void skipNonSelectable(int dir) {
@@ -439,12 +476,15 @@ public:
       _numRows(0), _cursor(0), _scrollTop(0),
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
       _editFloat(0), _editInt(0), _confirmAction(0),
-      _onboarding(false), _radioChanged(false) {
+      _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
+      _radioChanged(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
   }
 
   void enter() {
     _editMode = EDIT_NONE;
+    _subScreen = SUB_NONE;
+    _savedTopCursor = 0;
     _cursor = 0;
     _scrollTop = 0;
     _radioChanged = false;
@@ -476,42 +516,6 @@ public:
   bool isOnboarding() const { return _onboarding; }
   bool isEditing() const { return _editMode != EDIT_NONE; }
   bool hasRadioChanges() const { return _radioChanged; }
-
-  // Returns true when cursor is on a non-public channel row (deletable)
-  bool isCursorOnDeletableChannel() const {
-    if (_cursor < 0 || _cursor >= _numRows) return false;
-    return _rows[_cursor].type == ROW_CHANNEL && _rows[_cursor].param > 0
-           && _editMode == EDIT_NONE;
-  }
-
-  // T5S3 VKB integration for text editing (channel name, device name, freq, APN)
-  bool isEditingText() const { return _editMode == EDIT_TEXT; }
-  bool isEditingNumOrPicker() const { return _editMode == EDIT_NUMBER || _editMode == EDIT_PICKER; }
-  const char* getEditBuf() const { return _editBuf; }
-
-  // Get a suitable VKB label for the current text edit field
-  const char* getEditLabel() const {
-    if (_cursor < 0 || _cursor >= _numRows) return "Edit";
-    switch (_rows[_cursor].type) {
-      case ROW_NAME:        return "Device Name";
-      case ROW_ADD_CHANNEL: return "Add Channel";
-      case ROW_FREQ:        return "Frequency";
-      #ifdef HAS_4G_MODEM
-      case ROW_APN:         return "Edit APN";
-      #endif
-      default:              return "Edit";
-    }
-  }
-
-  // Fill edit buffer with VKB result and confirm via Enter
-  void submitEditText(const char* text) {
-    int len = strlen(text);
-    if (len >= SETTINGS_TEXT_BUF) len = SETTINGS_TEXT_BUF - 1;
-    memcpy(_editBuf, text, len);
-    _editBuf[len] = '\0';
-    _editPos = len;
-    handleKeyInput('\r');  // trigger existing confirm logic
-  }
 
   // ---------------------------------------------------------------------------
   // WiFi scan helpers
@@ -664,6 +668,10 @@ public:
     display.setCursor(0, 0);
     if (_onboarding) {
       display.print("Welcome! Setup");
+    } else if (_subScreen == SUB_CONTACTS) {
+      display.print("Settings > Contacts");
+    } else if (_subScreen == SUB_CHANNELS) {
+      display.print("Settings > Channels");
     } else {
       display.print("Settings");
     }
@@ -809,13 +817,26 @@ public:
           display.print(tmp);
           break;
 
+        case ROW_GPS_BAUD: {
+          char baudStr[16];
+          if (editing && _editMode == EDIT_PICKER) {
+            snprintf(tmp, sizeof(tmp), "< GPS Baud: %s > *",
+                     gpsBaudLabel(GPS_BAUD_OPTIONS[_editPickerIdx], baudStr, sizeof(baudStr)));
+          } else {
+            snprintf(tmp, sizeof(tmp), "GPS Baud: %s *",
+                     gpsBaudLabel(_prefs->gps_baudrate, baudStr, sizeof(baudStr)));
+          }
+          display.print(tmp);
+          break;
+        }
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_DARK_MODE:
           snprintf(tmp, sizeof(tmp), "Dark Mode: %s",
                    _prefs->dark_mode ? "ON" : "OFF");
           display.print(tmp);
           break;
 
-#if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:
           snprintf(tmp, sizeof(tmp), "Portrait Mode: %s",
                    _prefs->portrait_mode ? "ON" : "OFF");
@@ -852,6 +873,17 @@ public:
        //   display.print(tmp);
         //  break;
         #endif
+
+        // --- Submenu folder rows ---
+        case ROW_CONTACTS_SUBMENU:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Contacts >>");
+          break;
+
+        case ROW_CHANNELS_SUBMENU:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Channels >>");
+          break;
 
         // --- Contacts section ---
         case ROW_CONTACT_HEADER:
@@ -917,11 +949,7 @@ public:
               snprintf(tmp, sizeof(tmp), " %s", ch.name);
               if (selected) {
                 // Show delete hint on right
-#if defined(LilyGo_T5S3_EPaper_Pro)
-                const char* hint = "Hold:Delete";
-#else
                 const char* hint = "Del:X";
-#endif
                 int hintW = display.getTextWidth(hint);
                 display.setCursor(display.width() - hintW - 2, y);
                 display.print(hint);
@@ -1035,11 +1063,7 @@ public:
       } else if (_confirmAction == 2) {
         display.drawTextCentered(display.width() / 2, by + 4, "Apply radio changes?");
       }
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      display.drawTextCentered(display.width() / 2, by + bh - 14, "Tap:Yes  Boot:No");
-#else
       display.drawTextCentered(display.width() / 2, by + bh - 14, "Enter:Yes  Q:No");
-#endif
       display.setTextSize(1);
     }
 
@@ -1137,10 +1161,17 @@ public:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     if (_editMode == EDIT_NONE) {
-      display.print("Swipe:Scroll");
-      const char* r = "Tap:Toggle  Hold:Edit";
-      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
-      display.print(r);
+      if (_subScreen != SUB_NONE) {
+        display.print("Boot:Back");
+        const char* r = "Tap:Toggle  Hold:Edit";
+        display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+        display.print(r);
+      } else {
+        display.print("Swipe:Scroll");
+        const char* r = "Tap:Toggle  Hold:Edit";
+        display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+        display.print(r);
+      }
     } else if (_editMode == EDIT_NUMBER) {
       display.print("Swipe:Adjust");
       const char* r = "Tap:OK  Boot:Cancel";
@@ -1199,7 +1230,11 @@ public:
     } else if (_editMode == EDIT_CONFIRM) {
       // Footer already covered by overlay
     } else {
-      display.print("Q:Bck");
+      if (_subScreen != SUB_NONE) {
+        display.print("Q:Back");
+      } else {
+        display.print("Q:Bck");
+      }
       const char* r = "W/S:Up/Dwn Entr:Chng";
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
       display.print(r);
@@ -1426,6 +1461,9 @@ public:
         if (type == ROW_CONTACT_MODE) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = CONTACT_MODE_COUNT - 1;
+        } else if (type == ROW_GPS_BAUD) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = GPS_BAUD_OPTION_COUNT - 1;
         } else {
           // Radio preset
           _editPickerIdx--;
@@ -1437,6 +1475,9 @@ public:
         if (type == ROW_CONTACT_MODE) {
           _editPickerIdx++;
           if (_editPickerIdx >= CONTACT_MODE_COUNT) _editPickerIdx = 0;
+        } else if (type == ROW_GPS_BAUD) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= GPS_BAUD_OPTION_COUNT) _editPickerIdx = 0;
         } else {
           // Radio preset
           _editPickerIdx++;
@@ -1448,6 +1489,12 @@ public:
         if (type == ROW_CONTACT_MODE) {
           applyContactMode(_editPickerIdx);
           _editMode = EDIT_NONE;
+        } else if (type == ROW_GPS_BAUD) {
+          _prefs->gps_baudrate = GPS_BAUD_OPTIONS[_editPickerIdx];
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: GPS baud set to %lu (reboot to apply)\n",
+                        (unsigned long)_prefs->gps_baudrate);
         } else {
           // Apply radio preset
           if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
@@ -1627,13 +1674,16 @@ public:
         case ROW_PATH_HASH_SIZE:
           startEditInt(_prefs->path_hash_mode + 1);  // display as 1-3
           break;
+        case ROW_GPS_BAUD:
+          startEditPicker(findGpsBaudIndex(_prefs->gps_baudrate));
+          break;
+#if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_DARK_MODE:
           _prefs->dark_mode = _prefs->dark_mode ? 0 : 1;
           the_mesh.savePrefs();
           Serial.printf("Settings: Dark mode = %s\n",
                         _prefs->dark_mode ? "ON" : "OFF");
           break;
-#if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:
           _prefs->portrait_mode = _prefs->portrait_mode ? 0 : 1;
           the_mesh.savePrefs();
@@ -1748,6 +1798,24 @@ public:
                         (_prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) ? "ON" : "OFF");
           break;
 
+        // --- Submenu folder rows ---
+        case ROW_CONTACTS_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_CONTACTS;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered Contacts sub-screen");
+          break;
+        case ROW_CHANNELS_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_CHANNELS;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered Channels sub-screen");
+          break;
+
         case ROW_ADD_CHANNEL:
           startEditText("");
           break;
@@ -1771,8 +1839,18 @@ public:
       }
     }
 
-    // Q: back Ã¢â‚¬â€ if radio changed, prompt to apply first
+    // Q: back -- if in sub-screen, return to top level; else exit settings
     if (c == 'q' || c == 'Q') {
+      if (_subScreen != SUB_NONE) {
+        // Return to top-level settings list
+        _subScreen = SUB_NONE;
+        rebuildRows();
+        _cursor = _savedTopCursor;
+        if (_cursor >= _numRows) _cursor = _numRows - 1;
+        skipNonSelectable(1);
+        Serial.println("Settings: back to top level");
+        return true;
+      }
       if (_radioChanged) {
         _editMode = EDIT_CONFIRM;
         _confirmAction = 2;

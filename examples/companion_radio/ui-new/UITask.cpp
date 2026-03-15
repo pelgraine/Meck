@@ -138,6 +138,7 @@ class HomeScreen : public UIScreen {
   unsigned long _shutdown_at;   // earliest time to proceed with shutdown (after e-ink refresh)
   bool _editing_utc;
   int8_t _saved_utc_offset;  // for cancel/undo
+
   AdvertPath recent[UI_RECENT_LIST_SIZE];
 
 
@@ -254,7 +255,7 @@ public:
        _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
-  void cancelEditUTC() { 
+  void cancelEditing() { 
     if (_editing_utc) {
       _node_prefs->utc_offset_hours = _saved_utc_offset;
       _editing_utc = false;
@@ -666,7 +667,9 @@ public:
           display.drawTextLeftAlign(0, y, "time(U)");
           display.drawTextRightAlign(display.width()-1, y, "no sync");
         }
+        y = y + 12;
       }
+
       // UTC offset editor overlay
       if (_editing_utc) {
         // Draw background box
@@ -686,6 +689,7 @@ public:
         display.drawTextCentered(display.width() / 2, by + bh - 10, "W/S:adj Enter:ok Q:cancel");
         display.setTextSize(1);
       }
+
 #endif
 #if UI_SENSORS_PAGE == 1
     } else if (_page == HomePage::SENSORS) {
@@ -842,11 +846,7 @@ public:
 #endif
       }
     }
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    return _editing_utc ? 700 : 2000;   // Faster refresh for touch-only (no key to force update)
-#else
-    return _editing_utc ? 700 : 5000;   // match e-ink refresh cycle while editing UTC
-#endif
+    return _editing_utc ? 700 : 5000;
   }
 
   bool handleInput(char c) override {
@@ -1179,11 +1179,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   map_screen = nullptr;
 #endif
 
-  // Apply saved dark mode preference before first render
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Apply saved display preferences before first render
   if (_node_prefs->dark_mode) {
     ::display.setDarkMode(true);
   }
-#if defined(LilyGo_T5S3_EPaper_Pro)
   if (_node_prefs->portrait_mode) {
     ::display.setPortraitMode(true);
   }
@@ -1278,16 +1278,9 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #endif
 
   if (_display != NULL) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    // E-ink: always wake — no backlight cost, and stale image shows wrong MSG count
-    if (!_display->isOn()) {
-      _display->turnOn();
-    }
-#else
     if (!_display->isOn() && !hasConnection()) {
       _display->turnOn();
     }
-#endif
     if (_display->isOn()) {
     _auto_off = millis() + AUTO_OFF_MILLIS;  // extend the auto-off timer
     _next_refresh = 100;  // trigger refresh
@@ -1552,11 +1545,11 @@ if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
-      // Sync dark mode with prefs (settings toggle takes effect here)
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // Sync display modes with prefs (settings toggles take effect here)
       if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
         display.setDarkMode(_node_prefs->dark_mode != 0);
       }
-#if defined(LilyGo_T5S3_EPaper_Pro)
       if (_node_prefs && display.isPortraitMode() != (_node_prefs->portrait_mode != 0)) {
         display.setPortraitMode(_node_prefs->portrait_mode != 0);
         // Text reader layout depends on orientation — force recalculation
@@ -1839,14 +1832,6 @@ void UITask::onVKBSubmit() {
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
-    case VKB_SETTINGS_TEXT: {
-      SettingsScreen* ss = (SettingsScreen*)settings_screen;
-      if (ss) {
-        ss->submitEditText(text);  // Fills buffer + triggers Enter confirm
-      }
-      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
-      break;
-    }
     case VKB_NOTES: {
       NotesScreen* notes = (NotesScreen*)getNotesScreen();
       if (notes && strlen(text) > 0) {
@@ -2006,7 +1991,7 @@ void UITask::injectKey(char c) {
 
 void UITask::gotoHomeScreen() {
   // Cancel any active editing state when navigating to home
-  ((HomeScreen *) home)->cancelEditUTC();
+  ((HomeScreen *) home)->cancelEditing();
   setCurrScreen(home);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
