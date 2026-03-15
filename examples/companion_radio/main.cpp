@@ -1164,15 +1164,18 @@ void setup() {
   sensors.begin();
   MESH_DEBUG_PRINTLN("setup() - sensors.begin() done");
 
-  // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1
-  // We need to reinitialize Serial2 to reclaim them
+  // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1.
+  // We must end Serial1 first, then reclaim the pins for Serial2 (which feeds gpsStream).
   #if HAS_GPS
-    Serial2.end();  // Close any existing Serial2
+    Serial1.end();   // Release GPS pins from Serial1's UART + ISR
+    Serial2.end();   // Close any existing Serial2
     {
       uint32_t gps_baud = the_mesh.getNodePrefs()->gps_baudrate;
+      Serial.printf("GPS: prefs gps_baudrate=%lu (0=use default)\n", (unsigned long)gps_baud);
       if (gps_baud == 0) gps_baud = GPS_BAUDRATE;
       Serial2.begin(gps_baud, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-      MESH_DEBUG_PRINTLN("setup() - Reinitialized Serial2 for GPS at %lu baud", (unsigned long)gps_baud);
+      Serial.printf("GPS: Serial2 started at %lu baud (RX=%d TX=%d)\n",
+                     (unsigned long)gps_baud, GPS_RX_PIN, GPS_TX_PIN);
     }
   #endif
 
@@ -1373,10 +1376,12 @@ void setup() {
   }
   #endif
 
-  // GPS power — honour saved pref, default to enabled on first boot
+  // GPS power — honour saved pref, default to enabled on first boot.
+  // GPS is critical for timesync on standalone variants without 4G.
   #if HAS_GPS
   {
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
+    Serial.printf("GPS: pref gps_enabled=%d\n", (int)gps_wanted);
     if (gps_wanted) {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
@@ -1388,7 +1393,7 @@ void setup() {
       #endif
       sensors.setSettingValue("gps", "0");
     }
-    MESH_DEBUG_PRINTLN("setup() - GPS power %s", gps_wanted ? "on" : "off");
+    Serial.printf("GPS: power %s, PIN_GPS_EN=%d\n", gps_wanted ? "ON" : "OFF", PIN_GPS_EN);
   }
   #endif
 
@@ -1409,6 +1414,21 @@ void loop() {
 
 
   sensors.loop();
+
+  // GPS diagnostic — print sentence count every 30s so we can tell if Serial2 is receiving data
+  #if HAS_GPS
+  {
+    static unsigned long lastGpsDiag = 0;
+    if (millis() - lastGpsDiag >= 30000) {
+      lastGpsDiag = millis();
+      uint32_t sentences = gpsStream.getSentenceCount();
+      uint16_t perSec = gpsStream.getSentencesPerSec();
+      Serial.printf("GPS diag: %lu sentences total, %u/sec, Serial2.available=%d, lat=%.6f lon=%.6f\n",
+                    (unsigned long)sentences, perSec, Serial2.available(),
+                    sensors.node_lat, sensors.node_lon);
+    }
+  }
+  #endif
 
   // Map screen: periodically update own GPS position and contact markers
   #if HAS_GPS

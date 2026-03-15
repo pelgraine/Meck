@@ -1193,12 +1193,24 @@ void MyMesh::begin(bool has_display) {
       _prefs.gps_baudrate != 9600 && _prefs.gps_baudrate != 19200 &&
       _prefs.gps_baudrate != 38400 && _prefs.gps_baudrate != 57600 &&
       _prefs.gps_baudrate != 115200) {
+    Serial.printf("PREFS: invalid gps_baudrate=%lu — reset to 0 (default)\n",
+                  (unsigned long)_prefs.gps_baudrate);
     _prefs.gps_baudrate = 0;  // reset to default if invalid
   }
-  // interference_threshold: 0 = disabled, minimum functional value is 14
+  // interference_threshold: 0 = disabled, minimum functional value is 14, max sane ~30
   if (_prefs.interference_threshold > 0 && _prefs.interference_threshold < 14) {
     _prefs.interference_threshold = 0;
   }
+  if (_prefs.interference_threshold > 50) {
+    Serial.printf("PREFS: invalid interference_threshold=%d — reset to 0 (disabled)\n",
+                  _prefs.interference_threshold);
+    _prefs.interference_threshold = 0;  // garbage from prefs upgrade — disable
+  }
+  // Clamp remaining v1.0 fields that may contain garbage after upgrade from older firmware
+  if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;
+  if (_prefs.autoadd_max_hops > 64) _prefs.autoadd_max_hops = 0;
+  if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
+  if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
