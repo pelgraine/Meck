@@ -1181,13 +1181,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
   // Apply saved display preferences before first render
-  if (_node_prefs->dark_mode) {
-    ::display.setDarkMode(true);
-  }
   if (_node_prefs->portrait_mode) {
     ::display.setPortraitMode(true);
   }
 #endif
+
+  // Apply saved dark mode preference (both T-Deck Pro and T5S3)
+  if (_node_prefs->dark_mode) {
+    ::display.setDarkMode(true);
+  }
 
   setCurrScreen(splash);
 }
@@ -1545,11 +1547,12 @@ if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      // Sync display modes with prefs (settings toggles take effect here)
+      // Sync dark mode with prefs (settings toggle takes effect here)
       if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
         display.setDarkMode(_node_prefs->dark_mode != 0);
       }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // Sync portrait mode with prefs (T5S3 only)
       if (_node_prefs && display.isPortraitMode() != (_node_prefs->portrait_mode != 0)) {
         display.setPortraitMode(_node_prefs->portrait_mode != 0);
         // Text reader layout depends on orientation — force recalculation

@@ -284,6 +284,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Msg Rcvd LED Pulse | Toggle keyboard backlight flash on new message (Enter to toggle) |
 | GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
+| Dark Mode | Toggle inverted display — white text on black background (Enter to toggle) |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
 | Device Info | Public key and firmware version (read-only) |
@@ -444,12 +445,12 @@ Tap keys to type. Tap **Enter** to submit, or press the **Boot button** to cance
 
 ### Display Settings
 
-The T5S3 Settings screen includes two additional options not available on the T-Deck Pro:
+The T5S3 Settings screen includes one additional display option not available on the T-Deck Pro:
 
 | Setting | Description |
 |---------|-------------|
-| **Dark Mode** | Inverts the display — white text on black background. Tap to toggle on/off. |
-| **Portrait Mode** | Rotates the display 90° from landscape (960×540) to portrait (540×960). Touch coordinates are automatically remapped. Text reader layout recalculates on orientation change. |
+| **Dark Mode** | Inverts the display — white text on black background. Tap to toggle on/off. Available on both T-Deck Pro and T5S3. |
+| **Portrait Mode** | Rotates the display 90° from landscape (960×540) to portrait (540×960). Touch coordinates are automatically remapped. Text reader layout recalculates on orientation change. T5S3 only. |
 
 These settings are persisted and survive reboots.
 
