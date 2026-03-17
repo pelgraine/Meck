@@ -1333,6 +1333,8 @@ void UITask::userLedHandler() {
 
 void UITask::setCurrScreen(UIScreen* c) {
   curr = c;
+  _alert_expiry = 0;  // Dismiss any active toast — prevents stale overlay from
+                       // triggering extra 644ms e-ink refreshes on the new screen
   _next_refresh = 100;
 }
 
