@@ -137,22 +137,18 @@ public:
       _zoomMin(MAP_MIN_ZOOM),
       _zoomMax(MAP_MAX_ZOOM),
       _pngBuf(nullptr),
+      _lineBuf(nullptr),
       _tileFound(false)
   {
-    // Allocate marker array in PSRAM at construction (~20KB)
-    // so addMarker() works before enter() is called
-    _markers = (MapMarker*)ps_calloc(MAP_MAX_MARKERS, sizeof(MapMarker));
-    if (_markers) {
-      Serial.printf("MapScreen: markers allocated (%d × %d = %d bytes PSRAM)\n",
-                     MAP_MAX_MARKERS, (int)sizeof(MapMarker),
-                     MAP_MAX_MARKERS * (int)sizeof(MapMarker));
-    } else {
-      Serial.println("MapScreen: marker PSRAM alloc FAILED");
-    }
+    // Marker array and PNG buffers are deferred to enter() to avoid
+    // consuming 20KB+ PSRAM at boot when the map may never be opened.
+    _markers = nullptr;
+    _numMarkers = 0;
   }
 
   ~MapScreen() {
     if (_pngBuf) { free(_pngBuf); _pngBuf = nullptr; }
+    if (_lineBuf) { free(_lineBuf); _lineBuf = nullptr; }
     if (_markers) { free(_markers); _markers = nullptr; }
   }
 
@@ -184,7 +180,12 @@ public:
   // Add a location marker (call once per contact before entering map)
   void clearMarkers() { _numMarkers = 0; }
   void addMarker(double lat, double lon, const char* name = "", uint8_t type = 0) {
-    if (!_markers || _numMarkers >= MAP_MAX_MARKERS) return;
+    // Lazy-allocate markers on first use (deferred from constructor)
+    if (!_markers) {
+      _markers = (MapMarker*)ps_calloc(MAP_MAX_MARKERS, sizeof(MapMarker));
+      if (!_markers) return;  // Alloc failed — skip silently
+    }
+    if (_numMarkers >= MAP_MAX_MARKERS) return;
     if (lat == 0.0 && lon == 0.0) return;  // Skip no-location contacts
     _markers[_numMarkers].lat = lat;
     _markers[_numMarkers].lon = lon;
@@ -203,6 +204,18 @@ public:
     _einkDisplay = static_cast<GxEPDDisplay*>(&display);
     _needsRedraw = true;
 
+    // Allocate marker array in PSRAM on first use (~20KB)
+    if (!_markers) {
+      _markers = (MapMarker*)ps_calloc(MAP_MAX_MARKERS, sizeof(MapMarker));
+      if (_markers) {
+        Serial.printf("MapScreen: markers allocated (%d × %d = %d bytes PSRAM)\n",
+                       MAP_MAX_MARKERS, (int)sizeof(MapMarker),
+                       MAP_MAX_MARKERS * (int)sizeof(MapMarker));
+      } else {
+        Serial.println("MapScreen: marker PSRAM alloc FAILED");
+      }
+    }
+
     // Allocate PNG read buffer in PSRAM on first use
     if (!_pngBuf) {
       _pngBuf = (uint8_t*)ps_malloc(MAP_PNG_BUF_SIZE);
@@ -214,6 +227,20 @@ public:
         Serial.printf("MapScreen: PNG buffer allocated (%d bytes)\n", MAP_PNG_BUF_SIZE);
       } else {
         Serial.println("MapScreen: PNG buffer alloc FAILED");
+      }
+    }
+
+    // Allocate scanline decode buffer in PSRAM (512 bytes — avoids stack
+    // allocation inside the PNGdec callback which is called 256× per tile)
+    if (!_lineBuf) {
+      _lineBuf = (uint16_t*)ps_malloc(MAP_TILE_SIZE * sizeof(uint16_t));
+      if (!_lineBuf) {
+        _lineBuf = (uint16_t*)malloc(MAP_TILE_SIZE * sizeof(uint16_t));
+      }
+      if (_lineBuf) {
+        Serial.println("MapScreen: lineBuf allocated");
+      } else {
+        Serial.println("MapScreen: lineBuf alloc FAILED");
       }
     }
 
@@ -356,6 +383,7 @@ private:
 
   // PNG decode buffer (PSRAM)
   uint8_t* _pngBuf;
+  uint16_t* _lineBuf;  // Scanline RGB565 buffer for PNG decode (PSRAM)
   bool _tileFound;      // Did last tile load succeed?
 
   // PNGdec instance
@@ -381,6 +409,7 @@ private:
     int offsetY;      // Screen Y offset for this tile
     int viewportY;    // Top of viewport (MAP_VIEWPORT_Y)
     int viewportH;    // Height of viewport (MAP_VIEWPORT_H)
+    uint16_t* lineBuf; // Scanline decode buffer (PSRAM-allocated, avoids 512B stack usage per callback)
   };
   DrawContext _drawCtx;
 
@@ -487,7 +516,7 @@ private:
   // Load a PNG tile from SD and decode it directly to the display
   // screenX, screenY = top-left corner on display where this tile goes
   bool loadAndRenderTile(int tileX, int tileY, int screenX, int screenY) {
-    if (!_pngBuf || !_einkDisplay) return false;
+    if (!_pngBuf || !_lineBuf || !_einkDisplay) return false;
 
     char path[64];
     buildTilePath(path, sizeof(path), _zoom, tileX, tileY);
@@ -521,6 +550,7 @@ private:
     _drawCtx.offsetY   = screenY;
     _drawCtx.viewportY = MAP_VIEWPORT_Y;
     _drawCtx.viewportH = MAP_VIEWPORT_H;
+    _drawCtx.lineBuf   = _lineBuf;
 
     // Open PNG from memory buffer
     int rc = _png.openRAM(_pngBuf, fileSize, pngDrawCallback);
@@ -547,7 +577,7 @@ private:
   // Uses getLineAsRGB565 with correct (little) endianness for ESP32.
   static int pngDrawCallback(PNGDRAW* pDraw) {
     DrawContext* ctx = (DrawContext*)pDraw->pUser;
-    if (!ctx || !ctx->display || !ctx->png) return 0;
+    if (!ctx || !ctx->display || !ctx->png || !ctx->lineBuf) return 0;
 
     int screenY = ctx->offsetY + pDraw->y;
 
@@ -564,9 +594,8 @@ private:
     }
 
     uint16_t lineWidth = pDraw->iWidth;
-    uint16_t lineBuf[MAP_TILE_SIZE];
     if (lineWidth > MAP_TILE_SIZE) lineWidth = MAP_TILE_SIZE;
-    ctx->png->getLineAsRGB565(pDraw, lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0xFFFFFFFF);
+    ctx->png->getLineAsRGB565(pDraw, ctx->lineBuf, PNG_RGB565_LITTLE_ENDIAN, 0xFFFFFFFF);
 
     for (int x = 0; x < lineWidth; x++) {
       int screenX = ctx->offsetX + x;
@@ -574,7 +603,7 @@ private:
 
       // RGB565 little-endian on ESP32: standard bit layout
       // R[15:11] G[10:5] B[4:0]
-      uint16_t pixel = lineBuf[x];
+      uint16_t pixel = ctx->lineBuf[x];
 
       // For B&W tiles this is 0x0000 (black) or 0xFFFF (white)
       // Simple threshold on full 16-bit value handles both cleanly
@@ -639,6 +668,7 @@ private:
         } else {
           missing++;
         }
+        yield();  // Feed WDT between tiles — each tile can take 1-2s at 80MHz
       }
     }
 

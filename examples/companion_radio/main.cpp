@@ -1122,9 +1122,10 @@ void setup() {
         if (ssid.length() > 0) {
           MESH_DEBUG_PRINTLN("setup() - WiFi: connecting to '%s'", ssid.c_str());
           WiFi.begin(ssid.c_str(), pass.c_str());
-          unsigned long timeout = millis() + 8000;
+          unsigned long timeout = millis() + 3000;  // 3s max — non-critical, Settings can retry
           while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
-            delay(100);
+            yield();  // Feed WDT during wait
+            delay(50);
           }
           if (WiFi.status() == WL_CONNECTED) {
             Serial.printf("WiFi companion: connected to %s, IP: %s\n",
@@ -1415,20 +1416,20 @@ void loop() {
 
   sensors.loop();
 
-  // GPS diagnostic — print sentence count every 30s so we can tell if Serial2 is receiving data
-  #if HAS_GPS
-  {
-    static unsigned long lastGpsDiag = 0;
-    if (millis() - lastGpsDiag >= 30000) {
-      lastGpsDiag = millis();
-      uint32_t sentences = gpsStream.getSentenceCount();
-      uint16_t perSec = gpsStream.getSentencesPerSec();
-      Serial.printf("GPS diag: %lu sentences total, %u/sec, Serial2.available=%d, lat=%.6f lon=%.6f\n",
-                    (unsigned long)sentences, perSec, Serial2.available(),
-                    sensors.node_lat, sensors.node_lon);
-    }
-  }
-  #endif
+  // GPS diagnostic — disabled to reduce serial noise (uncomment for debugging)
+  // #if HAS_GPS
+  // {
+  //   static unsigned long lastGpsDiag = 0;
+  //   if (millis() - lastGpsDiag >= 30000) {
+  //     lastGpsDiag = millis();
+  //     uint32_t sentences = gpsStream.getSentenceCount();
+  //     uint16_t perSec = gpsStream.getSentencesPerSec();
+  //     Serial.printf("GPS diag: %lu sentences total, %u/sec, Serial2.available=%d, lat=%.6f lon=%.6f\n",
+  //                   (unsigned long)sentences, perSec, Serial2.available(),
+  //                   sensors.node_lat, sensors.node_lon);
+  //   }
+  // }
+  // #endif
 
   // Map screen: periodically update own GPS position and contact markers
   #if HAS_GPS
@@ -2492,6 +2493,7 @@ void handleKeyboardInput() {
         ui_task.injectKey('g');  // Re-center on GPS
       } else {
         Serial.println("Opening map");
+        cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
         {
           MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
           if (ms) {
@@ -2509,7 +2511,7 @@ void handleKeyboardInput() {
                 double lon = ((double)ci.gps_lon) / 1000000.0;
                 ms->addMarker(lat, lon, ci.name, ci.type);
                 markerCount++;
-                Serial.printf("  marker: %s @ %.4f,%.4f (type=%d)\n", ci.name, lat, lon, ci.type);
+               // Serial.printf("  marker: %s @ %.4f,%.4f (type=%d)\n", ci.name, lat, lon, ci.type);
               }
             }
             Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
