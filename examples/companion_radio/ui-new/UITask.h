@@ -100,6 +100,10 @@ class UITask : public AbstractUITask {
   bool _vkbActive = false;
   UIScreen* _screenBeforeVKB = nullptr;
   unsigned long _vkbOpenedAt = 0;
+#elif defined(LilyGo_TDeck_Pro)
+  UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
+  UIScreen* _screenBeforeLock = nullptr;
+  bool _locked = false;
 #endif
 
   void userLedHandler();
@@ -174,10 +178,12 @@ public:
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro)
   bool isVKBActive() const { return _vkbActive; }
   unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }

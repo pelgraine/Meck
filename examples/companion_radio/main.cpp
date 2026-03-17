@@ -1775,10 +1775,10 @@ void loop() {
   // ---------------------------------------------------------------------------
   #ifdef MECK_TOUCH_ENABLED
   {
-    // Guard: skip touch when locked or VKB active (T5S3 only has these)
-    bool touchBlocked = false;
+    // Guard: skip touch when locked or VKB active
+    bool touchBlocked = ui_task.isLocked();
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    touchBlocked = ui_task.isLocked() || ui_task.isVKBActive();
+    touchBlocked = touchBlocked || ui_task.isVKBActive();
 #endif
 
     if (!touchBlocked)
@@ -1950,6 +1950,10 @@ void handleKeyboardInput() {
   
   char key = keyboard.readKey();
   if (key == 0) return;
+
+  // Block all keyboard input while lock screen is active.
+  // Still read the key above to clear the TCA8418 buffer.
+  if (ui_task.isLocked()) return;
   
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);

@@ -1035,11 +1035,12 @@ public:
 };
 
 // ==========================================================================
-// Lock Screen — T5S3 only
-// Big clock, battery %, unread message count. Touch disabled while shown.
-// Long press boot button to lock/unlock. Touch disabled while locked.
+// Lock Screen — T5S3 and T-Deck Pro
+// Big clock, battery %, unread message count.
+// T5S3: Long press boot button to lock/unlock. Touch disabled while locked.
+// T-Deck Pro: Double-press boot button to lock/unlock. Touch+keyboard disabled.
 // ==========================================================================
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 class LockScreen : public UIScreen {
   UITask* _task;
   mesh::RTCClock* _rtc;
@@ -1063,7 +1064,11 @@ public:
     }
 
     // ---- Huge clock: HH:MM on one line ----
-    display.setTextSize(5);  // Clock face size (FreeSansBold24pt × 5)
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(5);  // T5S3: FreeSansBold24pt × 5
+#else
+    display.setTextSize(5);  // T-Deck Pro: FreeSansBold12pt at GxEPD 2× scale
+#endif
     display.setColor(DisplayDriver::LIGHT);
     display.drawTextCentered(display.width() / 2, 55, timeBuf);
 
@@ -1092,7 +1097,11 @@ public:
     // ---- Unlock hint ----
     display.setTextSize(0);
     display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
     display.drawTextCentered(display.width() / 2, 120, "Hold button to unlock");
+#else
+    display.drawTextCentered(display.width() / 2, 120, "Dbl-press to unlock");
+#endif
 
     return 30000;
   }
@@ -1101,7 +1110,7 @@ public:
     return false;
   }
 };
-#endif // LilyGo_T5S3_EPaper_Pro
+#endif
 
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
@@ -1166,7 +1175,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
@@ -1436,6 +1445,13 @@ void UITask::loop() {
         c = 0;  // consumed
       }
     }
+#elif defined(LilyGo_TDeck_Pro)
+    // T-Deck Pro: single click ignored while locked — double-press to unlock
+    if (_locked) {
+      c = 0;
+    } else {
+      c = checkDisplayOn(KEY_NEXT);
+    }
 #else
     c = checkDisplayOn(KEY_NEXT);
 #endif
@@ -1702,6 +1718,14 @@ char UITask::handleDoubleClick(char c) {
     board.setBacklight(true);
   }
   c = 0;  // consume event — don't pass through as navigation
+#elif defined(LilyGo_TDeck_Pro)
+  // Double-click boot button → lock/unlock screen
+  if (_locked) {
+    unlockScreen();
+  } else {
+    lockScreen();
+  }
+  c = 0;
 #endif
   checkDisplayOn(c);
   return c;
@@ -1725,13 +1749,15 @@ char UITask::handleTripleClick(char c) {
   return c;
 }
 
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 void UITask::lockScreen() {
   if (_locked) return;
   _locked = true;
   _screenBeforeLock = curr;
   setCurrScreen(lock_screen);
-  board.setBacklight(false);  // Save power
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  board.setBacklight(false);  // Save power (T5S3 backlight)
+#endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
   Serial.println("[UI] Screen locked");
@@ -1750,7 +1776,9 @@ void UITask::unlockScreen() {
   _next_refresh = 0;
   Serial.println("[UI] Screen unlocked");
 }
+#endif // LilyGo_T5S3_EPaper_Pro || LilyGo_TDeck_Pro
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
 void UITask::showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx) {
   _vkb.open(purpose, label, initial, maxLen, contextIdx);
   _vkbActive = true;
