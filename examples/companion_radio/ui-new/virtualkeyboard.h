@@ -37,6 +37,7 @@ enum VKBPurpose {
   VKB_WEB_WIFI_PASS,  // Web reader WiFi password
   VKB_WEB_LINK,       // Web reader link number entry
 #endif
+  VKB_TEXT_PAGE,       // Text reader: go to page number
 };
 
 class VirtualKeyboard {

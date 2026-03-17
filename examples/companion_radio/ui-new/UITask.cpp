@@ -1964,6 +1964,17 @@ void UITask::onVKBSubmit() {
       break;
     }
 #endif
+    case VKB_TEXT_PAGE: {
+      if (strlen(text) > 0) {
+        int pageNum = atoi(text);
+        TextReaderScreen* reader = (TextReaderScreen*)getTextReaderScreen();
+        if (reader && pageNum > 0) {
+          reader->gotoPage(pageNum);
+        }
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
   }
   _screenBeforeVKB = nullptr;
   _next_refresh = 0;

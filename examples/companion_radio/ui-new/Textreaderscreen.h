@@ -115,10 +115,16 @@ inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineSta
   result.nextStart = lineStart;
   if (lineStart >= bufLen || !display) return result;
 
-  int displayW = display->width() - 3;  // 3-unit right margin (rounding safety for proportional fonts)
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  int rightMargin = 5;  // Wider margin for T5S3 (portrait mode especially tight)
+#else
+  int rightMargin = 3;
+#endif
+  int displayW = display->width() - rightMargin;
   char measBuf[300];                // temp buffer for pixel measurement
   int measLen = 0;
   int lastBreakPoint = -1;
+  int lastBreakMeasLen = 0;         // measLen at lastBreakPoint (for mid-word fallback)
   bool inWord = false;
   int charCount = 0;
 
@@ -145,6 +151,7 @@ inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineSta
       // UTF-8 handling: decode multi-byte sequences to CP437 for accurate
       // width measurement.  The renderer (renderPage) does this same conversion,
       // so the measurement must match or it underestimates line width.
+      int charStartIdx = i;  // buffer index where this character started
       if ((uint8_t)c >= 0xC0) {
         // UTF-8 lead byte — decode full sequence to CP437
         int decPos = i;
@@ -156,65 +163,54 @@ inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineSta
         }
         i = decPos - 1;  // -1 because the for loop will i++
         inWord = true;
-        continue;
-      }
-      if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) {
+      } else if ((uint8_t)c >= 0x80 && (uint8_t)c < 0xC0) {
         // Orphan continuation byte — treat as CP437 pass-through (same as renderer)
         if (measLen < 298) measBuf[measLen++] = c;
         charCount++;
         inWord = true;
-        continue;
+      } else {
+        // Plain ASCII
+        charCount++;
+        if (measLen < 298) measBuf[measLen++] = c;
+
+        if (c == ' ' || c == '\t') {
+          if (inWord) {
+            lastBreakPoint = i;
+            lastBreakMeasLen = measLen;
+            inWord = false;
+          }
+        } else if (c == '-') {
+          if (inWord) {
+            lastBreakPoint = i + 1;
+            lastBreakMeasLen = measLen;
+          }
+          inWord = true;
+        } else {
+          inWord = true;
+        }
       }
 
-      // Plain ASCII
-      charCount++;
-      if (measLen < 298) measBuf[measLen++] = c;
-
-      if (c == ' ' || c == '\t') {
-        if (inWord) {
-          // Measure pixel width at this word boundary
-          measBuf[measLen] = '\0';
-          int pw = display->getTextWidth(measBuf);
-          if (pw >= displayW) {
-            // Current word pushes past edge — break at previous word boundary
-            if (lastBreakPoint > lineStart) {
-              result.lineEnd = lastBreakPoint;
-              result.nextStart = lastBreakPoint;
-              while (result.nextStart < bufLen &&
-                     (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
-                result.nextStart++;
-            } else {
-              result.lineEnd = i;
-              result.nextStart = i;
-            }
-            return result;
+      // Per-character pixel width check — catches long words that exceed
+      // displayW without ever hitting a space/hyphen break point.
+      // Only measure every 3 chars to avoid excessive getTextWidth() calls.
+      if ((charCount & 3) == 0 || c == ' ' || c == '-') {
+        measBuf[measLen] = '\0';
+        int pw = display->getTextWidth(measBuf);
+        if (pw >= displayW) {
+          if (lastBreakPoint > lineStart) {
+            // Break at last word boundary
+            result.lineEnd = lastBreakPoint;
+            result.nextStart = lastBreakPoint;
+            while (result.nextStart < bufLen &&
+                   (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
+              result.nextStart++;
+          } else {
+            // No word boundary found — break mid-word before this character
+            result.lineEnd = charStartIdx;
+            result.nextStart = charStartIdx;
           }
-          lastBreakPoint = i;
-          inWord = false;
+          return result;
         }
-      } else if (c == '-') {
-        if (inWord) {
-          // Measure at hyphen break point
-          measBuf[measLen] = '\0';
-          int pw = display->getTextWidth(measBuf);
-          if (pw >= displayW) {
-            if (lastBreakPoint > lineStart) {
-              result.lineEnd = lastBreakPoint;
-              result.nextStart = lastBreakPoint;
-              while (result.nextStart < bufLen &&
-                     (buffer[result.nextStart] == ' ' || buffer[result.nextStart] == '\t'))
-                result.nextStart++;
-            } else {
-              result.lineEnd = i;
-              result.nextStart = i;
-            }
-            return result;
-          }
-          lastBreakPoint = i + 1;
-        }
-        inWord = true;
-      } else {
-        inWord = true;
       }
 
       // Safety: hard char limit (handles spaceless lines, URLs, etc.)
@@ -1248,14 +1244,14 @@ private:
     display.setTextSize(0);
     display.setCursor(0, footerY);
     display.print(status);
-    const char* right = "Swipe: Page   Tap: Next   Hold: Close";
+    const char* right = "Swipe:Page  Tap:GoTo  Hold:Close";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
     display.setCursor(0, footerY);
     display.print(status);
 
-    const char* right = "W/S:Nav Q:Back";
+    const char* right = "A/D:Page Tap:GoTo Q:Back";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif
@@ -1528,6 +1524,20 @@ public:
   // Are we currently reading a book? (for key routing in main.cpp)
   bool isReading() const { return _mode == READING; }
   bool isInFileList() const { return _mode == FILE_LIST; }
+
+  // Jump to a specific page number (1-based for user-facing, converted to 0-based)
+  void gotoPage(int pageNum) {
+    if (!_fileOpen || _totalPages == 0) return;
+    int target = pageNum - 1;  // Convert 1-based input to 0-based
+    if (target < 0) target = 0;
+    if (target >= _totalPages) target = _totalPages - 1;
+    _currentPage = target;
+    loadPageContent();
+    Serial.printf("TextReader: Go to page %d/%d\n", _currentPage + 1, _totalPages);
+  }
+
+  int getTotalPages() const { return _totalPages; }
+  int getCurrentPage() const { return _currentPage; }
 
   // Tap-to-select: given virtual Y, select file list row.
   // Returns: 0=miss, 1=moved, 2=tapped current row.

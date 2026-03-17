@@ -614,11 +614,22 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
-    // Reader: tap in reading mode = next page; in file list = select row
+    // Reader: tap in reading mode; in file list = select row
     if (ui_task.isOnTextReader()) {
       TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
       if (reader && reader->isReading()) {
-        return 'd';  // next page
+        // Footer zone tap → go to page
+        if (vy >= 113) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          char label[24];
+          snprintf(label, sizeof(label), "Page (1-%d)", reader->getTotalPages());
+          ui_task.showVirtualKeyboard(VKB_TEXT_PAGE, label, "", 5);
+          return 0;
+#else
+          return 0;  // T-Deck Pro: tap footer consumed, no action (use keyboard)
+#endif
+        }
+        return 'd';  // Body tap = next page
       }
       // File list: tap-to-select, double-tap to open
       if (reader && reader->isInFileList()) {
