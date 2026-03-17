@@ -70,6 +70,24 @@ static inline int findGpsBaudIndex(uint32_t baud) {
   return 0;
 }
 
+// Auto-lock timeout options (minutes, 0=disabled)
+static const uint8_t AUTO_LOCK_OPTIONS[] = { 0, 2, 5, 10, 15, 30 };
+#define AUTO_LOCK_OPTION_COUNT 6
+
+static inline const char* autoLockLabel(uint8_t minutes) {
+  if (minutes == 0) return "None";
+  static char buf[8];
+  snprintf(buf, sizeof(buf), "%d min", minutes);
+  return buf;
+}
+
+static inline int findAutoLockIndex(uint8_t minutes) {
+  for (int i = 0; i < AUTO_LOCK_OPTION_COUNT; i++) {
+    if (AUTO_LOCK_OPTIONS[i] == minutes) return i;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Settings row types
 // ---------------------------------------------------------------------------
@@ -86,6 +104,9 @@ enum SettingsRowType : uint8_t {
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
 #if defined(LilyGo_T5S3_EPaper_Pro)
   ROW_PORTRAIT_MODE,  // Portrait orientation toggle
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  ROW_AUTO_LOCK,      // Auto-lock timeout picker (None/2/5/10/15/30 min)
 #endif
   ROW_GPS_BAUD,       // GPS baud rate picker (requires reboot)
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
@@ -312,6 +333,9 @@ private:
       addRow(ROW_DARK_MODE);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+      addRow(ROW_AUTO_LOCK);
 #endif
       #ifdef MECK_WIFI_COMPANION
       addRow(ROW_WIFI_SETUP);
@@ -869,6 +893,19 @@ public:
         case ROW_PORTRAIT_MODE:
           snprintf(tmp, sizeof(tmp), "Portrait Mode: %s",
                    _prefs->portrait_mode ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+#endif
+
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+        case ROW_AUTO_LOCK:
+          if (editing && _editMode == EDIT_PICKER) {
+            snprintf(tmp, sizeof(tmp), "< Auto Lock: %s >",
+                     autoLockLabel(AUTO_LOCK_OPTIONS[_editPickerIdx]));
+          } else {
+            snprintf(tmp, sizeof(tmp), "Auto Lock: %s",
+                     autoLockLabel(_prefs->auto_lock_minutes));
+          }
           display.print(tmp);
           break;
 #endif
@@ -1493,6 +1530,9 @@ public:
         } else if (type == ROW_GPS_BAUD) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = GPS_BAUD_OPTION_COUNT - 1;
+        } else if (type == ROW_AUTO_LOCK) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = AUTO_LOCK_OPTION_COUNT - 1;
         } else {
           // Radio preset
           _editPickerIdx--;
@@ -1507,6 +1547,9 @@ public:
         } else if (type == ROW_GPS_BAUD) {
           _editPickerIdx++;
           if (_editPickerIdx >= GPS_BAUD_OPTION_COUNT) _editPickerIdx = 0;
+        } else if (type == ROW_AUTO_LOCK) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= AUTO_LOCK_OPTION_COUNT) _editPickerIdx = 0;
         } else {
           // Radio preset
           _editPickerIdx++;
@@ -1524,6 +1567,12 @@ public:
           _editMode = EDIT_NONE;
           Serial.printf("Settings: GPS baud set to %lu (reboot to apply)\n",
                         (unsigned long)_prefs->gps_baudrate);
+        } else if (type == ROW_AUTO_LOCK) {
+          _prefs->auto_lock_minutes = AUTO_LOCK_OPTIONS[_editPickerIdx];
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: Auto lock = %s\n",
+                        autoLockLabel(_prefs->auto_lock_minutes));
         } else {
           // Apply radio preset
           if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
@@ -1718,6 +1767,11 @@ public:
           the_mesh.savePrefs();
           Serial.printf("Settings: Portrait mode = %s\n",
                         _prefs->portrait_mode ? "ON" : "OFF");
+          break;
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+        case ROW_AUTO_LOCK:
+          startEditPicker(findAutoLockIndex(_prefs->auto_lock_minutes));
           break;
 #endif
         #ifdef MECK_WIFI_COMPANION

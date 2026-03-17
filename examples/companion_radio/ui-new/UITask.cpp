@@ -1164,6 +1164,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   ui_started_at = millis();
   _alert_expiry = 0;
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  _lastInputMillis = millis();
+#endif
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
@@ -1494,6 +1497,9 @@ void UITask::loop() {
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 100;  // trigger refresh
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
   }
 
   userLedHandler();
@@ -1642,6 +1648,20 @@ if (curr) curr->poll();
 #endif
   }
 
+  // Auto-lock idle timer — runs regardless of display on/off state
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  if (_node_prefs && _node_prefs->auto_lock_minutes > 0 && !_locked) {
+    uint8_t alm = _node_prefs->auto_lock_minutes;
+    // Only act on valid option values (guards against garbage from uninitialised prefs)
+    if (alm == 2 || alm == 5 || alm == 10 || alm == 15 || alm == 30) {
+      unsigned long lock_timeout = (unsigned long)alm * 60000UL;
+      if (millis() - _lastInputMillis >= lock_timeout) {
+        lockScreen();
+      }
+    }
+  }
+#endif
+
 #ifdef PIN_VIBRATION
   vibration.loop();
 #endif
@@ -1683,6 +1703,9 @@ char UITask::checkDisplayOn(char c) {
     }
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 0;  // trigger refresh
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
   }
   return c;
 }
@@ -1755,6 +1778,10 @@ void UITask::lockScreen() {
   _locked = true;
   _screenBeforeLock = curr;
   setCurrScreen(lock_screen);
+  // Ensure display is on so lock screen renders (auto-off may have turned it off)
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
 #if defined(LilyGo_T5S3_EPaper_Pro)
   board.setBacklight(false);  // Save power (T5S3 backlight)
 #endif
@@ -1772,7 +1799,12 @@ void UITask::unlockScreen() {
     gotoHomeScreen();
   }
   _screenBeforeLock = nullptr;
+  // Ensure display is on so unlocked screen renders
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
   _auto_off = millis() + AUTO_OFF_MILLIS;
+  _lastInputMillis = millis();  // Reset auto-lock idle timer
   _next_refresh = 0;
   Serial.println("[UI] Screen unlocked");
 }
@@ -2007,6 +2039,9 @@ void UITask::injectKey(char c) {
     }
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
     // Debounce refresh when editing UTC offset - e-ink takes 644ms per refresh
     // so don't queue another render until the current one could have finished
     if (isEditingHomeScreen()) {
