@@ -152,6 +152,31 @@ public:
 
   FilterMode getFilter() const { return _filter; }
 
+  // Tap-to-select: given virtual Y, select contact row.
+  // Returns: 0=miss, 1=moved, 2=tapped current row.
+  int selectRowAtVY(int vy) {
+    if (_filteredCount == 0) return 0;
+    const int headerH = 14, footerH = 14, lineH = 9;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const int bodyTop = headerH;
+#else
+    const int bodyTop = headerH + 5;
+#endif
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+
+    int maxVisible = (128 - headerH - footerH) / lineH;
+    if (maxVisible < 3) maxVisible = 3;
+    int startIdx = max(0, min(_scrollPos - maxVisible / 2,
+                              _filteredCount - maxVisible));
+
+    int tappedRow = startIdx + (vy - bodyTop) / lineH;
+    if (tappedRow < 0 || tappedRow >= _filteredCount) return 0;
+
+    if (tappedRow == _scrollPos) return 2;
+    _scrollPos = tappedRow;
+    return 1;
+  }
+
   // Get the raw contact table index for the currently highlighted item
   // Returns -1 if no valid selection
   int getSelectedContactIdx() const {

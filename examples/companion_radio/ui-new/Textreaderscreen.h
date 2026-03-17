@@ -1529,6 +1529,34 @@ public:
   bool isReading() const { return _mode == READING; }
   bool isInFileList() const { return _mode == FILE_LIST; }
 
+  // Tap-to-select: given virtual Y, select file list row.
+  // Returns: 0=miss, 1=moved, 2=tapped current row.
+  int selectRowAtVY(int vy) {
+    if (_mode != FILE_LIST) return 0;
+    const int startY = 14, footerH = 14, listLineH = 8;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const int bodyTop = startY;
+#else
+    const int bodyTop = startY + 5;  // GxEPD baseline offset
+#endif
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+
+    int totalItems = totalListItems();
+    if (totalItems == 0) return 0;
+    int maxVisible = (128 - startY - footerH) / listLineH;
+    if (maxVisible < 3) maxVisible = 3;
+    if (maxVisible > 15) maxVisible = 15;
+    int startIdx = max(0, min(_selectedFile - maxVisible / 2,
+                              totalItems - maxVisible));
+
+    int tappedRow = startIdx + (vy - bodyTop) / listLineH;
+    if (tappedRow < 0 || tappedRow >= totalItems) return 0;
+
+    if (tappedRow == _selectedFile) return 2;
+    _selectedFile = tappedRow;
+    return 1;
+  }
+
   int render(DisplayDriver& display) override {
     if (!_sdReady) {
       display.setCursor(0, 20);

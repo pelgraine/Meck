@@ -338,8 +338,15 @@
 #endif
 
 // =============================================================================
-// T5S3 E-Paper Pro — GT911 Touch Input
+// Touch Input — unified across T5S3 (GT911) and T-Deck Pro (CST328)
 // =============================================================================
+
+// Define MECK_TOUCH_ENABLED for any platform with touch support
+#if defined(LilyGo_T5S3_EPaper_Pro) || (defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN))
+  #define MECK_TOUCH_ENABLED 1
+#endif
+
+// --- T5S3: GT911 capacitive touch driver ---
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #include "TouchDrvGT911.hpp"
   #include <SD.h>
@@ -355,28 +362,7 @@
   static bool gt911Ready = false;
   static bool sdCardReady = false;  // T5S3 SD card state
 
-  // Touch state machine — supports tap, long press, and swipe
-  static bool touchDown = false;
-  static unsigned long touchDownTime = 0;
-  static int16_t touchDownX = 0;
-  static int16_t touchDownY = 0;
-  static int16_t touchLastX = 0;
-  static int16_t touchLastY = 0;
-  static unsigned long lastTouchSeenMs = 0;  // Last time getPoint() returned true
-  #define TOUCH_LONG_PRESS_MS  500
-  #define TOUCH_SWIPE_THRESHOLD 60   // Min pixels to count as a swipe (physical)
-  #define TOUCH_LIFT_DEBOUNCE_MS 150 // No-touch duration before "finger lifted"
-  #define TOUCH_MIN_INTERVAL_MS 300  // Min ms between accepted events
-  static bool longPressHandled = false;
-  static bool swipeHandled = false;
-  static bool touchCooldown = false;
-  static unsigned long lastTouchEventMs = 0;
-
   // Read GT911 in landscape orientation (960×540)
-  // GT911 reports portrait (540×960), rotate: x=raw_y, y=540-1-raw_x
-  // Note: Do NOT gate on GT911_PIN_INT — it pulses briefly per event
-  // and goes high between reports, causing drags to look like taps.
-  // Polling getPoint() directly works for continuous touch tracking.
   static bool readTouchLandscape(int16_t* outX, int16_t* outY) {
     if (!gt911Ready) return false;
     int16_t raw_x, raw_y;
@@ -388,11 +374,7 @@
     return false;
   }
 
-  // Read GT911 in portrait orientation (540×960, rotation 3)
-  // Maps GT911 native coords to portrait logical space
   // Read GT911 in portrait orientation (540×960, canvas rotation 3)
-  // Rotation 3 maps logical(lx,ly) → physical(ly, 539-lx).
-  // Inverting: logical_x = raw_x, logical_y = raw_y (GT911 native = portrait).
   static bool readTouchPortrait(int16_t* outX, int16_t* outY) {
     if (!gt911Ready) return false;
     int16_t raw_x, raw_y;
@@ -403,13 +385,62 @@
     }
     return false;
   }
+#endif
 
-  // Unified touch reader — picks landscape or portrait based on display mode
+// --- Shared touch state machine variables ---
+#ifdef MECK_TOUCH_ENABLED
+  static bool touchDown = false;
+  static unsigned long touchDownTime = 0;
+  static int16_t touchDownX = 0;
+  static int16_t touchDownY = 0;
+  static int16_t touchLastX = 0;
+  static int16_t touchLastY = 0;
+  static unsigned long lastTouchSeenMs = 0;
+  #define TOUCH_LONG_PRESS_MS  500
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+    #define TOUCH_SWIPE_THRESHOLD 60   // T5S3: 960×540 — 60px ≈ 6% of width
+  #else
+    #define TOUCH_SWIPE_THRESHOLD 30   // T-Deck Pro: 240×320 — 30px ≈ 12.5% of width
+  #endif
+  #define TOUCH_LIFT_DEBOUNCE_MS 150
+  #define TOUCH_MIN_INTERVAL_MS 300
+  static bool longPressHandled = false;
+  static bool swipeHandled = false;
+  static bool touchCooldown = false;
+  static unsigned long lastTouchEventMs = 0;
+
+  // Unified touch reader — returns physical screen coordinates
   static bool readTouch(int16_t* outX, int16_t* outY) {
+  #if defined(LilyGo_T5S3_EPaper_Pro)
     if (display.isPortraitMode()) {
       return readTouchPortrait(outX, outY);
     }
     return readTouchLandscape(outX, outY);
+  #elif defined(LilyGo_TDeck_Pro)
+    return touchInput.getPoint(*outX, *outY);
+  #else
+    return false;
+  #endif
+  }
+
+  // Convert physical touch coords to virtual 128×128 coordinate space
+  static void touchToVirtual(int16_t px, int16_t py, int& vx, int& vy) {
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+    float sx = display.isPortraitMode() ? ((float)EPD_HEIGHT / 128.0f) : ((float)EPD_WIDTH / 128.0f);
+    float sy = display.isPortraitMode() ? ((float)EPD_WIDTH / 128.0f) : ((float)EPD_HEIGHT / 128.0f);
+  #elif defined(LilyGo_TDeck_Pro)
+    float sx = (float)EINK_WIDTH / 128.0f;   // 240/128 = 1.875
+    float sy = (float)EINK_HEIGHT / 128.0f;   // 320/128 = 2.5
+  #endif
+    vx = (int)(px / sx);
+  #if defined(LilyGo_TDeck_Pro)
+    // Subtract EINK_Y_OFFSET to align touch coords with virtual render coords.
+    // GxEPD setCursor/fillRect add offset_y (5) internally, so raw physical→virtual
+    // is off by that amount.
+    vy = (int)(py / sy) - EINK_Y_OFFSET;
+  #else
+    vy = (int)(py / sy);
+  #endif
   }
 #endif
 
@@ -527,16 +558,13 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
 /* END GLOBAL OBJECTS */
 
-// T5S3 touch mapping — must be after ui_task declaration
-#if defined(LilyGo_T5S3_EPaper_Pro)
+// Touch mapping — must be after ui_task declaration
+#ifdef MECK_TOUCH_ENABLED
   // Map a single tap based on current screen context
   static char mapTouchTap(int16_t x, int16_t y) {
-    // Convert physical screen coords to virtual (128×128) using current scale
-    // Scale factors change between landscape (7.5, 4.22) and portrait (4.22, 7.5)
-    float sx = display.isPortraitMode() ? ((float)EPD_HEIGHT / 128.0f) : ((float)EPD_WIDTH / 128.0f);
-    float sy = display.isPortraitMode() ? ((float)EPD_WIDTH / 128.0f) : ((float)EPD_HEIGHT / 128.0f);
-    int vx = (int)(x / sx);
-    int vy = (int)(y / sy);
+    // Convert physical screen coords to virtual (128×128)
+    int vx, vy;
+    touchToVirtual(x, y, vx, vy);
 
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
     // Exception: text reader reading mode uses full screen for content (no header)
@@ -586,60 +614,74 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
-    // Reader (reading mode): tap = next page
+    // Reader: tap in reading mode = next page; in file list = select row
     if (ui_task.isOnTextReader()) {
       TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
       if (reader && reader->isReading()) {
         return 'd';  // next page
       }
-      return KEY_ENTER;  // file list: open selected
+      // File list: tap-to-select, double-tap to open
+      if (reader && reader->isInFileList()) {
+        int result = reader->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;  // Moved selection
+        }
+        if (result == 2) return KEY_ENTER;  // Same row — open
+      }
+      return 0;
     }
 
     // Notes editing: tap → open keyboard for typing
     if (ui_task.isOnNotesScreen()) {
       NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
       if (notes && notes->isEditing()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
         ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
-        return 0;
+#endif
+        return 0;  // T-Deck Pro: keyboard handles typing directly
       }
     }
 
 #ifdef MECK_WEB_READER
-    // Web reader: context-dependent taps (VKB for text fields, navigation elsewhere)
+    // Web reader: context-dependent taps
     if (ui_task.isOnWebReader()) {
       WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
       if (wr) {
         if (wr->isReading()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
           // Footer zone tap → open link VKB (if links exist)
           if (vy >= 113 && wr->getLinkCount() > 0) {
             ui_task.showVirtualKeyboard(VKB_WEB_LINK, "Link #", "", 3);
             return 0;
           }
+#endif
           return 'd';  // Tap reading area → next page
         }
 
         if (wr->isHome()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
           int sel = wr->getHomeSelected();
           if (sel == 1) {
-            // URL bar → open VKB for URL entry
             ui_task.showVirtualKeyboard(VKB_WEB_URL, "Enter URL",
                                          wr->getUrlText(), WEB_MAX_URL_LEN - 1);
             return 0;
           }
           if (sel == 2) {
-            // Search → open VKB for DuckDuckGo search
             ui_task.showVirtualKeyboard(VKB_WEB_SEARCH, "Search DuckDuckGo", "", 127);
             return 0;
           }
-          return KEY_ENTER;  // IRC, bookmarks, history: select
+#endif
+          return KEY_ENTER;  // Select current item (keyboard handles text on T-Deck Pro)
         }
 
         if (wr->isWifiSetup()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
           if (wr->isPasswordEntry()) {
-            // Open VKB for WiFi password entry
             ui_task.showVirtualKeyboard(VKB_WEB_WIFI_PASS, "WiFi Password", "", 63);
             return 0;
           }
+#endif
           return KEY_ENTER;  // SSID list: select, failed: retry
         }
       }
@@ -658,6 +700,48 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         return 'v';  // Show path overlay
       }
       return 0;  // Tap on message area — consumed, no action
+    }
+
+    // Contacts screen: tap to select row, tap same row to activate
+    if (ui_task.isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+      if (cs) {
+        int result = cs->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;  // Moved cursor
+        }
+        if (result == 2) return KEY_ENTER;  // Same row — activate
+      }
+      return 0;
+    }
+
+    // Discovery screen: tap to select, tap same to add
+    if (ui_task.isOnDiscoveryScreen()) {
+      DiscoveryScreen* ds = (DiscoveryScreen*)ui_task.getDiscoveryScreen();
+      if (ds) {
+        int result = ds->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;
+        }
+        if (result == 2) return KEY_ENTER;  // Same row — add to contacts
+      }
+      return 0;
+    }
+
+    // Settings screen: tap to select row, tap same row to activate
+    if (ui_task.isOnSettingsScreen()) {
+      SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
+      if (ss && !ss->isEditing()) {
+        int result = ss->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;  // Moved cursor — just refresh, don't activate
+        }
+        if (result == 2) return KEY_ENTER;  // Tapped same row — activate
+      }
+      return KEY_ENTER;  // Editing mode or header/footer tap
     }
 
     // All other screens: tap = select
@@ -775,6 +859,7 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
     // Channel screen: long press → compose to current channel
     if (ui_task.isOnChannelScreen()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
       uint8_t chIdx = ui_task.getChannelScreenViewIdx();
       ChannelDetails ch;
       if (the_mesh.getChannel(chIdx, ch)) {
@@ -783,6 +868,9 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
         ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
       }
       return 0;
+#else
+      return KEY_ENTER;  // T-Deck Pro: keyboard handles compose mode
+#endif
     }
 
     // Contacts screen: long press → DM for chat contacts, admin for repeaters
@@ -791,6 +879,7 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       if (cs) {
         int idx = cs->getSelectedContactIdx();
         uint8_t ctype = cs->getSelectedContactType();
+#if defined(LilyGo_T5S3_EPaper_Pro)
         if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
           char dname[32];
           cs->getSelectedContactName(dname, sizeof(dname));
@@ -802,6 +891,14 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
           ui_task.gotoRepeaterAdmin(idx);
           return 0;
         }
+#else
+        // T-Deck Pro: repeater admin works directly, DM via keyboard compose
+        if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+          ui_task.gotoRepeaterAdmin(idx);
+          return 0;
+        }
+        return KEY_ENTER;
+#endif
       }
       return KEY_ENTER;
     }
@@ -817,8 +914,12 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
       if (admin) {
         RepeaterAdminScreen::AdminState astate = admin->getState();
         if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
           ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
           return 0;
+#else
+          return KEY_ENTER;  // T-Deck Pro: keyboard handles password entry
+#endif
         }
       }
     }
@@ -836,20 +937,11 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
       if (ss) {
-        if (ss->isEditingText()) {
-          // Open VKB pre-populated with current edit buffer
-          ui_task.showVirtualKeyboard(VKB_SETTINGS_TEXT, ss->getEditLabel(),
-                                       ss->getEditBuf(), SETTINGS_TEXT_BUF - 1);
-          return 0;
-        }
-        if (ss->isEditingNumOrPicker()) {
-          return 0;  // Consume — don't confirm prematurely
-        }
-        if (ss->isCursorOnDeletableChannel()) {
-          return 'x';  // Triggers existing X key → EDIT_CONFIRM delete flow
+        if (ss->isEditing()) {
+          return 0;  // Consume — don't interfere with active edit mode
         }
       }
-      return KEY_ENTER;  // All other settings rows: toggle/edit as normal
+      return KEY_ENTER;  // Not editing: toggle/edit selected row
     }
 
     // Default: enter/select
@@ -1672,106 +1764,100 @@ void loop() {
   #endif
 
   // ---------------------------------------------------------------------------
-  // T5S3 GT911 Touch Input — tap/swipe/long-press state machine
+  // Touch Input — tap/swipe/long-press state machine (T5S3 + T-Deck Pro)
   // Gestures:
   //   Tap = finger down + up with minimal movement → select/open
   //   Swipe = finger drag > threshold → scroll/page turn
   //   Long press = finger held > 500ms without moving → edit/enter
   // After processing an event, cooldown waits for finger lift before next event.
   // Touch is disabled while lock screen is active.
-  // When virtual keyboard is active, taps route to keyboard.
+  // When virtual keyboard is active (T5S3), taps route to keyboard.
   // ---------------------------------------------------------------------------
-  #if defined(LilyGo_T5S3_EPaper_Pro)
-  if (!ui_task.isLocked() && !ui_task.isVKBActive())
+  #ifdef MECK_TOUCH_ENABLED
   {
-    int16_t tx, ty;
-    bool gotPoint = readTouch(&tx, &ty);
-    unsigned long now = millis();
+    // Guard: skip touch when locked or VKB active (T5S3 only has these)
+    bool touchBlocked = false;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    touchBlocked = ui_task.isLocked() || ui_task.isVKBActive();
+#endif
 
-    if (gotPoint) {
-      lastTouchSeenMs = now;  // Track when we last saw a valid touch report
-    }
+    if (!touchBlocked)
+    {
+      int16_t tx, ty;
+      bool gotPoint = readTouch(&tx, &ty);
+      unsigned long now = millis();
 
-    // Determine if finger is "present" — GT911 getPoint() only returns true
-    // once per report cycle (~10ms), then returns false until the next report.
-    // During a blocking e-ink refresh (~1s), many cycles are missed.
-    // So "finger lifted" = no valid report for TOUCH_LIFT_DEBOUNCE_MS.
-    bool fingerPresent = (now - lastTouchSeenMs) < TOUCH_LIFT_DEBOUNCE_MS;
-
-    // Rate limit — after processing an event, wait for finger lift + cooldown
-    if (touchCooldown) {
-      if (!fingerPresent && (now - lastTouchEventMs) >= TOUCH_MIN_INTERVAL_MS) {
-        touchCooldown = false;
-        touchDown = false;
-      }
-    }
-    else if (gotPoint && !touchDown) {
-      // Finger just touched down (first valid report)
-      touchDown = true;
-      touchDownTime = now;
-      touchDownX = tx;
-      touchDownY = ty;
-      touchLastX = tx;
-      touchLastY = ty;
-      longPressHandled = false;
-      swipeHandled = false;
-    }
-    else if (touchDown && fingerPresent) {
-      // Finger still down — update position if we got a new point
       if (gotPoint) {
+        lastTouchSeenMs = now;
+      }
+
+      bool fingerPresent = (now - lastTouchSeenMs) < TOUCH_LIFT_DEBOUNCE_MS;
+
+      if (touchCooldown) {
+        if (!fingerPresent && (now - lastTouchEventMs) >= TOUCH_MIN_INTERVAL_MS) {
+          touchCooldown = false;
+          touchDown = false;
+        }
+      }
+      else if (gotPoint && !touchDown) {
+        touchDown = true;
+        touchDownTime = now;
+        touchDownX = tx;
+        touchDownY = ty;
         touchLastX = tx;
         touchLastY = ty;
+        longPressHandled = false;
+        swipeHandled = false;
       }
+      else if (touchDown && fingerPresent) {
+        if (gotPoint) {
+          touchLastX = tx;
+          touchLastY = ty;
+        }
 
-      int16_t dx = touchLastX - touchDownX;
-      int16_t dy = touchLastY - touchDownY;
-      int16_t dist = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
+        int16_t dx = touchLastX - touchDownX;
+        int16_t dy = touchLastY - touchDownY;
+        int16_t dist = abs(dx) > abs(dy) ? abs(dx) : abs(dy);
 
-      // Swipe detection — fire once when threshold exceeded
-      if (!swipeHandled && !longPressHandled && dist >= TOUCH_SWIPE_THRESHOLD) {
-        swipeHandled = true;
-        Serial.printf("[Touch] SWIPE dx=%d dy=%d\n", dx, dy);
-        char c = mapTouchSwipe(dx, dy);
-        if (c) {
-          ui_task.injectKey(c);
-          cpuPower.setBoost();
+        if (!swipeHandled && !longPressHandled && dist >= TOUCH_SWIPE_THRESHOLD) {
+          swipeHandled = true;
+          char c = mapTouchSwipe(dx, dy);
+          if (c) {
+            ui_task.injectKey(c);
+            cpuPower.setBoost();
+          }
+          lastTouchEventMs = now;
+          touchCooldown = true;
         }
-        lastTouchEventMs = now;
-        touchCooldown = true;
+        else if (!longPressHandled && !swipeHandled && dist < TOUCH_SWIPE_THRESHOLD &&
+                 (now - touchDownTime) >= TOUCH_LONG_PRESS_MS) {
+          longPressHandled = true;
+          char c = mapTouchLongPress(touchDownX, touchDownY);
+          if (c) {
+            ui_task.injectKey(c);
+            cpuPower.setBoost();
+          }
+          lastTouchEventMs = now;
+          touchCooldown = true;
+        }
       }
-      // Long press — only if finger hasn't moved much
-      else if (!longPressHandled && !swipeHandled && dist < TOUCH_SWIPE_THRESHOLD &&
-               (now - touchDownTime) >= TOUCH_LONG_PRESS_MS) {
-        longPressHandled = true;
-        Serial.printf("[Touch] LONG PRESS at (%d,%d)\n", touchDownX, touchDownY);
-        char c = mapTouchLongPress(touchDownX, touchDownY);
-        if (c) {
-          ui_task.injectKey(c);
+      else if (touchDown && !fingerPresent) {
+        touchDown = false;
+        if (!longPressHandled && !swipeHandled) {
+          char c = mapTouchTap(touchDownX, touchDownY);
+          if (c) {
+            ui_task.injectKey(c);
+          }
           cpuPower.setBoost();
+          lastTouchEventMs = now;
+          touchCooldown = true;
         }
-        lastTouchEventMs = now;
-        touchCooldown = true;
-      }
-    }
-    else if (touchDown && !fingerPresent) {
-      // Finger lifted (no report for TOUCH_LIFT_DEBOUNCE_MS)
-      touchDown = false;
-      if (!longPressHandled && !swipeHandled) {
-        Serial.printf("[Touch] TAP at (%d,%d)\n", touchDownX, touchDownY);
-        char c = mapTouchTap(touchDownX, touchDownY);
-        if (c) {
-          ui_task.injectKey(c);
-        }
-        cpuPower.setBoost();
-        lastTouchEventMs = now;
-        touchCooldown = true;
       }
     }
   }
 
-  // Virtual keyboard touch routing.
-  // Guard: require finger lift AND 2s after VKB opened before accepting taps.
-  // The 2s covers the ~1s blocking e-ink refresh plus margin for finger lift.
+  // Virtual keyboard touch routing (T5S3 only — T-Deck Pro uses physical keyboard)
+#if defined(LilyGo_T5S3_EPaper_Pro)
   {
     static bool vkbNeedLift = true;
 
@@ -1780,26 +1866,25 @@ void loop() {
       bool gotPt = readTouch(&tx, &ty);
 
       if (!gotPt) {
-        vkbNeedLift = false;  // Finger lifted
+        vkbNeedLift = false;
       }
 
       bool cooldownOk = (millis() - ui_task.vkbOpenedAt()) > 2000;
 
       if (gotPt && !vkbNeedLift && cooldownOk) {
-        float sx = display.isPortraitMode() ? ((float)EPD_HEIGHT / 128.0f) : ((float)EPD_WIDTH / 128.0f);
-        float sy = display.isPortraitMode() ? ((float)EPD_WIDTH / 128.0f) : ((float)EPD_HEIGHT / 128.0f);
-        int vx = (int)(tx / sx);
-        int vy = (int)(ty / sy);
+        int vx, vy;
+        touchToVirtual(tx, ty, vx, vy);
         if (ui_task.getVKB().handleTap(vx, vy)) {
           ui_task.forceRefresh();
         }
-        vkbNeedLift = true;  // Require lift before next tap
+        vkbNeedLift = true;
       }
     } else {
-      vkbNeedLift = true;  // Reset for next VKB open
+      vkbNeedLift = true;
     }
   }
-  #endif
+#endif
+  #endif // MECK_TOUCH_ENABLED
 
   // Poll touch input for phone dialer numpad
   // Hybrid debounce: finger-up detection + 150ms minimum between accepted taps.
@@ -2511,7 +2596,6 @@ void handleKeyboardInput() {
                 double lon = ((double)ci.gps_lon) / 1000000.0;
                 ms->addMarker(lat, lon, ci.name, ci.type);
                 markerCount++;
-               // Serial.printf("  marker: %s @ %.4f,%.4f (type=%d)\n", ci.name, lat, lon, ci.type);
               }
             }
             Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);

@@ -517,6 +517,35 @@ public:
   bool isEditing() const { return _editMode != EDIT_NONE; }
   bool hasRadioChanges() const { return _radioChanged; }
 
+  // Tap-to-select: given a virtual Y coordinate, compute which row was tapped
+  // and move cursor there. Returns: 0=miss, 1=moved to new row, 2=tapped current row.
+  int selectRowAtVY(int vy) {
+    if (_editMode != EDIT_NONE) return 0;  // Don't change cursor while editing
+    const int headerH = 14, footerH = 14, lineH = 9;
+    // T-Deck Pro render offsets fillRect by +5 (GxEPD baseline compensation),
+    // so visual rows start 5 units below headerH. T5S3 renders at y directly.
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const int bodyTop = headerH;
+#else
+    const int bodyTop = headerH + 5;
+#endif
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;  // Outside body area
+
+    int maxVisible = (128 - headerH - footerH) / lineH;
+    if (maxVisible < 3) maxVisible = 3;
+    int startIdx = max(0, min(_cursor - maxVisible / 2, _numRows - maxVisible));
+
+    int tappedRow = startIdx + (vy - bodyTop) / lineH;
+    if (tappedRow < 0 || tappedRow >= _numRows) return 0;
+
+    // Skip non-selectable rows (headers/separators)
+    if (!isSelectable(tappedRow)) return 0;
+
+    if (tappedRow == _cursor) return 2;  // Same row — activate
+    _cursor = tappedRow;
+    return 1;  // Moved to new row
+  }
+
   // ---------------------------------------------------------------------------
   // WiFi scan helpers
   // ---------------------------------------------------------------------------
