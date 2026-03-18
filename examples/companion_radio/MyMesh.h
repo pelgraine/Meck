@@ -8,7 +8,7 @@
 #define FIRMWARE_VER_CODE 10
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "17 March 2026"
+#define FIRMWARE_BUILD_DATE "18 March 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
@@ -79,6 +79,7 @@
 struct AdvertPath {
   uint8_t pubkey_prefix[7];
   uint8_t path_len;
+  uint8_t type;             // ADV_TYPE_* (Chat/Repeater/Room/Sensor)
   char    name[32];
   uint32_t recv_timestamp;
   uint8_t path[MAX_PATH_SIZE];
@@ -119,6 +120,12 @@ public:
   int  getDiscoveredCount() const { return _discoveredCount; }
   const DiscoveredNode& getDiscovered(int idx) const { return _discovered[idx]; }
   bool addDiscoveredToContacts(int idx);  // promote a discovered node into contacts
+
+  // Last Heard — public wrappers for contact add/remove from UI
+  void scheduleLazyContactSave();
+  int getContactBlob(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
+    return getBlobByKey(key, key_len, dest_buf);
+  }
   
   // Queue a sent channel message for BLE app sync
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
@@ -262,7 +269,7 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
-  #define ADVERT_PATH_TABLE_SIZE   16
+  #define ADVERT_PATH_TABLE_SIZE   40
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
 
     // Sent message repeat tracking

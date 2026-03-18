@@ -1140,9 +1140,9 @@ private:
     display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: home");
 #else
     display.setCursor(0, footerY);
-    display.print("Q:Back W/S:Nav");
+    display.print("Q:Bk");
 
-    const char* right = "Ent:Open";
+    const char* right = "Tap/Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

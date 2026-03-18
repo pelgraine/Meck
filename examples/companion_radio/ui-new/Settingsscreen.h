@@ -1299,9 +1299,9 @@ public:
       if (_subScreen != SUB_NONE) {
         display.print("Q:Back");
       } else {
-        display.print("Q:Bck");
+        display.print("Q:Bk");
       }
-      const char* r = "W/S:Up/Dwn Entr:Chng";
+      const char* r = "Tap/Ent:Edit";
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
       display.print(r);
     }

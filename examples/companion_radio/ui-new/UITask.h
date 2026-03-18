@@ -84,6 +84,7 @@ class UITask : public AbstractUITask {
 #endif
   UIScreen* repeater_admin;   // Repeater admin screen
   UIScreen* discovery_screen;  // Node discovery scan screen
+  UIScreen* last_heard_screen; // Last heard passive advert list
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -143,6 +144,7 @@ public:
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
+  void gotoLastHeardScreen();              // Navigate to last heard passive list
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -179,6 +181,7 @@ public:
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
+  bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
@@ -210,6 +213,8 @@ public:
 
   // Check if home screen is in an editing mode (e.g. UTC offset editor)
   bool isEditingHomeScreen() const;
+  // Check if home screen is showing the Recent Adverts page
+  bool isHomeOnRecentPage() const;
 
   // Inject a key press from external source (e.g., keyboard)
   void injectKey(char c);
@@ -237,6 +242,7 @@ public:
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
+  UIScreen* getLastHeardScreen() const { return last_heard_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }

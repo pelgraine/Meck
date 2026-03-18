@@ -570,8 +570,8 @@ private:
     display.print("Swipe:Nav");
     const char* right = "Tap:Open";
 #else
-    display.print("Q:Back W/S:Nav");
-    const char* right = "Ent:Open";
+    display.print("Q:Bk");
+    const char* right = "Tap/Ent:Open";
 #endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -592,8 +592,8 @@ private:
       display.print("Tap:Edit");
       const char* right = "Hold:Delete";
 #else
-      display.print("Q:Bck Ent:Edit");
-      const char* right = "Sh+Del:Del";
+      display.print("Q:Bk Ent:Edit");
+      const char* right = "X:Delete";
 #endif
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
@@ -684,9 +684,9 @@ private:
 
     const char* right = "Tap:Edit";
 #else
-    display.print("Q:Bck Ent:Edit");
+    display.print("Q:Bk Ent:Edit");
 
-    const char* right = "Sh+Del:Del";
+    const char* right = "X:Delete";
 #endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);

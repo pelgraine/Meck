@@ -19,6 +19,7 @@
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
+  #include "LastHeardScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -357,6 +358,7 @@
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
+  #include "LastHeardScreen.h"
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -558,6 +560,41 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
 /* END GLOBAL OBJECTS */
 
+// Last Heard: add/remove contact for selected entry.
+// Called from both touch double-tap (mapTouchTap) and keyboard Enter handler.
+#ifdef DISPLAY_CLASS
+static void lastHeardToggleContact() {
+  LastHeardScreen* lh = (LastHeardScreen*)ui_task.getLastHeardScreen();
+  if (!lh) return;
+  const AdvertPath* entry = lh->getSelectedEntry();
+  if (!entry) return;
+
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(entry->pubkey_prefix, 7);
+  if (existing) {
+    the_mesh.removeContact(*existing);
+    the_mesh.scheduleLazyContactSave();
+    char alertBuf[40];
+    snprintf(alertBuf, sizeof(alertBuf), "Removed: %s", entry->name);
+    ui_task.showAlert(alertBuf, 1500);
+    Serial.printf("[LastHeard] Removed: %s\n", entry->name);
+  } else {
+    uint8_t blob[256];
+    int blobLen = the_mesh.getContactBlob(entry->pubkey_prefix, 7, blob);
+    if (blobLen > 0) {
+      the_mesh.importContact(blob, blobLen);
+      the_mesh.scheduleLazyContactSave();
+      char alertBuf[40];
+      snprintf(alertBuf, sizeof(alertBuf), "Added: %s", entry->name);
+      ui_task.showAlert(alertBuf, 1500);
+      Serial.printf("[LastHeard] Added: %s\n", entry->name);
+    } else {
+      ui_task.showAlert("Blob not found", 1500);
+    }
+  }
+  ui_task.forceRefresh();
+}
+#endif
+
 // Touch mapping — must be after ui_task declaration
 #ifdef MECK_TOUCH_ENABLED
   // Map a single tap based on current screen context
@@ -610,7 +647,12 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
     }
 
     // Home screen (non-tile pages): left half taps backward, right half forward
+    // Exception: on Recent Adverts page, bottom area tap opens Last Heard
     if (ui_task.isOnHomeScreen()) {
+      if (ui_task.isHomeOnRecentPage() && vy >= 100) {
+        ui_task.gotoLastHeardScreen();
+        return 0;
+      }
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
     }
 
@@ -737,6 +779,23 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
           return 0;
         }
         if (result == 2) return KEY_ENTER;  // Same row — add to contacts
+      }
+      return 0;
+    }
+
+    // Last Heard screen: tap to select, tap same to add/remove
+    if (ui_task.isOnLastHeardScreen()) {
+      LastHeardScreen* lh = (LastHeardScreen*)ui_task.getLastHeardScreen();
+      if (lh) {
+        int result = lh->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;
+        }
+        if (result == 2) {
+          lastHeardToggleContact();
+          return 0;
+        }
       }
       return 0;
     }
@@ -2635,9 +2694,9 @@ void handleKeyboardInput() {
       break;
     
     case 's':
-      // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery
+      // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
-          || ui_task.isOnDiscoveryScreen()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -2653,7 +2712,7 @@ void handleKeyboardInput() {
     case 'w':
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
-          || ui_task.isOnDiscoveryScreen()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -2778,6 +2837,8 @@ void handleKeyboardInput() {
             ui_task.showAlert("Add failed", 1000);
           }
         }
+      } else if (ui_task.isOnLastHeardScreen()) {
+        lastHeardToggleContact();
       } else {
         // Other screens: pass Enter as generic select
         ui_task.injectKey(13);
@@ -2842,6 +2903,14 @@ void handleKeyboardInput() {
       }
       break;
 
+    case 'h':
+      // Open Last Heard screen (passive advert list)
+      if (!ui_task.isOnLastHeardScreen()) {
+        Serial.println("Opening last heard");
+        ui_task.gotoLastHeardScreen();
+      }
+      break;
+
     case 'q':
     case '\b':
       // If channel screen reply select or path overlay is showing, dismiss it
@@ -2872,6 +2941,12 @@ void handleKeyboardInput() {
         the_mesh.stopDiscovery();
         Serial.println("Nav: Discovery -> Contacts");
         ui_task.gotoContactsScreen();
+        break;
+      }
+      // Last Heard: Q goes back to home
+      if (ui_task.isOnLastHeardScreen()) {
+        Serial.println("Nav: Last Heard -> Home");
+        ui_task.gotoHomeScreen();
         break;
       }
       // Go back to home screen (admin mode handled above)

@@ -203,13 +203,9 @@ public:
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
-    display.print("Q:Back");
+    display.print("Q:Bk F:Rescan");
 
-    const char* mid = "Ent:Add";
-    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
-    display.print(mid);
-
-    const char* right = "F:Rescan";
+    const char* right = "Tap/Ent:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

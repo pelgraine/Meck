@@ -339,15 +339,10 @@ public:
 #else
     // Left: Q:Bk
     display.setCursor(0, footerY);
-    display.print("Q:Bk");
+    display.print("Q:Bk A/D:Filter");
 
-    // Center: A/D:Filter
-    const char* mid = "A/D:Filtr";
-    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
-    display.print(mid);
-
-    // Right: F:Dscvr
-    const char* right = "F:Dscvr";
+    // Right: Tap/Ent:Select
+    const char* right = "Tap/Ent:Select";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

@@ -4,6 +4,7 @@
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
 #include "DiscoveryScreen.h"
+#include "LastHeardScreen.h"
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -255,6 +256,7 @@ public:
        _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
+  bool isOnRecentPage() const { return _page == HomePage::RECENT; }
   void cancelEditing() { 
     if (_editing_utc) {
       _node_prefs->utc_offset_hours = _saved_utc_offset;
@@ -497,6 +499,16 @@ public:
         display.setCursor(display.width() - timestamp_width - 1, y);
         display.print(tmp);
       }
+      // Hint for full Last Heard screen
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, display.height() - 24,
+                               "Tap here for full Last Heard list");
+#else
+      display.drawTextCentered(display.width() / 2, display.height() - 24,
+                               "Press H: Full Last Heard list");
+#endif
     } else if (_page == HomePage::RADIO) {
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(1);
@@ -1178,6 +1190,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
+  last_heard_screen = new LastHeardScreen(&rtc_clock);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -1642,6 +1655,13 @@ if (curr) curr->poll();
       }
 #endif
       _display->endFrame();
+
+      // E-ink render throttle: enforce minimum 800ms between renders.
+      // Each partial update blocks for ~644ms. Without this floor, incoming
+      // mesh notifications can trigger back-to-back renders that starve the
+      // keyboard polling loop, causing TCA8418 FIFO overflow and lost keys.
+      unsigned long minNext = millis() + 800;
+      if (_next_refresh < minNext) _next_refresh = minNext;
     }
 #if AUTO_OFF_MILLIS > 0
     if (millis() > _auto_off) {
@@ -2083,6 +2103,10 @@ bool UITask::isEditingHomeScreen() const {
   return curr == home && ((HomeScreen *) home)->isEditingUTC();
 }
 
+bool UITask::isHomeOnRecentPage() const {
+  return curr == home && ((HomeScreen *) home)->isOnRecentPage();
+}
+
 void UITask::gotoChannelScreen() {
   ((ChannelScreen *) channel_screen)->resetScroll();
   // Mark the currently viewed channel as read
@@ -2233,6 +2257,16 @@ void UITask::gotoRepeaterAdmin(int contactIdx) {
 void UITask::gotoDiscoveryScreen() {
   ((DiscoveryScreen*)discovery_screen)->resetScroll();
   setCurrScreen(discovery_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoLastHeardScreen() {
+  ((LastHeardScreen*)last_heard_screen)->resetScroll();
+  setCurrScreen(last_heard_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
