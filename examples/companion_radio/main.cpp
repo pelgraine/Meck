@@ -364,6 +364,13 @@
   static bool gt911Ready = false;
   static bool sdCardReady = false;  // T5S3 SD card state
 
+#ifdef MECK_CARDKB
+  #include "CardKBKeyboard.h"
+  static CardKBKeyboard cardkb;
+  static unsigned long lastCardKBProbe = 0;
+  #define CARDKB_PROBE_INTERVAL_MS 5000  // Re-probe for hot-plug every 5s
+#endif
+
   // Read GT911 in landscape orientation (960×540)
   static bool readTouchLandscape(int16_t* outX, int16_t* outY) {
     if (!gt911Ready) return false;
@@ -1397,6 +1404,16 @@ void setup() {
     }
   #endif
 
+  // Initialize CardKB external keyboard (if connected via QWIIC)
+  #if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+    if (cardkb.begin()) {
+      ui_task.setCardKBDetected(true);
+      Serial.println("setup() - CardKB detected at 0x5F");
+    } else {
+      Serial.println("setup() - CardKB not detected (will re-probe)");
+    }
+  #endif
+
   // RTC diagnostic + boot-time serial clock sync (T5S3 has no GPS)
   #if defined(LilyGo_T5S3_EPaper_Pro)
   {
@@ -1977,6 +1994,128 @@ void loop() {
   }
 #endif
   #endif // MECK_TOUCH_ENABLED
+
+  // ---------------------------------------------------------------------------
+  // CardKB external keyboard polling (T5S3 only, via QWIIC)
+  // When VKB is active: typed characters feed into the VKB text buffer.
+  // When VKB is not active: navigation keys route through injectKey().
+  // ESC key maps to 'q' (back) when no VKB is active.
+  // ---------------------------------------------------------------------------
+#if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+  {
+    // Hot-plug detection: re-probe periodically
+    if (millis() - lastCardKBProbe >= CARDKB_PROBE_INTERVAL_MS) {
+      lastCardKBProbe = millis();
+      bool wasDetected = cardkb.isDetected();
+      bool nowDetected = cardkb.probe();
+      if (nowDetected != wasDetected) {
+        ui_task.setCardKBDetected(nowDetected);
+        Serial.printf("[CardKB] %s\n", nowDetected ? "Connected" : "Disconnected");
+      }
+    }
+
+    // Poll for keypress
+    char ckb = cardkb.readKey();
+    if (ckb != 0) {
+      // Block input while locked (same as touch)
+      if (!ui_task.isLocked()) {
+        cpuPower.setBoost();
+        ui_task.keepAlive();
+
+        if (ui_task.isVKBActive()) {
+          // VKB is open — feed character into VKB text buffer
+          ui_task.feedCardKBChar(ckb);
+        } else if (ckb == 0x1B) {
+          // ESC → back (same as 'q' on T-Deck Pro)
+          ui_task.injectKey('q');
+        } else if (ui_task.isOnHomeScreen()) {
+          // Home screen: letter shortcuts open tiles, arrows cycle pages
+          switch (ckb) {
+            case 'm': ui_task.gotoChannelScreen(); break;
+            case 'c': ui_task.gotoContactsScreen(); break;
+            case 'e': ui_task.gotoTextReader(); break;
+            case 'n': ui_task.gotoNotesScreen(); break;
+            case 's': ui_task.gotoSettingsScreen(); break;
+            case 'f': ui_task.gotoDiscoveryScreen(); break;
+            case 'h': ui_task.gotoLastHeardScreen(); break;
+#ifdef MECK_WEB_READER
+            case 'b': ui_task.gotoWebReader(); break;
+#endif
+#if HAS_GPS
+            case 'g': ui_task.gotoMapScreen(); break;
+#endif
+            default:  ui_task.injectKey(ckb); break;
+          }
+        } else {
+          // Non-home screens: handle Enter for compose, remap arrows to WASD.
+          // Screens respond to w/s (scroll up/down) and a/d (prev/next channel)
+          // but not to KEY_LEFT/KEY_RIGHT constants.
+          if (ckb == '\r') {
+            // Enter key — screen-specific compose or select
+            if (ui_task.isOnChannelScreen()) {
+              // Open VKB for channel message compose
+              uint8_t chIdx = ui_task.getChannelScreenViewIdx();
+              ChannelDetails ch;
+              if (the_mesh.getChannel(chIdx, ch)) {
+                char label[40];
+                snprintf(label, sizeof(label), "To: %s", ch.name);
+                ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+              }
+            } else if (ui_task.isOnContactsScreen()) {
+              // DM compose for chat contacts, admin for repeaters
+              ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+              if (cs) {
+                int idx = cs->getSelectedContactIdx();
+                uint8_t ctype = cs->getSelectedContactType();
+                if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+                  char dname[32];
+                  cs->getSelectedContactName(dname, sizeof(dname));
+                  char label[40];
+                  snprintf(label, sizeof(label), "DM: %s", dname);
+                  ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+                  ui_task.gotoRepeaterAdmin(idx);
+                }
+              }
+            } else if (ui_task.isOnRepeaterAdmin()) {
+              // Open VKB for password or CLI entry
+              RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
+              if (admin) {
+                RepeaterAdminScreen::AdminState astate = admin->getState();
+                if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+                  ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
+                } else {
+                  ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
+                }
+              }
+            } else if (ui_task.isOnNotesScreen()) {
+              // Open VKB for note editing
+              NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
+              if (notesScr && notesScr->isEditing()) {
+                ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
+              } else {
+                ui_task.injectKey('\r');  // File list: select/open
+              }
+            } else {
+              // All other screens: pass Enter through for native handling
+              // (settings toggle, discovery add-contact, last heard, text reader file select, etc.)
+              ui_task.injectKey('\r');
+            }
+          } else {
+            // Non-Enter keys: remap arrows to WASD, pass others through
+            switch (ckb) {
+              case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
+              case (char)0xF1: ui_task.injectKey('s'); break;  // Down → scroll down
+              case (char)0xF3: ui_task.injectKey('a'); break;  // Left → prev channel/category
+              case (char)0xF4: ui_task.injectKey('d'); break;  // Right → next channel/category
+              default:         ui_task.injectKey(ckb); break;
+            }
+          }
+        }
+      }
+    }
+  }
+#endif
 
   // Poll touch input for phone dialer numpad
   // Hybrid debounce: finger-up detection + 150ms minimum between accepted taps.

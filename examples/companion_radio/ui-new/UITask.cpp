@@ -2032,6 +2032,30 @@ void UITask::onVKBCancel() {
   display.invalidateFrameCRC();
   Serial.println("[UI] VKB cancelled");
 }
+
+#ifdef MECK_CARDKB
+void UITask::feedCardKBChar(char c) {
+  if (_vkbActive) {
+    // VKB is open — feed character into its text buffer
+    if (_vkb.feedChar(c)) {
+      _next_refresh = 0;  // Redraw VKB immediately
+      _auto_off = millis() + 120000;  // Extend timeout while typing
+      // Check if feedChar triggered submit or cancel
+      if (_vkb.status() == VKB_SUBMITTED) {
+        onVKBSubmit();
+      } else if (_vkb.status() == VKB_CANCELLED) {
+        onVKBCancel();
+      }
+    } else {
+      // feedChar returned false — nav keys (arrows) while VKB is active
+      // Not consumed; could be used for cursor movement in future
+    }
+  } else {
+    // No VKB active — route as normal navigation key
+    injectKey(c);
+  }
+}
+#endif
 #endif
 
 bool UITask::getGPSState() {

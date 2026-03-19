@@ -103,6 +103,9 @@ class UITask : public AbstractUITask {
   bool _vkbActive = false;
   UIScreen* _screenBeforeVKB = nullptr;
   unsigned long _vkbOpenedAt = 0;
+#ifdef MECK_CARDKB
+  bool _cardkbDetected = false;
+#endif
 #elif defined(LilyGo_TDeck_Pro)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
   UIScreen* _screenBeforeLock = nullptr;
@@ -197,6 +200,11 @@ public:
   void showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx = 0);
   void onVKBSubmit();
   void onVKBCancel();
+#ifdef MECK_CARDKB
+  void setCardKBDetected(bool v) { _cardkbDetected = v; }
+  bool hasCardKB() const { return _cardkbDetected; }
+  void feedCardKBChar(char c);
+#endif
 #endif
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }
