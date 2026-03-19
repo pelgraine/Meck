@@ -588,7 +588,11 @@ static void lastHeardToggleContact() {
       ui_task.showAlert(alertBuf, 1500);
       Serial.printf("[LastHeard] Added: %s\n", entry->name);
     } else {
-      ui_task.showAlert("Blob not found", 1500);
+      // Blob store is limited to 100 entries — with many contacts, blobs
+      // from non-contact nodes get evicted quickly. User needs to wait
+      // for the node to re-broadcast its advert.
+      ui_task.showAlert("Advert expired, wait for re-broadcast", 2500);
+      Serial.printf("[LastHeard] Blob evicted for %s (store full)\n", entry->name);
     }
   }
   ui_task.forceRefresh();

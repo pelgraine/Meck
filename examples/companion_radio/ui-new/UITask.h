@@ -97,6 +97,7 @@ class UITask : public AbstractUITask {
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
+  unsigned long _lastLockRefresh = 0;  // Periodic lock screen clock update
 
   VirtualKeyboard _vkb;
   bool _vkbActive = false;
@@ -107,6 +108,7 @@ class UITask : public AbstractUITask {
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
+  unsigned long _lastLockRefresh = 0;  // Periodic lock screen clock update
 #endif
 
   void userLedHandler();

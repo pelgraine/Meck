@@ -507,7 +507,7 @@ public:
                                "Tap here for full Last Heard list");
 #else
       display.drawTextCentered(display.width() / 2, display.height() - 24,
-                               "Press H: Full Last Heard list");
+                               "H: Full Last Heard list");
 #endif
     } else if (_page == HomePage::RADIO) {
       display.setColor(DisplayDriver::YELLOW);
@@ -1682,6 +1682,21 @@ if (curr) curr->poll();
       }
     }
   }
+
+  // Lock screen clock refresh — update time display every 15 minutes.
+  // Runs outside the _display->isOn() gate so it works even after auto-off.
+  // Wakes the display briefly to render, then lets auto-off turn it back off.
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 15UL * 60UL * 1000UL;  // 15 minutes
+    if (millis() - _lastLockRefresh >= LOCK_REFRESH_INTERVAL) {
+      _lastLockRefresh = millis();
+      if (!_display->isOn()) {
+        _display->turnOn();
+        _auto_off = millis() + 5000;  // Stay on just long enough to render + settle
+      }
+      _next_refresh = 0;  // Trigger immediate render
+    }
+  }
 #endif
 
 #ifdef PIN_VIBRATION
@@ -1809,6 +1824,7 @@ void UITask::lockScreen() {
 #endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
+  _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
   Serial.println("[UI] Screen locked");
 }
 
