@@ -17,6 +17,7 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "variant.h"  // For I2C_SDA, I2C_SCL (bus recovery)
 
 // I2C address (defined in variant.h, fallback here)
 #ifndef CARDKB_I2C_ADDR
@@ -60,11 +61,31 @@ public:
 
   // Poll for a keypress. Returns 0 if no key available.
   // Returns raw ASCII for printable chars, or Meck KEY_* constants for nav keys.
+  // Throttled to avoid flooding I2C bus — polls at most every 50ms.
+  // On read failure, backs off 500ms and re-inits Wire to recover bus state.
   char readKey() {
     if (!_detected) return 0;
 
+    unsigned long now = millis();
+    if (now - _lastPoll < _pollInterval) return 0;
+    _lastPoll = now;
+
     Wire.requestFrom((uint8_t)CARDKB_I2C_ADDR, (uint8_t)1);
-    if (!Wire.available()) return 0;
+    if (!Wire.available()) {
+      _errorCount++;
+      if (_errorCount >= 3) {
+        // I2C bus may be stuck — re-init to recover
+        Wire.begin(I2C_SDA, I2C_SCL);
+        Wire.setClock(100000);
+        _pollInterval = 500;  // Back off for 500ms
+        _errorCount = 0;
+        Serial.println("[CardKB] I2C error recovery — bus re-init");
+      }
+      return 0;
+    }
+
+    _errorCount = 0;
+    _pollInterval = 50;  // Normal polling rate
 
     uint8_t raw = Wire.read();
     if (raw == 0) return 0;
@@ -92,6 +113,9 @@ public:
 
 private:
   bool _detected;
+  unsigned long _lastPoll = 0;
+  unsigned long _pollInterval = 50;  // ms between polls (increases on error)
+  uint8_t _errorCount = 0;
 };
 
 #endif // CARDKB_KEYBOARD_H

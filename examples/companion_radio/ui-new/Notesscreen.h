@@ -102,6 +102,10 @@ private:
   uint32_t _rtcTime;      // Unix timestamp (0 = unavailable)
   int8_t _utcOffset;      // UTC offset in hours
 
+  // Callback to get fresh RTC time (set by UITask at init)
+  typedef uint32_t (*TimeGetterFn)();
+  TimeGetterFn _getTimeFn = nullptr;
+
   // ---- Helpers ----
 
   String getFullPath(const String& filename) {
@@ -1077,6 +1081,10 @@ private:
   // ---- Note Creation ----
 
   void createNewNote() {
+    // Refresh timestamp at creation time for accurate filenames
+    if (_getTimeFn) {
+      _rtcTime = _getTimeFn();
+    }
     _currentFile = generateFilename();
     _buf[0] = '\0';
     _bufLen = 0;
@@ -1175,6 +1183,8 @@ public:
     _rtcTime = rtcTime;
     _utcOffset = utcOffset;
   }
+
+  void setTimeGetter(TimeGetterFn fn) { _getTimeFn = fn; }
 
   void enter(DisplayDriver& display) {
     initLayout(display);

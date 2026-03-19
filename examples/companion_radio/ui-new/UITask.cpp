@@ -1463,6 +1463,15 @@ void UITask::loop() {
           gotoHomeScreen();  // file list: go home
           c = 0;
         }
+      } else if (isOnNotesScreen()) {
+        NotesScreen* notes = (NotesScreen*)notes_screen;
+        if (notes && notes->isEditing()) {
+          notes->triggerSaveAndExit();  // save and return to file list
+        } else {
+          notes->exitNotes();
+          gotoHomeScreen();
+        }
+        c = 0;
       } else {
         gotoHomeScreen();
         c = 0;  // consumed
@@ -1616,6 +1625,11 @@ if (curr) curr->poll();
           onVKBCancel();
         }
       } else {
+        // Default: allow full refresh. Override for notes editing (no flash while typing).
+        display.setForcePartial(false);
+        if (isOnNotesScreen() && ((NotesScreen*)notes_screen)->isEditing()) {
+          display.setForcePartial(true);
+        }
         int delay_millis = curr->render(*_display);
 
         // Check if settings screen needs VKB for WiFi password entry
@@ -2194,6 +2208,10 @@ void UITask::gotoNotesScreen() {
   if (_display != NULL) {
     notes->enter(*_display);
   }
+  // Set fresh timestamp and wire up time getter for note creation
+  notes->setTimestamp(rtc_clock.getCurrentTime(),
+                      _node_prefs ? _node_prefs->utc_offset_hours : 0);
+  notes->setTimeGetter([]() -> uint32_t { return rtc_clock.getCurrentTime(); });
   setCurrScreen(notes_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();

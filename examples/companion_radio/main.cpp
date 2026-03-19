@@ -2025,90 +2025,118 @@ void loop() {
         if (ui_task.isVKBActive()) {
           // VKB is open — feed character into VKB text buffer
           ui_task.feedCardKBChar(ckb);
-        } else if (ckb == 0x1B) {
-          // ESC → back (same as 'q' on T-Deck Pro)
-          ui_task.injectKey('q');
         } else if (ui_task.isOnHomeScreen()) {
-          // Home screen: letter shortcuts open tiles, arrows cycle pages
-          switch (ckb) {
-            case 'm': ui_task.gotoChannelScreen(); break;
-            case 'c': ui_task.gotoContactsScreen(); break;
-            case 'e': ui_task.gotoTextReader(); break;
-            case 'n': ui_task.gotoNotesScreen(); break;
-            case 's': ui_task.gotoSettingsScreen(); break;
-            case 'f': ui_task.gotoDiscoveryScreen(); break;
-            case 'h': ui_task.gotoLastHeardScreen(); break;
+          // Home screen: ESC does nothing special, letter shortcuts open tiles
+          if (ckb == 0x1B) {
+            // ESC on home — no-op (already home)
+          } else {
+            switch (ckb) {
+              case 'm': ui_task.gotoChannelScreen(); break;
+              case 'c': ui_task.gotoContactsScreen(); break;
+              case 'e': ui_task.gotoTextReader(); break;
+              case 'n': ui_task.gotoNotesScreen(); break;
+              case 's': ui_task.gotoSettingsScreen(); break;
+              case 'f': ui_task.gotoDiscoveryScreen(); break;
+              case 'h': ui_task.gotoLastHeardScreen(); break;
 #ifdef MECK_WEB_READER
-            case 'b': ui_task.gotoWebReader(); break;
+              case 'b': ui_task.gotoWebReader(); break;
 #endif
 #if HAS_GPS
-            case 'g': ui_task.gotoMapScreen(); break;
+              case 'g': ui_task.gotoMapScreen(); break;
 #endif
-            default:  ui_task.injectKey(ckb); break;
+              default:  ui_task.injectKey(ckb); break;
+            }
           }
         } else {
-          // Non-home screens: handle Enter for compose, remap arrows to WASD.
-          // Screens respond to w/s (scroll up/down) and a/d (prev/next channel)
-          // but not to KEY_LEFT/KEY_RIGHT constants.
-          if (ckb == '\r') {
-            // Enter key — screen-specific compose or select
-            if (ui_task.isOnChannelScreen()) {
-              // Open VKB for channel message compose
-              uint8_t chIdx = ui_task.getChannelScreenViewIdx();
-              ChannelDetails ch;
-              if (the_mesh.getChannel(chIdx, ch)) {
-                char label[40];
-                snprintf(label, sizeof(label), "To: %s", ch.name);
-                ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
-              }
-            } else if (ui_task.isOnContactsScreen()) {
-              // DM compose for chat contacts, admin for repeaters
-              ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
-              if (cs) {
-                int idx = cs->getSelectedContactIdx();
-                uint8_t ctype = cs->getSelectedContactType();
-                if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-                  char dname[32];
-                  cs->getSelectedContactName(dname, sizeof(dname));
-                  char label[40];
-                  snprintf(label, sizeof(label), "DM: %s", dname);
-                  ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
-                } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
-                  ui_task.gotoRepeaterAdmin(idx);
-                }
-              }
-            } else if (ui_task.isOnRepeaterAdmin()) {
-              // Open VKB for password or CLI entry
-              RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
-              if (admin) {
-                RepeaterAdminScreen::AdminState astate = admin->getState();
-                if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
-                  ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
+          // Non-home screens: context-specific routing
+          bool handled = false;
+
+          // Notes editing/renaming: route ALL keys directly (no VKB).
+          // This gives: Enter=newline, arrows=cursor, printable=insert, ESC=save&exit
+          if (ui_task.isOnNotesScreen()) {
+            NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
+            if (notesScr && (notesScr->isEditing() || notesScr->isRenaming())) {
+              handled = true;
+              if (ckb == 0x1B) {
+                // ESC: save & exit editing, or cancel rename
+                if (notesScr->isEditing()) {
+                  notesScr->triggerSaveAndExit();
                 } else {
-                  ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
+                  ui_task.injectKey('q');
                 }
-              }
-            } else if (ui_task.isOnNotesScreen()) {
-              // Open VKB for note editing
-              NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
-              if (notesScr && notesScr->isEditing()) {
-                ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
+              } else if (notesScr->isEditing()) {
+                // Editing mode: arrows move cursor, everything else types directly
+                switch (ckb) {
+                  case (char)0xF2: notesScr->moveCursorUp();    break;
+                  case (char)0xF1: notesScr->moveCursorDown();  break;
+                  case (char)0xF3: notesScr->moveCursorLeft();  break;
+                  case (char)0xF4: notesScr->moveCursorRight(); break;
+                  default:         ui_task.injectKey(ckb);      break;
+                }
               } else {
-                ui_task.injectKey('\r');  // File list: select/open
+                // Renaming mode: all keys go directly to rename handler
+                ui_task.injectKey(ckb);
+              }
+              ui_task.forceRefresh();
+            }
+          }
+
+          if (!handled) {
+            // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
+            if (ckb == 0x1B) {
+              ui_task.injectKey('q');
+            } else if (ckb == '\r') {
+              // Enter key — screen-specific compose or select
+              if (ui_task.isOnChannelScreen()) {
+                // Open VKB for channel message compose
+                uint8_t chIdx = ui_task.getChannelScreenViewIdx();
+                ChannelDetails ch;
+                if (the_mesh.getChannel(chIdx, ch)) {
+                  char label[40];
+                  snprintf(label, sizeof(label), "To: %s", ch.name);
+                  ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                }
+              } else if (ui_task.isOnContactsScreen()) {
+                // DM compose for chat contacts, admin for repeaters
+                ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+                if (cs) {
+                  int idx = cs->getSelectedContactIdx();
+                  uint8_t ctype = cs->getSelectedContactType();
+                  if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+                    char dname[32];
+                    cs->getSelectedContactName(dname, sizeof(dname));
+                    char label[40];
+                    snprintf(label, sizeof(label), "DM: %s", dname);
+                    ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                  } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+                    ui_task.gotoRepeaterAdmin(idx);
+                  }
+                }
+              } else if (ui_task.isOnRepeaterAdmin()) {
+                // Open VKB for password or CLI entry
+                RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
+                if (admin) {
+                  RepeaterAdminScreen::AdminState astate = admin->getState();
+                  if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+                    ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
+                  } else {
+                    ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
+                  }
+                }
+              } else {
+                // All other screens: pass Enter through for native handling
+                // (settings toggle, discovery add-contact, last heard, text reader, notes file list, etc.)
+                ui_task.injectKey('\r');
               }
             } else {
-              // All other screens: pass Enter through for native handling
-              // (settings toggle, discovery add-contact, last heard, text reader file select, etc.)
-              ui_task.injectKey('\r');
-            }
-          } else {
-            // Non-Enter keys: remap arrows to WASD, pass others through
-            switch (ckb) {
-              case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
-              case (char)0xF1: ui_task.injectKey('s'); break;  // Down → scroll down
-              case (char)0xF3: ui_task.injectKey('a'); break;  // Left → prev channel/category
-              case (char)0xF4: ui_task.injectKey('d'); break;  // Right → next channel/category
-              default:         ui_task.injectKey(ckb); break;
+              // Non-Enter keys: remap arrows to WASD, pass others through
+              switch (ckb) {
+                case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
+                case (char)0xF1: ui_task.injectKey('s'); break;  // Down → scroll down
+                case (char)0xF3: ui_task.injectKey('a'); break;  // Left → prev channel/category
+                case (char)0xF4: ui_task.injectKey('d'); break;  // Right → next channel/category
+                default:         ui_task.injectKey(ckb); break;
+              }
             }
           }
         }
@@ -2843,14 +2871,6 @@ void handleKeyboardInput() {
     case 'n':
       // Open notes
       Serial.println("Opening notes");
-      {
-        NotesScreen* notesScr2 = (NotesScreen*)ui_task.getNotesScreen();
-        if (notesScr2) {
-          uint32_t ts = rtc_clock.getCurrentTime();
-          int8_t utcOff = the_mesh.getNodePrefs()->utc_offset_hours;
-          notesScr2->setTimestamp(ts, utcOff);
-        }
-      }
       ui_task.gotoNotesScreen();
       break;
     
