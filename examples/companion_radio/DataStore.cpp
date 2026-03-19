@@ -443,6 +443,101 @@ void DataStore::saveContacts(DataStoreHost* host) {
   }
 }
 
+// =========================================================================
+// Chunked contact save — non-blocking across multiple loop iterations
+// =========================================================================
+
+bool DataStore::beginSaveContacts(DataStoreHost* host) {
+  if (_saveInProgress) return false;  // Already saving
+
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  _saveFile = openWrite(fs, "/contacts3.tmp");
+  if (!_saveFile) {
+    Serial.println("DataStore: chunked save FAILED — cannot open tmp file");
+    return false;
+  }
+
+  _saveHost = host;
+  _saveIdx = 0;
+  _saveRecordsWritten = 0;
+  _saveWriteOk = true;
+  _saveInProgress = true;
+  Serial.println("DataStore: chunked save started");
+  return true;
+}
+
+bool DataStore::saveContactsChunk(int batchSize) {
+  if (!_saveInProgress || !_saveWriteOk) return false;
+
+  ContactInfo c;
+  uint8_t unused = 0;
+  int written = 0;
+
+  while (written < batchSize && _saveHost->getContactForSave(_saveIdx, c)) {
+    bool success = (_saveFile.write(c.id.pub_key, 32) == 32);
+    success = success && (_saveFile.write((uint8_t *)&c.name, 32) == 32);
+    success = success && (_saveFile.write(&c.type, 1) == 1);
+    success = success && (_saveFile.write(&c.flags, 1) == 1);
+    success = success && (_saveFile.write(&unused, 1) == 1);
+    success = success && (_saveFile.write((uint8_t *)&c.sync_since, 4) == 4);
+    success = success && (_saveFile.write((uint8_t *)&c.out_path_len, 1) == 1);
+    success = success && (_saveFile.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+    success = success && (_saveFile.write(c.out_path, 64) == 64);
+    success = success && (_saveFile.write((uint8_t *)&c.lastmod, 4) == 4);
+    success = success && (_saveFile.write((uint8_t *)&c.gps_lat, 4) == 4);
+    success = success && (_saveFile.write((uint8_t *)&c.gps_lon, 4) == 4);
+
+    if (!success) {
+      _saveWriteOk = false;
+      Serial.printf("DataStore: chunked save write error at record %d\n", _saveIdx);
+      return false;  // Error — finishSaveContacts will clean up
+    }
+
+    _saveRecordsWritten++;
+    _saveIdx++;
+    written++;
+  }
+
+  // Check if there are more contacts to write
+  ContactInfo peek;
+  if (_saveHost->getContactForSave(_saveIdx, peek)) {
+    return true;  // More to write
+  }
+  return false;  // Done
+}
+
+void DataStore::finishSaveContacts() {
+  if (!_saveInProgress) return;
+
+  _saveFile.close();
+  _saveInProgress = false;
+
+  FILESYSTEM* fs = _getContactsChannelsFS();
+  const char* finalPath = "/contacts3";
+  const char* tmpPath   = "/contacts3.tmp";
+
+  // Verify
+  size_t expectedBytes = _saveRecordsWritten * 152;
+  File verify = openRead(fs, tmpPath);
+  size_t bytesWritten = verify ? verify.size() : 0;
+  if (verify) verify.close();
+
+  if (!_saveWriteOk || bytesWritten != expectedBytes) {
+    Serial.printf("DataStore: chunked save ABORTED — wrote %d bytes, expected %d (%d records)\n",
+                  (int)bytesWritten, (int)expectedBytes, _saveRecordsWritten);
+    fs->remove(tmpPath);
+    return;
+  }
+
+  fs->remove(finalPath);
+  if (fs->rename(tmpPath, finalPath)) {
+    Serial.printf("DataStore: saved %d contacts (%d bytes, chunked)\n",
+                  _saveRecordsWritten, (int)bytesWritten);
+  } else {
+    Serial.println("DataStore: rename failed, tmp file preserved");
+  }
+}
+
 void DataStore::loadChannels(DataStoreHost* host) {
     FILESYSTEM* fs = _getContactsChannelsFS();
 

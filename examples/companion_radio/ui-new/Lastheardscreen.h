@@ -55,7 +55,7 @@ public:
   // Check if selected node is already in contacts
   bool isSelectedInContacts() const {
     if (_scrollPos < 0 || _scrollPos >= _count) return false;
-    return the_mesh.lookupContactByPubKey(_entries[_scrollPos].pubkey_prefix, 7) != nullptr;
+    return the_mesh.lookupContactByPubKey(_entries[_scrollPos].pubkey_prefix, 8) != nullptr;
   }
 
   // Get selected entry (for add/delete operations)
@@ -162,13 +162,17 @@ public:
                  selected ? '>' : ' ', typeChar(entry.type));
         display.print(prefix);
 
-        // Right side: age + hops + [+] if in contacts
+        // Right side: age + hops + [★] for favourites, [+] for other contacts
         char rightStr[20];
         char ageBuf[8];
         formatAge(now, entry.recv_timestamp, ageBuf, sizeof(ageBuf));
 
-        bool inContacts = the_mesh.lookupContactByPubKey(entry.pubkey_prefix, 7) != nullptr;
-        if (inContacts) {
+        ContactInfo* ci = the_mesh.lookupContactByPubKey(entry.pubkey_prefix, 8);
+        bool inContacts = (ci != nullptr);
+        bool isFav = inContacts && (ci->flags & 0x01);
+        if (isFav) {
+          snprintf(rightStr, sizeof(rightStr), "%s %dh [*]", ageBuf, entry.path_len & 63);
+        } else if (inContacts) {
           snprintf(rightStr, sizeof(rightStr), "%s %dh [+]", ageBuf, entry.path_len & 63);
         } else {
           snprintf(rightStr, sizeof(rightStr), "%s %dh", ageBuf, entry.path_len & 63);

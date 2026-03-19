@@ -1378,9 +1378,14 @@ void UITask::shutdown(bool restart){
     }
 
     // Disable WiFi if active
-    #ifdef WIFI_SSID
+    #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
+    #endif
+
+    // Disable 4G modem if active
+    #ifdef HAS_4G_MODEM
+      modemManager.shutdown();
     #endif
 
     // Disable GPS if active

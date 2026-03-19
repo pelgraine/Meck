@@ -2999,8 +2999,17 @@ void MyMesh::loop() {
 
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    saveContacts();
+    if (!_store->isSaveInProgress()) {
+      _store->beginSaveContacts(this);
+    }
     dirty_contacts_expiry = 0;
+  }
+
+  // Drive chunked contact save — write a batch each loop iteration
+  if (_store->isSaveInProgress()) {
+    if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
+      _store->finishSaveContacts();  // Done or error — verify and commit
+    }
   }
 
   // Discovery scan timeout

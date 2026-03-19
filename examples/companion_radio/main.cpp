@@ -569,8 +569,26 @@ static void lastHeardToggleContact() {
   const AdvertPath* entry = lh->getSelectedEntry();
   if (!entry) return;
 
-  ContactInfo* existing = the_mesh.lookupContactByPubKey(entry->pubkey_prefix, 7);
+  ContactInfo* existing = the_mesh.lookupContactByPubKey(entry->pubkey_prefix, 8);
   if (existing) {
+    // Double-confirm for favourites (bit 0 of flags)
+    static unsigned long lastRemoveAttempt = 0;
+    static uint8_t lastRemovePrefix[8] = {0};
+    bool isFav = (existing->flags & 0x01) != 0;
+
+    if (isFav) {
+      if (millis() - lastRemoveAttempt < 3000 &&
+          memcmp(lastRemovePrefix, entry->pubkey_prefix, 8) == 0) {
+        // Second press within 3s — confirmed
+      } else {
+        // First press on favourite — warn and wait
+        lastRemoveAttempt = millis();
+        memcpy(lastRemovePrefix, entry->pubkey_prefix, 8);
+        ui_task.showAlert("Favourite! Press again", 2500);
+        return;
+      }
+    }
+
     the_mesh.removeContact(*existing);
     the_mesh.scheduleLazyContactSave();
     char alertBuf[40];
@@ -579,7 +597,7 @@ static void lastHeardToggleContact() {
     Serial.printf("[LastHeard] Removed: %s\n", entry->name);
   } else {
     uint8_t blob[256];
-    int blobLen = the_mesh.getContactBlob(entry->pubkey_prefix, 7, blob);
+    int blobLen = the_mesh.getContactBlob(entry->pubkey_prefix, 8, blob);
     if (blobLen > 0) {
       the_mesh.importContact(blob, blobLen);
       the_mesh.scheduleLazyContactSave();
@@ -591,7 +609,7 @@ static void lastHeardToggleContact() {
       // Blob store is limited to 100 entries — with many contacts, blobs
       // from non-contact nodes get evicted quickly. User needs to wait
       // for the node to re-broadcast its advert.
-      ui_task.showAlert("Advert expired, wait for re-broadcast", 2500);
+      ui_task.showAlert("Advert expired, try later", 2000);
       Serial.printf("[LastHeard] Blob evicted for %s (store full)\n", entry->name);
     }
   }
