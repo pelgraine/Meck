@@ -540,6 +540,13 @@ public:
   bool isOnboarding() const { return _onboarding; }
   bool isEditing() const { return _editMode != EDIT_NONE; }
   bool hasRadioChanges() const { return _radioChanged; }
+  bool isOnChannelsSubScreen() const { return _subScreen == SUB_CHANNELS; }
+  bool isOnDeletableChannel() const {
+    return _subScreen == SUB_CHANNELS &&
+           _cursor >= 0 && _cursor < _numRows &&
+           _rows[_cursor].type == ROW_CHANNEL &&
+           _rows[_cursor].param > 0;
+  }
 
   // Tap-to-select: given a virtual Y coordinate, compute which row was tapped
   // and move cursor there. Returns: 0=miss, 1=moved to new row, 2=tapped current row.
@@ -1015,7 +1022,11 @@ public:
               snprintf(tmp, sizeof(tmp), " %s", ch.name);
               if (selected) {
                 // Show delete hint on right
-                const char* hint = "Del:X";
+              #if defined(LilyGo_T5S3_EPaper_Pro)
+                const char* hint = "Hold:Del";
+              #else
+                const char* hint = "X:Del";
+              #endif
                 int hintW = display.getTextWidth(hint);
                 display.setCursor(display.width() - hintW - 2, y);
                 display.print(hint);
@@ -1129,7 +1140,11 @@ public:
       } else if (_confirmAction == 2) {
         display.drawTextCentered(display.width() / 2, by + 4, "Apply radio changes?");
       }
+    #if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, by + bh - 14, "Tap:Yes  Boot:No");
+    #else
       display.drawTextCentered(display.width() / 2, by + bh - 14, "Enter:Yes  Q:No");
+    #endif
       display.setTextSize(1);
     }
 
@@ -1229,7 +1244,7 @@ public:
     if (_editMode == EDIT_NONE) {
       if (_subScreen != SUB_NONE) {
         display.print("Boot:Back");
-        const char* r = "Tap:Toggle  Hold:Edit";
+        const char* r = (_subScreen == SUB_CHANNELS) ? "Tap:Select  Hold:Del" : "Tap:Toggle  Hold:Edit";
         display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
         display.print(r);
       } else {

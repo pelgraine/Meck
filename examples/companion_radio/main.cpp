@@ -1037,6 +1037,9 @@ static void lastHeardToggleContact() {
         if (ss->isEditing()) {
           return 0;  // Consume — don't interfere with active edit mode
         }
+        if (ss->isOnDeletableChannel()) {
+          return 'x';  // Long press on channel row → delete
+        }
       }
       return KEY_ENTER;  // Not editing: toggle/edit selected row
     }
