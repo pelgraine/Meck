@@ -396,6 +396,11 @@ private:
   int _pageBufLen;
   bool _contentDirty;  // Need to re-read from SD
 
+  // Go-to-page input mode (Enter in reading view)
+  bool _gotoMode = false;
+  char _gotoBuf[6];      // Up to 5 digits + null
+  int _gotoBufLen = 0;
+
   // ---- Splash Screen Drawing ----
   // Draw directly to display outside the normal render cycle.
   // Matches the style of the standalone text reader firmware splash.
@@ -1238,7 +1243,13 @@ private:
 
     char status[30];
     int pct = _totalPages > 1 ? (_currentPage * 100) / (_totalPages - 1) : 100;
-    sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
+
+    if (_gotoMode) {
+      // Go-to-page input mode — show typed digits in footer
+      snprintf(status, sizeof(status), "Go to: %.*s_", _gotoBufLen, _gotoBuf);
+    } else {
+      sprintf(status, "%d/%d %d%%", _currentPage + 1, _totalPages, pct);
+    }
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(0);
@@ -1251,7 +1262,7 @@ private:
     display.setCursor(0, footerY);
     display.print(status);
 
-    const char* right = "A/D:Page Tap:GoTo Q:Back";
+    const char* right = _gotoMode ? "Ent:Go Q:Cancel" : "Entr:Pg# Q:Bk";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif
@@ -1591,6 +1602,7 @@ public:
     if (_mode == FILE_LIST) {
       return handleFileListInput(c);
     } else if (_mode == READING) {
+      if (_gotoMode) return handleGotoInput(c);
       return handleReadingInput(c);
     }
     return false;
@@ -1711,15 +1723,23 @@ public:
       return false;
     }
 
-    // S/D/Space/Enter - next page
+    // S/D/Space - next page
     if (c == 's' || c == 'S' || c == 'd' || c == 'D' ||
-        c == ' ' || c == '\r' || c == 13 || c == 0xF1) {
+        c == ' ' || c == 0xF1) {
       if (_currentPage < _totalPages - 1) {
         _currentPage++;
         loadPageContent();
         return true;
       }
       return false;
+    }
+
+    // Enter - go-to-page input mode
+    if (c == '\r' || c == 13) {
+      _gotoMode = true;
+      _gotoBufLen = 0;
+      _gotoBuf[0] = '\0';
+      return true;
     }
 
     // Q - close book, back to file list
@@ -1730,6 +1750,42 @@ public:
     }
 
     return false;
+  }
+
+  bool handleGotoInput(char c) {
+    // Enter — commit page number
+    if (c == '\r' || c == 13) {
+      if (_gotoBufLen > 0) {
+        int pageNum = atoi(_gotoBuf);
+        gotoPage(pageNum);
+      }
+      _gotoMode = false;
+      return true;
+    }
+
+    // Q or Escape — cancel
+    if (c == 'q' || c == 'Q' || c == 0x1B) {
+      _gotoMode = false;
+      return true;
+    }
+
+    // Backspace — delete last digit
+    if (c == '\b' || c == 0x7F) {
+      if (_gotoBufLen > 0) {
+        _gotoBufLen--;
+        _gotoBuf[_gotoBufLen] = '\0';
+      }
+      return true;
+    }
+
+    // Digit — append (max 5 digits)
+    if (c >= '0' && c <= '9' && _gotoBufLen < 5) {
+      _gotoBuf[_gotoBufLen++] = c;
+      _gotoBuf[_gotoBufLen] = '\0';
+      return true;
+    }
+
+    return true;  // Consume all other keys while in goto mode
   }
 
   // External close (called when leaving reader screen entirely)

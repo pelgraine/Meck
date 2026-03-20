@@ -689,18 +689,16 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnTextReader()) {
       TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
       if (reader && reader->isReading()) {
-        // Footer zone tap → go to page
-        if (vy >= 113) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
+        // Footer zone tap → go to page via VKB
+        if (vy >= 113) {
           char label[24];
           snprintf(label, sizeof(label), "Page (1-%d)", reader->getTotalPages());
           ui_task.showVirtualKeyboard(VKB_TEXT_PAGE, label, "", 5);
           return 0;
-#else
-          return 0;  // T-Deck Pro: tap footer consumed, no action (use keyboard)
-#endif
         }
-        return 'd';  // Body tap = next page
+#endif
+        return 'd';  // Tap anywhere else = next page
       }
       // File list: tap-to-select, double-tap to open
       if (reader && reader->isInFileList()) {
