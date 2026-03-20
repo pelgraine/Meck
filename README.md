@@ -181,7 +181,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | T | Open SMS & Phone app (4G variant only) |
 | P | Open audiobook player (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
-| L | Open last heard list (passive advert history) |
+| H | Open last heard list (passive advert history) |
 | G | Open map screen (shows contacts with GPS positions) |
 | Q | Back to home screen |
 | Double-click Boot | Lock / unlock screen |
