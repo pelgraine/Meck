@@ -44,6 +44,32 @@ public:
 
   int getSelectedIdx() const { return _scrollPos; }
 
+  // Tap-to-select: given virtual Y, select discovered node row.
+  // Returns: 0=miss, 1=moved, 2=tapped current row.
+  int selectRowAtVY(int vy) {
+    int count = the_mesh.getDiscoveredCount();
+    if (count == 0) return 0;
+    const int headerH = 14, footerH = 14, lineH = 9;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const int bodyTop = headerH;
+#else
+    const int bodyTop = headerH + 5;
+#endif
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+
+    int maxVisible = (128 - headerH - footerH) / lineH;
+    if (maxVisible < 3) maxVisible = 3;
+    int startIdx = max(0, min(_scrollPos - maxVisible / 2,
+                              count - maxVisible));
+
+    int tappedRow = startIdx + (vy - bodyTop) / lineH;
+    if (tappedRow < 0 || tappedRow >= count) return 0;
+
+    if (tappedRow == _scrollPos) return 2;
+    _scrollPos = tappedRow;
+    return 1;
+  }
+
   int render(DisplayDriver& display) override {
     int count = the_mesh.getDiscoveredCount();
     bool active = the_mesh.isDiscoveryActive();
@@ -177,13 +203,9 @@ public:
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
-    display.print("Q:Back");
+    display.print("Q:Bk F:Rescan");
 
-    const char* mid = "Ent:Add";
-    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
-    display.print(mid);
-
-    const char* right = "F:Rescan";
+    const char* right = "Tap/Ent:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

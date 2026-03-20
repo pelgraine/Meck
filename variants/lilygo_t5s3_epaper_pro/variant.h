@@ -29,6 +29,7 @@
 #define I2C_ADDR_BQ27220     0x55  // Fuel gauge
 #define I2C_ADDR_BQ25896     0x6B  // Battery charger
 #define I2C_ADDR_TPS65185    0x68  // E-ink power driver
+#define CARDKB_I2C_ADDR      0x5F  // M5Stack CardKB (external, via QWIIC)
 
 // -----------------------------------------------------------------------------
 // SPI Bus — shared by LoRa and SD card

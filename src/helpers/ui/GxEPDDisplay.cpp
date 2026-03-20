@@ -52,7 +52,7 @@ bool GxEPDDisplay::begin() {
 
 void GxEPDDisplay::turnOn() {
   if (!_init) begin();
-#if defined(DISP_BACKLIGHT) && !defined(BACKLIGHT_BTN)
+#if defined(DISP_BACKLIGHT) && !defined(BACKLIGHT_BTN) && !defined(LilyGo_TDeck_Pro)
   digitalWrite(DISP_BACKLIGHT, HIGH);
 #elif defined(EXP_PIN_BACKLIGHT) && !defined(BACKLIGHT_BTN)
   expander.digitalWrite(EXP_PIN_BACKLIGHT, HIGH);
@@ -61,12 +61,17 @@ void GxEPDDisplay::turnOn() {
 }
 
 void GxEPDDisplay::turnOff() {
-#if defined(DISP_BACKLIGHT) && !defined(BACKLIGHT_BTN)
+#if defined(DISP_BACKLIGHT) && !defined(BACKLIGHT_BTN) && !defined(LilyGo_TDeck_Pro)
+  // Only toggle backlight on boards that actually have one.
+  // T-Deck Pro defines DISP_BACKLIGHT (GPIO 45) but has no physical backlight —
+  // setting _isOn=false would stop the render loop, making the device appear frozen.
   digitalWrite(DISP_BACKLIGHT, LOW);
+  _isOn = false;
 #elif defined(EXP_PIN_BACKLIGHT) && !defined(BACKLIGHT_BTN)
   expander.digitalWrite(EXP_PIN_BACKLIGHT, LOW);
-#endif
   _isOn = false;
+#endif
+  // T-Deck Pro: _isOn stays true — e-ink has no backlight, render loop must keep running
 }
 
 void GxEPDDisplay::clear() {
@@ -100,15 +105,23 @@ void GxEPDDisplay::setTextSize(int sz) {
       break;
     case 1:  // Small - use 9pt (was 9pt)
       display.setFont(&FreeSans9pt7b);
+      display.setTextSize(1);
       break;
     case 2:  // Medium Bold - use 9pt bold instead of 12pt
       display.setFont(&FreeSans9pt7b);
+      display.setTextSize(1);
       break;
     case 3:  // Large - use 12pt instead of 18pt
       display.setFont(&FreeSansBold12pt7b);
+      display.setTextSize(1);
+      break;
+    case 5:  // Extra Large - lock screen clock face
+      display.setFont(&FreeSansBold12pt7b);
+      display.setTextSize(2);  // GxEPD2 native 2× scaling on 12pt bold
       break;
     default:
       display.setFont(&FreeSans9pt7b);
+      display.setTextSize(1);
       break;
   }
 }

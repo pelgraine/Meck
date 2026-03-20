@@ -18,6 +18,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Keyboard Controls](#t-deck-pro-keyboard-controls)
   - [Navigation (Home Screen)](#navigation-home-screen)
   - [Bluetooth (BLE)](#bluetooth-ble)
+  - [WiFi Companion](#wifi-companion)
   - [Clock & Timezone](#clock--timezone)
   - [Channel Message Screen](#channel-message-screen)
   - [Contacts Screen](#contacts-screen)
@@ -29,6 +30,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Emoji Picker](#emoji-picker)
   - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
   - [Web Browser & IRC](#web-browser--irc)
+  - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
   - [Build Variants](#t5s3-build-variants)
   - [Touch Navigation](#touch-navigation)
@@ -78,7 +80,7 @@ Download the latest firmware from the [Releases](https://github.com/pelgraine/Me
 
 | File Type | When to Use |
 |-----------|-------------|
-| `*_merged.bin` | **First-time flash** — includes bootloader, partition table, and firmware in a single file. Flash at address `0x0`. |
+| `*-merged.bin` | **First-time flash** — includes bootloader, partition table, and firmware in a single file. Flash at address `0x0`. |
 | `*.bin` (non-merged) | **Upgrading existing firmware** — firmware image only. Also used when loading firmware from an SD card via the Launcher. |
 
 ### First-Time Flash (Merged Firmware)
@@ -89,7 +91,7 @@ If the device has never had Meck firmware (or you want a clean start), use the *
 
 ```
 esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
-  write_flash 0x0 meck_t5s3_standalone_merged.bin
+  write_flash 0x0 meck_t5s3_standalone-merged.bin
 ```
 
 On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM port like `COM3`.
@@ -101,7 +103,7 @@ On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM 
 3. Select the **merged** `.bin` file you downloaded
 4. Click **Flash**, select your device in the popup, and click **Connect**
 
-> **Note:** The MeshCore Flasher flashes at address `0x0` by default, so the merged file is the correct choice here for first-time flashes.
+> **Note:** The MeshCore Flasher detects merged firmware by the `-merged.bin` suffix in the filename and automatically flashes at address `0x0`. If the filename doesn't end with `-merged.bin`, the flasher writes at `0x10000` instead, which will fail on a clean device.
 
 ### Upgrading Firmware
 
@@ -151,8 +153,10 @@ For a detailed explanation of what multibyte path hash means and why it matters,
 | Variant | Environment | BLE | WiFi | 4G Modem | Audio DAC | Web Reader | Max Contacts |
 |---------|------------|-----|------|----------|-----------|------------|-------------|
 | Audio + BLE | `meck_audio_ble` | Yes | Yes (via BLE stack) | — | PCM5102A | Yes | 500 |
+| Audio + WiFi | `meck_audio_wifi` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 1,500 |
 | Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 1,500 |
 | 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 500 |
+| 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 1,500 |
 | 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 1,500 |
 
 The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive.
@@ -177,8 +181,10 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | T | Open SMS & Phone app (4G variant only) |
 | P | Open audiobook player (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
+| L | Open last heard list (passive advert history) |
 | G | Open map screen (shows contacts with GPS positions) |
 | Q | Back to home screen |
+| Double-click Boot | Lock / unlock screen |
 
 ### Bluetooth (BLE)
 
@@ -186,12 +192,29 @@ BLE is **disabled by default** at boot to support standalone-first operation. Th
 
 To connect to the MeshCore companion app, navigate to the **Bluetooth** home page (use D to page through) and press **Enter** to toggle BLE on. The BLE PIN will be displayed on screen. Toggle it off again the same way when you're done.
 
+### WiFi Companion
+
+The WiFi companion variants (`meck_audio_wifi`, `meck_4g_wifi`) connect to the MeshCore web app, meshcore.js, or Python CLI over your local network via TCP on port 5000. WiFi credentials are stored on the SD card at `/web/wifi.cfg`.
+
+**Connecting:**
+
+1. Navigate to the **WiFi** home page (use D to page through)
+2. Press **Enter** to toggle WiFi on
+3. The device scans for networks — select yours and enter the password
+4. Once connected, the IP address is displayed on the WiFi home page
+
+Connect the MeshCore web app or meshcore.js to `<device IP>:5000`.
+
+WiFi is also used by the web reader and IRC client on WiFi variants. The web reader shares the same connection — no extra setup needed.
+
+> **Tip:** WiFi variants support up to 1,500 contacts (vs 500 for BLE variants) because they are not constrained by the BLE protocol ceiling.
+
 ### Clock & Timezone
 
-The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of two methods:
+The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of these methods:
 
 1. **GPS fix** (standalone) — Once the GPS acquires a satellite fix, the time is automatically synced from the NMEA data. No phone or BLE connection required. Typical time to first fix is 30–90 seconds outdoors with clear sky.
-2. **BLE companion app** — If BLE is enabled and connected to the MeshCore companion app, the app will push the current time to the device.
+2. **BLE/WiFi companion app** — If connected to the MeshCore companion app (via BLE or WiFi), the app will push the current time to the device.
 
 **Setting your timezone:**
 
@@ -232,7 +255,7 @@ Press **C** from the home screen to open the contacts list. All known mesh conta
 | R | Import contacts from SD card (wait 5–10 seconds for confirmation popup) |
 | Q | Back to home screen |
 
-**Contact limits:** Standalone variants support up to 1,500 contacts (stored in PSRAM). BLE variants (both Audio-BLE and 4G-BLE) are limited to 500 contacts due to BLE protocol constraints.
+**Contact limits:** Standalone and WiFi variants support up to 1,500 contacts (stored in PSRAM). BLE variants (Audio-BLE and 4G-BLE) are limited to 500 contacts due to BLE protocol constraints.
 
 ### Sending a Direct Message
 
@@ -287,6 +310,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
 | Dark Mode | Toggle inverted display — white text on black background (Enter to toggle) |
+| Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
 | Device Info | Public key and firmware version (read-only) |
@@ -356,13 +380,21 @@ For full documentation including key mappings, dialpad usage, contacts managemen
 
 ### Web Browser & IRC
 
-Press **B** from the home screen to open the web reader. This is available on the BLE and 4G variants (not the standalone audio variant, which excludes WiFi to preserve lowest-battery-usage design).
+Press **B** from the home screen to open the web reader. This is available on the BLE, WiFi, and 4G variants (not the standalone audio variant, which excludes WiFi to preserve lowest-battery-usage design).
 
 The web reader home screen provides access to the **IRC client**, the **URL bar**, and your **bookmarks** and **history**. Select IRC Chat and press Enter to configure and connect to an IRC server. Select the URL bar to enter a web address, or scroll down to open a bookmark or history entry.
 
 The browser is a text-centric reader best suited to text-heavy websites. It also includes basic web search via DuckDuckGo Lite, and can download EPUB files — follow a link to an `.epub` and it will be saved to the books folder on your SD card for reading later in the e-book reader.
 
 For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web_App_Guide.md).
+
+### Lock Screen (T-Deck Pro)
+
+Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
+
+Double-click the Boot button again to unlock and return to whatever screen you were on.
+
+An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
 
 ---
 
@@ -433,6 +465,8 @@ Long press the Boot button to lock the device. The lock screen shows:
 
 Touch input is completely disabled while locked. Long press the Boot button again to unlock and return to whatever screen you were on.
 
+An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time). The CPU drops to 40 MHz while locked to reduce power consumption.
+
 ### Virtual Keyboard
 
 Since the T5S3 has no physical keyboard, a full-screen QWERTY virtual keyboard appears automatically when text input is needed (composing messages, entering WiFi passwords, editing settings, etc.).
@@ -444,6 +478,12 @@ The virtual keyboard supports:
 - Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
 
 Tap keys to type. Tap **Enter** to submit, or press the **Boot button** to cancel and close the keyboard.
+
+### External Keyboard (CardKB)
+
+The T5S3 supports the M5Stack CardKB (or compatible I2C keyboard) connected via the QWIIC port. When detected at boot, the CardKB can be used for all text input — composing messages, entering URLs, editing notes, and navigating menus — without the on-screen virtual keyboard.
+
+The CardKB is auto-detected on the I2C bus at address `0x5F`. No configuration is needed — just plug it in.
 
 ### Display Settings
 
@@ -518,6 +558,7 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Gesture | Action |
 |---------|--------|
 | Tap anywhere | Next page |
+| Tap footer bar | Go to page number (via virtual keyboard) |
 | Swipe left | Next page |
 | Swipe right | Previous page |
 | Swipe up / down | Next / previous page |
@@ -558,7 +599,15 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Gesture | Action |
 |---------|--------|
 | Swipe up / down | Scroll node list |
+| Tap | Add selected node to contacts |
 | Long press | Rescan for nodes |
+
+#### Last Heard
+
+| Gesture | Action |
+|---------|--------|
+| Swipe up / down | Scroll advert list |
+| Tap | Add to or delete from contacts |
 
 #### Repeater Admin
 
@@ -620,9 +669,9 @@ For developers:
 
 **Companion Firmware**
 
-The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE variants) or WiFi (T5S3 WiFi variant, TCP port 5000).
+The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE variants) or WiFi (T-Deck Pro WiFi variants and T5S3 WiFi variant, TCP port 5000).
 
-> **Note:** On both the T-Deck Pro and T5S3, BLE is disabled by default at boot. On the T-Deck Pro, navigate to the Bluetooth home page and press Enter to enable BLE. On the T5S3, navigate to the Bluetooth home page and long-press the screen to toggle BLE on.
+> **Note:** On both the T-Deck Pro and T5S3, BLE and WiFi are disabled by default at boot. On the T-Deck Pro, navigate to the Bluetooth or WiFi home page and press Enter to enable. On the T5S3, navigate to the Bluetooth home page and long-press the screen to toggle BLE on.
 
 - Web: https://app.meshcore.nz
 - Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
@@ -659,17 +708,20 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Settings screen with radio presets, channel management, and first-boot onboarding
 - [X] Expand SMS app to enable phone calls
 - [X] Basic web reader app with IRC client
+- [X] Lock screen with auto-lock timer and low-power standby
+- [X] Last heard passive advert list
+- [X] Touch-to-select on contacts, discovery, settings, text reader, notes screens
+- [X] Map screen with GPS tile rendering
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
-- [ ] Map support with GPS
-- [ ] WiFi companion environment
+- [X] WiFi companion environment
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
 - [X] Touch-navigable home screen with tappable tile grid
 - [X] Full virtual keyboard for text entry
-- [X] Lock screen with clock, battery, and unread count
+- [X] Lock screen with clock, battery, unread count, and auto-lock timer
 - [X] Backlight control (double/triple-click Boot button)
 - [X] Dark mode and portrait mode display settings
 - [X] Channel messages with swipe navigation and touch compose
@@ -678,6 +730,9 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Web reader with virtual keyboard URL/search entry (WiFi variant)
 - [X] Settings screen with touch editing
 - [X] Serial clock sync for hardware RTC
+- [X] CardKB external keyboard support (via QWIIC)
+- [X] Last heard passive advert list
+- [X] Tap-to-select on contacts, discovery, settings, text reader, notes screens
 - [ ] Emoji sprites on home tiles
 - [ ] Portrait mode toggle via quadruple-click Boot button
 - [ ] Hibernate should auto-off backlight

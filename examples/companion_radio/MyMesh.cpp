@@ -380,6 +380,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
 
     memcpy(p->pubkey_prefix, contact.id.pub_key, sizeof(p->pubkey_prefix));
     strcpy(p->name, contact.name);
+    p->type = contact.type;
     p->recv_timestamp = getRTCClock()->getCurrentTime();
     p->path_len = mesh::Packet::copyPath(p->path, path, path_len);
   }
@@ -425,6 +426,10 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
     dest[i] = advert_paths[i];
   }
   return max_num;
+}
+
+void MyMesh::scheduleLazyContactSave() {
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
@@ -2994,8 +2999,17 @@ void MyMesh::loop() {
 
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    saveContacts();
+    if (!_store->isSaveInProgress()) {
+      _store->beginSaveContacts(this);
+    }
     dirty_contacts_expiry = 0;
+  }
+
+  // Drive chunked contact save — write a batch each loop iteration
+  if (_store->isSaveInProgress()) {
+    if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
+      _store->finishSaveContacts();  // Done or error — verify and commit
+    }
   }
 
   // Discovery scan timeout

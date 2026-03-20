@@ -4,6 +4,7 @@
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
 #include "DiscoveryScreen.h"
+#include "LastHeardScreen.h"
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -255,6 +256,7 @@ public:
        _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
+  bool isOnRecentPage() const { return _page == HomePage::RECENT; }
   void cancelEditing() { 
     if (_editing_utc) {
       _node_prefs->utc_offset_hours = _saved_utc_offset;
@@ -497,6 +499,16 @@ public:
         display.setCursor(display.width() - timestamp_width - 1, y);
         display.print(tmp);
       }
+      // Hint for full Last Heard screen
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.drawTextCentered(display.width() / 2, display.height() - 24,
+                               "Tap here for full Last Heard list");
+#else
+      display.drawTextCentered(display.width() / 2, display.height() - 24,
+                               "H: Full Last Heard list");
+#endif
     } else if (_page == HomePage::RADIO) {
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(1);
@@ -1035,11 +1047,12 @@ public:
 };
 
 // ==========================================================================
-// Lock Screen — T5S3 only
-// Big clock, battery %, unread message count. Touch disabled while shown.
-// Long press boot button to lock/unlock. Touch disabled while locked.
+// Lock Screen — T5S3 and T-Deck Pro
+// Big clock, battery %, unread message count.
+// T5S3: Long press boot button to lock/unlock. Touch disabled while locked.
+// T-Deck Pro: Double-press boot button to lock/unlock. Touch+keyboard disabled.
 // ==========================================================================
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 class LockScreen : public UIScreen {
   UITask* _task;
   mesh::RTCClock* _rtc;
@@ -1063,7 +1076,11 @@ public:
     }
 
     // ---- Huge clock: HH:MM on one line ----
-    display.setTextSize(5);  // Clock face size (FreeSansBold24pt × 5)
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(5);  // T5S3: FreeSansBold24pt × 5
+#else
+    display.setTextSize(5);  // T-Deck Pro: FreeSansBold12pt at GxEPD 2× scale
+#endif
     display.setColor(DisplayDriver::LIGHT);
     display.drawTextCentered(display.width() / 2, 55, timeBuf);
 
@@ -1092,7 +1109,11 @@ public:
     // ---- Unlock hint ----
     display.setTextSize(0);
     display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
     display.drawTextCentered(display.width() / 2, 120, "Hold button to unlock");
+#else
+    display.drawTextCentered(display.width() / 2, 120, "Dbl-press to unlock");
+#endif
 
     return 30000;
   }
@@ -1101,7 +1122,7 @@ public:
     return false;
   }
 };
-#endif // LilyGo_T5S3_EPaper_Pro
+#endif
 
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
@@ -1155,6 +1176,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   ui_started_at = millis();
   _alert_expiry = 0;
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  _lastInputMillis = millis();
+#endif
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
@@ -1166,7 +1190,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
-#if defined(LilyGo_T5S3_EPaper_Pro)
+  last_heard_screen = new LastHeardScreen(&rtc_clock);
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
@@ -1321,6 +1346,8 @@ void UITask::userLedHandler() {
 
 void UITask::setCurrScreen(UIScreen* c) {
   curr = c;
+  _alert_expiry = 0;  // Dismiss any active toast — prevents stale overlay from
+                       // triggering extra 644ms e-ink refreshes on the new screen
   _next_refresh = 100;
 }
 
@@ -1351,9 +1378,14 @@ void UITask::shutdown(bool restart){
     }
 
     // Disable WiFi if active
-    #ifdef WIFI_SSID
+    #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
+    #endif
+
+    // Disable 4G modem if active
+    #ifdef HAS_4G_MODEM
+      modemManager.shutdown();
     #endif
 
     // Disable GPS if active
@@ -1431,10 +1463,26 @@ void UITask::loop() {
           gotoHomeScreen();  // file list: go home
           c = 0;
         }
+      } else if (isOnNotesScreen()) {
+        NotesScreen* notes = (NotesScreen*)notes_screen;
+        if (notes && notes->isEditing()) {
+          notes->triggerSaveAndExit();  // save and return to file list
+        } else {
+          notes->exitNotes();
+          gotoHomeScreen();
+        }
+        c = 0;
       } else {
         gotoHomeScreen();
         c = 0;  // consumed
       }
+    }
+#elif defined(LilyGo_TDeck_Pro)
+    // T-Deck Pro: single click ignored while locked — double-press to unlock
+    if (_locked) {
+      c = 0;
+    } else {
+      c = checkDisplayOn(KEY_NEXT);
     }
 #else
     c = checkDisplayOn(KEY_NEXT);
@@ -1478,6 +1526,9 @@ void UITask::loop() {
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 100;  // trigger refresh
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
   }
 
   userLedHandler();
@@ -1574,6 +1625,11 @@ if (curr) curr->poll();
           onVKBCancel();
         }
       } else {
+        // Default: allow full refresh. Override for notes editing (no flash while typing).
+        display.setForcePartial(false);
+        if (isOnNotesScreen() && ((NotesScreen*)notes_screen)->isEditing()) {
+          display.setForcePartial(true);
+        }
         int delay_millis = curr->render(*_display);
 
         // Check if settings screen needs VKB for WiFi password entry
@@ -1618,6 +1674,13 @@ if (curr) curr->poll();
       }
 #endif
       _display->endFrame();
+
+      // E-ink render throttle: enforce minimum 800ms between renders.
+      // Each partial update blocks for ~644ms. Without this floor, incoming
+      // mesh notifications can trigger back-to-back renders that starve the
+      // keyboard polling loop, causing TCA8418 FIFO overflow and lost keys.
+      unsigned long minNext = millis() + 800;
+      if (_next_refresh < minNext) _next_refresh = minNext;
     }
 #if AUTO_OFF_MILLIS > 0
     if (millis() > _auto_off) {
@@ -1625,6 +1688,35 @@ if (curr) curr->poll();
     }
 #endif
   }
+
+  // Auto-lock idle timer — runs regardless of display on/off state
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  if (_node_prefs && _node_prefs->auto_lock_minutes > 0 && !_locked) {
+    uint8_t alm = _node_prefs->auto_lock_minutes;
+    // Only act on valid option values (guards against garbage from uninitialised prefs)
+    if (alm == 2 || alm == 5 || alm == 10 || alm == 15 || alm == 30) {
+      unsigned long lock_timeout = (unsigned long)alm * 60000UL;
+      if (millis() - _lastInputMillis >= lock_timeout) {
+        lockScreen();
+      }
+    }
+  }
+
+  // Lock screen clock refresh — update time display every 15 minutes.
+  // Runs outside the _display->isOn() gate so it works even after auto-off.
+  // Wakes the display briefly to render, then lets auto-off turn it back off.
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 15UL * 60UL * 1000UL;  // 15 minutes
+    if (millis() - _lastLockRefresh >= LOCK_REFRESH_INTERVAL) {
+      _lastLockRefresh = millis();
+      if (!_display->isOn()) {
+        _display->turnOn();
+        _auto_off = millis() + 5000;  // Stay on just long enough to render + settle
+      }
+      _next_refresh = 0;  // Trigger immediate render
+    }
+  }
+#endif
 
 #ifdef PIN_VIBRATION
   vibration.loop();
@@ -1667,6 +1759,9 @@ char UITask::checkDisplayOn(char c) {
     }
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 0;  // trigger refresh
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
   }
   return c;
 }
@@ -1702,6 +1797,14 @@ char UITask::handleDoubleClick(char c) {
     board.setBacklight(true);
   }
   c = 0;  // consume event — don't pass through as navigation
+#elif defined(LilyGo_TDeck_Pro)
+  // Double-click boot button → lock/unlock screen
+  if (_locked) {
+    unlockScreen();
+  } else {
+    lockScreen();
+  }
+  c = 0;
 #endif
   checkDisplayOn(c);
   return c;
@@ -1725,16 +1828,23 @@ char UITask::handleTripleClick(char c) {
   return c;
 }
 
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 void UITask::lockScreen() {
   if (_locked) return;
   _locked = true;
   _screenBeforeLock = curr;
   setCurrScreen(lock_screen);
-  board.setBacklight(false);  // Save power
+  // Ensure display is on so lock screen renders (auto-off may have turned it off)
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  board.setBacklight(false);  // Save power (T5S3 backlight)
+#endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
-  Serial.println("[UI] Screen locked");
+  _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
+  Serial.println("[UI] Screen locked — entering low-power mode");
 }
 
 void UITask::unlockScreen() {
@@ -1746,11 +1856,18 @@ void UITask::unlockScreen() {
     gotoHomeScreen();
   }
   _screenBeforeLock = nullptr;
+  // Ensure display is on so unlocked screen renders
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
   _auto_off = millis() + AUTO_OFF_MILLIS;
+  _lastInputMillis = millis();  // Reset auto-lock idle timer
   _next_refresh = 0;
-  Serial.println("[UI] Screen unlocked");
+  Serial.println("[UI] Screen unlocked — exiting low-power mode");
 }
+#endif // LilyGo_T5S3_EPaper_Pro || LilyGo_TDeck_Pro
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
 void UITask::showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx) {
   _vkb.open(purpose, label, initial, maxLen, contextIdx);
   _vkbActive = true;
@@ -1902,6 +2019,17 @@ void UITask::onVKBSubmit() {
       break;
     }
 #endif
+    case VKB_TEXT_PAGE: {
+      if (strlen(text) > 0) {
+        int pageNum = atoi(text);
+        TextReaderScreen* reader = (TextReaderScreen*)getTextReaderScreen();
+        if (reader && pageNum > 0) {
+          reader->gotoPage(pageNum);
+        }
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
   }
   _screenBeforeVKB = nullptr;
   _next_refresh = 0;
@@ -1918,6 +2046,30 @@ void UITask::onVKBCancel() {
   display.invalidateFrameCRC();
   Serial.println("[UI] VKB cancelled");
 }
+
+#ifdef MECK_CARDKB
+void UITask::feedCardKBChar(char c) {
+  if (_vkbActive) {
+    // VKB is open — feed character into its text buffer
+    if (_vkb.feedChar(c)) {
+      _next_refresh = 0;  // Redraw VKB immediately
+      _auto_off = millis() + 120000;  // Extend timeout while typing
+      // Check if feedChar triggered submit or cancel
+      if (_vkb.status() == VKB_SUBMITTED) {
+        onVKBSubmit();
+      } else if (_vkb.status() == VKB_CANCELLED) {
+        onVKBCancel();
+      }
+    } else {
+      // feedChar returned false — nav keys (arrows) while VKB is active
+      // Not consumed; could be used for cursor movement in future
+    }
+  } else {
+    // No VKB active — route as normal navigation key
+    injectKey(c);
+  }
+}
+#endif
 #endif
 
 bool UITask::getGPSState() {
@@ -1979,6 +2131,9 @@ void UITask::injectKey(char c) {
     }
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();  // Reset auto-lock idle timer
+#endif
     // Debounce refresh when editing UTC offset - e-ink takes 644ms per refresh
     // so don't queue another render until the current one could have finished
     if (isEditingHomeScreen()) {
@@ -2005,6 +2160,10 @@ void UITask::gotoHomeScreen() {
 
 bool UITask::isEditingHomeScreen() const {
   return curr == home && ((HomeScreen *) home)->isEditingUTC();
+}
+
+bool UITask::isHomeOnRecentPage() const {
+  return curr == home && ((HomeScreen *) home)->isOnRecentPage();
 }
 
 void UITask::gotoChannelScreen() {
@@ -2049,6 +2208,10 @@ void UITask::gotoNotesScreen() {
   if (_display != NULL) {
     notes->enter(*_display);
   }
+  // Set fresh timestamp and wire up time getter for note creation
+  notes->setTimestamp(rtc_clock.getCurrentTime(),
+                      _node_prefs ? _node_prefs->utc_offset_hours : 0);
+  notes->setTimeGetter([]() -> uint32_t { return rtc_clock.getCurrentTime(); });
   setCurrScreen(notes_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -2157,6 +2320,16 @@ void UITask::gotoRepeaterAdmin(int contactIdx) {
 void UITask::gotoDiscoveryScreen() {
   ((DiscoveryScreen*)discovery_screen)->resetScroll();
   setCurrScreen(discovery_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoLastHeardScreen() {
+  ((LastHeardScreen*)last_heard_screen)->resetScroll();
+  setCurrScreen(last_heard_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

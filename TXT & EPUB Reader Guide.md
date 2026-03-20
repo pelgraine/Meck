@@ -2,7 +2,7 @@
 
 ## Overview
 
-This adds a text reader accessible via the **R** key from the home screen.
+This adds a text reader accessible via the **E** key from the home screen.
 
 **Features:**
 - Browse `.txt` and `.epub` files from `/books/` folder on SD card
@@ -13,17 +13,27 @@ This adds a text reader accessible via the **R** key from the home screen.
 - Index files cached to SD for instant re-opens
 - Bookmark indicator (`*`) on files with saved positions
 
-**Key Mapping:**
+**Key Mapping (T-Deck Pro):**
 | Context | Key | Action |
 |---------|-----|--------|
 | Home screen | E | Open text reader |
 | File list | W/S | Navigate up/down |
-| File list | Enter | Open selected file |
+| File list | Tap / Enter | Open selected file |
 | File list | Q | Back to home screen |
 | Reading | W/A | Previous page |
-| Reading | S/D/Space/Enter | Next page |
+| Reading | S/D/Space | Next page |
+| Reading | Enter | Go to page number (type digits, Enter to confirm, Q to cancel) |
 | Reading | Q | Close book → file list |
-| Reading | C | Enter compose mode |
+
+**Touch Gestures (T5S3):**
+| Context | Gesture | Action |
+|---------|---------|--------|
+| File list | Swipe up/down | Scroll file list |
+| File list | Tap | Open selected book |
+| Reading | Tap | Next page |
+| Reading | Swipe left/right | Next / previous page |
+| Reading | Tap footer | Go to page number (via virtual keyboard) |
+| Reading | Long press | Close book → file list |
 
 ---
 

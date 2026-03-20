@@ -102,6 +102,10 @@ private:
   uint32_t _rtcTime;      // Unix timestamp (0 = unavailable)
   int8_t _utcOffset;      // UTC offset in hours
 
+  // Callback to get fresh RTC time (set by UITask at init)
+  typedef uint32_t (*TimeGetterFn)();
+  TimeGetterFn _getTimeFn = nullptr;
+
   // ---- Helpers ----
 
   String getFullPath(const String& filename) {
@@ -570,8 +574,8 @@ private:
     display.print("Swipe:Nav");
     const char* right = "Tap:Open";
 #else
-    display.print("Q:Back W/S:Nav");
-    const char* right = "Ent:Open";
+    display.print("Q:Bk");
+    const char* right = "Tap/Ent:Open";
 #endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -592,8 +596,8 @@ private:
       display.print("Tap:Edit");
       const char* right = "Hold:Delete";
 #else
-      display.print("Q:Bck Ent:Edit");
-      const char* right = "Sh+Del:Del";
+      display.print("Q:Bk Ent:Edit");
+      const char* right = "X:Delete";
 #endif
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
@@ -684,9 +688,9 @@ private:
 
     const char* right = "Tap:Edit";
 #else
-    display.print("Q:Bck Ent:Edit");
+    display.print("Q:Bk Ent:Edit");
 
-    const char* right = "Sh+Del:Del";
+    const char* right = "X:Delete";
 #endif
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -1077,6 +1081,10 @@ private:
   // ---- Note Creation ----
 
   void createNewNote() {
+    // Refresh timestamp at creation time for accurate filenames
+    if (_getTimeFn) {
+      _rtcTime = _getTimeFn();
+    }
     _currentFile = generateFilename();
     _buf[0] = '\0';
     _bufLen = 0;
@@ -1175,6 +1183,8 @@ public:
     _rtcTime = rtcTime;
     _utcOffset = utcOffset;
   }
+
+  void setTimeGetter(TimeGetterFn fn) { _getTimeFn = fn; }
 
   void enter(DisplayDriver& display) {
     initLayout(display);

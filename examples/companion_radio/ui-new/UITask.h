@@ -84,6 +84,7 @@ class UITask : public AbstractUITask {
 #endif
   UIScreen* repeater_admin;   // Repeater admin screen
   UIScreen* discovery_screen;  // Node discovery scan screen
+  UIScreen* last_heard_screen; // Last heard passive advert list
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -95,11 +96,22 @@ class UITask : public AbstractUITask {
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
+  unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
+  unsigned long _lastLockRefresh = 0;  // Periodic lock screen clock update
 
   VirtualKeyboard _vkb;
   bool _vkbActive = false;
   UIScreen* _screenBeforeVKB = nullptr;
   unsigned long _vkbOpenedAt = 0;
+#ifdef MECK_CARDKB
+  bool _cardkbDetected = false;
+#endif
+#elif defined(LilyGo_TDeck_Pro)
+  UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
+  UIScreen* _screenBeforeLock = nullptr;
+  bool _locked = false;
+  unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
+  unsigned long _lastLockRefresh = 0;  // Periodic lock screen clock update
 #endif
 
   void userLedHandler();
@@ -137,6 +149,7 @@ public:
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
+  void gotoLastHeardScreen();              // Navigate to last heard passive list
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -173,17 +186,25 @@ public:
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
+  bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
+#endif
+#if defined(LilyGo_T5S3_EPaper_Pro)
   bool isVKBActive() const { return _vkbActive; }
   unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }
   void showVirtualKeyboard(VKBPurpose purpose, const char* label, const char* initial, int maxLen, int contextIdx = 0);
   void onVKBSubmit();
   void onVKBCancel();
+#ifdef MECK_CARDKB
+  void setCardKBDetected(bool v) { _cardkbDetected = v; }
+  bool hasCardKB() const { return _cardkbDetected; }
+  void feedCardKBChar(char c);
+#endif
 #endif
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }
@@ -202,6 +223,8 @@ public:
 
   // Check if home screen is in an editing mode (e.g. UTC offset editor)
   bool isEditingHomeScreen() const;
+  // Check if home screen is showing the Recent Adverts page
+  bool isHomeOnRecentPage() const;
 
   // Inject a key press from external source (e.g., keyboard)
   void injectKey(char c);
@@ -229,6 +252,7 @@ public:
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
+  UIScreen* getLastHeardScreen() const { return last_heard_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }
