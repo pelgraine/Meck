@@ -1844,7 +1844,7 @@ void UITask::lockScreen() {
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
   _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
-  Serial.println("[UI] Screen locked");
+  Serial.println("[UI] Screen locked — entering low-power mode");
 }
 
 void UITask::unlockScreen() {
@@ -1863,7 +1863,7 @@ void UITask::unlockScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _lastInputMillis = millis();  // Reset auto-lock idle timer
   _next_refresh = 0;
-  Serial.println("[UI] Screen unlocked");
+  Serial.println("[UI] Screen unlocked — exiting low-power mode");
 }
 #endif // LilyGo_T5S3_EPaper_Pro || LilyGo_TDeck_Pro
 

@@ -1662,6 +1662,27 @@ void loop() {
   // CPU frequency auto-timeout back to idle
   cpuPower.loop();
 
+  // Low-power mode — drop CPU to 40 MHz and throttle loop when lock screen
+  // is active.  The mesh radio has its own FIFO so packets are buffered;
+  // 50 ms yield means the loop still runs 20×/sec which is more than enough
+  // to drain the radio FIFO before overflow.
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  {
+    static bool wasLocked = false;
+    bool nowLocked = ui_task.isLocked();
+    if (nowLocked && !wasLocked) {
+      cpuPower.setLowPower();
+      Serial.printf("[Power] Low-power mode: CPU %d MHz, loop throttled\n",
+                    cpuPower.getFrequencyMHz());
+    } else if (!nowLocked && wasLocked) {
+      cpuPower.clearLowPower();
+      Serial.printf("[Power] Normal mode: CPU %d MHz\n",
+                    cpuPower.getFrequencyMHz());
+    }
+    wasLocked = nowLocked;
+  }
+#endif
+
   // Audiobook: service audio decode regardless of which screen is active
   #if defined(LilyGo_TDeck_Pro) && !defined(HAS_4G_MODEM)
   {
@@ -2182,6 +2203,16 @@ void loop() {
     }
   }
   #endif
+
+  // Low-power loop throttle — yield CPU when lock screen is active.
+  // The RTOS idle task executes WFI (wait-for-interrupt) during delay(),
+  // dramatically reducing CPU power draw.  50 ms gives 20 loop cycles/sec
+  // which is ample for LoRa packet reception (radio has hardware FIFO).
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+  if (ui_task.isLocked()) {
+    delay(50);
+  }
+#endif
 }
 
 // ============================================================================

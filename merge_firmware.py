@@ -21,7 +21,7 @@ def merge_bin(source, target, env):
     bootloader = os.path.join(build_dir, "bootloader.bin")
     partitions = os.path.join(build_dir, "partitions.bin")
     firmware   = os.path.join(build_dir, "firmware.bin")
-    output     = os.path.join(build_dir, "firmware_merged.bin")
+    output     = os.path.join(build_dir, "firmware-merged.bin")
 
     # Verify all inputs exist
     for f in [bootloader, partitions, firmware]:
