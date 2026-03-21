@@ -737,6 +737,13 @@ bool MyMesh::uiLoginToRepeater(uint32_t contact_idx, const char* password, uint3
   uint8_t save_path_len = recipient->out_path_len;
   recipient->out_path_len = OUT_PATH_UNKNOWN;
 
+  // For room servers: reset sync_since to zero so the server pushes ALL posts.
+  // The device has no persistent DM storage, so every session needs full history.
+  // sync_since naturally updates as messages arrive (BaseChatMesh::onPeerDataRecv).
+  if (recipient->type == ADV_TYPE_ROOM) {
+    recipient->sync_since = 0;
+  }
+
   Serial.printf("[uiLogin] Sending login to '%s' (idx=%d, path was 0x%02X, now 0x%02X, hash_mode=%d)\n",
                 recipient->name, contact_idx, save_path_len, recipient->out_path_len, _prefs.path_hash_mode);
 

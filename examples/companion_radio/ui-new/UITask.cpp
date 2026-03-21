@@ -1287,7 +1287,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     if (_dedup[i].name_hash == nameH && _dedup[i].text_hash == textH &&
         (now - _dedup[i].millis) < MSG_DEDUP_WINDOW_MS) {
       // Duplicate — suppress UI notification but still queued for BLE sync
-      Serial.printf("[Dedup] Suppressed duplicate from %s\n", from_name);
+      Serial.println("[Dedup] Suppressed duplicate");
       return;
     }
   }
@@ -1963,12 +1963,26 @@ void UITask::onVKBSubmit() {
     case VKB_DM: {
       if (strlen(text) == 0) break;
 
+      bool dmSuccess = false;
       if (the_mesh.uiSendDirectMessage((uint32_t)idx, text)) {
-        showAlert("DM sent!", 1500);
-      } else {
-        showAlert("DM failed!", 1500);
+        // Add to channel screen so sent DM appears in conversation view
+        ContactInfo dmRecipient;
+        if (the_mesh.getContactByIdx(idx, dmRecipient)) {
+          addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, text);
+        }
+        dmSuccess = true;
       }
-      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      // Return to DM conversation if we have contact info
+      ContactInfo dmContact;
+      if (the_mesh.getContactByIdx(idx, dmContact)) {
+        ChannelScreen* cs = (ChannelScreen*)channel_screen;
+        uint8_t savedPerms = (cs && cs->isDMConversation()) ? cs->getDMContactPerms() : 0;
+        gotoDMConversation(dmContact.name, idx, savedPerms);
+      } else if (_screenBeforeVKB) {
+        setCurrScreen(_screenBeforeVKB);
+      }
+      // Show alert AFTER navigation (setCurrScreen clears prior alerts)
+      showAlert(dmSuccess ? "DM sent!" : "DM failed!", 1500);
       break;
     }
     case VKB_ADMIN_PASSWORD: {
@@ -2219,11 +2233,14 @@ bool UITask::isHomeOnRecentPage() const {
 }
 
 void UITask::gotoChannelScreen() {
-  ((ChannelScreen *) channel_screen)->resetScroll();
+  ChannelScreen* cs = (ChannelScreen*)channel_screen;
+  // If currently showing DM view, reset to channel 0
+  if (cs->getViewChannelIdx() == 0xFF) {
+    cs->setViewChannelIdx(0);
+  }
+  cs->resetScroll();
   // Mark the currently viewed channel as read
-  ((ChannelScreen *) channel_screen)->markChannelRead(
-    ((ChannelScreen *) channel_screen)->getViewChannelIdx()
-  );
+  cs->markChannelRead(cs->getViewChannelIdx());
   setCurrScreen(channel_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -2360,6 +2377,14 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   
   // Add to channel history with path_len=0 (local message)
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+}
+
+void UITask::addSentDM(const char* recipientName, const char* sender, const char* text) {
+  // Format as "Sender: message" and tag with recipient's peer hash
+  char formattedMsg[CHANNEL_MSG_TEXT_LEN];
+  snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
+  ((ChannelScreen *) channel_screen)->addMessage(0xFF, 0, sender, formattedMsg,
+                                                  nullptr, 0, recipientName);
 }
 
 void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
@@ -2505,8 +2530,6 @@ void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t serv
           ContactInfo contact;
           if (the_mesh.getContactByIdx(cidx, contact) && contact.type == ADV_TYPE_ROOM) {
             uint8_t maskedPerms = permissions & 0x03;
-            Serial.printf("[Admin] Room login (raw=%d, masked=%d) — opening conversation for %s\n",
-                          permissions, maskedPerms, contact.name);
             gotoDMConversation(contact.name, cidx, maskedPerms);
             return;
           }

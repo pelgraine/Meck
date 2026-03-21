@@ -262,6 +262,7 @@ public:
   
   // Add a sent message to the channel screen history
   void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
+  void addSentDM(const char* recipientName, const char* sender, const char* text);
 
   // Mark channel as read when BLE companion app syncs messages
   void markChannelReadFromBLE(uint8_t channel_idx) override;

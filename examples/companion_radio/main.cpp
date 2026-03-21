@@ -2369,17 +2369,29 @@ void handleKeyboardInput() {
     if (key == '\r') {
       // Enter - send the message
       Serial.println("Compose: Enter pressed, sending...");
+      bool composeWasSent = false;
       if (composePos > 0) {
         sendComposedMessage();
+        composeWasSent = true;  // sendComposedMessage shows its own alert
       }
       bool wasDM = composeDM;
+      int savedDMIdx = composeDMContactIdx;
+      char savedDMName[32];
+      if (wasDM) strncpy(savedDMName, composeDMName, sizeof(savedDMName));
       composeMode = false;
       emojiPickerMode = false;
       composeDM = false;
       composeDMContactIdx = -1;
       composeBuffer[0] = '\0';
       composePos = 0;
-      if (wasDM) {
+      if (wasDM && savedDMIdx >= 0) {
+        // Return to DM conversation to see sent message
+        ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+        uint8_t savedPerms = (chScr && chScr->isDMConversation()) ? chScr->getDMContactPerms() : 0;
+        ui_task.gotoDMConversation(savedDMName, savedDMIdx, savedPerms);
+        // Re-show alert after navigation (setCurrScreen clears prior alerts)
+        if (composeWasSent) ui_task.showAlert("DM sent!", 1500);
+      } else if (wasDM) {
         ui_task.gotoContactsScreen();
       } else {
         ui_task.gotoChannelScreen();
@@ -2393,13 +2405,20 @@ void handleKeyboardInput() {
         // Shift+Backspace = Cancel (works anytime)
         Serial.println("Compose: Shift+Backspace, cancelling...");
         bool wasDM = composeDM;
+        int savedDMIdx = composeDMContactIdx;
+        char savedDMName[32];
+        if (wasDM) strncpy(savedDMName, composeDMName, sizeof(savedDMName));
         composeMode = false;
         emojiPickerMode = false;
         composeDM = false;
         composeDMContactIdx = -1;
         composeBuffer[0] = '\0';
         composePos = 0;
-        if (wasDM) {
+        if (wasDM && savedDMIdx >= 0) {
+          ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+          uint8_t savedPerms = (chScr && chScr->isDMConversation()) ? chScr->getDMContactPerms() : 0;
+          ui_task.gotoDMConversation(savedDMName, savedDMIdx, savedPerms);
+        } else if (wasDM) {
           ui_task.gotoContactsScreen();
         } else {
           ui_task.gotoChannelScreen();
@@ -2699,22 +2718,34 @@ void handleKeyboardInput() {
     RepeaterAdminScreen::AdminState astate = admin->getState();
     bool shiftDel = (key == '\b' && keyboard.wasShiftConsumed());
 
+    // Helper: exit admin — room servers go to DM conversation if logged in, otherwise contacts
+    auto exitAdmin = [&]() {
+      int cidx = admin->getContactIdx();
+      uint8_t perms = admin->getPermissions() & 0x03;
+      ContactInfo ci;
+      if (cidx >= 0 && perms > 0 && the_mesh.getContactByIdx(cidx, ci) && ci.type == ADV_TYPE_ROOM) {
+        ui_task.gotoDMConversation(ci.name, cidx, perms);
+        Serial.printf("Nav: Admin -> conversation for %s\n", ci.name);
+      } else {
+        ui_task.gotoContactsScreen();
+        Serial.println("Nav: Admin -> contacts");
+      }
+    };
+
     // In password entry: Shift+Del exits, all other keys pass through normally
     if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
       if (shiftDel) {
-        Serial.println("Nav: Back to contacts from admin login");
-        ui_task.gotoContactsScreen();
+        exitAdmin();
       } else {
         ui_task.injectKey(key);
       }
       return;
     }
 
-    // In category menu (top level): Shift+Del exits to contacts, C opens compose
+    // In category menu (top level): Shift+Del exits, C opens compose
     if (astate == RepeaterAdminScreen::STATE_CATEGORY_MENU) {
       if (shiftDel) {
-        Serial.println("Nav: Back to contacts from admin menu");
-        ui_task.gotoContactsScreen();
+        exitAdmin();
         return;
       }
       // C key: allow entering compose mode from admin menu
@@ -3270,10 +3301,6 @@ void handleKeyboardInput() {
       // L = Login/Admin — from DM conversation, open repeater admin with auto-login
       if (ui_task.isOnChannelScreen()) {
         ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
-        Serial.printf("[L key] onChannelScreen=1, isDMConv=%d, perms=%d, cidx=%d\n",
-                      chScr ? chScr->isDMConversation() : -1,
-                      chScr ? chScr->getDMContactPerms() : -1,
-                      chScr ? chScr->getDMContactIdx() : -1);
         if (chScr && chScr->isDMConversation() && chScr->getDMContactPerms() > 0) {
           int cidx = chScr->getDMContactIdx();
           if (cidx >= 0) {
@@ -3515,6 +3542,8 @@ void sendComposedMessage() {
     // Direct message to a specific contact
     if (composeDMContactIdx >= 0) {
       if (the_mesh.uiSendDirectMessage((uint32_t)composeDMContactIdx, utf8Buf)) {
+        // Add to channel screen so sent DM appears in conversation view
+        ui_task.addSentDM(composeDMName, the_mesh.getNodePrefs()->node_name, utf8Buf);
         ui_task.showAlert("DM sent!", 1500);
       } else {
         ui_task.showAlert("DM failed!", 1500);

@@ -475,6 +475,7 @@ public:
 
   int getContactIdx() const { return _contactIdx; }
   AdminState getState() const { return _state; }
+  uint8_t getPermissions() const { return _permissions; }
 
   void onLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
     _waitingForLogin = false;

@@ -59,10 +59,18 @@ public:
     uint8_t path_len;
     uint8_t channel_idx;  // Which channel this message belongs to
     int8_t  snr;          // Receive SNR × 4 (0 if locally sent or unknown)
+    uint32_t dm_peer_hash; // DM peer name hash (for conversation filtering)
     uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
   };
+
+  // Simple hash for DM peer matching
+  static uint32_t peerHash(const char* s) {
+    uint32_t h = 5381;
+    while (*s) { h = ((h << 5) + h) ^ (uint8_t)*s++; }
+    return h;
+  }
 
 private:
   UITask* _task;
@@ -100,13 +108,10 @@ private:
     if (_viewChannelIdx != 0xFF) {
       return msg.channel_idx == _viewChannelIdx;
     }
-    // DM tab in conversation mode: filter by sender name
+    // DM tab in conversation mode: filter by peer hash
     if (!_dmInboxMode && _dmFilterName[0] != '\0') {
       if (msg.channel_idx != 0xFF) return false;
-      int nameLen = strlen(_dmFilterName);
-      if (strncmp(msg.text, _dmFilterName, nameLen) != 0) return false;
-      if (msg.text[nameLen] != ':') return false;
-      return true;
+      return msg.dm_peer_hash == peerHash(_dmFilterName);
     }
     // Inbox mode or no filter — match all DMs
     return msg.channel_idx == 0xFF;
@@ -127,6 +132,7 @@ public:
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
+      _messages[i].dm_peer_hash = 0;
       memset(_messages[i].path, 0, MSG_PATH_MAX);
     }
     // Initialize unread counts
@@ -136,8 +142,9 @@ public:
   void setSDReady(bool ready) { _sdReady = ready; }
 
   // Add a new message to the history
+  // peer_name: for DMs, the contact this message belongs to (sender for received, recipient for sent)
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
-                  const uint8_t* path_bytes = nullptr, int8_t snr = 0) {
+                  const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -147,6 +154,13 @@ public:
     msg->channel_idx = channel_idx;
     msg->snr = snr;
     msg->valid = true;
+    
+    // Set DM peer hash for conversation filtering
+    if (channel_idx == 0xFF) {
+      msg->dm_peer_hash = peerHash(peer_name ? peer_name : sender);
+    } else {
+      msg->dm_peer_hash = 0;
+    }
     
     // Store path hop hashes
     memset(msg->path, 0, MSG_PATH_MAX);
@@ -226,8 +240,6 @@ public:
     _dmContactIdx = contactIdx;
     _dmContactPerms = perms;
     _scrollPos = 0;
-    Serial.printf("[ChannelScreen] openConversation: name=%s, idx=%d, perms=%d\n",
-                  contactName, contactIdx, perms);
   }
 
   int getDMContactIdx() const { return _dmContactIdx; }
@@ -1376,8 +1388,6 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else if (_viewChannelIdx == 0xFF) {
-      Serial.printf("[DM Footer] perms=%d, contactIdx=%d, inboxMode=%d\n",
-                    _dmContactPerms, _dmContactIdx, _dmInboxMode);
       if (_dmContactPerms > 0) {
         display.print("Q:Exit L:Admin");
       } else {
