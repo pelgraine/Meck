@@ -561,7 +561,9 @@ public:
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, 0);
-    snprintf(tmp, sizeof(tmp), "Admin: %.16s", _repeaterName);
+    const char* hdrPrefix = (_state == STATE_PASSWORD_ENTRY || _state == STATE_LOGGING_IN)
+                             ? "Login" : "Admin";
+    snprintf(tmp, sizeof(tmp), "%s: %.16s", hdrPrefix, _repeaterName);
     display.print(tmp);
 
     if (_state >= STATE_CATEGORY_MENU && _state <= STATE_RESPONSE_VIEW) {

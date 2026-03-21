@@ -1138,6 +1138,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   _node_prefs = node_prefs;
 
+  // Initialize message dedup ring buffer
+  memset(_dedup, 0, sizeof(_dedup));
+  _dedupIdx = 0;
+
+  // Allocate per-contact DM unread tracking (PSRAM if available)
+#if defined(ESP32) && defined(BOARD_HAS_PSRAM)
+  _dmUnread = (uint8_t*)ps_calloc(MAX_CONTACTS, sizeof(uint8_t));
+#else
+  _dmUnread = new uint8_t[MAX_CONTACTS]();
+#endif
+
 #if ENV_INCLUDE_GPS == 1
   // Apply GPS preferences from stored prefs
   if (_sensors != NULL && _node_prefs != NULL) {
@@ -1184,7 +1195,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
+  ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
+  ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
   text_reader = new TextReaderScreen(this);
   notes_screen = new NotesScreen(this);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
@@ -1266,6 +1279,24 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
                     const uint8_t* path, int8_t snr) {
   _msgcount = msgcount;
 
+  // --- Dedup: suppress retry spam (same sender + text within 60s) ---
+  uint32_t nameH = simpleHash(from_name);
+  uint32_t textH = simpleHash(text);
+  unsigned long now = millis();
+  for (int i = 0; i < MSG_DEDUP_SIZE; i++) {
+    if (_dedup[i].name_hash == nameH && _dedup[i].text_hash == textH &&
+        (now - _dedup[i].millis) < MSG_DEDUP_WINDOW_MS) {
+      // Duplicate — suppress UI notification but still queued for BLE sync
+      Serial.printf("[Dedup] Suppressed duplicate from %s\n", from_name);
+      return;
+    }
+  }
+  // Record this message in the dedup ring
+  _dedup[_dedupIdx].name_hash = nameH;
+  _dedup[_dedupIdx].text_hash = textH;
+  _dedup[_dedupIdx].millis = now;
+  _dedupIdx = (_dedupIdx + 1) % MSG_DEDUP_SIZE;
+
   // Add to preview screen (for notifications on non-keyboard devices)
   ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
   
@@ -1282,13 +1313,34 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   }
   
   // Add to channel history screen with channel index, path data, and SNR
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
+  // For DMs (channel_idx == 0xFF), prefix text with sender name so the
+  // DM inbox can extract it later. Channel messages already arrive from
+  // MeshCore in "Sender: message" format.
+  if (channel_idx == 0xFF) {
+    char dmFormatted[CHANNEL_MSG_TEXT_LEN];
+    snprintf(dmFormatted, sizeof(dmFormatted), "%s: %s", from_name, text);
+    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr);
+  } else {
+    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
+  }
   
   // If user is currently viewing this channel, mark it as read immediately
   // (they can see the message arrive in real-time)
   if (isOnChannelScreen() && 
       ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) {
     ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  }
+
+  // Per-contact DM unread tracking: find contact index by name
+  if (channel_idx == 0xFF && _dmUnread) {
+    uint32_t numContacts = the_mesh.getNumContacts();
+    ContactInfo contact;
+    for (uint32_t ci = 0; ci < numContacts; ci++) {
+      if (the_mesh.getContactByIdx(ci, contact) && strcmp(contact.name, from_name) == 0) {
+        if (_dmUnread[ci] < 255) _dmUnread[ci]++;
+        break;
+      }
+    }
   }
   
 #if defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
@@ -2180,6 +2232,30 @@ void UITask::gotoChannelScreen() {
   _next_refresh = 100;
 }
 
+void UITask::gotoDMTab() {
+  ((ChannelScreen *) channel_screen)->setViewChannelIdx(0xFF);  // switches + marks read
+  ((ChannelScreen *) channel_screen)->resetScroll();
+  setCurrScreen(channel_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoDMConversation(const char* contactName, int contactIdx, uint8_t perms) {
+  ChannelScreen* cs = (ChannelScreen*)channel_screen;
+  cs->setViewChannelIdx(0xFF);  // enters inbox mode + marks read
+  cs->openConversation(contactName, contactIdx, perms);  // switches to conversation mode
+  cs->resetScroll();
+  setCurrScreen(channel_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
 void UITask::gotoContactsScreen() {
   ((ContactsScreen *) contacts_screen)->resetScroll();
   setCurrScreen(contacts_screen);
@@ -2288,8 +2364,32 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
 
 void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
   ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
+  // If clearing DMs, also zero all per-contact DM counts
+  if (channel_idx == 0xFF && _dmUnread) {
+    memset(_dmUnread, 0, MAX_CONTACTS * sizeof(uint8_t));
+  }
   // Trigger a refresh so the home screen unread count updates in real-time
   _next_refresh = millis() + 200;
+}
+
+bool UITask::hasDMUnread(int contactIdx) const {
+  if (!_dmUnread || contactIdx < 0 || contactIdx >= MAX_CONTACTS) return false;
+  return _dmUnread[contactIdx] > 0;
+}
+
+int UITask::getDMUnreadCount(int contactIdx) const {
+  if (!_dmUnread || contactIdx < 0 || contactIdx >= MAX_CONTACTS) return 0;
+  return _dmUnread[contactIdx];
+}
+
+void UITask::clearDMUnread(int contactIdx) {
+  if (!_dmUnread || contactIdx < 0 || contactIdx >= MAX_CONTACTS) return;
+  int count = _dmUnread[contactIdx];
+  if (count > 0) {
+    _dmUnread[contactIdx] = 0;
+    ((ChannelScreen *) channel_screen)->subtractDMUnread(count);
+    _next_refresh = millis() + 200;
+  }
 }
 
 void UITask::gotoRepeaterAdmin(int contactIdx) {
@@ -2315,6 +2415,17 @@ void UITask::gotoRepeaterAdmin(int contactIdx) {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+}
+
+void UITask::gotoRepeaterAdminDirect(int contactIdx) {
+  // Open admin and auto-submit cached password (skips password screen)
+  _skipRoomRedirect = true;  // Don't redirect back to conversation after login
+  gotoRepeaterAdmin(contactIdx);
+  RepeaterAdminScreen* admin = (RepeaterAdminScreen*)repeater_admin;
+  if (admin && admin->getState() == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+    // If password was pre-filled from cache, simulate Enter to submit login
+    admin->handleInput('\r');
+  }
 }
 
 void UITask::gotoDiscoveryScreen() {
@@ -2381,6 +2492,28 @@ void UITask::onAdminLoginResult(bool success, uint8_t permissions, uint32_t serv
   if (repeater_admin && isOnRepeaterAdmin()) {
     ((RepeaterAdminScreen*)repeater_admin)->onLoginResult(success, permissions, server_time);
     _next_refresh = 100;  // trigger re-render
+
+    if (success) {
+      int cidx = ((RepeaterAdminScreen*)repeater_admin)->getContactIdx();
+      if (cidx >= 0) {
+        clearDMUnread(cidx);
+
+        // Room server login: redirect to conversation view with stored permissions.
+        // Admin users see L:Admin footer to access the admin panel.
+        // Skip redirect if user explicitly pressed L to get to admin.
+        if (!_skipRoomRedirect) {
+          ContactInfo contact;
+          if (the_mesh.getContactByIdx(cidx, contact) && contact.type == ADV_TYPE_ROOM) {
+            uint8_t maskedPerms = permissions & 0x03;
+            Serial.printf("[Admin] Room login (raw=%d, masked=%d) — opening conversation for %s\n",
+                          permissions, maskedPerms, contact.name);
+            gotoDMConversation(contact.name, cidx, maskedPerms);
+            return;
+          }
+        }
+        _skipRoomRedirect = false;
+      }
+    }
   }
 }
 

@@ -40,6 +40,9 @@ private:
   // How many rows fit on screen (computed during render)
   int _rowsPerPage;
 
+  // Pointer to per-contact DM unread array (owned by UITask, set via setter)
+  const uint8_t* _dmUnread = nullptr;
+
   // --- helpers ---
 
   static const char* filterLabel(FilterMode f) {
@@ -144,6 +147,9 @@ public:
   }
 
   void invalidateCache() { _cacheValid = false; }
+
+  // Set pointer to per-contact DM unread array (called by UITask after allocation)
+  void setDMUnreadPtr(const uint8_t* ptr) { _dmUnread = ptr; }
 
   void resetScroll() {
     _scrollPos = 0;
@@ -303,9 +309,14 @@ public:
         char ageStr[6];
         formatAge(ageStr, sizeof(ageStr), now, contact.last_advert_timestamp);
 
-        // Build right-side string: "hops age"
-        char rightStr[14];
-        snprintf(rightStr, sizeof(rightStr), "%sh %s", hopStr, ageStr);
+        // Build right-side string: "*N hops age" if unread, else "hops age"
+        int dmCount = (_dmUnread && _filteredIdx[i] < MAX_CONTACTS) ? _dmUnread[_filteredIdx[i]] : 0;
+        char rightStr[20];
+        if (dmCount > 0) {
+          snprintf(rightStr, sizeof(rightStr), "*%d %sh %s", dmCount, hopStr, ageStr);
+        } else {
+          snprintf(rightStr, sizeof(rightStr), "%sh %s", hopStr, ageStr);
+        }
         int rightWidth = display.getTextWidth(rightStr) + 2;
 
         // Name region: after prefix + small gap, before right info

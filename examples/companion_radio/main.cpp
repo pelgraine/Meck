@@ -954,10 +954,38 @@ static void lastHeardToggleContact() {
     }
 #endif
 
-    // Channel screen: long press → compose to current channel
+    // Channel screen: long press → compose to current channel (or DM actions on DM tab)
     if (ui_task.isOnChannelScreen()) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
       uint8_t chIdx = ui_task.getChannelScreenViewIdx();
+      if (chIdx == 0xFF) {
+        ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+        if (chScr->isDMInboxMode()) {
+          // Inbox mode: long press = open selected conversation (same as Enter)
+          return '\r';
+        }
+        // Conversation mode: long press = compose reply
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        const char* dmName = chScr->getDMFilterName();
+        if (dmName && dmName[0]) {
+          uint32_t numC = the_mesh.getNumContacts();
+          ContactInfo ci;
+          for (uint32_t j = 0; j < numC; j++) {
+            if (the_mesh.getContactByIdx(j, ci) && strcmp(ci.name, dmName) == 0) {
+              char label[40];
+              snprintf(label, sizeof(label), "DM: %s", dmName);
+              ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, j);
+              ui_task.clearDMUnread(j);
+              return 0;
+            }
+          }
+        }
+        ui_task.showAlert("Contact not found", 1000);
+        return 0;
+#else
+        return KEY_ENTER;
+#endif
+      }
+#if defined(LilyGo_T5S3_EPaper_Pro)
       ChannelDetails ch;
       if (the_mesh.getChannel(chIdx, ch)) {
         char label[40];
@@ -978,6 +1006,13 @@ static void lastHeardToggleContact() {
         uint8_t ctype = cs->getSelectedContactType();
 #if defined(LilyGo_T5S3_EPaper_Pro)
         if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+          if (ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+            return 0;
+          }
           char dname[32];
           cs->getSelectedContactName(dname, sizeof(dname));
           char label[40];
@@ -986,6 +1021,16 @@ static void lastHeardToggleContact() {
           return 0;
         } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
           ui_task.gotoRepeaterAdmin(idx);
+          return 0;
+        } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+          // Room server: open login (after login, auto-redirects to conversation)
+          ui_task.gotoRepeaterAdmin(idx);
+          return 0;
+        } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+          char cname[32];
+          cs->getSelectedContactName(cname, sizeof(cname));
+          ui_task.clearDMUnread(idx);
+          ui_task.gotoDMConversation(cname);
           return 0;
         }
 #else
@@ -2110,13 +2155,37 @@ void loop() {
             } else if (ckb == '\r') {
               // Enter key — screen-specific compose or select
               if (ui_task.isOnChannelScreen()) {
-                // Open VKB for channel message compose
                 uint8_t chIdx = ui_task.getChannelScreenViewIdx();
-                ChannelDetails ch;
-                if (the_mesh.getChannel(chIdx, ch)) {
-                  char label[40];
-                  snprintf(label, sizeof(label), "To: %s", ch.name);
-                  ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                if (chIdx == 0xFF) {
+                  ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+                  if (chScr->isDMInboxMode()) {
+                    // Inbox mode: inject Enter to open conversation
+                    ui_task.injectKey('\r');
+                  } else {
+                    // Conversation mode: open VKB DM compose
+                    const char* dmName = chScr->getDMFilterName();
+                    if (dmName && dmName[0]) {
+                      uint32_t numC = the_mesh.getNumContacts();
+                      ContactInfo ci;
+                      for (uint32_t j = 0; j < numC; j++) {
+                        if (the_mesh.getContactByIdx(j, ci) && strcmp(ci.name, dmName) == 0) {
+                          char label[40];
+                          snprintf(label, sizeof(label), "DM: %s", dmName);
+                          ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, j);
+                          ui_task.clearDMUnread(j);
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  // Open VKB for channel message compose
+                  ChannelDetails ch;
+                  if (the_mesh.getChannel(chIdx, ch)) {
+                    char label[40];
+                    snprintf(label, sizeof(label), "To: %s", ch.name);
+                    ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                  }
                 }
               } else if (ui_task.isOnContactsScreen()) {
                 // DM compose for chat contacts, admin for repeaters
@@ -2125,13 +2194,28 @@ void loop() {
                   int idx = cs->getSelectedContactIdx();
                   uint8_t ctype = cs->getSelectedContactType();
                   if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-                    char dname[32];
-                    cs->getSelectedContactName(dname, sizeof(dname));
-                    char label[40];
-                    snprintf(label, sizeof(label), "DM: %s", dname);
-                    ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                    if (ui_task.hasDMUnread(idx)) {
+                      char cname[32];
+                      cs->getSelectedContactName(cname, sizeof(cname));
+                      ui_task.clearDMUnread(idx);
+                      ui_task.gotoDMConversation(cname);
+                    } else {
+                      char dname[32];
+                      cs->getSelectedContactName(dname, sizeof(dname));
+                      char label[40];
+                      snprintf(label, sizeof(label), "DM: %s", dname);
+                      ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                    }
                   } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
                     ui_task.gotoRepeaterAdmin(idx);
+                  } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+                    // Room server: open login (auto-redirects to conversation)
+                    ui_task.gotoRepeaterAdmin(idx);
+                  } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+                    char cname[32];
+                    cs->getSelectedContactName(cname, sizeof(cname));
+                    ui_task.clearDMUnread(idx);
+                    ui_task.gotoDMConversation(cname);
                   }
                 }
               } else if (ui_task.isOnRepeaterAdmin()) {
@@ -2966,24 +3050,46 @@ void handleKeyboardInput() {
         int idx = cs->getSelectedContactIdx();
         uint8_t ctype = cs->getSelectedContactType();
         if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-          composeDM = true;
-          composeDMContactIdx = idx;
-          cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
-          composeMode = true;
-          composeBuffer[0] = '\0';
-          composePos = 0;
-          Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
-          drawComposeScreen();
-          lastComposeRefresh = millis();
+          // If unread DMs exist, go to conversation view to read first
+          if (ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+            Serial.printf("Unread DMs from %s — opening conversation\n", cname);
+          } else {
+            composeDM = true;
+            composeDMContactIdx = idx;
+            cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
+            composeMode = true;
+            composeBuffer[0] = '\0';
+            composePos = 0;
+            Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
+            drawComposeScreen();
+            lastComposeRefresh = millis();
+          }
         } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
           // Open repeater admin screen
           char rname[32];
           cs->getSelectedContactName(rname, sizeof(rname));
           Serial.printf("Opening repeater admin for %s (idx %d)\n", rname, idx);
           ui_task.gotoRepeaterAdmin(idx);
+        } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+          // Room server: open login screen (after login, auto-redirects to conversation)
+          char rname[32];
+          cs->getSelectedContactName(rname, sizeof(rname));
+          Serial.printf("Room %s — opening login\n", rname);
+          ui_task.gotoRepeaterAdmin(idx);
         } else if (idx >= 0) {
-          // Non-chat, non-repeater contact (room, sensor, etc.) - future use
-          Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
+          // Other contacts with unreads
+          if (ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+          } else {
+            Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
+          }
         }
       } else if (ui_task.isOnChannelScreen()) {
         // If path overlay is showing, Enter copies path text to compose buffer
@@ -3010,6 +3116,42 @@ void handleKeyboardInput() {
           lastComposeRefresh = millis();
           break;
         }
+
+        // DM inbox mode: pass Enter to ChannelScreen to open the selected conversation
+        if (chScr2 && chScr2->isDMInboxMode()) {
+          ui_task.injectKey('\r');
+          break;
+        }
+
+        // DM conversation mode: Enter opens DM compose to the contact being viewed
+        // (DM inbox mode Enter is handled by ChannelScreen::handleInput internally)
+        if (chScr2 && chScr2->isDMConversation()) {
+          const char* dmName = chScr2->getDMFilterName();
+          if (dmName && dmName[0]) {
+            uint32_t numC = the_mesh.getNumContacts();
+            ContactInfo ci;
+            for (uint32_t j = 0; j < numC; j++) {
+              if (the_mesh.getContactByIdx(j, ci) && strcmp(ci.name, dmName) == 0) {
+                composeDM = true;
+                composeDMContactIdx = (int)j;
+                strncpy(composeDMName, dmName, sizeof(composeDMName) - 1);
+                composeDMName[sizeof(composeDMName) - 1] = '\0';
+                composeMode = true;
+                composeBuffer[0] = '\0';
+                composePos = 0;
+                ui_task.clearDMUnread(j);
+                Serial.printf("DM conversation compose to %s (idx %d)\n", dmName, j);
+                drawComposeScreen();
+                lastComposeRefresh = millis();
+                break;
+              }
+            }
+          } else {
+            ui_task.showAlert("No contact selected", 1000);
+          }
+          break;
+        }
+
         composeDM = false;
         composeDMContactIdx = -1;
         composeChannelIdx = ui_task.getChannelScreenViewIdx();
@@ -3121,6 +3263,24 @@ void handleKeyboardInput() {
       if (!ui_task.isOnLastHeardScreen()) {
         Serial.println("Opening last heard");
         ui_task.gotoLastHeardScreen();
+      }
+      break;
+
+    case 'l':
+      // L = Login/Admin — from DM conversation, open repeater admin with auto-login
+      if (ui_task.isOnChannelScreen()) {
+        ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+        Serial.printf("[L key] onChannelScreen=1, isDMConv=%d, perms=%d, cidx=%d\n",
+                      chScr ? chScr->isDMConversation() : -1,
+                      chScr ? chScr->getDMContactPerms() : -1,
+                      chScr ? chScr->getDMContactIdx() : -1);
+        if (chScr && chScr->isDMConversation() && chScr->getDMContactPerms() > 0) {
+          int cidx = chScr->getDMContactIdx();
+          if (cidx >= 0) {
+            ui_task.gotoRepeaterAdminDirect(cidx);
+            Serial.printf("DM conversation: auto-login admin for idx %d\n", cidx);
+          }
+        }
       }
       break;
 

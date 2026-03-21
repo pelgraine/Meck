@@ -84,6 +84,34 @@ private:
   int  _replySelectPos;        // Index into chronological channelMsgs[] (0=oldest)
   int  _replyChannelMsgCount;  // Cached count from last render (for input bounds)
 
+  // DM tab (channel_idx == 0xFF) two-level view:
+  //   Inbox mode: list of contacts you have DMs from
+  //   Conversation mode: messages filtered to one contact
+  bool _dmInboxMode;           // true = showing inbox list, false = conversation
+  int  _dmInboxScroll;         // Scroll position in inbox list
+  char _dmFilterName[32];      // Selected contact name for conversation view
+  int  _dmContactIdx;          // Contact index for conversation (-1 if unknown)
+  uint8_t _dmContactPerms;     // Last login permissions for this contact (0=none/guest)
+  const uint8_t* _dmUnreadPtr; // Pointer to per-contact DM unread array (from UITask)
+
+  // Helper: does a message belong to the current view?
+  bool msgMatchesView(const ChannelMessage& msg) const {
+    if (!msg.valid) return false;
+    if (_viewChannelIdx != 0xFF) {
+      return msg.channel_idx == _viewChannelIdx;
+    }
+    // DM tab in conversation mode: filter by sender name
+    if (!_dmInboxMode && _dmFilterName[0] != '\0') {
+      if (msg.channel_idx != 0xFF) return false;
+      int nameLen = strlen(_dmFilterName);
+      if (strncmp(msg.text, _dmFilterName, nameLen) != 0) return false;
+      if (msg.text[nameLen] != ':') return false;
+      return true;
+    }
+    // Inbox mode or no filter — match all DMs
+    return msg.channel_idx == 0xFF;
+  }
+
   // Per-channel unread message counts (standalone mode)
   // Index 0..MAX_GROUP_CHANNELS-1 for channel messages
   // Index MAX_GROUP_CHANNELS for DMs (channel_idx == 0xFF)
@@ -93,7 +121,9 @@ public:
   ChannelScreen(UITask* task, mesh::RTCClock* rtc) 
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
       _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathScrollPos(0), _pathHopsVisible(20),
-      _replySelectMode(false), _replySelectPos(-1), _replyChannelMsgCount(0) {
+      _replySelectMode(false), _replySelectPos(-1), _replyChannelMsgCount(0),
+      _dmInboxMode(true), _dmInboxScroll(0), _dmContactIdx(-1), _dmContactPerms(0), _dmUnreadPtr(nullptr) {
+    _dmFilterName[0] = '\0';
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
       _messages[i].valid = false;
@@ -158,7 +188,7 @@ public:
   int getMessageCountForChannel() const {
     int count = 0;
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
-      if (_messages[i].valid && _messages[i].channel_idx == _viewChannelIdx) {
+      if (msgMatchesView(_messages[i])) {
         count++;
       }
     }
@@ -173,10 +203,48 @@ public:
     _scrollPos = 0;
     _showPathOverlay = false;
     _pathScrollPos = 0;
+    // Reset DM inbox state when entering DM tab
+    if (idx == 0xFF) {
+      _dmInboxMode = true;
+      _dmInboxScroll = 0;
+      _dmFilterName[0] = '\0';
+      _dmContactIdx = -1;
+      _dmContactPerms = 0;
+    }
     markChannelRead(idx);
   }
+  bool isDMTab() const { return _viewChannelIdx == 0xFF; }
+  bool isDMInboxMode() const { return _viewChannelIdx == 0xFF && _dmInboxMode; }
+  bool isDMConversation() const { return _viewChannelIdx == 0xFF && !_dmInboxMode; }
+  const char* getDMFilterName() const { return _dmFilterName; }
+
+  // Open a specific contact's DM conversation directly (skipping inbox)
+  void openConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0) {
+    strncpy(_dmFilterName, contactName, sizeof(_dmFilterName) - 1);
+    _dmFilterName[sizeof(_dmFilterName) - 1] = '\0';
+    _dmInboxMode = false;
+    _dmContactIdx = contactIdx;
+    _dmContactPerms = perms;
+    _scrollPos = 0;
+    Serial.printf("[ChannelScreen] openConversation: name=%s, idx=%d, perms=%d\n",
+                  contactName, contactIdx, perms);
+  }
+
+  int getDMContactIdx() const { return _dmContactIdx; }
+  uint8_t getDMContactPerms() const { return _dmContactPerms; }
+  void setDMContactPerms(uint8_t p) { _dmContactPerms = p; }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
   void dismissPathOverlay() { _showPathOverlay = false; _pathScrollPos = 0; }
+
+  // Set pointer to per-contact DM unread array (called by UITask after allocation)
+  void setDMUnreadPtr(const uint8_t* ptr) { _dmUnreadPtr = ptr; }
+
+  // Subtract a specific amount from the DM unread slot (used by per-contact clearing)
+  void subtractDMUnread(int count) {
+    int slot = MAX_GROUP_CHANNELS;  // DM slot
+    _unread[slot] -= count;
+    if (_unread[slot] < 0) _unread[slot] = 0;
+  }
 
   // --- Reply select mode (R key → pick a message → Enter to @mention reply) ---
   bool isReplySelectMode() const { return _replySelectMode; }
@@ -206,7 +274,7 @@ public:
       int idx = _newestIdx - i;
       while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
       idx = idx % CHANNEL_MSG_HISTORY_SIZE;
-      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx) {
+      if (_messages[idx].valid && msgMatchesView(_messages[idx])) {
         rsMsgs[count++] = idx;
       }
     }
@@ -230,7 +298,7 @@ public:
       int idx = _newestIdx - i;
       while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
       idx = idx % CHANNEL_MSG_HISTORY_SIZE;
-      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx) {
+      if (_messages[idx].valid && msgMatchesView(_messages[idx])) {
         rsMsgs[count++] = idx;
       }
     }
@@ -277,7 +345,7 @@ public:
       int idx = _newestIdx - i;
       while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
       idx = idx % CHANNEL_MSG_HISTORY_SIZE;
-      if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx
+      if (msgMatchesView(_messages[idx])
           && _messages[idx].path_len != 0) {
         return &_messages[idx];
       }
@@ -449,7 +517,15 @@ public:
     
     // Get channel name
     ChannelDetails channel;
-    if (the_mesh.getChannel(_viewChannelIdx, channel)) {
+    if (_viewChannelIdx == 0xFF) {
+      if (_dmInboxMode) {
+        display.print("Direct Messages");
+      } else {
+        char hdr[40];
+        snprintf(hdr, sizeof(hdr), "DM: %s", _dmFilterName);
+        display.print(hdr);
+      }
+    } else if (the_mesh.getChannel(_viewChannelIdx, channel)) {
       display.print(channel.name);
     } else {
       sprintf(tmp, "Channel %d", _viewChannelIdx);
@@ -464,6 +540,180 @@ public:
     
     // Divider line
     display.drawRect(0, 11, display.width(), 1);
+
+    // === DM Inbox mode: show list of contacts with DMs ===
+    if (_viewChannelIdx == 0xFF && _dmInboxMode) {
+      #define DM_INBOX_MAX 20
+      struct DMInboxEntry {
+        char name[32];
+        int msgCount;
+        int unreadCount;
+        uint32_t newestTs;
+      };
+      DMInboxEntry inbox[DM_INBOX_MAX];
+      int inboxCount = 0;
+
+      // Scan all DMs and build unique sender list
+      for (int i = 0; i < _msgCount && i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+        int idx = _newestIdx - i;
+        while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+        idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+        if (!_messages[idx].valid || _messages[idx].channel_idx != 0xFF) continue;
+
+        char sender[32];
+        if (!extractSenderName(_messages[idx].text, sender, sizeof(sender))) continue;
+
+        // Find existing entry
+        int found = -1;
+        for (int j = 0; j < inboxCount; j++) {
+          if (strcmp(inbox[j].name, sender) == 0) { found = j; break; }
+        }
+        if (found < 0 && inboxCount < DM_INBOX_MAX) {
+          found = inboxCount++;
+          strncpy(inbox[found].name, sender, 31);
+          inbox[found].name[31] = '\0';
+          inbox[found].msgCount = 0;
+          inbox[found].unreadCount = 0;
+          inbox[found].newestTs = 0;
+        }
+        if (found >= 0) {
+          inbox[found].msgCount++;
+          if (_messages[idx].timestamp > inbox[found].newestTs)
+            inbox[found].newestTs = _messages[idx].timestamp;
+        }
+      }
+
+      // Look up unread counts from per-contact array
+      if (_dmUnreadPtr) {
+        for (int e = 0; e < inboxCount; e++) {
+          uint32_t numC = the_mesh.getNumContacts();
+          ContactInfo ci;
+          for (uint32_t c = 0; c < numC; c++) {
+            if (the_mesh.getContactByIdx(c, ci) && strcmp(ci.name, inbox[e].name) == 0) {
+              inbox[e].unreadCount = _dmUnreadPtr[c];
+              break;
+            }
+          }
+        }
+      }
+
+      // Sort by newest timestamp descending (insertion sort)
+      for (int i = 1; i < inboxCount; i++) {
+        DMInboxEntry tmp2 = inbox[i];
+        int j = i - 1;
+        while (j >= 0 && inbox[j].newestTs < tmp2.newestTs) {
+          inbox[j + 1] = inbox[j];
+          j--;
+        }
+        inbox[j + 1] = tmp2;
+      }
+
+      // Render inbox list
+      display.setTextSize(0);
+      int lineH = 9;
+      int headerH = 14;
+      int footerH = 14;
+      int maxY = display.height() - footerH;
+      int y = headerH;
+      int maxVisible = (maxY - headerH) / lineH;
+      if (maxVisible < 3) maxVisible = 3;
+
+      // Clamp scroll
+      if (_dmInboxScroll >= inboxCount) _dmInboxScroll = inboxCount > 0 ? inboxCount - 1 : 0;
+
+      if (inboxCount == 0) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(0, y);
+        display.print("No direct messages");
+        display.setCursor(0, y + lineH);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("DMs from contacts appear here");
+#else
+        display.print("A/D: Switch channel");
+#endif
+      } else {
+        int startIdx = max(0, min(_dmInboxScroll - maxVisible / 2,
+                                  inboxCount - maxVisible));
+        int endIdx = min(inboxCount, startIdx + maxVisible);
+
+        for (int i = startIdx; i < endIdx && y + lineH <= maxY; i++) {
+          bool selected = (i == _dmInboxScroll);
+
+          if (selected) {
+            display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(0, y, display.width(), lineH);
+#else
+            display.fillRect(0, y + 5, display.width(), lineH);
+#endif
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
+
+          display.setCursor(0, y);
+
+          // Prefix: > for selected, unread indicator
+          char prefix[6];
+          if (inbox[i].unreadCount > 0) {
+            snprintf(prefix, sizeof(prefix), "%s*%d", selected ? ">" : " ", inbox[i].unreadCount);
+          } else {
+            snprintf(prefix, sizeof(prefix), "%s ", selected ? ">" : " ");
+          }
+          display.print(prefix);
+
+          // Name (truncated)
+          char filteredName[32];
+          display.translateUTF8ToBlocks(filteredName, inbox[i].name, sizeof(filteredName));
+
+          // Right side: message count + age
+          char ageStr[8];
+          uint32_t age = _rtc->getCurrentTime() - inbox[i].newestTs;
+          if (age < 60) snprintf(ageStr, sizeof(ageStr), "%ds", age);
+          else if (age < 3600) snprintf(ageStr, sizeof(ageStr), "%dm", age / 60);
+          else if (age < 86400) snprintf(ageStr, sizeof(ageStr), "%dh", age / 3600);
+          else snprintf(ageStr, sizeof(ageStr), "%dd", age / 86400);
+
+          char rightStr[16];
+          snprintf(rightStr, sizeof(rightStr), "(%d) %s", inbox[i].msgCount, ageStr);
+          int rightW = display.getTextWidth(rightStr) + 2;
+
+          int nameX = display.getTextWidth(prefix) + 2;
+          int nameMaxW = display.width() - nameX - rightW - 2;
+          display.drawTextEllipsized(nameX, y, nameMaxW, filteredName);
+
+          display.setCursor(display.width() - rightW, y);
+          display.print(rightStr);
+
+          y += lineH;
+        }
+      }
+
+      // Footer
+      display.setTextSize(1);
+      int footerY = display.height() - 12;
+      display.drawRect(0, footerY - 2, display.width(), 1);
+      display.setColor(DisplayDriver::YELLOW);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.setCursor(0, footerY);
+      display.print("Swipe:Nav");
+      const char* rtInbox = "Hold:Open";
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.print(rtInbox);
+#else
+      display.setCursor(0, footerY);
+      display.print("Q:Bck A/D:Ch");
+      const char* rtInbox = "Ent:Open";
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.print(rtInbox);
+#endif
+
+#ifdef USE_EINK
+      return 5000;
+#else
+      return 1000;
+#endif
+    }
     
     // --- Path detail overlay ---
     if (_showPathOverlay) {
@@ -667,18 +917,154 @@ public:
       display.setTextSize(0);  // Tiny font for body text
       display.setCursor(0, 20);
       display.setColor(DisplayDriver::LIGHT);
-      display.print("No messages yet");
-      display.setCursor(0, 30);
+      if (_viewChannelIdx == 0xFF) {
+        char noMsg[48];
+        snprintf(noMsg, sizeof(noMsg), "No messages from %s", _dmFilterName);
+        display.print(noMsg);
+        display.setCursor(0, 30);
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      display.print("Swipe: Switch channel");
-      display.setCursor(0, 40);
-      display.print("Long press: Compose");
+        display.print("Hold: Compose reply");
 #else
-      display.print("A/D: Switch channel");
-      display.setCursor(0, 40);
-      display.print("C: Compose message");
+        display.print("Q: Back to inbox");
+        display.setCursor(0, 40);
+        display.print("Ent: Compose reply");
 #endif
+      } else {
+        display.print("No messages yet");
+        display.setCursor(0, 30);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.print("Swipe: Switch channel");
+        display.setCursor(0, 40);
+        display.print("Long press: Compose");
+#else
+        display.print("A/D: Switch channel");
+        display.setCursor(0, 40);
+        display.print("C: Compose message");
+#endif
+      }
       display.setTextSize(1);  // Restore for footer
+    } else if (_viewChannelIdx == 0xFF && _dmInboxMode) {
+      // =================================================================
+      // DM Inbox: list of contacts/rooms you have DM history with
+      // =================================================================
+      display.setTextSize(0);
+      int lineHeight = 9;
+      int headerHeight = 14;
+      int footerHeight = 14;
+      int maxY = display.height() - footerHeight;
+      int y = headerHeight;
+
+      // Scan all DM messages and collect unique senders
+      #define DM_INBOX_MAX 16
+      struct InboxEntry {
+        char name[24];
+        int count;
+        uint32_t newest_ts;
+      };
+      static InboxEntry inbox[DM_INBOX_MAX];
+      int inboxCount = 0;
+
+      for (int i = 0; i < _msgCount; i++) {
+        int idx = _newestIdx - i;
+        while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+        idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+        if (!_messages[idx].valid || _messages[idx].channel_idx != 0xFF) continue;
+
+        char sender[24];
+        if (!extractSenderName(_messages[idx].text, sender, sizeof(sender))) continue;
+
+        // Find or add sender in inbox
+        bool found = false;
+        for (int j = 0; j < inboxCount; j++) {
+          if (strcmp(inbox[j].name, sender) == 0) {
+            inbox[j].count++;
+            if (_messages[idx].timestamp > inbox[j].newest_ts)
+              inbox[j].newest_ts = _messages[idx].timestamp;
+            found = true;
+            break;
+          }
+        }
+        if (!found && inboxCount < DM_INBOX_MAX) {
+          strncpy(inbox[inboxCount].name, sender, 23);
+          inbox[inboxCount].name[23] = '\0';
+          inbox[inboxCount].count = 1;
+          inbox[inboxCount].newest_ts = _messages[idx].timestamp;
+          inboxCount++;
+        }
+      }
+
+      // Sort by newest timestamp descending (most recent first)
+      for (int i = 1; i < inboxCount; i++) {
+        InboxEntry tmp2 = inbox[i];
+        int j = i - 1;
+        while (j >= 0 && inbox[j].newest_ts < tmp2.newest_ts) {
+          inbox[j + 1] = inbox[j];
+          j--;
+        }
+        inbox[j + 1] = tmp2;
+      }
+
+      if (inboxCount == 0) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(0, y);
+        display.print("No conversations");
+      } else {
+        // Clamp scroll
+        if (_dmInboxScroll >= inboxCount) _dmInboxScroll = inboxCount - 1;
+        if (_dmInboxScroll < 0) _dmInboxScroll = 0;
+
+        int maxVisible = (maxY - headerHeight) / lineHeight;
+        if (maxVisible < 3) maxVisible = 3;
+        int startIdx = max(0, min(_dmInboxScroll - maxVisible / 2,
+                                  inboxCount - maxVisible));
+        int endIdx = min(inboxCount, startIdx + maxVisible);
+
+        uint32_t now = _rtc->getCurrentTime();
+        for (int i = startIdx; i < endIdx && y + lineHeight <= maxY; i++) {
+          bool selected = (i == _dmInboxScroll);
+
+          if (selected) {
+            display.setColor(DisplayDriver::LIGHT);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            display.fillRect(0, y, display.width(), lineHeight);
+#else
+            display.fillRect(0, y + 5, display.width(), lineHeight);
+#endif
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
+
+          display.setCursor(0, y);
+          display.print(selected ? ">" : " ");
+
+          // Name (ellipsized)
+          char filteredName[24];
+          display.translateUTF8ToBlocks(filteredName, inbox[i].name, sizeof(filteredName));
+
+          // Right side: message count + age
+          char ageStr[8];
+          uint32_t age = now - inbox[i].newest_ts;
+          if (age < 60) snprintf(ageStr, sizeof(ageStr), "%ds", age);
+          else if (age < 3600) snprintf(ageStr, sizeof(ageStr), "%dm", age / 60);
+          else if (age < 86400) snprintf(ageStr, sizeof(ageStr), "%dh", age / 3600);
+          else snprintf(ageStr, sizeof(ageStr), "%dd", age / 86400);
+
+          char rightStr[16];
+          snprintf(rightStr, sizeof(rightStr), "[%d] %s", inbox[i].count, ageStr);
+          int rightW = display.getTextWidth(rightStr) + 2;
+
+          int nameX = display.getTextWidth(">") + 2;
+          int nameMaxW = display.width() - nameX - rightW - 2;
+          display.drawTextEllipsized(nameX, y, nameMaxW, filteredName);
+
+          display.setCursor(display.width() - rightW, y);
+          display.print(rightStr);
+
+          y += lineHeight;
+        }
+      }
+      display.setTextSize(1);
     } else {
       display.setTextSize(0);  // Tiny font for message body
       int lineHeight = 9;   // 8px font + 1px spacing
@@ -701,7 +1087,7 @@ public:
         while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
         idx = idx % CHANNEL_MSG_HISTORY_SIZE;
         
-        if (_messages[idx].valid && _messages[idx].channel_idx == _viewChannelIdx) {
+        if (msgMatchesView(_messages[idx])) {
           channelMsgs[numChannelMsgs++] = idx;
         }
       }
@@ -968,17 +1354,35 @@ public:
     
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setCursor(0, footerY);
-    display.print("Swipe:Ch/Scroll");
-    const char* midCh = "Tap:Path";
-    display.setCursor((display.width() - display.getTextWidth(midCh)) / 2, footerY);
-    display.print(midCh);
-    const char* rtCh = "Hold:Compose";
-    display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
-    display.print(rtCh);
+    if (_viewChannelIdx == 0xFF) {
+      display.print("Swipe:Scroll");
+      const char* rtCh = "Hold:Reply";
+      display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
+      display.print(rtCh);
+    } else {
+      display.print("Swipe:Ch/Scroll");
+      const char* midCh = "Tap:Path";
+      display.setCursor((display.width() - display.getTextWidth(midCh)) / 2, footerY);
+      display.print(midCh);
+      const char* rtCh = "Hold:Compose";
+      display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
+      display.print(rtCh);
+    }
 #else
     // Left side: abbreviated controls
     if (_replySelectMode) {
       display.print("W/S:Sel V:Pth Q:X");
+      const char* rightText = "Ent:Reply";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
+    } else if (_viewChannelIdx == 0xFF) {
+      Serial.printf("[DM Footer] perms=%d, contactIdx=%d, inboxMode=%d\n",
+                    _dmContactPerms, _dmContactIdx, _dmInboxMode);
+      if (_dmContactPerms > 0) {
+        display.print("Q:Exit L:Admin");
+      } else {
+        display.print("Q:Exit");
+      }
       const char* rightText = "Ent:Reply";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
@@ -1080,10 +1484,90 @@ public:
       return true;  // Consume all other keys in reply select
     }
 
+    // --- DM Inbox mode (two-level DM view) ---
+    if (_viewChannelIdx == 0xFF && _dmInboxMode) {
+      // W - scroll up in inbox
+      if (c == 'w' || c == 'W' || c == 0xF2) {
+        if (_dmInboxScroll > 0) { _dmInboxScroll--; return true; }
+        return false;
+      }
+      // S - scroll down in inbox
+      if (c == 's' || c == 'S' || c == 0xF1) {
+        _dmInboxScroll++;  // Clamped during render
+        return true;
+      }
+      // Enter - open conversation for selected sender
+      if (c == '\r' || c == 13) {
+        // Rebuild inbox to find the selected sender name
+        int cur = 0;
+        for (int i = 0; i < _msgCount; i++) {
+          int idx = _newestIdx - i;
+          while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+          idx = idx % CHANNEL_MSG_HISTORY_SIZE;
+          if (!_messages[idx].valid || _messages[idx].channel_idx != 0xFF) continue;
+          char sender[24];
+          if (!extractSenderName(_messages[idx].text, sender, sizeof(sender))) continue;
+          // Check if we've seen this sender already
+          bool dup = false;
+          for (int k = 0; k < i; k++) {
+            int ki = _newestIdx - k;
+            while (ki < 0) ki += CHANNEL_MSG_HISTORY_SIZE;
+            ki = ki % CHANNEL_MSG_HISTORY_SIZE;
+            if (!_messages[ki].valid || _messages[ki].channel_idx != 0xFF) continue;
+            char prev[24];
+            if (extractSenderName(_messages[ki].text, prev, sizeof(prev))
+                && strcmp(prev, sender) == 0) { dup = true; break; }
+          }
+          if (dup) continue;
+          if (cur == _dmInboxScroll) {
+            strncpy(_dmFilterName, sender, sizeof(_dmFilterName) - 1);
+            _dmFilterName[sizeof(_dmFilterName) - 1] = '\0';
+            _dmInboxMode = false;
+            _scrollPos = 0;
+            // Look up contact index
+            _dmContactIdx = -1;
+            _dmContactPerms = 0;
+            uint32_t numC = the_mesh.getNumContacts();
+            ContactInfo ci;
+            for (uint32_t c = 0; c < numC; c++) {
+              if (the_mesh.getContactByIdx(c, ci) && strcmp(ci.name, sender) == 0) {
+                _dmContactIdx = (int)c;
+                break;
+              }
+            }
+            return true;
+          }
+          cur++;
+        }
+        return true;
+      }
+      // Q - let main.cpp handle (back to home)
+      if (c == 'q' || c == 'Q' || c == '\b') {
+        return false;
+      }
+      // A/D pass through to channel switching below
+      if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {
+        // Fall through to channel switching
+      } else {
+        return true;  // Consume other keys
+      }
+    }
+
+    // --- DM Conversation mode: Q goes back to inbox ---
+    if (_viewChannelIdx == 0xFF && !_dmInboxMode) {
+      if (c == 'q' || c == 'Q' || c == '\b') {
+        _dmInboxMode = true;
+        _dmFilterName[0] = '\0';
+        _scrollPos = 0;
+        return true;
+      }
+    }
+
     int channelMsgCount = getMessageCountForChannel();
 
-    // R - enter reply select mode
+    // R - enter reply select mode (group channels only — DM tab uses Enter to reply)
     if (c == 'r' || c == 'R') {
+      if (_viewChannelIdx == 0xFF) return false;  // Not applicable on DM tab
       if (channelMsgCount > 0) {
         _replySelectMode = true;
         // Start with newest message selected
@@ -1120,14 +1604,12 @@ public:
       }
     }
     
-    // A - previous channel
+    // A - previous channel (includes DM tab at 0xFF)
     if (c == 'a' || c == 'A') {
       _replySelectMode = false;
       _replySelectPos = -1;
-      if (_viewChannelIdx > 0) {
-        _viewChannelIdx--;
-      } else {
-        // Wrap to last valid channel
+      if (_viewChannelIdx == 0xFF) {
+        // DM tab → go to last valid group channel
         for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
           ChannelDetails ch;
           if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
@@ -1135,22 +1617,39 @@ public:
             break;
           }
         }
+      } else if (_viewChannelIdx > 0) {
+        _viewChannelIdx--;
+      } else {
+        // Channel 0 → wrap to DM tab
+        _viewChannelIdx = 0xFF;
+        _dmInboxMode = true;
+        _dmInboxScroll = 0;
+        _dmFilterName[0] = '\0';
       }
       _scrollPos = 0;
       markChannelRead(_viewChannelIdx);
       return true;
     }
     
-    // D - next channel
+    // D - next channel (includes DM tab at 0xFF)
     if (c == 'd' || c == 'D') {
       _replySelectMode = false;
       _replySelectPos = -1;
-      ChannelDetails ch;
-      uint8_t nextIdx = _viewChannelIdx + 1;
-      if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
-        _viewChannelIdx = nextIdx;
-      } else {
+      if (_viewChannelIdx == 0xFF) {
+        // DM tab → wrap to channel 0
         _viewChannelIdx = 0;
+      } else {
+        ChannelDetails ch;
+        uint8_t nextIdx = _viewChannelIdx + 1;
+        if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
+          _viewChannelIdx = nextIdx;
+        } else {
+          // Past last channel → go to DM tab
+          _viewChannelIdx = 0xFF;
+          _dmInboxMode = true;
+          _dmInboxScroll = 0;
+          _dmFilterName[0] = '\0';
+        }
       }
       _scrollPos = 0;
       markChannelRead(_viewChannelIdx);

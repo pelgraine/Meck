@@ -1588,6 +1588,13 @@ void MyMesh::handleCmdFrame(size_t len) {
           uint8_t ch_idx = is_v3_ch ? out_frame[4] : out_frame[1];
           _ui->markChannelReadFromBLE(ch_idx);
         }
+
+        // Mark DM slot read when companion app syncs a contact (DM/room) message
+        bool is_v3_dm = (out_frame[0] == RESP_CODE_CONTACT_MSG_RECV_V3);
+        bool is_old_dm = (out_frame[0] == RESP_CODE_CONTACT_MSG_RECV);
+        if (is_v3_dm || is_old_dm) {
+          _ui->markChannelReadFromBLE(0xFF);
+        }
       }
 #endif
     } else {

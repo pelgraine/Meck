@@ -114,6 +114,26 @@ class UITask : public AbstractUITask {
   unsigned long _lastLockRefresh = 0;  // Periodic lock screen clock update
 #endif
 
+  // --- Message dedup ring buffer (suppress retry spam at UI level) ---
+  #define MSG_DEDUP_SIZE 8
+  #define MSG_DEDUP_WINDOW_MS 60000  // 60 seconds
+  struct MsgDedup {
+    uint32_t name_hash;
+    uint32_t text_hash;
+    unsigned long millis;
+  };
+  MsgDedup _dedup[MSG_DEDUP_SIZE];
+  int _dedupIdx = 0;
+
+  // --- Per-contact DM unread tracking ---
+  uint8_t* _dmUnread = nullptr;  // PSRAM-allocated, MAX_CONTACTS entries
+
+  static uint32_t simpleHash(const char* s) {
+    uint32_t h = 5381;
+    while (*s) { h = ((h << 5) + h) ^ (uint8_t)*s++; }
+    return h;
+  }
+
   void userLedHandler();
 
   // Button action handlers
@@ -141,6 +161,8 @@ public:
 
   void gotoHomeScreen();
   void gotoChannelScreen();  // Navigate to channel message screen
+  void gotoDMTab();          // Navigate directly to DM tab on channel screen
+  void gotoDMConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0);
   void gotoContactsScreen(); // Navigate to contacts list
   void gotoTextReader();     // *** NEW: Navigate to text reader ***
   void gotoNotesScreen();    // Navigate to notes editor
@@ -148,6 +170,7 @@ public:
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
+  void gotoRepeaterAdminDirect(int contactIdx);  // Auto-login admin (L key from conversation)
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
   void gotoLastHeardScreen();              // Navigate to last heard passive list
 #if HAS_GPS
@@ -171,6 +194,14 @@ public:
   }
   int  getMsgCount() const { return _msgcount; }
   int  getUnreadMsgCount() const;  // Per-channel unread tracking (standalone)
+  
+  // Per-contact DM unread tracking
+  bool hasDMUnread(int contactIdx) const;
+  int  getDMUnreadCount(int contactIdx) const;
+  void clearDMUnread(int contactIdx);
+
+  // Flag: suppress room→conversation redirect on next login (L key admin access)
+  bool _skipRoomRedirect = false;
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
   bool isOnChannelScreen() const { return curr == channel_screen; }
