@@ -757,7 +757,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] OTA firmware update via phone
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
-- [X] DM deduplication for retry suppression
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
@@ -778,7 +777,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] OTA firmware update via phone (WiFi variant)
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
-- [X] DM deduplication for retry suppression
 
 ## 📞 Get Support
 
