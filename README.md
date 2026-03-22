@@ -8,10 +8,12 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 ### Contents
 - [Supported Devices](#supported-devices)
+- [SD Card Requirements](#sd-card-requirements)
 - [Flashing Firmware](#flashing-firmware)
   - [First-Time Flash (Merged Firmware)](#first-time-flash-merged-firmware)
   - [Upgrading Firmware](#upgrading-firmware)
-  - [SD Card Launcher](#sd-card-launcher)
+  - [Launcher](#launcher)
+  - [OTA Firmware Update](#ota-firmware-update-v13)
 - [Path Hash Mode (v0.9.9+)](#path-hash-mode-v099)
 - [T-Deck Pro](#t-deck-pro)
   - [Build Variants](#t-deck-pro-build-variants)
@@ -23,6 +25,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Channel Message Screen](#channel-message-screen)
   - [Contacts Screen](#contacts-screen)
   - [Sending a Direct Message](#sending-a-direct-message)
+  - [Roomservers](#roomservers)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Settings Screen](#settings-screen)
   - [Compose Mode](#compose-mode)
@@ -74,6 +77,14 @@ Both devices use the ESP32-S3 with 16 MB flash and 8 MB PSRAM.
 
 ---
 
+## SD Card Requirements
+
+**An SD card is essential for Meck to function properly.** Many features — including the e-book reader, notes, bookmarks, web reader cache, audiobook playback, firmware updates, contact import/export, and WiFi credential storage — rely on files stored on the SD card. Without an SD card inserted, the device will boot and handle mesh messaging, but most extended features will be unavailable or will fail silently.
+
+**Recommended:** A **32 GB or larger** microSD card formatted as **FAT32**. MeshCore users have found that **SanDisk** microSD cards are the most reliable across both the T-Deck Pro and T5S3.
+
+---
+
 ## Flashing Firmware
 
 Download the latest firmware from the [Releases](https://github.com/pelgraine/Meck/releases) page. Each release includes two types of `.bin` files per build variant:
@@ -118,9 +129,24 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
 
 > **Tip:** If you're unsure whether the device already has a bootloader, it's always safe to use the merged file and flash at `0x0` — it will overwrite everything cleanly.
 
-### SD Card Launcher
+### Launcher
 
 If you're loading firmware from an SD card via the LilyGo Launcher firmware, use the **non-merged** `.bin` file. The Launcher provides its own bootloader and only needs the application image.
+
+### OTA Firmware Update (v1.3+)
+
+Once Meck is installed, you can update firmware directly from your phone — no computer or serial cable required. The device creates a temporary WiFi access point and you upload the new `.bin` via your phone's browser.
+
+1. Download the new **non-merged** `.bin` to your phone (from GitHub Releases, Discord, etc.)
+2. On the device: **Settings → Firmware Update → Enter** (T-Deck Pro) or **tap** (T5S3)
+3. The device starts a WiFi network called `Meck-Update-XXXX` and displays connection details
+4. On your phone: connect to the `Meck-Update` WiFi network, open a browser, go to `192.168.4.1`
+5. Tap **Choose File**, select the `.bin`, tap **Upload**
+6. The device receives the file, saves to SD, verifies, flashes, and reboots
+
+The partition layout supports dual OTA slots — the old firmware remains on the inactive partition as an automatic rollback target. If the new firmware fails to boot, the ESP32 bootloader reverts to the previous working version automatically.
+
+> **Note:** Use the **non-merged** `.bin` for OTA updates. The merged binary is only needed for first-time USB flashing.
 
 ---
 
@@ -236,7 +262,7 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 | Key | Action |
 |-----|--------|
 | W / S | Scroll messages up/down |
-| A / D | Switch between channels |
+| A / D | Switch between channels (press D past the last channel to reach the DM inbox, A to return) |
 | Enter | Compose new message |
 | R | Reply to a message — enter reply select mode, scroll to a message with W/S, then press Enter to compose a reply with an @mention |
 | V | View relay path of the last received message (scrollable, up to 20 hops) |
@@ -260,6 +286,18 @@ Press **C** from the home screen to open the contacts list. All known mesh conta
 ### Sending a Direct Message
 
 Select a **Chat** contact in the contacts list and press **Enter** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
+
+Contacts with unread direct messages show a `*` marker next to their name in the contacts list.
+
+**Reading received DMs:** On the Channel Messages screen, press **D** past the last group channel to reach the **DM inbox**. This shows all received direct messages with sender name and timestamp. Entering the DM inbox marks all DM messages as read and clears the unread indicator. Press **A** to return to group channels.
+
+### Roomservers
+
+Room servers are MeshCore nodes that host persistent chat rooms. Messages sent to a room server are stored and relayed to anyone who logs in. In Meck, room server messages arrive as contact messages and appear in the DM inbox alongside regular direct messages.
+
+To interact with a room server, navigate to the Contacts screen, filter to **Room** contacts, select the room, and press **Enter** to open the Repeater Admin screen. Log in with the room's admin password to access room administration. On successful login, all unread messages from that room are automatically marked as read.
+
+Room server messages are also synced to the companion app when connected via BLE or WiFi — the companion app will pull and display them alongside other messages.
 
 ### Repeater Admin Screen
 
@@ -531,7 +569,7 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Gesture | Action |
 |---------|--------|
 | Swipe up / down | Scroll messages |
-| Swipe left / right | Switch between channels |
+| Swipe left / right | Switch between channels (swipe left past the last channel to reach the DM inbox) |
 | Tap footer area | View relay path of last received message |
 | Tap path overlay | Dismiss overlay |
 | Long press (touch) | Open virtual keyboard to compose message to current channel |
@@ -543,7 +581,7 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Swipe up / down | Scroll through contacts |
 | Swipe left / right | Cycle contact filter (All → Chat → Repeater → Room → Sensor → Favourites) |
 | Tap | Select contact |
-| Long press on Chat contact | Open virtual keyboard to compose DM |
+| Long press on Chat contact | View unread DMs (if any), then compose DM |
 | Long press on Repeater contact | Open repeater admin login |
 
 #### Text Reader (File List)
@@ -716,6 +754,10 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
 - [X] WiFi companion environment
+- [X] OTA firmware update via phone
+- [X] DM inbox with per-contact unread indicators
+- [X] Roomserver message handling and mark-read on login
+- [X] DM deduplication for retry suppression
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
@@ -733,9 +775,10 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] CardKB external keyboard support (via QWIIC)
 - [X] Last heard passive advert list
 - [X] Tap-to-select on contacts, discovery, settings, text reader, notes screens
-- [ ] Emoji sprites on home tiles
-- [ ] Portrait mode toggle via quadruple-click Boot button
-- [ ] Hibernate should auto-off backlight
+- [X] OTA firmware update via phone (WiFi variant)
+- [X] DM inbox with per-contact unread indicators
+- [X] Roomserver message handling and mark-read on login
+- [X] DM deduplication for retry suppression
 
 ## 📞 Get Support
 
