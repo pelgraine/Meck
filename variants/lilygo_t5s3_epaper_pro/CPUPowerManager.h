@@ -24,7 +24,7 @@
 #endif
 
 #ifndef CPU_FREQ_LOW_POWER
-#define CPU_FREQ_LOW_POWER  40 // MHz — lock screen / idle standby
+#define CPU_FREQ_LOW_POWER 80   // MHz — lock screen / idle standby (40 MHz breaks I2C)
 #endif
 
 #ifndef CPU_BOOST_TIMEOUT_MS
