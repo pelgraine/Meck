@@ -8,7 +8,7 @@
 #define FIRMWARE_VER_CODE 10
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "21 March 2026"
+#define FIRMWARE_BUILD_DATE "22 March 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
