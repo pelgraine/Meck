@@ -457,15 +457,15 @@ public:
 #if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
 #elif defined(HAS_4G_MODEM)
-      display.drawTextCentered(display.width() / 2, y, "[T] Phone                     ");
+      display.drawTextCentered(display.width() / 2, y, "[T] Phone       [F] Discover  ");
 #elif defined(MECK_AUDIO_VARIANT) && defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [B] Browser   ");
 #elif defined(MECK_AUDIO_VARIANT)
-      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks                ");
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [F] Discover  ");
 #elif defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
 #else
-      y -= 10;  // reclaim the row for standalone
+      display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
 #endif
       y += 14;
 

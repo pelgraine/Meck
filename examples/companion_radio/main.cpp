@@ -3437,9 +3437,9 @@ void handleKeyboardInput() {
       break;
 
     case 'f':
-      // Start discovery scan from contacts screen, or rescan on discovery screen
-      if (ui_task.isOnContactsScreen()) {
-        Serial.println("Contacts: Starting discovery scan...");
+      // Start discovery scan from home/contacts screen, or rescan on discovery screen
+      if (ui_task.isOnContactsScreen() || ui_task.isOnHomeScreen()) {
+        Serial.println("Starting discovery scan...");
         the_mesh.startDiscovery();
         ui_task.gotoDiscoveryScreen();
       } else if (ui_task.isOnDiscoveryScreen()) {
