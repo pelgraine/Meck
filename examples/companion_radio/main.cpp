@@ -367,6 +367,87 @@
   static bool gt911Ready = false;
   static bool sdCardReady = false;  // T5S3 SD card state
 
+  // ---------------------------------------------------------------------------
+  // SD Settings Backup / Restore (T5S3)
+  // ---------------------------------------------------------------------------
+  static bool copyFile(fs::FS& srcFS, const char* srcPath,
+                       fs::FS& dstFS, const char* dstPath) {
+    File src = srcFS.open(srcPath, "r");
+    if (!src) return false;
+    File dst = dstFS.open(dstPath, "w", true);
+    if (!dst) { src.close(); return false; }
+
+    uint8_t buf[128];
+    while (src.available()) {
+      int n = src.read(buf, sizeof(buf));
+      if (n > 0) dst.write(buf, n);
+    }
+    src.close();
+    dst.close();
+    return true;
+  }
+
+  void backupSettingsToSD() {
+    if (!sdCardReady) return;
+
+    if (!SD.exists("/meshcore")) SD.mkdir("/meshcore");
+
+    if (SPIFFS.exists("/new_prefs")) {
+      copyFile(SPIFFS, "/new_prefs", SD, "/meshcore/prefs.bin");
+    }
+    if (SPIFFS.exists("/channels2")) {
+      copyFile(SPIFFS, "/channels2", SD, "/meshcore/channels.bin");
+    }
+    if (SPIFFS.exists("/identity/_main.id")) {
+      if (!SD.exists("/meshcore/identity")) SD.mkdir("/meshcore/identity");
+      copyFile(SPIFFS, "/identity/_main.id", SD, "/meshcore/identity/_main.id");
+    }
+    if (SPIFFS.exists("/contacts3")) {
+      copyFile(SPIFFS, "/contacts3", SD, "/meshcore/contacts.bin");
+    }
+
+    digitalWrite(SDCARD_CS, HIGH);
+    Serial.println("Settings backed up to SD");
+  }
+
+  bool restoreSettingsFromSD() {
+    if (!sdCardReady) return false;
+
+    bool restored = false;
+
+    if (!SPIFFS.exists("/new_prefs") && SD.exists("/meshcore/prefs.bin")) {
+      if (copyFile(SD, "/meshcore/prefs.bin", SPIFFS, "/new_prefs")) {
+        Serial.println("Restored prefs from SD");
+        restored = true;
+      }
+    }
+    if (!SPIFFS.exists("/channels2") && SD.exists("/meshcore/channels.bin")) {
+      if (copyFile(SD, "/meshcore/channels.bin", SPIFFS, "/channels2")) {
+        Serial.println("Restored channels from SD");
+        restored = true;
+      }
+    }
+    if (!SPIFFS.exists("/identity/_main.id") && SD.exists("/meshcore/identity/_main.id")) {
+      SPIFFS.mkdir("/identity");
+      if (copyFile(SD, "/meshcore/identity/_main.id", SPIFFS, "/identity/_main.id")) {
+        Serial.println("Restored identity from SD");
+        restored = true;
+      }
+    }
+    if (!SPIFFS.exists("/contacts3") && SD.exists("/meshcore/contacts.bin")) {
+      if (copyFile(SD, "/meshcore/contacts.bin", SPIFFS, "/contacts3")) {
+        Serial.println("Restored contacts from SD");
+        restored = true;
+      }
+    }
+
+    if (restored) {
+      Serial.println("=== Settings restored from SD card backup ===");
+    }
+    digitalWrite(SDCARD_CS, HIGH);
+    return restored;
+  }
+
 #ifdef MECK_CARDKB
   #include "CardKBKeyboard.h"
   static CardKBKeyboard cardkb;
@@ -1322,6 +1403,11 @@ void setup() {
     if (mounted) {
       sdCardReady = true;
       Serial.println("setup() - SD card initialized");
+
+      // If SPIFFS was wiped (fresh flash), restore settings from SD backup
+      if (restoreSettingsFromSD()) {
+        Serial.println("setup() - T5S3: Settings restored from SD backup");
+      }
     } else {
       Serial.println("setup() - SD card not available");
     }
@@ -1682,8 +1768,52 @@ void setup() {
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
+// ---------------------------------------------------------------------------
+// OTA radio control — pause LoRa during firmware updates to prevent SPI
+// bus contention (SD and LoRa share the same SPI bus on both platforms).
+// Also pauses the mesh loop to prevent radio state confusion while standby.
+// ---------------------------------------------------------------------------
+#ifdef MECK_OTA_UPDATE
+extern RADIO_CLASS radio;  // Defined in target.cpp
+
+static bool otaRadioPaused = false;
+
+void otaPauseRadio() {
+  otaRadioPaused = true;
+  radio.standby();
+  Serial.println("OTA: Radio standby, mesh loop paused");
+}
+
+void otaResumeRadio() {
+  radio.startReceive();
+  otaRadioPaused = false;
+  Serial.println("OTA: Radio receive resumed, mesh loop active");
+}
+#endif
+
 void loop() {
+  #ifdef MECK_OTA_UPDATE
+  if (!otaRadioPaused) {
+  #endif
   the_mesh.loop();
+  #ifdef MECK_OTA_UPDATE
+  } else {
+    // OTA active — poll the web server from the main loop for fast response.
+    // The render cycle on T5S3 (960×540 FastEPD) can block for 500ms+ during
+    // e-ink refresh, causing the browser to timeout before handleClient() runs.
+    // Polling here gives us ~1-5ms response time instead.
+    if (ui_task.isOnSettingsScreen()) {
+      SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
+      if (ss) {
+        ss->pollOTAServer();
+        // Detect upload completion and trigger verify → flash → reboot.
+        // Must happen here (not in render) because T5S3 e-ink refresh blocks
+        // for 500ms+ and the render-based check never fires reliably.
+        ss->checkOTAComplete(display);
+      }
+    }
+  }
+  #endif
 
 
   sensors.loop();
@@ -1955,6 +2085,9 @@ void loop() {
 #endif
   rtc_clock.tick();
   // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
+  #ifdef MECK_OTA_UPDATE
+  if (!otaRadioPaused)
+  #endif
   if ((millis() - lastAGCReset) >= AGC_RESET_INTERVAL_MS) {
     radio_reset_agc();
     lastAGCReset = millis();

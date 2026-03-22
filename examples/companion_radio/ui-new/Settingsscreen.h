@@ -794,9 +794,18 @@ public:
     WiFi.macAddress(mac);
     snprintf(_otaApName, sizeof(_otaApName), "Meck-Update-%02X%02X", mac[4], mac[5]);
 
-    // Tear down existing WiFi and start AP
+    // Pause LoRa radio — SD and LoRa share the same SPI bus on both
+    // platforms. Incoming packets during SD writes cause bus contention
+    // that stalls the upload.
+    extern void otaPauseRadio();
+    otaPauseRadio();
+
+    // Clean WiFi init from any state (including never-initialised on
+    // standalone builds where WiFi.mode() was never called during boot).
+    // OFF→AP sequence ensures the WiFi peripheral starts fresh.
     WiFi.disconnect(true);
-    delay(100);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
     WiFi.mode(WIFI_AP);
     WiFi.softAP(_otaApName);
     delay(500);  // Let AP stabilise
@@ -878,12 +887,15 @@ public:
     WiFi.mode(WIFI_OFF);
     delay(100);
     _editMode = EDIT_NONE;
+    // Resume LoRa radio
+    extern void otaResumeRadio();
+    otaResumeRadio();
     // Try to restore STA WiFi from saved credentials
     #ifdef MECK_WIFI_COMPANION
     WiFi.mode(WIFI_STA);
     wifiReconnectSaved();
     #endif
-    Serial.println("OTA: Stopped, AP down");
+    Serial.println("OTA: Stopped, AP down, radio resumed");
   }
 
   bool verifyFirmwareFile() {
@@ -975,11 +987,23 @@ public:
     return true;
   }
 
-  // Called from render loop to poll the web server
+  // Called from render loop AND main loop to poll the web server
   void pollOTAServer() {
     if (_otaServer && (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) {
       _otaServer->handleClient();
     }
+  }
+
+  // Called from main loop — detect upload completion and trigger flash.
+  // Must be called from the main loop (not render) because T5S3 FastEPD
+  // blocks for 500ms+ per frame, making render-only detection unreliable.
+  void checkOTAComplete(DisplayDriver& display) {
+    if (_editMode != EDIT_OTA) return;
+    if (!_otaUploadOk) return;
+    if (_otaPhase != OTA_PHASE_RECEIVING && _otaPhase != OTA_PHASE_WAITING) return;
+
+    Serial.printf("OTA: Upload complete (%d bytes), starting flash sequence\n", _otaBytesReceived);
+    processOTAUpload(display);
   }
 
   // Run the verify → flash → reboot sequence after upload completes
@@ -1599,13 +1623,6 @@ public:
       display.setTextSize(0);
       int oy = by + 4;
 
-      // Detect upload completion — trigger verify + flash sequence
-      if (_otaUploadOk && (_otaPhase == OTA_PHASE_RECEIVING || _otaPhase == OTA_PHASE_WAITING)) {
-        display.endFrame();  // Flush current frame before blocking flash
-        processOTAUpload(display);
-        return 500;  // Won't reach here if flash succeeds (reboots)
-      }
-
       if (_otaPhase == OTA_PHASE_CONFIRM) {
         display.drawTextCentered(display.width() / 2, oy, "Firmware Update");
         oy += 14;
@@ -1853,11 +1870,8 @@ public:
           return true;
         }
       } else if (_otaPhase == OTA_PHASE_WAITING) {
-        // Check if upload just completed
+        // Upload completed — main loop will detect and trigger flash
         if (_otaUploadOk) {
-          // Upload finished — run verify + flash (blocking)
-          // The display reference isn't available here, so we set a flag
-          // and the render loop will call processOTAUpload()
           return true;
         }
         if (c == 'q' || c == 'Q') {
