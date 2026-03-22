@@ -252,6 +252,34 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (_prefs.path_hash_mode > 2) _prefs.path_hash_mode = 0;
     if (_prefs.autoadd_max_hops > 64) _prefs.autoadd_max_hops = 0;
 
+    // v1.1+ Meck fields — may not exist in older prefs files
+    if (file.read((uint8_t *)&_prefs.gps_baudrate, sizeof(_prefs.gps_baudrate)) != sizeof(_prefs.gps_baudrate)) {
+      _prefs.gps_baudrate = 0;  // default: use compile-time GPS_BAUDRATE
+    }
+    if (file.read((uint8_t *)&_prefs.interference_threshold, sizeof(_prefs.interference_threshold)) != sizeof(_prefs.interference_threshold)) {
+      _prefs.interference_threshold = 0;  // default: disabled
+    }
+    if (file.read((uint8_t *)&_prefs.dark_mode, sizeof(_prefs.dark_mode)) != sizeof(_prefs.dark_mode)) {
+      _prefs.dark_mode = 0;  // default: light mode
+    }
+    if (file.read((uint8_t *)&_prefs.portrait_mode, sizeof(_prefs.portrait_mode)) != sizeof(_prefs.portrait_mode)) {
+      _prefs.portrait_mode = 0;  // default: landscape
+    }
+    if (file.read((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)) != sizeof(_prefs.auto_lock_minutes)) {
+      _prefs.auto_lock_minutes = 0;  // default: disabled
+    }
+
+    // Clamp to valid ranges
+    if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
+    if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
+    // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
+    {
+      uint8_t alm = _prefs.auto_lock_minutes;
+      if (alm != 0 && alm != 2 && alm != 5 && alm != 10 && alm != 15 && alm != 30) {
+        _prefs.auto_lock_minutes = 0;
+      }
+    }
+
     file.close();
   }
 }
@@ -291,6 +319,11 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.ringtone_enabled, sizeof(_prefs.ringtone_enabled));    // 90
     file.write((uint8_t *)&_prefs.path_hash_mode, sizeof(_prefs.path_hash_mode));        // 91
     file.write((uint8_t *)&_prefs.autoadd_max_hops, sizeof(_prefs.autoadd_max_hops));   // 92
+    file.write((uint8_t *)&_prefs.gps_baudrate, sizeof(_prefs.gps_baudrate));            // 93
+    file.write((uint8_t *)&_prefs.interference_threshold, sizeof(_prefs.interference_threshold)); // 97
+    file.write((uint8_t *)&_prefs.dark_mode, sizeof(_prefs.dark_mode));                  // 98
+    file.write((uint8_t *)&_prefs.portrait_mode, sizeof(_prefs.portrait_mode));          // 99
+    file.write((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)); // 100
 
     file.close();
   }
