@@ -1313,13 +1313,32 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   }
   
   // Add to channel history screen with channel index, path data, and SNR
-  // For DMs (channel_idx == 0xFF), prefix text with sender name so the
-  // DM inbox can extract it later. Channel messages already arrive from
-  // MeshCore in "Sender: message" format.
+  // For DMs (channel_idx == 0xFF):
+  //   - Regular DMs: prefix text with sender name ("NodeName: hello")
+  //   - Room server messages: text already contains "OriginalSender: message",
+  //     don't double-prefix. Tag with room server name for conversation filtering.
+  bool isRoomMsg = false;
   if (channel_idx == 0xFF) {
-    char dmFormatted[CHANNEL_MSG_TEXT_LEN];
-    snprintf(dmFormatted, sizeof(dmFormatted), "%s: %s", from_name, text);
-    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr);
+    // Check if sender is a room server
+    uint32_t numContacts = the_mesh.getNumContacts();
+    ContactInfo senderContact;
+    for (uint32_t ci = 0; ci < numContacts; ci++) {
+      if (the_mesh.getContactByIdx(ci, senderContact) && strcmp(senderContact.name, from_name) == 0) {
+        if (senderContact.type == ADV_TYPE_ROOM) isRoomMsg = true;
+        break;
+      }
+    }
+
+    if (isRoomMsg) {
+      // Room server: text already has "Poster: message" format — store as-is
+      // Tag with room server name for conversation filtering
+      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, from_name);
+    } else {
+      // Regular DM: prefix with sender name
+      char dmFormatted[CHANNEL_MSG_TEXT_LEN];
+      snprintf(dmFormatted, sizeof(dmFormatted), "%s: %s", from_name, text);
+      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr);
+    }
   } else {
     ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
   }
@@ -1346,14 +1365,15 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #if defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
-  if (!isOnRepeaterAdmin()) {
+  // Suppress toasts for room server messages (bulk sync would spam toasts)
+  if (!isOnRepeaterAdmin() && !isRoomMsg) {
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
     showAlert(alertBuf, 2000);
   }
 #else
-  // Other devices: Show full preview screen (legacy behavior)
-  setCurrScreen(msg_preview);
+  // Other devices: Show full preview screen (legacy behavior, skip room sync)
+  if (!isRoomMsg) setCurrScreen(msg_preview);
 #endif
 
   if (_display != NULL) {
@@ -1362,13 +1382,19 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
     if (_display->isOn()) {
     _auto_off = millis() + AUTO_OFF_MILLIS;  // extend the auto-off timer
-    _next_refresh = 100;  // trigger refresh
+    // Throttle refresh during room sync — batch messages instead of 648ms render per msg
+    if (isRoomMsg) {
+      unsigned long earliest = millis() + 3000;  // At most one refresh per 3s during sync
+      if (_next_refresh < earliest) _next_refresh = earliest;
+    } else {
+      _next_refresh = 100;  // trigger refresh
+    }
     }
   }
 
-  // Keyboard flash notification
+  // Keyboard flash notification (suppress for room sync)
 #ifdef KB_BL_PIN
-  if (_node_prefs->kb_flash_notify) {
+  if (_node_prefs->kb_flash_notify && !isRoomMsg) {
     digitalWrite(KB_BL_PIN, HIGH);
     _kb_flash_off_at = millis() + 200;  // 200ms flash
   }

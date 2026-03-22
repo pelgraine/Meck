@@ -2,6 +2,9 @@
 #ifdef BLE_PIN_CODE
   #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
 #endif
+#ifdef MECK_OTA_UPDATE
+  #include <esp_ota_ops.h>
+#endif
 #include <Mesh.h>
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
@@ -1422,6 +1425,28 @@ void setup() {
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   MESH_DEBUG_PRINTLN("setup() - ui_task.begin() done");
 #endif
+
+  // ---------------------------------------------------------------------------
+  // OTA boot validation — confirm new firmware is working after an OTA update.
+  // If we reach this point, display + radio + SD + mesh all initialised OK.
+  // Without this call (when CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE is set),
+  // the bootloader will roll back to the previous partition on next reboot.
+  // ---------------------------------------------------------------------------
+  #ifdef MECK_OTA_UPDATE
+  {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK) {
+      if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+          Serial.println("OTA: New firmware validated, rollback cancelled");
+        } else {
+          Serial.println("OTA: WARNING - failed to cancel rollback");
+        }
+      }
+    }
+  }
+  #endif
 
   // Initialize T-Deck Pro keyboard
   #if defined(LilyGo_TDeck_Pro)

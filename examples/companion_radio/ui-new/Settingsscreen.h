@@ -22,6 +22,16 @@
   #include <SD.h>
 #endif
 
+#ifdef MECK_OTA_UPDATE
+  #ifndef MECK_WIFI_COMPANION
+    #include <WiFi.h>
+    #include <SD.h>
+  #endif
+  #include <WebServer.h>
+  #include <Update.h>
+  #include <esp_ota_ops.h>
+#endif
+
 // Forward declarations
 class UITask;
 class MyMesh;
@@ -131,6 +141,9 @@ enum SettingsRowType : uint8_t {
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
   ROW_INFO_HEADER,    // "--- Info ---" separator
+  #ifdef MECK_OTA_UPDATE
+  ROW_FW_UPDATE,      // "Firmware Update" — WiFi upload + flash
+  #endif
   ROW_PUB_KEY,        // Public key display
   ROW_FIRMWARE,       // Firmware version
   #ifdef HAS_4G_MODEM
@@ -152,6 +165,9 @@ enum EditMode : uint8_t {
   #ifdef MECK_WIFI_COMPANION
   EDIT_WIFI,         // WiFi scan/select/password flow
   #endif
+  #ifdef MECK_OTA_UPDATE
+  EDIT_OTA,          // OTA firmware update flow (multi-phase overlay)
+  #endif
 };
 
 // ---------------------------------------------------------------------------
@@ -162,6 +178,20 @@ enum SubScreen : uint8_t {
   SUB_CONTACTS,    // Contacts settings sub-screen
   SUB_CHANNELS,    // Channels management sub-screen
 };
+
+#ifdef MECK_OTA_UPDATE
+// OTA update phases
+enum OtaPhase : uint8_t {
+  OTA_PHASE_CONFIRM,    // "Start firmware update? Enter:Yes Q:No"
+  OTA_PHASE_AP_START,   // Starting WiFi AP + web server
+  OTA_PHASE_WAITING,    // AP up, waiting for device to upload
+  OTA_PHASE_RECEIVING,  // File upload in progress
+  OTA_PHASE_VERIFY,     // Checking downloaded file
+  OTA_PHASE_FLASH,      // Writing to flash — DO NOT POWER OFF
+  OTA_PHASE_DONE,       // Success, rebooting
+  OTA_PHASE_ERROR,      // Error with message
+};
+#endif
 
 // Max rows in the settings list (increased for contact sub-toggles + WiFi)
 #if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
@@ -236,6 +266,17 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
   bool _wifiNeedsVKB;              // T5S3: signal UITask to open VKB for password
 #endif
+  #endif
+
+  #ifdef MECK_OTA_UPDATE
+  // OTA update state
+  OtaPhase _otaPhase;
+  WebServer* _otaServer;
+  File _otaFile;
+  size_t _otaBytesReceived;
+  bool _otaUploadOk;
+  char _otaApName[24];
+  const char* _otaError;
   #endif
 
   // ---------------------------------------------------------------------------
@@ -351,6 +392,9 @@ private:
 
       // Info section (stays at top level)
       addRow(ROW_INFO_HEADER);
+      #ifdef MECK_OTA_UPDATE
+      addRow(ROW_FW_UPDATE);
+      #endif
       addRow(ROW_PUB_KEY);
       addRow(ROW_FIRMWARE);
 
@@ -503,6 +547,13 @@ public:
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
       _radioChanged(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
+    #ifdef MECK_OTA_UPDATE
+    _otaServer = nullptr;
+    _otaPhase = OTA_PHASE_CONFIRM;
+    _otaBytesReceived = 0;
+    _otaUploadOk = false;
+    _otaError = nullptr;
+    #endif
   }
 
   void enter() {
@@ -686,6 +737,301 @@ public:
     }
   }
 #endif
+
+  #endif
+
+  // ---------------------------------------------------------------------------
+  // OTA firmware update
+  // ---------------------------------------------------------------------------
+
+  #ifdef MECK_OTA_UPDATE
+
+  // HTML upload page served to the browser
+  static const char* otaUploadPageHTML() {
+    return
+      "<!DOCTYPE html><html><head>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<title>Meck Firmware Update</title>"
+      "<style>"
+      "body{font-family:-apple-system,sans-serif;max-width:480px;margin:40px auto;"
+      "padding:0 20px;background:#1a1a2e;color:#e0e0e0}"
+      "h1{color:#4ecca3;font-size:1.4em}"
+      ".info{background:#16213e;padding:12px;border-radius:8px;margin:16px 0;font-size:0.9em}"
+      "input[type=file]{margin:16px 0;color:#e0e0e0}"
+      "button{background:#4ecca3;color:#1a1a2e;border:none;padding:12px 32px;"
+      "border-radius:6px;font-size:1.1em;font-weight:bold;cursor:pointer}"
+      "button:active{background:#3ba88f}"
+      "#prog{display:none;margin-top:16px}"
+      ".bar{background:#16213e;border-radius:4px;height:24px;overflow:hidden}"
+      ".fill{background:#4ecca3;height:100%;width:0%;transition:width 0.3s}"
+      "</style></head><body>"
+      "<h1>Meck Firmware Update</h1>"
+      "<div class='info'>Select the firmware .bin file and tap Upload. "
+      "The device will verify and flash it automatically.</div>"
+      "<form method='POST' action='/upload' enctype='multipart/form-data'>"
+      "<input type='file' name='firmware' accept='.bin'><br>"
+      "<button type='submit' onclick=\"document.getElementById('prog').style.display='block'\">"
+      "Upload Firmware</button></form>"
+      "<div id='prog'><div>Uploading... do not close this page</div>"
+      "<div class='bar'><div class='fill' id='fill'></div></div></div>"
+      "<script>document.querySelector('form').onsubmit=function(){"
+      "var f=document.getElementById('fill'),w=0;"
+      "setInterval(function(){w+=2;if(w>90)w=90;f.style.width=w+'%'},500)};</script>"
+      "</body></html>";
+  }
+
+  void startOTA() {
+    _editMode = EDIT_OTA;
+    _otaPhase = OTA_PHASE_CONFIRM;
+    _otaBytesReceived = 0;
+    _otaUploadOk = false;
+    _otaError = nullptr;
+  }
+
+  void startOTAServer() {
+    // Build AP name with last 4 of MAC for uniqueness
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    snprintf(_otaApName, sizeof(_otaApName), "Meck-Update-%02X%02X", mac[4], mac[5]);
+
+    // Tear down existing WiFi and start AP
+    WiFi.disconnect(true);
+    delay(100);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(_otaApName);
+    delay(500);  // Let AP stabilise
+    Serial.printf("OTA: AP '%s' started, IP: %s\n",
+                  _otaApName, WiFi.softAPIP().toString().c_str());
+
+    // Start web server
+    if (_otaServer) { _otaServer->stop(); delete _otaServer; }
+    _otaServer = new WebServer(80);
+
+    _otaServer->on("/", HTTP_GET, [this]() {
+      _otaServer->send(200, "text/html", otaUploadPageHTML());
+    });
+
+    _otaServer->on("/upload", HTTP_POST,
+      // Response after upload completes
+      [this]() {
+        _otaServer->send(200, "text/html",
+          _otaUploadOk
+            ? "<html><body style='background:#1a1a2e;color:#4ecca3;font-family:sans-serif;"
+              "text-align:center;padding:60px'><h1>Upload OK!</h1>"
+              "<p>The device is now verifying and flashing.<br>It will reboot automatically.</p></body></html>"
+            : "<html><body style='background:#1a1a2e;color:#e74c3c;font-family:sans-serif;"
+              "text-align:center;padding:60px'><h1>Upload Failed</h1>"
+              "<p>Please try again.</p></body></html>"
+        );
+      },
+      // Upload handler — called per chunk
+      [this]() {
+        HTTPUpload& upload = _otaServer->upload();
+
+        if (upload.status == UPLOAD_FILE_START) {
+          Serial.printf("OTA: Receiving: %s\n", upload.filename.c_str());
+          _otaUploadOk = false;
+          _otaBytesReceived = 0;
+
+          if (!SD.exists("/firmware")) SD.mkdir("/firmware");
+          if (SD.exists("/firmware/update.bin")) {
+            SD.remove("/firmware/previous.bin");
+            SD.rename("/firmware/update.bin", "/firmware/previous.bin");
+          }
+          _otaFile = SD.open("/firmware/update.bin", FILE_WRITE);
+          if (!_otaFile) {
+            Serial.println("OTA: Failed to open SD file");
+            return;
+          }
+          _otaPhase = OTA_PHASE_RECEIVING;
+
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+          if (_otaFile) {
+            _otaFile.write(upload.buf, upload.currentSize);
+            _otaBytesReceived += upload.currentSize;
+          }
+
+        } else if (upload.status == UPLOAD_FILE_END) {
+          if (_otaFile) {
+            _otaFile.close();
+            digitalWrite(SDCARD_CS, HIGH);
+            Serial.printf("OTA: Received %d bytes\n", _otaBytesReceived);
+            _otaUploadOk = (_otaBytesReceived > 0);
+          }
+
+        } else if (upload.status == UPLOAD_FILE_ABORTED) {
+          if (_otaFile) { _otaFile.close(); SD.remove("/firmware/update.bin"); }
+          digitalWrite(SDCARD_CS, HIGH);
+          Serial.println("OTA: Upload aborted");
+        }
+      }
+    );
+
+    _otaServer->begin();
+    Serial.println("OTA: Web server started on port 80");
+    _otaPhase = OTA_PHASE_WAITING;
+  }
+
+  void stopOTA() {
+    if (_otaServer) { _otaServer->stop(); delete _otaServer; _otaServer = nullptr; }
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
+    _editMode = EDIT_NONE;
+    // Try to restore STA WiFi from saved credentials
+    #ifdef MECK_WIFI_COMPANION
+    WiFi.mode(WIFI_STA);
+    wifiReconnectSaved();
+    #endif
+    Serial.println("OTA: Stopped, AP down");
+  }
+
+  bool verifyFirmwareFile() {
+    File f = SD.open("/firmware/update.bin", FILE_READ);
+    if (!f) { _otaError = "File not found on SD"; return false; }
+
+    size_t fileSize = f.size();
+    if (fileSize < 500000 || fileSize > 6500000) {
+      f.close(); digitalWrite(SDCARD_CS, HIGH);
+      _otaError = "Bad file size (need 0.5-6MB)";
+      Serial.printf("OTA: Bad file size: %d\n", fileSize);
+      return false;
+    }
+
+    // Check ESP32 image magic byte
+    uint8_t magic;
+    f.read(&magic, 1);
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    if (magic != 0xE9) {
+      _otaError = "Not a firmware file (bad magic)";
+      Serial.printf("OTA: Bad magic: 0x%02X\n", magic);
+      return false;
+    }
+    return true;
+  }
+
+  bool flashFirmwareFromSD(DisplayDriver& display) {
+    File firmware = SD.open("/firmware/update.bin", FILE_READ);
+    if (!firmware) { _otaError = "Cannot open firmware file"; return false; }
+
+    size_t fileSize = firmware.size();
+    if (!Update.begin(fileSize, U_FLASH)) {
+      _otaError = Update.errorString();
+      Serial.printf("OTA: Update.begin failed: %s\n", _otaError);
+      firmware.close();
+      return false;
+    }
+
+    const int BUF_SIZE = 4096;
+    uint8_t* buf = (uint8_t*)ps_malloc(BUF_SIZE);
+    if (!buf) buf = (uint8_t*)malloc(BUF_SIZE);
+    if (!buf) { firmware.close(); Update.abort(); _otaError = "Out of memory"; return false; }
+
+    size_t totalWritten = 0;
+    char tmp[48];
+
+    while (firmware.available()) {
+      int bytesRead = firmware.read(buf, BUF_SIZE);
+      if (bytesRead <= 0) break;
+
+      size_t written = Update.write(buf, bytesRead);
+      if (written != (size_t)bytesRead) {
+        _otaError = "Flash write error";
+        Serial.printf("OTA: Write error at %d bytes\n", totalWritten);
+        break;
+      }
+      totalWritten += written;
+
+      // Update e-ink progress every ~128KB
+      if (totalWritten % 131072 < (size_t)BUF_SIZE) {
+        display.startFrame();
+        display.setColor(DisplayDriver::DARK);
+        display.fillRect(2, 14, display.width() - 4, display.height() - 28);
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawRect(2, 14, display.width() - 4, display.height() - 28);
+        display.setTextSize(0);
+        display.drawTextCentered(display.width() / 2, 22, "Flashing Firmware");
+        snprintf(tmp, sizeof(tmp), "%d / %d KB", (int)(totalWritten / 1024), (int)(fileSize / 1024));
+        display.drawTextCentered(display.width() / 2, 42, tmp);
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, 62, "DO NOT POWER OFF");
+        display.endFrame();
+      }
+    }
+
+    free(buf);
+    firmware.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    if (!Update.end(true)) {
+      _otaError = Update.errorString();
+      Serial.printf("OTA: Update.end failed: %s\n", _otaError);
+      return false;
+    }
+
+    Serial.printf("OTA: Flash success! %d bytes written\n", totalWritten);
+    return true;
+  }
+
+  // Called from render loop to poll the web server
+  void pollOTAServer() {
+    if (_otaServer && (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) {
+      _otaServer->handleClient();
+    }
+  }
+
+  // Run the verify → flash → reboot sequence after upload completes
+  void processOTAUpload(DisplayDriver& display) {
+    // Stop web server and AP first
+    if (_otaServer) { _otaServer->stop(); delete _otaServer; _otaServer = nullptr; }
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+
+    _otaPhase = OTA_PHASE_VERIFY;
+    if (!verifyFirmwareFile()) {
+      _otaPhase = OTA_PHASE_ERROR;
+      return;
+    }
+
+    _otaPhase = OTA_PHASE_FLASH;
+
+    // Backup settings before flashing (preserves identity/contacts across updates)
+    extern void backupSettingsToSD();
+    backupSettingsToSD();
+
+    if (!flashFirmwareFromSD(display)) {
+      _otaPhase = OTA_PHASE_ERROR;
+      return;
+    }
+
+    _otaPhase = OTA_PHASE_DONE;
+    // Show success screen then reboot
+    display.startFrame();
+    display.setColor(DisplayDriver::DARK);
+    display.fillRect(2, 14, display.width() - 4, display.height() - 28);
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(2, 14, display.width() - 4, display.height() - 28);
+    display.setTextSize(0);
+    display.setColor(DisplayDriver::GREEN);
+    display.drawTextCentered(display.width() / 2, 30, "Update Complete!");
+    display.setColor(DisplayDriver::LIGHT);
+    File fw = SD.open("/firmware/update.bin", FILE_READ);
+    char tmp[48];
+    if (fw) {
+      snprintf(tmp, sizeof(tmp), "Firmware: %d KB", (int)(fw.size() / 1024));
+      fw.close(); digitalWrite(SDCARD_CS, HIGH);
+    } else {
+      strcpy(tmp, "Firmware written");
+    }
+    display.drawTextCentered(display.width() / 2, 48, tmp);
+    display.drawTextCentered(display.width() / 2, 66, "Rebooting in 3 seconds...");
+    display.endFrame();
+
+    delay(3000);
+    ESP.restart();
+  }
 
   #endif
 
@@ -1050,6 +1396,12 @@ public:
           display.print(tmp);
           break;
 
+        #ifdef MECK_OTA_UPDATE
+        case ROW_FW_UPDATE:
+          display.print("Firmware Update");
+          break;
+        #endif
+
         case ROW_INFO_HEADER:
           display.setColor(DisplayDriver::YELLOW);
           display.print("--- Device Info ---");
@@ -1234,6 +1586,105 @@ public:
     }
     #endif
 
+    #ifdef MECK_OTA_UPDATE
+    // === OTA update overlay ===
+    if (_editMode == EDIT_OTA) {
+      int bx = 2, by = 14, bw = display.width() - 4;
+      int bh = display.height() - 28;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, bh);
+
+      display.setTextSize(0);
+      int oy = by + 4;
+
+      // Detect upload completion — trigger verify + flash sequence
+      if (_otaUploadOk && (_otaPhase == OTA_PHASE_RECEIVING || _otaPhase == OTA_PHASE_WAITING)) {
+        display.endFrame();  // Flush current frame before blocking flash
+        processOTAUpload(display);
+        return 500;  // Won't reach here if flash succeeds (reboots)
+      }
+
+      if (_otaPhase == OTA_PHASE_CONFIRM) {
+        display.drawTextCentered(display.width() / 2, oy, "Firmware Update");
+        oy += 14;
+        display.setCursor(bx + 4, oy);
+        display.print("Start WiFi upload server?");
+        oy += 10;
+        display.setCursor(bx + 4, oy);
+        display.print("You will upload a .bin file");
+        oy += 8;
+        display.setCursor(bx + 4, oy);
+        display.print("from your device's browser.");
+
+      } else if (_otaPhase == OTA_PHASE_AP_START) {
+        display.drawTextCentered(display.width() / 2, oy + 20, "Starting WiFi...");
+
+      } else if (_otaPhase == OTA_PHASE_WAITING) {
+        display.drawTextCentered(display.width() / 2, oy, "Firmware Update");
+        oy += 14;
+        display.setCursor(bx + 4, oy);
+        display.print("Connect to WiFi network:");
+        oy += 10;
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(bx + 4, oy);
+        display.print(_otaApName);
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 12;
+        display.setCursor(bx + 4, oy);
+        display.print("Then open browser:");
+        oy += 10;
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(bx + 4, oy);
+        char ipBuf[32];
+        snprintf(ipBuf, sizeof(ipBuf), "http://%s", WiFi.softAPIP().toString().c_str());
+        display.print(ipBuf);
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 12;
+        display.setCursor(bx + 4, oy);
+        display.print("Waiting for upload...");
+
+        // Poll the web server during render
+        pollOTAServer();
+
+      } else if (_otaPhase == OTA_PHASE_RECEIVING) {
+        display.drawTextCentered(display.width() / 2, oy, "Receiving Firmware");
+        oy += 16;
+        char progBuf[32];
+        snprintf(progBuf, sizeof(progBuf), "%d KB received", (int)(_otaBytesReceived / 1024));
+        display.drawTextCentered(display.width() / 2, oy, progBuf);
+        oy += 14;
+        display.setCursor(bx + 4, oy);
+        display.print("Do not close browser");
+
+        // Keep polling during receive
+        pollOTAServer();
+
+      } else if (_otaPhase == OTA_PHASE_VERIFY) {
+        display.drawTextCentered(display.width() / 2, oy + 20, "Verifying file...");
+
+      } else if (_otaPhase == OTA_PHASE_FLASH) {
+        display.drawTextCentered(display.width() / 2, oy + 10, "Flashing Firmware");
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, oy + 30, "DO NOT POWER OFF");
+        display.setColor(DisplayDriver::LIGHT);
+
+      } else if (_otaPhase == OTA_PHASE_ERROR) {
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, oy, "Update Failed");
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 14;
+        if (_otaError) {
+          display.setCursor(bx + 4, oy);
+          display.print(_otaError);
+        }
+      }
+
+      display.setTextSize(1);
+    }
+    #endif
+
     // === Footer ===
     int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
@@ -1279,6 +1730,21 @@ public:
         display.print("Please wait...");
       }
     #endif
+    #ifdef MECK_OTA_UPDATE
+    } else if (_editMode == EDIT_OTA) {
+      if (_otaPhase == OTA_PHASE_CONFIRM) {
+        display.print("Boot:Cancel");
+        const char* r = "Tap:Start";
+        display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+        display.print(r);
+      } else if (_otaPhase == OTA_PHASE_WAITING) {
+        display.print("Boot:Cancel");
+      } else if (_otaPhase == OTA_PHASE_ERROR) {
+        display.print("Boot:Back");
+      } else {
+        display.print("Please wait...");
+      }
+    #endif
     } else if (_editMode == EDIT_TEXT) {
       display.print("Hold:Type");
       const char* r = "Tap:OK  Boot:Cancel";
@@ -1304,6 +1770,18 @@ public:
         display.print("Please wait...");
       }
     #endif
+    #ifdef MECK_OTA_UPDATE
+    } else if (_editMode == EDIT_OTA) {
+      if (_otaPhase == OTA_PHASE_CONFIRM) {
+        display.print("Enter:Start  Q:Cancel");
+      } else if (_otaPhase == OTA_PHASE_WAITING) {
+        display.print("Q:Cancel");
+      } else if (_otaPhase == OTA_PHASE_ERROR) {
+        display.print("Q:Back");
+      } else {
+        display.print("Please wait...");
+      }
+    #endif
     } else if (_editMode == EDIT_PICKER) {
       display.print("A/D:Choose Enter:Ok");
     } else if (_editMode == EDIT_NUMBER) {
@@ -1322,6 +1800,13 @@ public:
     }
 #endif
 
+    #ifdef MECK_OTA_UPDATE
+    // Poll web server frequently during OTA waiting/receiving phases
+    if (_editMode == EDIT_OTA &&
+        (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) {
+      return 200;  // 200ms — fast enough for web server responsiveness
+    }
+    #endif
     return _editMode != EDIT_NONE ? 700 : 1000;
   }
 
@@ -1353,6 +1838,42 @@ public:
       }
       return true;  // consume all keys in confirm mode
     }
+
+    #ifdef MECK_OTA_UPDATE
+    // --- OTA update flow ---
+    if (_editMode == EDIT_OTA) {
+      if (_otaPhase == OTA_PHASE_CONFIRM) {
+        if (c == '\r' || c == 13) {
+          _otaPhase = OTA_PHASE_AP_START;
+          startOTAServer();
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          _editMode = EDIT_NONE;
+          return true;
+        }
+      } else if (_otaPhase == OTA_PHASE_WAITING) {
+        // Check if upload just completed
+        if (_otaUploadOk) {
+          // Upload finished — run verify + flash (blocking)
+          // The display reference isn't available here, so we set a flag
+          // and the render loop will call processOTAUpload()
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          stopOTA();
+          return true;
+        }
+      } else if (_otaPhase == OTA_PHASE_ERROR) {
+        if (c == 'q' || c == 'Q') {
+          stopOTA();
+          return true;
+        }
+      }
+      // Consume all keys during OTA
+      return true;
+    }
+    #endif
 
     #ifdef MECK_WIFI_COMPANION
     // --- WiFi setup flow ---
@@ -1917,6 +2438,11 @@ public:
         case ROW_ADD_CHANNEL:
           startEditText("");
           break;
+        #ifdef MECK_OTA_UPDATE
+        case ROW_FW_UPDATE:
+          startOTA();
+          break;
+        #endif
         case ROW_CHANNEL:
         case ROW_PUB_KEY:
         case ROW_FIRMWARE:

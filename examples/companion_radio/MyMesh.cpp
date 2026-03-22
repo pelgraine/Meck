@@ -498,7 +498,24 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
   if (should_display && _ui) {
     const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
-    _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path, pkt->_snr);
+
+    // For signed messages (room server posts): the extra bytes contain the
+    // original poster's pub_key prefix. Look up their name and format as
+    // "PosterName: message" so the UI shows who actually wrote it.
+    if (txt_type == TXT_TYPE_SIGNED_PLAIN && extra && extra_len >= 4) {
+      ContactInfo* poster = lookupContactByPubKey(extra, extra_len);
+      if (poster) {
+        char formatted[MAX_PACKET_PAYLOAD];
+        snprintf(formatted, sizeof(formatted), "%s: %s", poster->name, text);
+        _ui->newMsg(path_len, from.name, formatted, offline_queue_len, msg_path, pkt->_snr);
+      } else {
+        // Poster not in contacts — show raw text (no name prefix)
+        _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path, pkt->_snr);
+      }
+    } else {
+      _ui->newMsg(path_len, from.name, text, offline_queue_len, msg_path, pkt->_snr);
+    }
+
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::contactMessage); //buzz if enabled
   }
 #endif

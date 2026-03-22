@@ -557,6 +557,7 @@ public:
     if (_viewChannelIdx == 0xFF && _dmInboxMode) {
       #define DM_INBOX_MAX 20
       struct DMInboxEntry {
+        uint32_t hash;
         char name[32];
         int msgCount;
         int unreadCount;
@@ -565,28 +566,43 @@ public:
       DMInboxEntry inbox[DM_INBOX_MAX];
       int inboxCount = 0;
 
-      // Scan all DMs and build unique sender list
+      // Scan all DMs and group by peer hash
       for (int i = 0; i < _msgCount && i < CHANNEL_MSG_HISTORY_SIZE; i++) {
         int idx = _newestIdx - i;
         while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
         idx = idx % CHANNEL_MSG_HISTORY_SIZE;
         if (!_messages[idx].valid || _messages[idx].channel_idx != 0xFF) continue;
+        if (_messages[idx].dm_peer_hash == 0) continue;
 
-        char sender[32];
-        if (!extractSenderName(_messages[idx].text, sender, sizeof(sender))) continue;
+        uint32_t h = _messages[idx].dm_peer_hash;
 
-        // Find existing entry
+        // Find existing entry by hash
         int found = -1;
         for (int j = 0; j < inboxCount; j++) {
-          if (strcmp(inbox[j].name, sender) == 0) { found = j; break; }
+          if (inbox[j].hash == h) { found = j; break; }
         }
         if (found < 0 && inboxCount < DM_INBOX_MAX) {
           found = inboxCount++;
-          strncpy(inbox[found].name, sender, 31);
-          inbox[found].name[31] = '\0';
+          inbox[found].hash = h;
+          inbox[found].name[0] = '\0';
           inbox[found].msgCount = 0;
           inbox[found].unreadCount = 0;
           inbox[found].newestTs = 0;
+
+          // Look up name from contacts by matching peer hash
+          uint32_t numC = the_mesh.getNumContacts();
+          ContactInfo ci;
+          for (uint32_t c = 0; c < numC; c++) {
+            if (the_mesh.getContactByIdx(c, ci) && peerHash(ci.name) == h) {
+              strncpy(inbox[found].name, ci.name, 31);
+              inbox[found].name[31] = '\0';
+              break;
+            }
+          }
+          // Fallback: extract from text if contact not found
+          if (inbox[found].name[0] == '\0') {
+            extractSenderName(_messages[idx].text, inbox[found].name, sizeof(inbox[found].name));
+          }
         }
         if (found >= 0) {
           inbox[found].msgCount++;
@@ -601,7 +617,7 @@ public:
           uint32_t numC = the_mesh.getNumContacts();
           ContactInfo ci;
           for (uint32_t c = 0; c < numC; c++) {
-            if (the_mesh.getContactByIdx(c, ci) && strcmp(ci.name, inbox[e].name) == 0) {
+            if (the_mesh.getContactByIdx(c, ci) && peerHash(ci.name) == inbox[e].hash) {
               inbox[e].unreadCount = _dmUnreadPtr[c];
               break;
             }
@@ -1506,45 +1522,47 @@ public:
         _dmInboxScroll++;  // Clamped during render
         return true;
       }
-      // Enter - open conversation for selected sender
+      // Enter - open conversation for selected entry
       if (c == '\r' || c == 13) {
-        // Rebuild inbox to find the selected sender name
+        // Rebuild inbox by hash to find the selected entry
+        uint32_t seenHash[DM_INBOX_MAX];
         int cur = 0;
         for (int i = 0; i < _msgCount; i++) {
           int idx = _newestIdx - i;
           while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
           idx = idx % CHANNEL_MSG_HISTORY_SIZE;
           if (!_messages[idx].valid || _messages[idx].channel_idx != 0xFF) continue;
-          char sender[24];
-          if (!extractSenderName(_messages[idx].text, sender, sizeof(sender))) continue;
-          // Check if we've seen this sender already
+          if (_messages[idx].dm_peer_hash == 0) continue;
+
+          uint32_t h = _messages[idx].dm_peer_hash;
           bool dup = false;
-          for (int k = 0; k < i; k++) {
-            int ki = _newestIdx - k;
-            while (ki < 0) ki += CHANNEL_MSG_HISTORY_SIZE;
-            ki = ki % CHANNEL_MSG_HISTORY_SIZE;
-            if (!_messages[ki].valid || _messages[ki].channel_idx != 0xFF) continue;
-            char prev[24];
-            if (extractSenderName(_messages[ki].text, prev, sizeof(prev))
-                && strcmp(prev, sender) == 0) { dup = true; break; }
+          for (int k = 0; k < cur; k++) {
+            if (seenHash[k] == h) { dup = true; break; }
           }
           if (dup) continue;
+          if (cur < DM_INBOX_MAX) seenHash[cur] = h;
+
           if (cur == _dmInboxScroll) {
-            strncpy(_dmFilterName, sender, sizeof(_dmFilterName) - 1);
-            _dmFilterName[sizeof(_dmFilterName) - 1] = '\0';
-            _dmInboxMode = false;
-            _scrollPos = 0;
-            // Look up contact index
+            // Found the selected entry — look up name from contacts
+            _dmFilterName[0] = '\0';
             _dmContactIdx = -1;
             _dmContactPerms = 0;
             uint32_t numC = the_mesh.getNumContacts();
             ContactInfo ci;
-            for (uint32_t c = 0; c < numC; c++) {
-              if (the_mesh.getContactByIdx(c, ci) && strcmp(ci.name, sender) == 0) {
-                _dmContactIdx = (int)c;
+            for (uint32_t c2 = 0; c2 < numC; c2++) {
+              if (the_mesh.getContactByIdx(c2, ci) && peerHash(ci.name) == h) {
+                strncpy(_dmFilterName, ci.name, sizeof(_dmFilterName) - 1);
+                _dmFilterName[sizeof(_dmFilterName) - 1] = '\0';
+                _dmContactIdx = (int)c2;
                 break;
               }
             }
+            // Fallback to text extraction if contact not found
+            if (_dmFilterName[0] == '\0') {
+              extractSenderName(_messages[idx].text, _dmFilterName, sizeof(_dmFilterName));
+            }
+            _dmInboxMode = false;
+            _scrollPos = 0;
             return true;
           }
           cur++;
