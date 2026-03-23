@@ -750,13 +750,16 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Last heard passive advert list
 - [X] Touch-to-select on contacts, discovery, settings, text reader, notes screens
 - [X] Map screen with GPS tile rendering
-- [ ] Fix M4B rendering to enable chaptered audiobook playback
-- [ ] Better JPEG and PNG decoding
-- [ ] Improve EPUB rendering and EPUB format handling
 - [X] WiFi companion environment
 - [X] OTA firmware update via phone
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
+- [ ] Fix M4B rendering to enable chaptered audiobook playback
+- [ ] Better JPEG and PNG decoding
+- [ ] Improve EPUB rendering and EPUB format handling
+- [ ] Figure out a way to silence the ringtone
+- [ ] Figure out a way to customise the ringtone
+- [ ] Customised user option for larger-font mode
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
