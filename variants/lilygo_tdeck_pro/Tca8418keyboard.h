@@ -161,24 +161,47 @@ public:
       return false;
     }
 
-    // Configure keyboard matrix (8 rows x 10 cols)
+    // --- Warm-reboot safe init sequence ---
+    // The TCA8418 stays powered across ESP32 resets (no dedicated RST pin),
+    // so the scanner may still be active from the previous session.
+    // We must disable it before reconfiguring the matrix.
+
+    // 1. Disable scanner — stop all scanning before touching config
+    writeReg(TCA8418_REG_CFG, 0x00);
+
+    // 2. Drain any stale events from the previous session
+    for (int i = 0; i < 16; i++) {
+      if ((readReg(TCA8418_REG_KEY_LCK_EC) & 0x0F) == 0) break;
+      readReg(TCA8418_REG_KEY_EVENT_A);
+    }
+    writeReg(TCA8418_REG_INT_STAT, 0x1F);  // Clear all interrupt flags
+
+    // 3. Explicitly clear GPI event masks (prevent phantom GPI events)
+    writeReg(TCA8418_REG_GPI_EM1, 0x00);
+    writeReg(TCA8418_REG_GPI_EM2, 0x00);
+    writeReg(TCA8418_REG_GPI_EM3, 0x00);
+
+    // 4. Configure keyboard matrix (8 rows x 10 cols)
     writeReg(TCA8418_REG_KP_GPIO1, 0xFF);  // Rows 0-7 as keypad
     writeReg(TCA8418_REG_KP_GPIO2, 0xFF);  // Cols 0-7 as keypad
     writeReg(TCA8418_REG_KP_GPIO3, 0x03);  // Cols 8-9 as keypad
 
-    // Enable keypad with FIFO overflow detection
-    writeReg(TCA8418_REG_CFG, 0x11);  // KE_IEN + INT_CFG
-
-    // Set debounce
+    // 5. Set debounce
     writeReg(TCA8418_REG_DEBOUNCE, 0x03);
 
-    // Clear any pending interrupts
+    // 6. Final pre-enable cleanup
     writeReg(TCA8418_REG_INT_STAT, 0x1F);
 
-    // Flush the FIFO
-    while (readReg(TCA8418_REG_KEY_LCK_EC) & 0x0F) {
+    // 7. Enable scanner — matrix config is stable, safe to start scanning
+    writeReg(TCA8418_REG_CFG, 0x11);  // KE_IEN + INT_CFG
+
+    // 8. Let scanner stabilise, then flush any spurious first-scan events
+    delay(5);
+    for (int i = 0; i < 16; i++) {
+      if ((readReg(TCA8418_REG_KEY_LCK_EC) & 0x0F) == 0) break;
       readReg(TCA8418_REG_KEY_EVENT_A);
     }
+    writeReg(TCA8418_REG_INT_STAT, 0x1F);
 
     _initialized = true;
     Serial.println("TCA8418: Keyboard initialized OK");
