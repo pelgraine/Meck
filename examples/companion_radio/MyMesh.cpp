@@ -1240,6 +1240,7 @@ void MyMesh::begin(bool has_display) {
   if (_prefs.autoadd_max_hops > 64) _prefs.autoadd_max_hops = 0;
   if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
   if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
+  if (_prefs.hint_shown > 1) _prefs.hint_shown = 0;
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {

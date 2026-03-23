@@ -716,6 +716,12 @@ static void lastHeardToggleContact() {
     int vx, vy;
     touchToVirtual(x, y, vx, vy);
 
+    // Dismiss boot navigation hint on any tap
+    if (ui_task.isHintActive()) {
+      ui_task.dismissBootHint();
+      return 0;
+    }
+
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
     // Exception: text reader reading mode uses full screen for content (no header)
     if (vy < 18 && !ui_task.isOnHomeScreen()) {
@@ -1731,6 +1737,21 @@ void setup() {
     if (strcmp(prefs->node_name, defaultName) == 0) {
       MESH_DEBUG_PRINTLN("setup() - Default node name detected, launching onboarding");
       ui_task.gotoOnboarding();
+      // Show hint immediately overlaid on the onboarding screen
+      if (!prefs->hint_shown) ui_task.showBootHint(true);
+    } else if (!prefs->hint_shown) {
+      // Not a first-time flash (has a name), but hint never dismissed yet
+      // Deferred — will activate after splash screen transitions to home
+      ui_task.showBootHint(false);
+    }
+  }
+  #endif
+
+  #if defined(LilyGo_T5S3_EPaper_Pro)
+  {
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    if (!prefs->hint_shown) {
+      ui_task.showBootHint(false);  // Deferred — after splash
     }
   }
   #endif
@@ -2487,6 +2508,12 @@ void handleKeyboardInput() {
   // Block all keyboard input while lock screen is active.
   // Still read the key above to clear the TCA8418 buffer.
   if (ui_task.isLocked()) return;
+
+  // Dismiss boot navigation hint on any keypress
+  if (ui_task.isHintActive()) {
+    ui_task.dismissBootHint();
+    return;  // Consume the keypress (don't act on it)
+  }
   
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);

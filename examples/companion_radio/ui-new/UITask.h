@@ -56,6 +56,9 @@ class UITask : public AbstractUITask {
   NodePrefs* _node_prefs;
   char _alert[80];
   unsigned long _alert_expiry;
+  bool _hintActive = false;          // Boot navigation hint overlay
+  unsigned long _hintExpiry = 0;     // Auto-dismiss time for hint
+  bool _pendingBootHint = false;     // Deferred hint — show after splash screen
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
   uint8_t _low_batt_count = 0;  // Consecutive low-voltage readings for debounce
@@ -186,6 +189,9 @@ public:
 #endif
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
+  void showBootHint(bool immediate = false);  // Show navigation hint overlay on first boot
+  void dismissBootHint();  // Dismiss hint and save preference
+  bool isHintActive() const { return _hintActive; }
   // Wake display and extend auto-off timer. Call this when handling keys
   // outside of injectKey() to prevent display auto-off during direct input.
   void keepAlive() {

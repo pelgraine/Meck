@@ -38,4 +38,5 @@ struct NodePrefs {  // persisted to file
   uint8_t dark_mode;              // 0=off (white bg), 1=on (black bg)
   uint8_t portrait_mode;          // 0=landscape, 1=portrait — T5S3 only
   uint8_t auto_lock_minutes;      // 0=disabled, 2/5/10/15/30=auto-lock after idle
+  uint8_t hint_shown;             // 0=show nav hint on boot, 1=already shown (dismiss permanently)
 };

@@ -1238,6 +1238,34 @@ void UITask::showAlert(const char* text, int duration_millis) {
   _next_refresh = millis() + 100;  // trigger re-render to show updated text
 }
 
+void UITask::showBootHint(bool immediate) {
+  if (immediate) {
+    // Activate now — used when hint should overlay the current screen (e.g. onboarding)
+    _hintActive = true;
+    _hintExpiry = millis() + 8000;  // 8 seconds auto-dismiss
+    _pendingBootHint = false;
+    _next_refresh = millis() + 100;
+    Serial.println("[UI] Boot hint activated (immediate)");
+  } else {
+    // Defer until after splash screen — actual activation happens in gotoHomeScreen()
+    _pendingBootHint = true;
+    Serial.println("[UI] Boot hint pending (will show after splash)");
+  }
+}
+
+void UITask::dismissBootHint() {
+  if (!_hintActive) return;
+  _hintActive = false;
+  _hintExpiry = 0;
+  // Persist so hint never shows again
+  if (_node_prefs) {
+    _node_prefs->hint_shown = 1;
+    the_mesh.savePrefs();
+  }
+  _next_refresh = millis() + 100;
+  Serial.println("[UI] Boot hint dismissed");
+}
+
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
 switch(t){
@@ -1426,6 +1454,7 @@ void UITask::setCurrScreen(UIScreen* c) {
   curr = c;
   _alert_expiry = 0;  // Dismiss any active toast — prevents stale overlay from
                        // triggering extra 644ms e-ink refreshes on the new screen
+  if (_hintActive) dismissBootHint();  // Dismiss hint when navigating away
   _next_refresh = 100;
 }
 
@@ -1601,6 +1630,14 @@ void UITask::loop() {
 #endif
 
   if (c != 0 && curr) {
+    // Dismiss boot hint on any button input (boot button on T5S3)
+    if (_hintActive) {
+      dismissBootHint();
+      c = 0;  // Consume the press
+    }
+  }
+
+  if (c != 0 && curr) {
     curr->handleInput(c);
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 100;  // trigger refresh
@@ -1721,7 +1758,41 @@ if (curr) curr->poll();
         }
 #endif
 
-        if (millis() < _alert_expiry) {
+        if (_hintActive && millis() < _hintExpiry) {
+          // Boot navigation hint overlay — multi-line, larger box
+          _display->setTextSize(1);
+          int w = _display->width();
+          int h = _display->height();
+          int boxX = w / 8;
+          int boxY = h / 5;
+          int boxW = w - boxX * 2;
+          int boxH = h * 3 / 5;
+          _display->setColor(DisplayDriver::DARK);
+          _display->fillRect(boxX, boxY, boxW, boxH);
+          _display->setColor(DisplayDriver::LIGHT);
+          _display->drawRect(boxX, boxY, boxW, boxH);
+          int cx = w / 2;
+          int lineH = 11;
+          int startY = boxY + 6;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+          _display->drawTextCentered(cx, startY, "Swipe: Navigate");
+          _display->drawTextCentered(cx, startY + lineH, "Tap: Select");
+          _display->drawTextCentered(cx, startY + lineH * 2, "Long Press: Action");
+          _display->drawTextCentered(cx, startY + lineH * 3, "Boot Btn: Home");
+          _display->drawTextCentered(cx, startY + lineH * 4 + 4, "[Tap to dismiss hint]");
+#else
+          _display->drawTextCentered(cx, startY, "M:Msgs  C:Contacts");
+          _display->drawTextCentered(cx, startY + lineH, "S:Settings  E:Reader");
+          _display->drawTextCentered(cx, startY + lineH * 2, "N:Notes  W/S:Scroll");
+          _display->drawTextCentered(cx, startY + lineH * 3, "A/D:Cycle Left/Right");
+          _display->drawTextCentered(cx, startY + lineH * 4 + 4, "[X to dismiss hint]");
+#endif
+          _next_refresh = _hintExpiry;
+        } else if (_hintActive) {
+          // Hint expired — auto-dismiss
+          dismissBootHint();
+          _next_refresh = millis() + 200;
+        } else if (millis() < _alert_expiry) {
           _display->setTextSize(1);
           int y = _display->height() / 3;
           int p = _display->height() / 32;
@@ -1737,7 +1808,33 @@ if (curr) curr->poll();
       }
 #else
       int delay_millis = curr->render(*_display);
-      if (millis() < _alert_expiry) {  // render alert popup
+      if (_hintActive && millis() < _hintExpiry) {
+        // Boot navigation hint overlay — multi-line, larger box
+        _display->setTextSize(1);
+        int w = _display->width();
+        int h = _display->height();
+        int boxX = w / 8;
+        int boxY = h / 5;
+        int boxW = w - boxX * 2;
+        int boxH = h * 3 / 5;
+        _display->setColor(DisplayDriver::DARK);
+        _display->fillRect(boxX, boxY, boxW, boxH);
+        _display->setColor(DisplayDriver::LIGHT);
+        _display->drawRect(boxX, boxY, boxW, boxH);
+        int cx = w / 2;
+        int lineH = 11;
+        int startY = boxY + 6;
+        _display->drawTextCentered(cx, startY, "M:Msgs  C:Contacts");
+        _display->drawTextCentered(cx, startY + lineH, "S:Settings  E:Reader");
+        _display->drawTextCentered(cx, startY + lineH * 2, "N:Notes  W/S:Scroll");
+        _display->drawTextCentered(cx, startY + lineH * 3, "A/D:Cycle Left/Right");
+        _display->drawTextCentered(cx, startY + lineH * 4 + 4, "[X to dismiss]");
+        _next_refresh = _hintExpiry;
+      } else if (_hintActive) {
+        // Hint expired — auto-dismiss
+        dismissBootHint();
+        _next_refresh = millis() + 200;
+      } else if (millis() < _alert_expiry) {  // render alert popup
         _display->setTextSize(1);
         int y = _display->height() / 3;
         int p = _display->height() / 32;
@@ -2248,6 +2345,15 @@ void UITask::gotoHomeScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+
+  // Activate deferred boot hint now that home screen is visible
+  if (_pendingBootHint) {
+    _pendingBootHint = false;
+    _hintActive = true;
+    _hintExpiry = millis() + 8000;  // 8 seconds auto-dismiss
+    _next_refresh = millis() + 100;
+    Serial.println("[UI] Boot hint activated");
+  }
 }
 
 bool UITask::isEditingHomeScreen() const {
