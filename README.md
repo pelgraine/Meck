@@ -780,6 +780,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] OTA firmware update via phone (WiFi variant)
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
+- [ ] Improve EPUB rendering and EPUB format handling
+- [ ] Customised user option for larger-font mode
 
 ## 📞 Get Support
 
