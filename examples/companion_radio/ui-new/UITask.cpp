@@ -1758,6 +1758,21 @@ if (curr) curr->poll();
         }
 #endif
 
+        // Check if settings screen needs VKB for text editing (channel name, freq, APN)
+        if (isOnSettingsScreen() && !_vkbActive) {
+          SettingsScreen* ss = (SettingsScreen*)settings_screen;
+          if (ss->needsTextVKB()) {
+            ss->clearTextNeedsVKB();
+            // Pick a context-appropriate label
+            const char* label = "Edit";
+            SettingsRowType rt = ss->getCurrentRowType();
+            if (rt == ROW_NAME) label = "Node Name";
+            else if (rt == ROW_ADD_CHANNEL) label = "Channel Name";
+            else if (rt == ROW_FREQ) label = "Frequency";
+            showVirtualKeyboard(VKB_SETTINGS_TEXT, label, ss->getEditBuf(), 31);
+          }
+        }
+
         if (_hintActive && millis() < _hintExpiry) {
           // Boot navigation hint overlay — multi-line, larger box
           _display->setTextSize(1);
@@ -2137,6 +2152,19 @@ void UITask::onVKBSubmit() {
         _node_prefs->node_name[sizeof(_node_prefs->node_name) - 1] = '\0';
         the_mesh.savePrefs();
         showAlert("Name saved", 1000);
+      }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_SETTINGS_TEXT: {
+      // Generic settings text edit — copy text back to settings edit buffer
+      // and confirm via the normal Enter path (handles name/freq/channel/APN)
+      SettingsScreen* ss = (SettingsScreen*)settings_screen;
+      if (strlen(text) > 0) {
+        ss->submitEditText(text);
+      } else {
+        // Empty submission — cancel the edit
+        ss->handleInput('q');
       }
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;

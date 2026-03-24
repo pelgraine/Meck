@@ -242,6 +242,9 @@ private:
   // Dirty flag for radio params Ã¢â‚¬â€ prompt to apply
   bool _radioChanged;
 
+  // T5S3: signal UITask to open VKB when entering text edit mode
+  bool _needsTextVKB;
+
   // 4G modem state (runtime cache of config)
   #ifdef HAS_4G_MODEM
   bool _modemEnabled;
@@ -545,7 +548,7 @@ public:
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
       _editFloat(0), _editInt(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
-      _radioChanged(false) {
+      _radioChanged(false), _needsTextVKB(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
     #ifdef MECK_OTA_UPDATE
     _otaServer = nullptr;
@@ -739,6 +742,19 @@ public:
 #endif
 
   #endif
+
+  // T5S3 VKB integration for text editing (channel name, device name, freq, APN)
+  bool needsTextVKB() const { return _needsTextVKB; }
+  void clearTextNeedsVKB() { _needsTextVKB = false; }
+  const char* getEditBuf() const { return _editBuf; }
+  SettingsRowType getCurrentRowType() const { return _rows[_cursor].type; }
+  void submitEditText(const char* text) {
+    strncpy(_editBuf, text, SETTINGS_TEXT_BUF - 1);
+    _editBuf[SETTINGS_TEXT_BUF - 1] = '\0';
+    _editPos = strlen(_editBuf);
+    // Simulate Enter to confirm the edit through the normal path
+    handleInput('\r');
+  }
 
   // ---------------------------------------------------------------------------
   // OTA firmware update
@@ -1068,6 +1084,9 @@ public:
     strncpy(_editBuf, initial, SETTINGS_TEXT_BUF - 1);
     _editBuf[SETTINGS_TEXT_BUF - 1] = '\0';
     _editPos = strlen(_editBuf);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    _needsTextVKB = true;  // Signal UITask to open virtual keyboard
+#endif
   }
 
   void startEditPicker(int initialIdx) {

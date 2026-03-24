@@ -1739,19 +1739,6 @@ void setup() {
       ui_task.gotoOnboarding();
       // Show hint immediately overlaid on the onboarding screen
       if (!prefs->hint_shown) ui_task.showBootHint(true);
-    } else if (!prefs->hint_shown) {
-      // Not a first-time flash (has a name), but hint never dismissed yet
-      // Deferred — will activate after splash screen transitions to home
-      ui_task.showBootHint(false);
-    }
-  }
-  #endif
-
-  #if defined(LilyGo_T5S3_EPaper_Pro)
-  {
-    NodePrefs* prefs = the_mesh.getNodePrefs();
-    if (!prefs->hint_shown) {
-      ui_task.showBootHint(false);  // Deferred — after splash
     }
   }
   #endif
