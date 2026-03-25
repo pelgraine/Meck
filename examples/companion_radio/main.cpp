@@ -1771,6 +1771,19 @@ void setup() {
     MESH_DEBUG_PRINTLN("setup() - BLE disabled at boot (standalone mode)");
   #endif
 
+  // Alarm clock: create at boot so config is loaded, background alarm check
+  // works from first loop(), and the bell indicator is visible immediately.
+  // Audio object is NOT created here — lazy-init when alarm fires or user opens player.
+  #ifdef MECK_AUDIO_VARIANT
+  {
+    AlarmScreen* alarmScr = new AlarmScreen(&ui_task);
+    alarmScr->setSDReady(sdCardReady);
+    // Audio pointer set later when needed (fireAlarm or 'k'/'p' key)
+    ui_task.setAlarmScreen(alarmScr);
+    Serial.printf("ALARM: Boot init, %d alarms enabled\n", alarmScr->enabledCount());
+  }
+  #endif
+
   Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
@@ -1902,6 +1915,61 @@ void loop() {
       // Keep CPU at high freq during active audio decode
       if (abPlayer->isAudioActive()) {
         cpuPower.setBoost();
+      }
+    }
+  }
+  #endif
+
+  // Alarm clock: background alarm check + audio tick
+  #if defined(LilyGo_TDeck_Pro) && defined(MECK_AUDIO_VARIANT)
+  {
+    AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+    if (alarmScr) {
+      // Service alarm audio decode (like audiobook audioTick)
+      alarmScr->alarmAudioTick();
+      if (alarmScr->isAlarmAudioActive()) {
+        cpuPower.setBoost();
+      }
+
+      // Periodic alarm check (~every 10 seconds)
+      static unsigned long lastAlarmCheck = 0;
+      if (millis() - lastAlarmCheck > ALARM_CHECK_INTERVAL_MS) {
+        lastAlarmCheck = millis();
+        uint32_t rtcNow = the_mesh.getRTCClock()->getCurrentTime();
+        int fireSlot = alarmScr->checkAlarms(rtcNow, the_mesh.getNodePrefs()->utc_offset_hours);
+        if (fireSlot >= 0 && !alarmScr->isRinging()) {
+          // If audiobook is playing, the alarm will take over the shared Audio*
+          // object. The audiobook auto-saves bookmarks every 30s, so at most
+          // 30s of position is lost. User can resume from audiobook player after.
+          AudiobookPlayerScreen* abPlayer =
+            (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+          if (abPlayer && abPlayer->isAudioActive()) {
+            Serial.println("ALARM: Audiobook active — alarm taking over Audio");
+          }
+
+          // Ensure Audio object is shared
+          if (!audio) audio = new Audio();
+          alarmScr->setAudio(audio);
+
+          // Fire the alarm
+          alarmScr->fireAlarm(fireSlot);
+          alarmScr->setLastFiredEpoch(fireSlot, rtcNow);
+
+          // Let audio buffer fill before e-ink refresh blocks SPI
+          for (int i = 0; i < 50; i++) {
+            alarmScr->alarmAudioTick();
+            delay(2);
+          }
+
+          // Switch UI to alarm screen (ringing mode)
+          ui_task.gotoAlarmScreen();
+
+          // Wake display if asleep
+          ui_task.keepAlive();
+          ui_task.forceRefresh();
+
+          Serial.printf("ALARM: Fired slot %d, switched to ringing screen\n", fireSlot);
+        }
       }
     }
   }
@@ -2505,6 +2573,23 @@ void handleKeyboardInput() {
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);
   
+  // Alarm ringing: ANY key dismisses (highest priority after lock screen)
+  #ifdef MECK_AUDIO_VARIANT
+  {
+    AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+    if (alarmScr && alarmScr->isRinging()) {
+      if (key == 'z') {
+        alarmScr->handleInput('z');  // Snooze
+      } else {
+        alarmScr->dismiss();         // Any other key = dismiss
+      }
+      ui_task.gotoHomeScreen();
+      ui_task.forceRefresh();
+      return;  // Consume the key
+    }
+  }
+  #endif
+
   if (composeMode) {
     // Emoji picker sub-mode
     if (emojiPickerMode) {
@@ -3097,6 +3182,23 @@ void handleKeyboardInput() {
       break;
     #endif
 
+    #ifdef MECK_AUDIO_VARIANT
+    case 'k':
+      // Open alarm clock (screen created at boot; just ensure Audio* is available)
+      Serial.println("Opening alarm clock");
+      if (!audio) {
+        Serial.printf("Alarm: lazy init Audio - free heap: %d, largest block: %d\n",
+                       ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+        audio = new Audio();
+      }
+      {
+        AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+        if (alarmScr) alarmScr->setAudio(audio);
+      }
+      ui_task.gotoAlarmScreen();
+      break;
+    #endif
+
     #ifdef HAS_4G_MODEM
     case 't':
       // Open SMS (4G variant only)
@@ -3201,6 +3303,9 @@ void handleKeyboardInput() {
           || ui_task.isOnWebReader()
 #endif
           || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
          ) {
         ui_task.injectKey('s');  // Pass directly for scrolling
       } else {
@@ -3217,6 +3322,9 @@ void handleKeyboardInput() {
           || ui_task.isOnWebReader()
 #endif
           || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
          ) {
         ui_task.injectKey('w');  // Pass directly for scrolling
       } else {
@@ -3227,7 +3335,11 @@ void handleKeyboardInput() {
       
     case 'a':
       // Navigate left or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()) {
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
         ui_task.injectKey('a');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Previous");
@@ -3237,7 +3349,11 @@ void handleKeyboardInput() {
       
     case 'd':
       // Navigate right or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()) {
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
         ui_task.injectKey('d');  // Pass directly for channel/contacts switching
       } else {
         Serial.println("Nav: Next");
@@ -3515,6 +3631,24 @@ void handleKeyboardInput() {
         ui_task.gotoContactsScreen();
         break;
       }
+      // Alarm screen: Q/backspace routing depends on sub-mode
+#ifdef MECK_AUDIO_VARIANT
+      if (ui_task.isOnAlarmScreen()) {
+        AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+        if (alarmScr && alarmScr->isRinging()) {
+          alarmScr->dismiss();
+          ui_task.gotoHomeScreen();
+        } else if (alarmScr && alarmScr->getMode() != AlarmScreen::ALARM_LIST) {
+          // In edit/picker/digit mode — pass to screen (Q = back to list, backspace = delete)
+          ui_task.injectKey(key);
+        } else {
+          // On alarm list — go home
+          Serial.println("Nav: Alarm -> Home");
+          ui_task.gotoHomeScreen();
+        }
+        break;
+      }
+#endif
       // Last Heard: Q goes back to home
       if (ui_task.isOnLastHeardScreen()) {
         Serial.println("Nav: Last Heard -> Home");
@@ -3557,6 +3691,13 @@ void handleKeyboardInput() {
         ui_task.injectKey(key);
         break;
       }
+#ifdef MECK_AUDIO_VARIANT
+      // Pass unhandled keys to alarm screen (digits for time entry, o for toggle)
+      if (ui_task.isOnAlarmScreen()) {
+        ui_task.injectKey(key);
+        break;
+      }
+#endif
       Serial.printf("Unhandled key in normal mode: '%c' (0x%02X)\n", key, key);
       break;
   }

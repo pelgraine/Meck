@@ -12,7 +12,7 @@
   #include "MapScreen.h"
 #endif
 #include "target.h"
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -221,6 +221,25 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.print(">>");
     display.setTextSize(1); // restore
   }
+
+  // ---- Alarm enabled indicator ----
+  // Shows a small bell icon to the left of the audio indicator
+  // (or battery icon if no audio playing) when any alarm is enabled.
+  void renderAlarmIndicator(DisplayDriver& display, int batteryLeftX) {
+    AlarmScreen* alarmScr = (AlarmScreen*)_task->getAlarmScreen();
+    if (!alarmScr || alarmScr->enabledCount() == 0) return;
+
+    // Calculate X: shift left past audio indicator if it's showing
+    int rightEdge = batteryLeftX;
+    if (_task->isAudioPlayingInBackground()) {
+      display.setTextSize(0);
+      rightEdge = rightEdge - display.getTextWidth(">>") - 2;
+    }
+
+    display.setColor(DisplayDriver::GREEN);
+    int x = rightEdge - BELL_ICON_W - 2;
+    display.drawXbm(x, 1, icon_bell_small, BELL_ICON_W, BELL_ICON_H);
+  }
 #endif
 
   CayenneLPP sensors_lpp;
@@ -297,6 +316,9 @@ public:
 
     // audio background playback indicator (>> icon next to battery)
     renderAudioIndicator(display, battLeftX);
+
+    // alarm enabled indicator (AL icon, left of audio or battery)
+    renderAlarmIndicator(display, battLeftX);
 #else
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 #endif
@@ -458,10 +480,14 @@ public:
       display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
 #elif defined(HAS_4G_MODEM)
       display.drawTextCentered(display.width() / 2, y, "[T] Phone       [F] Discover  ");
-#elif defined(MECK_AUDIO_VARIANT) && defined(MECK_WEB_READER)
-      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [B] Browser   ");
 #elif defined(MECK_AUDIO_VARIANT)
-      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [F] Discover  ");
+      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [K] Alarm     ");
+      y += 10;
+  #ifdef MECK_WEB_READER
+      display.drawTextCentered(display.width() / 2, y, "[B] Browser     [F] Discover  ");
+  #else
+      display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+  #endif
 #elif defined(MECK_WEB_READER)
       display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
 #else
@@ -1208,6 +1234,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
+#ifdef MECK_AUDIO_VARIANT
+  alarm_screen = nullptr;      // Created and assigned from main.cpp if audio hardware present
+#endif
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this);
 #endif
@@ -2508,6 +2537,22 @@ void UITask::gotoAudiobookPlayer() {
   _next_refresh = 100;
 #endif
 }
+
+#ifdef MECK_AUDIO_VARIANT
+void UITask::gotoAlarmScreen() {
+  if (alarm_screen == nullptr) return;
+  AlarmScreen* alarmScr = (AlarmScreen*)alarm_screen;
+  if (_display != NULL) {
+    alarmScr->enter(*_display);
+  }
+  setCurrScreen(alarm_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
 
 #ifdef HAS_4G_MODEM
 void UITask::gotoSMSScreen() {

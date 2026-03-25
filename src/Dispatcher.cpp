@@ -36,7 +36,7 @@ uint32_t Dispatcher::getCADFailRetryDelay() const {
   return 200;
 }
 uint32_t Dispatcher::getCADFailMaxDuration() const {
-  return 4000;   // 4 seconds
+  return 6000;   // 6 seconds
 }
 
 void Dispatcher::loop() {
@@ -273,12 +273,16 @@ void Dispatcher::checkSend() {
       outbound_start = _ms->getMillis();
       bool success = _radio->startSendRaw(raw, len);
       if (!success) {
-        MESH_DEBUG_PRINTLN("%s Dispatcher::loop(): ERROR: send start failed!", getLogDateTime());
+        MESH_DEBUG_PRINTLN("%s Dispatcher::checkSend(): ERROR: send start failed!", getLogDateTime());
 
         logTxFail(outbound, outbound->getRawLength());
-  
-        releasePacket(outbound);  // return to pool
+
+        // re-queue instead of dropping so the packet gets another chance
+        int retry_delay = getCADFailRetryDelay();
+        unsigned long retry_time = futureMillis(retry_delay);
+        _mgr->queueOutbound(outbound, 0, retry_time);
         outbound = NULL;
+        next_tx_time = retry_time;
         return;
       }
       outbound_expiry = futureMillis(max_airtime);

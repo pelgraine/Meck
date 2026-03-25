@@ -30,6 +30,10 @@
   #include "WebReaderScreen.h"
 #endif
 
+#ifdef MECK_AUDIO_VARIANT
+  #include "AlarmScreen.h"
+#endif
+
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #include "VirtualKeyboard.h"
 #endif
@@ -82,6 +86,9 @@ class UITask : public AbstractUITask {
   UIScreen* notes_screen;    // Notes editor screen
   UIScreen* settings_screen; // Settings/onboarding screen
   UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
+#ifdef MECK_AUDIO_VARIANT
+  UIScreen* alarm_screen;     // Alarm clock screen (audio variant only)
+#endif
 #ifdef HAS_4G_MODEM
   UIScreen* sms_screen;      // SMS messaging screen (4G variant only)
 #endif
@@ -172,6 +179,9 @@ public:
   void gotoSettingsScreen(); // Navigate to settings
   void gotoOnboarding();     // Navigate to settings in onboarding mode
   void gotoAudiobookPlayer(); // Navigate to audiobook player
+#ifdef MECK_AUDIO_VARIANT
+  void gotoAlarmScreen();     // Navigate to alarm clock
+#endif
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoRepeaterAdminDirect(int contactIdx);  // Auto-login admin (L key from conversation)
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
@@ -221,6 +231,9 @@ public:
   bool isOnNotesScreen() const { return curr == notes_screen; }
   bool isOnSettingsScreen() const { return curr == settings_screen; }
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
+#ifdef MECK_AUDIO_VARIANT
+  bool isOnAlarmScreen() const { return curr == alarm_screen; }
+#endif
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
@@ -288,6 +301,10 @@ public:
   UIScreen* getSettingsScreen() const { return settings_screen; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
+#ifdef MECK_AUDIO_VARIANT
+  UIScreen* getAlarmScreen() const { return alarm_screen; }
+  void setAlarmScreen(UIScreen* s) { alarm_screen = s; }
+#endif
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
   UIScreen* getLastHeardScreen() const { return last_heard_screen; }
