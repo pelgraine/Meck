@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include "esp_wifi.h"
 #include "driver/rtc_io.h"
+#include "driver/gpio.h"
 
 class ESP32Board : public mesh::MainBoard {
 protected:
@@ -60,13 +61,20 @@ public:
 #if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(P_LORA_DIO_1) // Supported ESP32 variants
     if (rtc_gpio_is_valid_gpio((gpio_num_t)P_LORA_DIO_1)) { // Only enter sleep mode if P_LORA_DIO_1 is RTC pin
       esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
-      esp_sleep_enable_ext1_wakeup((1L << P_LORA_DIO_1), ESP_EXT1_WAKEUP_ANY_HIGH); // To wake up when receiving a LoRa packet
+      esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1), ESP_EXT1_WAKEUP_ANY_HIGH); // Wake on LoRa packet
+
+      // T5S3: Also wake on boot button press (GPIO0, active LOW).
+      // gpio_wakeup uses level trigger — works for light sleep only.
+#if defined(LilyGo_T5S3_EPaper_Pro) && defined(PIN_USER_BTN)
+      gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+      esp_sleep_enable_gpio_wakeup();
+#endif
 
       if (secs > 0) {
-        esp_sleep_enable_timer_wakeup(secs * 1000000); // To wake up every hour to do periodically jobs
+        esp_sleep_enable_timer_wakeup(secs * 1000000ULL); // Timer wake (microseconds)
       }
 
-      esp_light_sleep_start(); // CPU enters light sleep
+      esp_light_sleep_start(); // CPU halts here, resumes on wake
     }
 #endif
   }

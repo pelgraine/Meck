@@ -18,6 +18,9 @@
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
   #include <WiFi.h>
 #endif
+#if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  #include "esp_sleep.h"
+#endif
 
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
@@ -1937,6 +1940,42 @@ if (curr) curr->poll();
   }
 #endif
 
+  // ── T5S3 standalone powersaving ──────────────────────────────────────────
+  // When locked with display off, enter ESP32 light sleep (~8 mA total).
+  // Radio stays in continuous RX — DIO1 going HIGH wakes the CPU instantly.
+  // Boot button (GPIO0 LOW) and a 30-min safety timer also wake.
+  // First sleep starts 60s after lock; subsequent cycles wake for 5s to let
+  // the mesh stack process/relay any received packet, then sleep again.
+#if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  if (_locked && _display != NULL && !_display->isOn()) {
+    unsigned long now = millis();
+    if (now - _psLastActive >= _psNextSleepSecs * 1000UL) {
+      Serial.println("[POWERSAVE] Entering light sleep (locked+idle)");
+      board.sleep(1800);  // Light sleep up to 30 min
+      // ── CPU resumes here on wake ──
+      unsigned long wakeAt = millis();
+      _psLastActive = wakeAt;
+      _psNextSleepSecs = 5;  // Stay awake 5s for mesh processing
+
+      esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+      if (cause == ESP_SLEEP_WAKEUP_GPIO) {
+        // Boot button pressed — unlock and return to normal use
+        Serial.println("[POWERSAVE] Woke by button — unlocking");
+        unlockScreen();
+        _psNextSleepSecs = 60;  // Reset to long delay after user interaction
+      } else if (cause == ESP_SLEEP_WAKEUP_EXT1) {
+        Serial.println("[POWERSAVE] Woke by LoRa packet");
+      } else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+        Serial.println("[POWERSAVE] Woke by timer");
+      }
+    }
+  } else if (!_locked) {
+    // Not locked — keep powersaving timer reset so first sleep is 60s after lock
+    _psLastActive = millis();
+    _psNextSleepSecs = 60;
+  }
+#endif
+
 #ifdef PIN_VIBRATION
   vibration.loop();
 #endif
@@ -2063,6 +2102,10 @@ void UITask::lockScreen() {
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
   _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
+#if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  _psLastActive = millis();      // Start powersaving countdown (60s to first sleep)
+  _psNextSleepSecs = 60;
+#endif
   Serial.println("[UI] Screen locked — entering low-power mode");
 }
 

@@ -113,6 +113,13 @@ class UITask : public AbstractUITask {
   bool _vkbActive = false;
   UIScreen* _screenBeforeVKB = nullptr;
   unsigned long _vkbOpenedAt = 0;
+
+  // Powersaving: light sleep when locked + idle (standalone only — no BLE/WiFi)
+  // Wakes on LoRa packet (DIO1), boot button (GPIO0), or 30-min timer
+#if !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  unsigned long _psLastActive = 0;       // millis() at last wake or lock entry
+  unsigned long _psNextSleepSecs = 60;   // Seconds before first sleep (60s), then 5s cycles
+#endif
 #ifdef MECK_CARDKB
   bool _cardkbDetected = false;
 #endif
