@@ -159,7 +159,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     }
 
     display.setColor(DisplayDriver::GREEN);
-    display.setTextSize(0);
+    display.setTextSize(_node_prefs->smallTextSize());
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // T5S3: text-only battery indicator — "Batt 99% 4.1v"
@@ -173,7 +173,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.print(battStr);
     display.setTextSize(1);  // restore default text size
 #else
-    // T-Deck Pro: icon + percentage text
+    // T-Deck Pro: icon + percentage text (icon hidden in large font)
     int iconWidth = 16;
     int iconHeight = 6;
     int iconY = 0;
@@ -184,26 +184,35 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     sprintf(pctStr, "%d%%", batteryPercentage);
     uint16_t textWidth = display.getTextWidth(pctStr);
 
-    // layout: [icon][cap 2px][gap 2px][text][margin 2px]
-    int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
-    int iconX = display.width() - totalWidth;
+    if (_node_prefs->large_font) {
+      // Large font: text only — no room for icon in header
+      int textX = display.width() - textWidth - 2;
+      if (outIconX) *outIconX = textX;
+      display.setCursor(textX, textY);
+      display.print(pctStr);
+    } else {
+      // Tiny font: icon + text
+      // layout: [icon][cap 2px][gap 2px][text][margin 2px]
+      int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
+      int iconX = display.width() - totalWidth;
 
-    if (outIconX) *outIconX = iconX;
+      if (outIconX) *outIconX = iconX;
 
-    // battery outline
-    display.drawRect(iconX, iconY, iconWidth, iconHeight);
+      // battery outline
+      display.drawRect(iconX, iconY, iconWidth, iconHeight);
 
-    // battery "cap"
-    display.fillRect(iconX + iconWidth, iconY + (iconHeight / 4), 2, iconHeight / 2);
+      // battery "cap"
+      display.fillRect(iconX + iconWidth, iconY + (iconHeight / 4), 2, iconHeight / 2);
 
-    // fill the battery based on the percentage
-    int fillWidth = (batteryPercentage * (iconWidth - 4)) / 100;
-    display.fillRect(iconX + 2, iconY + 2, fillWidth, iconHeight - 4);
+      // fill the battery based on the percentage
+      int fillWidth = (batteryPercentage * (iconWidth - 4)) / 100;
+      display.fillRect(iconX + 2, iconY + 2, fillWidth, iconHeight - 4);
 
-    // draw percentage text after the battery cap
-    int textX = iconX + iconWidth + 2 + 2;  // after cap + gap
-    display.setCursor(textX, textY);
-    display.print(pctStr);
+      // draw percentage text after the battery cap
+      int textX = iconX + iconWidth + 2 + 2;  // after cap + gap
+      display.setCursor(textX, textY);
+      display.print(pctStr);
+    }
     display.setTextSize(1);  // restore default text size
 #endif
   }
@@ -218,7 +227,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     if (!_task->isAudioPlayingInBackground()) return;
 
     display.setColor(DisplayDriver::GREEN);
-    display.setTextSize(0); // tiny font (same as clock & battery %)
+    display.setTextSize(_node_prefs->smallTextSize()); // tiny font (same as clock & battery %)
     int x = batteryLeftX - display.getTextWidth(">>") - 2;
     display.setCursor(x, -3); // align vertically with battery text
     display.print(">>");
@@ -235,7 +244,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     // Calculate X: shift left past audio indicator if it's showing
     int rightEdge = batteryLeftX;
     if (_task->isAudioPlayingInBackground()) {
-      display.setTextSize(0);
+      display.setTextSize(_node_prefs->smallTextSize());
       rightEdge = rightEdge - display.getTextWidth(">>") - 2;
     }
 
@@ -298,7 +307,7 @@ public:
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
     // node name (tinyfont to avoid overlapping clock)
-    display.setTextSize(0);
+    display.setTextSize(_node_prefs->smallTextSize());
     display.setColor(DisplayDriver::GREEN);
     char filtered_name[sizeof(_node_prefs->node_name)];
     display.translateUTF8ToBlocks(filtered_name, _node_prefs->node_name, sizeof(filtered_name));
@@ -312,7 +321,7 @@ public:
     display.setCursor(0, HOME_HDR_Y);
     display.print(filtered_name);
 
-    // battery voltage
+    // battery voltage + status icons
 #ifdef MECK_AUDIO_VARIANT
     int battLeftX = display.width(); // default if battery doesn't render
     renderBatteryIndicator(display, _task->getBattMilliVolts(), &battLeftX);
@@ -326,7 +335,7 @@ public:
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 #endif
 
-    // centered clock (tinyfont) - only show when time is valid
+    // centered clock — only show when time is valid
     {
       uint32_t now = _rtc->getCurrentTime();
       if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
@@ -340,11 +349,14 @@ public:
         char timeBuf[6];
         sprintf(timeBuf, "%02d:%02d", hrs, mins);
 
-        display.setTextSize(0);  // tinyfont
+        display.setTextSize(_node_prefs->smallTextSize());
         display.setColor(DisplayDriver::LIGHT);
         uint16_t tw = display.getTextWidth(timeBuf);
         int clockX = (display.width() - tw) / 2;
-        display.setCursor(clockX, HOME_HDR_Y);  // align with node name Y
+        // Ensure clock doesn't overlap the node name
+        int nameRight = display.getTextWidth(filtered_name) + 4;
+        if (clockX < nameRight) clockX = nameRight;
+        display.setCursor(clockX, HOME_HDR_Y);
         display.print(timeBuf);
         display.setTextSize(1);  // restore
       }
@@ -387,17 +399,17 @@ public:
         IPAddress ip = WiFi.localIP();
         if (ip != IPAddress(0,0,0,0)) {
           snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
-          display.setTextSize(0);  // Tiny font for IP
+          display.setTextSize(_node_prefs->smallTextSize());  // Tiny font for IP
           display.drawTextCentered(display.width() / 2, y, tmp);
-          y += 8;
+          y += _node_prefs->smallLineH() - 1;
         }
       #endif
       #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       if (_task->hasConnection()) {
         display.setColor(DisplayDriver::GREEN);
-        display.setTextSize(0);  // Tiny font for Connected
+        display.setTextSize(_node_prefs->smallTextSize());  // Tiny font for Connected
         display.drawTextCentered(display.width() / 2, y, "< Connected >");
-        y += 8;  // Reduced from 12
+        y += _node_prefs->smallLineH() - 1;
 #ifdef BLE_PIN_CODE
       } else if (_task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
         display.setColor(DisplayDriver::RED);
@@ -448,7 +460,7 @@ public:
             display.drawXbm(iconX, iconY, tiles[row][col].icon, HOME_ICON_W, HOME_ICON_H);
 
             // Label centered below icon
-            display.setTextSize(0);
+            display.setTextSize(_node_prefs->smallTextSize());
             display.drawTextCentered(tx + tileW / 2, ty + 18, tiles[row][col].label);
           }
         }
@@ -456,51 +468,99 @@ public:
         // Nav hint below grid
         y = gridY + 2 * tileH + gapY + 2;
         display.setColor(DisplayDriver::GREEN);
-        display.setTextSize(0);
+        display.setTextSize(_node_prefs->smallTextSize());
         display.drawTextCentered(display.width() / 2, y, "Tap tile to open");
       }
       display.setTextSize(1);
 
 #else
       // ----- T-Deck Pro: Keyboard shortcut text menu -----
-      // Menu shortcuts - tinyfont monospaced grid
-      y += 6;
       display.setColor(DisplayDriver::LIGHT);
-      display.setTextSize(0);  // tinyfont 6x8 monospaced
-      display.drawTextCentered(display.width() / 2, y, "Press:");
-      y += 12;
-      display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts  ");
-      y += 10;
-      display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
-      y += 10;
+      display.setTextSize(_node_prefs->smallTextSize());
+      int menuLH = _node_prefs->smallLineH();
+
+      if (_node_prefs->large_font) {
+        // Proportional font: two-column layout with fixed X positions
+        y += 2;
+        int col1 = 2;
+        int col2 = display.width() / 2;
+
+        display.setCursor(col1, y); display.print("[M] Messages");
+        display.setCursor(col2, y); display.print("[C] Contacts");
+        y += menuLH;
+        display.setCursor(col1, y); display.print("[N] Notes");
+        display.setCursor(col2, y); display.print("[S] Settings");
+        y += menuLH;
 #if HAS_GPS
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader      [G] Maps      ");
+        display.setCursor(col1, y); display.print("[E] Reader");
+        display.setCursor(col2, y); display.print("[G] Maps");
 #else
-      display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
+        display.setCursor(col1, y); display.print("[E] Reader");
 #endif
-      y += 10;
+        y += menuLH;
 #if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
-      display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
+        display.setCursor(col1, y); display.print("[T] Phone");
+        display.setCursor(col2, y); display.print("[B] Browser");
 #elif defined(HAS_4G_MODEM)
-      display.drawTextCentered(display.width() / 2, y, "[T] Phone       [F] Discover  ");
+        display.setCursor(col1, y); display.print("[T] Phone");
+        display.setCursor(col2, y); display.print("[F] Discover");
 #elif defined(MECK_AUDIO_VARIANT)
-      display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [K] Alarm     ");
-      y += 10;
+        display.setCursor(col1, y); display.print("[P] Audio");
+        display.setCursor(col2, y); display.print("[K] Alarm");
+        y += menuLH;
   #ifdef MECK_WEB_READER
-      display.drawTextCentered(display.width() / 2, y, "[B] Browser     [F] Discover  ");
+        display.setCursor(col1, y); display.print("[B] Browser");
+        display.setCursor(col2, y); display.print("[F] Discover");
   #else
-      display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+        display.setCursor(col1, y); display.print("[F] Discover");
   #endif
 #elif defined(MECK_WEB_READER)
-      display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
+        display.setCursor(col1, y); display.print("[B] Browser");
 #else
-      display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+        display.setCursor(col1, y); display.print("[F] Discover");
 #endif
-      y += 14;
+        y += menuLH + 2;
+      } else {
+        // Monospaced built-in font: centered space-padded strings
+        y += 6;
+        display.drawTextCentered(display.width() / 2, y, "Press:");
+        y += 12;
+        display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts  ");
+        y += 10;
+        display.drawTextCentered(display.width() / 2, y, "[N] Notes       [S] Settings  ");
+        y += 10;
+#if HAS_GPS
+        display.drawTextCentered(display.width() / 2, y, "[E] Reader      [G] Maps      ");
+#else
+        display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
+#endif
+        y += 10;
+#if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
+        display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
+#elif defined(HAS_4G_MODEM)
+        display.drawTextCentered(display.width() / 2, y, "[T] Phone       [F] Discover  ");
+#elif defined(MECK_AUDIO_VARIANT)
+        display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [K] Alarm     ");
+        y += 10;
+  #ifdef MECK_WEB_READER
+        display.drawTextCentered(display.width() / 2, y, "[B] Browser     [F] Discover  ");
+  #else
+        display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+  #endif
+#elif defined(MECK_WEB_READER)
+        display.drawTextCentered(display.width() / 2, y, "[B] Browser                   ");
+#else
+        display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+#endif
+        y += 14;
+      }
 
-      // Nav hint
-      display.setColor(DisplayDriver::GREEN);
-      display.drawTextCentered(display.width() / 2, y, "Press A/D to cycle home views");
+      // Nav hint (only if room)
+      if (y < display.height() - 14) {
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, y,
+          _node_prefs->large_font ? "A/D: cycle views" : "Press A/D to cycle home views");
+      }
       display.setTextSize(1);  // restore
 #endif
     } else if (_page == HomePage::RECENT) {
@@ -530,7 +590,7 @@ public:
       }
       // Hint for full Last Heard screen
       display.setColor(DisplayDriver::LIGHT);
-      display.setTextSize(0);
+      display.setTextSize(_node_prefs->smallTextSize());
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, display.height() - 24,
                                "Tap here for full Last Heard list");
@@ -600,19 +660,20 @@ public:
       display.drawTextCentered(display.width() / 2, 18, "WiFi Companion");
 
       int wy = 36;
-      display.setTextSize(0);
+      display.setTextSize(_node_prefs->smallTextSize());
+      int wLH = _node_prefs->smallLineH() + 1;
       if (WiFi.status() == WL_CONNECTED) {
         display.setColor(DisplayDriver::GREEN);
         snprintf(tmp, sizeof(tmp), "SSID: %s", WiFi.SSID().c_str());
         display.drawTextCentered(display.width() / 2, wy, tmp);
-        wy += 10;
+        wy += wLH;
         IPAddress ip = WiFi.localIP();
         snprintf(tmp, sizeof(tmp), "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
         display.drawTextCentered(display.width() / 2, wy, tmp);
-        wy += 10;
+        wy += wLH;
         snprintf(tmp, sizeof(tmp), "Port: %d", TCP_PORT);
         display.drawTextCentered(display.width() / 2, wy, tmp);
-        wy += 12;
+        wy += wLH + 2;
         if (_task->hasConnection()) {
           display.setColor(DisplayDriver::GREEN);
           display.setTextSize(1);
@@ -625,7 +686,7 @@ public:
       } else {
         display.setColor(DisplayDriver::RED);
         display.drawTextCentered(display.width() / 2, wy, "Not connected");
-        wy += 12;
+        wy += wLH + 2;
         display.setColor(DisplayDriver::LIGHT);
         display.drawTextCentered(display.width() / 2, wy, "Configure in Settings");
       }
@@ -726,7 +787,7 @@ public:
         display.drawTextCentered(display.width() / 2, by + 4, buf);
 
         // Show controls hint
-        display.setTextSize(0);
+        display.setTextSize(_node_prefs->smallTextSize());
         display.drawTextCentered(display.width() / 2, by + bh - 10, "W/S:adj Enter:ok Q:cancel");
         display.setTextSize(1);
       }
@@ -1136,12 +1197,10 @@ public:
     }
 
     // ---- Unlock hint ----
-    display.setTextSize(0);
-    display.setColor(DisplayDriver::LIGHT);
 #if defined(LilyGo_T5S3_EPaper_Pro)
+    display.setTextSize(_node_prefs->smallTextSize());
+    display.setColor(DisplayDriver::LIGHT);
     display.drawTextCentered(display.width() / 2, 120, "Hold button to unlock");
-#else
-    display.drawTextCentered(display.width() / 2, 120, "Dbl-press to unlock");
 #endif
 
     return 30000;
@@ -1227,8 +1286,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
-  text_reader = new TextReaderScreen(this);
-  notes_screen = new NotesScreen(this);
+  text_reader = new TextReaderScreen(this, node_prefs);
+  notes_screen = new NotesScreen(this, node_prefs);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
@@ -1241,7 +1300,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   alarm_screen = nullptr;      // Created and assigned from main.cpp if audio hardware present
 #endif
 #ifdef HAS_4G_MODEM
-  sms_screen = new SMSScreen(this);
+  sms_screen = new SMSScreen(this, node_prefs);
 #endif
 #if HAS_GPS
   map_screen = new MapScreen(this);
@@ -2727,7 +2786,7 @@ void UITask::gotoWebReader() {
   if (web_reader == nullptr) {
     Serial.printf("WebReader: lazy init - free heap: %d, largest block: %d\n",
                    ESP.getFreeHeap(), ESP.getMaxAllocHeap());
-    web_reader = new WebReaderScreen(this);
+    web_reader = new WebReaderScreen(this, _node_prefs);
     Serial.printf("WebReader: init complete - free heap: %d\n", ESP.getFreeHeap());
   }
   WebReaderScreen* wr = (WebReaderScreen*)web_reader;

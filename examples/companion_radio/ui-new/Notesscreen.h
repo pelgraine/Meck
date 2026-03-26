@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <vector>
 #include "Utf8CP437.h"
+#include "../NodePrefs.h"
 
 // Forward declarations
 class UITask;
@@ -52,9 +53,11 @@ public:
 
 private:
   UITask* _task;
+  NodePrefs* _prefs;
   Mode _mode;
   bool _sdReady;
   bool _initialized;
+  uint8_t _lastFontPref;
   DisplayDriver* _display;
 
   // Display layout (calculated once from display metrics)
@@ -518,8 +521,8 @@ private:
     display.drawRect(0, 11, display.width(), 1);
 
     // File list with "+ New Note" at index 0
-    display.setTextSize(0);
-    int listLineH = 9;   // Match contacts/discovery for consistent selection highlight
+    display.setTextSize(_prefs->smallTextSize());
+    int listLineH = _prefs->smallLineH();
     int startY = 14;
     int totalItems = 1 + (int)_fileList.size();
     int maxVisible = (display.height() - startY - _footerHeight) / listLineH;
@@ -539,27 +542,21 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.fillRect(0, y, display.width(), listLineH);
 #else
-        display.fillRect(0, y + 5, display.width(), listLineH);
+        display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), listLineH);
 #endif
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
       }
 
-      display.setCursor(0, y);
-
       if (i == 0) {
         display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
-        display.print(selected ? "> + New Note" : "  + New Note");
+        display.drawTextEllipsized(0, y, display.width() - 4,
+                                   selected ? "> + New Note" : "  + New Note");
       } else {
         String line = selected ? "> " : "  ";
-        String name = _fileList[i - 1];
-        int maxLen = _charsPerLine - 4;
-        if ((int)name.length() > maxLen) {
-          name = name.substring(0, maxLen - 3) + "...";
-        }
-        line += name;
-        display.print(line.c_str());
+        line += _fileList[i - 1];
+        display.drawTextEllipsized(0, y, display.width() - 4, line.c_str());
       }
       y += listLineH;
     }
@@ -605,7 +602,7 @@ private:
     }
 
     // Render current page using tiny font
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
 
     int pageStart = _pageOffsets[_currentPage];
@@ -722,7 +719,7 @@ private:
     int textAreaTop = 14;
     int textAreaBottom = display.height() - 16;
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
 
     // Find cursor line
     int cursorLine = lineForPos(_cursorPos);
@@ -771,7 +768,7 @@ private:
 
     // If buffer is empty, show cursor at top
     if (_bufLen == 0) {
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::GREEN);
       display.setCursor(0, textAreaTop);
       display.print("|");
@@ -829,7 +826,7 @@ private:
     display.setCursor(0, 20);
     display.setColor(DisplayDriver::LIGHT);
     display.print("From: ");
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     String origDisplay = _renameOriginal;
     if (origDisplay.length() > 30) origDisplay = origDisplay.substring(0, 27) + "...";
     display.print(origDisplay.c_str());
@@ -840,7 +837,7 @@ private:
     display.setColor(DisplayDriver::LIGHT);
     display.print("To:   ");
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::GREEN);
     char displayName[NOTES_RENAME_MAX + 2];
     snprintf(displayName, sizeof(displayName), "%s|", _renameBuf);
@@ -880,7 +877,7 @@ private:
     display.setCursor(0, 25);
     display.print("File:");
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setCursor(0, 38);
     String nameDisplay = _deleteTarget;
     if (nameDisplay.length() > 35) nameDisplay = nameDisplay.substring(0, 32) + "...";
@@ -1096,9 +1093,9 @@ private:
   }
 
 public:
-  NotesScreen(UITask* task)
-    : _task(task), _mode(FILE_LIST),
-      _sdReady(false), _initialized(false), _display(nullptr),
+  NotesScreen(UITask* task, NodePrefs* prefs = nullptr)
+    : _task(task), _prefs(prefs), _mode(FILE_LIST),
+      _sdReady(false), _initialized(false), _lastFontPref(0), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5), _footerHeight(14),
       _editCharsPerLine(20), _editLineHeight(12), _editMaxLines(8),
       _selectedFile(0), _buf(nullptr), _bufLen(0), _cursorPos(0),
@@ -1133,14 +1130,30 @@ public:
   // ---- Layout Init ----
 
   void initLayout(DisplayDriver& display) {
+    // Re-init if font preference changed since last layout
+    uint8_t curFont = _prefs ? _prefs->large_font : 0;
+    if (_initialized && curFont != _lastFontPref) {
+      _initialized = false;
+      Serial.println("Notes: font changed, recalculating layout");
+    }
     if (_initialized) return;
+    _lastFontPref = curFont;
     _display = &display;
 
-    // Tiny font metrics (for read mode)
-    display.setTextSize(0);
+    // Font metrics (for read mode)
+    display.setTextSize(_prefs->smallTextSize());
     uint16_t tenCharsW = display.getTextWidth("MMMMMMMMMM");
     if (tenCharsW > 0) {
       _charsPerLine = (display.width() * 10) / tenCharsW;
+    }
+    // Proportional font: use average-width measurement instead of M-width
+    if (_prefs && _prefs->large_font) {
+      const char* sample = "the quick brown fox jumps over lazy dog";
+      uint16_t sampleW = display.getTextWidth(sample);
+      int sampleLen = strlen(sample);
+      if (sampleW > 0 && sampleLen > 0) {
+        _charsPerLine = (display.width() * sampleLen * 70) / ((int)sampleW * 100);
+      }
     }
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 60) _charsPerLine = 60;
@@ -1150,6 +1163,10 @@ public:
       _lineHeight = max(3, (int)((mWidth * 7 * 12) / (6 * 10)));
     } else {
       _lineHeight = 5;
+    }
+    // Large font: formula above assumes built-in 6x8 ratio — too small for 9pt
+    if (_prefs && _prefs->large_font) {
+      _lineHeight = _prefs->smallLineH();
     }
 
     _footerHeight = 14;

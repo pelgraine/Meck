@@ -43,6 +43,8 @@
 // JPEG decoder for cover art — JPEGDEC by bitbank2
 #include <JPEGDEC.h>
 
+#include "../NodePrefs.h"
+
 // Forward declarations
 class UITask;
 
@@ -151,6 +153,7 @@ public:
 
 private:
   UITask*  _task;
+  NodePrefs* _prefs;
   Audio*   _audio;
   Mode     _mode;
   bool     _sdReady;
@@ -1193,10 +1196,10 @@ private:
     }
 
     // Switch to tiny font for file list (6x8 built-in)
-    display.setTextSize(0);
+    display.setTextSize(_prefs ? _prefs->smallTextSize() : 0);
 
-    // Calculate visible items — tiny font uses ~8 virtual units per line
-    int itemHeight = 8;
+    // Calculate visible items
+    int itemHeight = (_prefs ? _prefs->smallLineH() : 9) - 1;
     int listTop = 13;
     int listBottom = display.height() - 14;  // Reserve footer space
     int visibleItems = (listBottom - listTop) / itemHeight;
@@ -1208,7 +1211,7 @@ private:
       _scrollOffset = _selectedFile - visibleItems + 1;
     }
 
-    // Approx chars that fit in tiny font (~36 on 128 virtual width)
+    // Approx chars for suffix/type tag sizing (still needed for type tag assembly)
     const int charsPerLine = 36;
 
     // Draw file list
@@ -1218,9 +1221,7 @@ private:
 
       if (fileIdx == _selectedFile) {
         display.setColor(DisplayDriver::LIGHT);
-        // setCursor adds +5 to y internally, but fillRect does not.
-        // Offset fillRect by +5 to align highlight bar with text.
-        display.fillRect(0, y + 5, display.width(), itemHeight - 1);
+        display.fillRect(0, y + (_prefs ? _prefs->smallHighlightOff() : 5), display.width(), itemHeight - 1);
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
@@ -1231,28 +1232,14 @@ private:
       char fullLine[96];
 
       if (fe.isDir) {
-        // Directory entry: show as "/ FolderName" or just ".."
         if (fe.name == "..") {
           snprintf(fullLine, sizeof(fullLine), ".. (up)");
         } else {
           snprintf(fullLine, sizeof(fullLine), "/%s", fe.name.c_str());
-          // Truncate if needed
-          if ((int)strlen(fullLine) > charsPerLine - 1) {
-            fullLine[charsPerLine - 4] = '.';
-            fullLine[charsPerLine - 3] = '.';
-            fullLine[charsPerLine - 2] = '.';
-            fullLine[charsPerLine - 1] = '\0';
-          }
         }
       } else {
         // Audio file: "Title - Author [TYPE]"
         char lineBuf[80];
-
-        // Reserve space for type tag and bookmark indicator
-        int suffixLen = fe.fileType.length() + 3;  // " [M4B]" or " [MP3]"
-        int bmkLen = fe.hasBookmark ? 2 : 0;       // " >"
-        int availChars = charsPerLine - suffixLen - bmkLen;
-        if (availChars < 10) availChars = 10;
 
         if (fe.displayAuthor.length() > 0) {
           snprintf(lineBuf, sizeof(lineBuf), "%s - %s",
@@ -1261,24 +1248,13 @@ private:
           snprintf(lineBuf, sizeof(lineBuf), "%s", fe.displayTitle.c_str());
         }
 
-        // Truncate with ellipsis if needed
-        if ((int)strlen(lineBuf) > availChars) {
-          if (availChars > 3) {
-            lineBuf[availChars - 3] = '.';
-            lineBuf[availChars - 2] = '.';
-            lineBuf[availChars - 1] = '.';
-            lineBuf[availChars] = '\0';
-          } else {
-            lineBuf[availChars] = '\0';
-          }
-        }
-
         // Append file type tag
         snprintf(fullLine, sizeof(fullLine), "%s [%s]", lineBuf, fe.fileType.c_str());
       }
 
-      display.setCursor(2, y);
-      display.print(fullLine);
+      // Pixel-aware ellipsis — reserve space for bookmark indicator
+      int reserveRight = (!fe.isDir && fe.hasBookmark) ? 10 : 2;
+      display.drawTextEllipsized(2, y, display.width() - reserveRight, fullLine);
 
       // Bookmark indicator (right-aligned, files only)
       if (!fe.isDir && fe.hasBookmark) {
@@ -1464,8 +1440,8 @@ private:
   }
 
 public:
-  AudiobookPlayerScreen(UITask* task, Audio* audio)
-    : _task(task), _audio(audio), _mode(FILE_LIST),
+  AudiobookPlayerScreen(UITask* task, Audio* audio, NodePrefs* prefs = nullptr)
+    : _task(task), _prefs(prefs), _audio(audio), _mode(FILE_LIST),
       _sdReady(false), _i2sInitialized(false), _dacPowered(false),
       _displayRef(nullptr),
       _selectedFile(0), _scrollOffset(0),

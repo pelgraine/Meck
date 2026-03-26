@@ -36,6 +36,7 @@
 #include "ModemManager.h"
 #include "SMSStore.h"
 #include "SMSContacts.h"
+#include "../NodePrefs.h"
 
 // Limits
 #define SMS_INBOX_PAGE_SIZE     4
@@ -51,6 +52,7 @@ public:
 
 private:
   UITask* _task;
+  NodePrefs* _prefs;
   SubView _view;
 
   // App menu state
@@ -117,8 +119,8 @@ private:
   }
 
 public:
-  SMSScreen(UITask* task)
-    : _task(task), _view(APP_MENU)
+  SMSScreen(UITask* task, NodePrefs* prefs = nullptr)
+    : _task(task), _prefs(prefs), _view(APP_MENU)
     , _menuCursor(0)
     , _convCount(0), _inboxCursor(0), _inboxScrollTop(0)
     , _msgCount(0), _msgScrollPos(0)
@@ -276,7 +278,7 @@ public:
 
     // Show modem state text if not ready
     if (ms != ModemState::READY && ms != ModemState::SENDING_SMS) {
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::YELLOW);
       const char* label = ModemManager::stateToString(ms);
       uint16_t labelW = display.getTextWidth(label);
@@ -356,7 +358,7 @@ public:
 
     // Modem status indicator 
     ModemState ms = modemManager.getState();
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setCursor(4, y + lineHeight + 8);
     if (ms == ModemState::OFF || ms == ModemState::POWERING_ON || 
         ms == ModemState::INITIALIZING) {
@@ -483,7 +485,7 @@ public:
         bool isAction = (row == 4);  // Bottom row has action buttons
 
         if (isAction) {
-          display.setTextSize(0);
+          display.setTextSize(_prefs->smallTextSize());
           if (col == 2 && _phoneInputPos > 0) {
             display.setColor(DisplayDriver::GREEN);  // CALL
           } else if (col == 1) {
@@ -544,7 +546,7 @@ public:
     display.drawRect(0, 11, display.width(), 1);
 
     if (_convCount == 0) {
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, 20);
       display.print("No conversations");
@@ -560,8 +562,8 @@ public:
       }
       display.setTextSize(1);
     } else {
-      display.setTextSize(0);
-      int lineHeight = 10;
+      display.setTextSize(_prefs->smallTextSize());
+      int lineHeight = _prefs->smallLineH() + 1;
       int y = 14;
 
       int visibleCount = (display.height() - 14 - 14) / (lineHeight * 2 + 2);
@@ -643,14 +645,14 @@ public:
     display.drawRect(0, 11, display.width(), 1);
 
     if (_msgCount == 0) {
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, 25);
       display.print("No messages");
       display.setTextSize(1);
     } else {
-      display.setTextSize(0);
-      int lineHeight = 10;
+      display.setTextSize(_prefs->smallTextSize());
+      int lineHeight = _prefs->smallLineH() + 1;
       int headerHeight = 14;
       int footerHeight = 14;
 
@@ -764,12 +766,13 @@ public:
       // Message body
       display.setCursor(0, 14);
       display.setColor(DisplayDriver::LIGHT);
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
 
       uint16_t testWidth = display.getTextWidth("MMMMMMMMMM");
       int charsPerLine = (testWidth > 0) ? (display.width() * 10) / testWidth : 20;
       if (charsPerLine < 12) charsPerLine = 12;
 
+      int composeLH = _prefs->smallLineH() + 1;
       int y = 14;
       int x = 0;
       char cs[2] = {0, 0};
@@ -780,7 +783,7 @@ public:
         x++;
         if (x >= charsPerLine) {
           x = 0;
-          y += 10;
+          y += composeLH;
         }
       }
 
@@ -827,7 +830,7 @@ public:
     int cnt = smsContacts.count();
 
     if (cnt == 0) {
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, 25);
       display.print("No contacts saved");
@@ -837,8 +840,8 @@ public:
       display.print("and press A to add");
       display.setTextSize(1);
     } else {
-      display.setTextSize(0);
-      int lineHeight = 10;
+      display.setTextSize(_prefs->smallTextSize());
+      int lineHeight = _prefs->smallLineH() + 1;
       int y = 14;
 
       int visibleCount = (display.height() - 14 - 14) / (lineHeight * 2 + 2);
@@ -900,7 +903,7 @@ public:
     display.drawRect(0, 11, display.width(), 1);
 
     // Phone number (read-only)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(0, 16);
     display.print("Phone: ");
@@ -956,7 +959,7 @@ public:
     display.print(dispName);
 
     // Phone number below name (smaller, dimmer)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(4, 36);
     display.print(_callPhone);
@@ -1011,7 +1014,7 @@ public:
     display.print(dispName);
 
     // Phone number below name (smaller, dimmer)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(4, 36);
     display.print(_callPhone);
@@ -1070,7 +1073,7 @@ public:
     display.print(dispName);
 
     // Phone number below name (smaller, dimmer)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(4, 36);
     display.print(_callPhone);
@@ -1090,7 +1093,7 @@ public:
     display.print(timeBuf);
 
     // Volume (left-aligned)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
     char volLabel[12];
     snprintf(volLabel, sizeof(volLabel), "Vol: %d/5", _callVolume);

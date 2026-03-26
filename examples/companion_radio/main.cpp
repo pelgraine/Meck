@@ -2701,9 +2701,28 @@ void handleKeyboardInput() {
     
     // A/D keys switch channels (only when buffer is empty, not in DM mode)
     if ((key == 'a') && composePos == 0 && !composeDM) {
-      // Previous channel
+      // Previous channel — skip gaps
       if (composeChannelIdx > 0) {
-        composeChannelIdx--;
+        bool found = false;
+        for (uint8_t prev = composeChannelIdx - 1; ; prev--) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(prev, ch) && ch.name[0] != '\0') {
+            composeChannelIdx = prev;
+            found = true;
+            break;
+          }
+          if (prev == 0) break;
+        }
+        if (!found) {
+          // Wrap to last valid channel
+          for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
+            ChannelDetails ch;
+            if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
+              composeChannelIdx = i;
+              break;
+            }
+          }
+        }
       } else {
         // Wrap to last valid channel
         for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
@@ -2720,12 +2739,17 @@ void handleKeyboardInput() {
     }
     
     if ((key == 'd') && composePos == 0 && !composeDM) {
-      // Next channel
-      ChannelDetails ch;
-      uint8_t nextIdx = composeChannelIdx + 1;
-      if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
-        composeChannelIdx = nextIdx;
-      } else {
+      // Next channel — skip gaps
+      bool found = false;
+      for (uint8_t next = composeChannelIdx + 1; next < MAX_GROUP_CHANNELS; next++) {
+        ChannelDetails ch;
+        if (the_mesh.getChannel(next, ch) && ch.name[0] != '\0') {
+          composeChannelIdx = next;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
         composeChannelIdx = 0;  // Wrap to first channel
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
@@ -3173,7 +3197,7 @@ void handleKeyboardInput() {
         Serial.printf("Audiobook: lazy init - free heap: %d, largest block: %d\n",
                        ESP.getFreeHeap(), ESP.getMaxAllocHeap());
         audio = new Audio();
-        AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio);
+        AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio, the_mesh.getNodePrefs());
         abScreen->setSDReady(sdCardReady);
         ui_task.setAudiobookScreen(abScreen);
         Serial.printf("Audiobook: init complete - free heap: %d\n", ESP.getFreeHeap());

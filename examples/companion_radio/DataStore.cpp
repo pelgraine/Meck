@@ -268,10 +268,18 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)) != sizeof(_prefs.auto_lock_minutes)) {
       _prefs.auto_lock_minutes = 0;  // default: disabled
     }
+    if (file.read((uint8_t *)&_prefs.hint_shown, sizeof(_prefs.hint_shown)) != sizeof(_prefs.hint_shown)) {
+      _prefs.hint_shown = 0;  // default: show boot hint
+    }
+    if (file.read((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font)) != sizeof(_prefs.large_font)) {
+      _prefs.large_font = 0;  // default: tiny font
+    }
 
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
     if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
+    if (_prefs.hint_shown > 1) _prefs.hint_shown = 0;
+    if (_prefs.large_font > 1) _prefs.large_font = 0;
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
     {
       uint8_t alm = _prefs.auto_lock_minutes;
@@ -324,6 +332,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.dark_mode, sizeof(_prefs.dark_mode));                  // 98
     file.write((uint8_t *)&_prefs.portrait_mode, sizeof(_prefs.portrait_mode));          // 99
     file.write((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)); // 100
+    file.write((uint8_t *)&_prefs.hint_shown, sizeof(_prefs.hint_shown));               // 101
+    file.write((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font));               // 102
 
     file.close();
   }

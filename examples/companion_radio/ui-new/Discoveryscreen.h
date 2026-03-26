@@ -49,11 +49,11 @@ public:
   int selectRowAtVY(int vy) {
     int count = the_mesh.getDiscoveredCount();
     if (count == 0) return 0;
-    const int headerH = 14, footerH = 14, lineH = 9;
+    const int headerH = 14, footerH = 14, lineH = the_mesh.getNodePrefs()->smallLineH();
 #if defined(LilyGo_T5S3_EPaper_Pro)
     const int bodyTop = headerH;
 #else
-    const int bodyTop = headerH + 5;
+    const int bodyTop = headerH + the_mesh.getNodePrefs()->smallHighlightOff();
 #endif
     if (vy < bodyTop || vy >= 128 - footerH) return 0;
 
@@ -91,8 +91,8 @@ public:
     display.drawRect(0, 11, display.width(), 1);
 
     // === Body — discovered node rows ===
-    display.setTextSize(0);  // tiny font for compact rows
-    int lineHeight = 9;
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());  // tiny font for compact rows
+    int lineHeight = the_mesh.getNodePrefs()->smallLineH();
     int headerHeight = 14;
     int footerHeight = 14;
     int maxY = display.height() - footerHeight;
@@ -129,7 +129,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, display.width(), lineHeight);
 #else
-          display.fillRect(0, y + 5, display.width(), lineHeight);
+          display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), display.width(), lineHeight);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {

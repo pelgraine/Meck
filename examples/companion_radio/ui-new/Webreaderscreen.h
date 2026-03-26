@@ -39,6 +39,7 @@
 #include "ModemManager.h"
 #endif
 #include "Utf8CP437.h"
+#include "../NodePrefs.h"
 
 // Forward declarations
 class UITask;
@@ -1030,8 +1031,10 @@ public:
 
 private:
   UITask* _task;
+  NodePrefs* _prefs;
   Mode _mode;
   bool _initialized;
+  uint8_t _lastFontPref;
   DisplayDriver* _display;
 
   // Display layout (calculated once)
@@ -1424,7 +1427,7 @@ private:
       _display->print("WiFi Setup");
       _display->drawRect(0, 11, _display->width(), 1);
       _display->setColor(DisplayDriver::LIGHT);
-      _display->setTextSize(0);
+      _display->setTextSize(_prefs->smallTextSize());
       _display->setCursor(0, 18);
       _display->print("Scanning for networks...");
       _display->endFrame();
@@ -1524,7 +1527,7 @@ private:
       _display->print("Web Reader");
       _display->drawRect(0, 11, _display->width(), 1);
 
-      _display->setTextSize(0);
+      _display->setTextSize(_prefs->smallTextSize());
       _display->setCursor(0, 18);
       _display->print("Connected!");
       _display->setCursor(0, 30);
@@ -2306,7 +2309,7 @@ private:
         _display->print("Web Reader");
         _display->drawRect(0, 11, _display->width(), 1);
         _display->setColor(DisplayDriver::YELLOW);
-        _display->setTextSize(0);
+        _display->setTextSize(_prefs->smallTextSize());
         _display->setCursor(0, 18);
         _display->print("Fetch failed:");
         _display->setColor(DisplayDriver::LIGHT);
@@ -2442,7 +2445,7 @@ private:
           _display->setTextSize(2);
           _display->setCursor(10, 20);
           _display->print("Logging in...");
-          _display->setTextSize(0);
+          _display->setTextSize(_prefs->smallTextSize());
           _display->setColor(DisplayDriver::LIGHT);
           _display->setCursor(10, 45);
           _display->print("Refreshing session...");
@@ -2656,14 +2659,14 @@ private:
     display.drawRect(0, 11, display.width(), 1);
 
     display.setColor(DisplayDriver::LIGHT);
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
 
     if (_wifiState == WIFI_SCANNING) {
       display.setCursor(0, 18);
       display.print("Scanning for networks...");
     } else if (_wifiState == WIFI_SCAN_DONE) {
       int y = 14;
-      int listLineH = 8;
+      int listLineH = _prefs ? _prefs->smallLineH() : 9;
       for (int i = 0; i < _ssidCount && y < display.height() - 24; i++) {
         bool selected = (i == _selectedSSID);
         if (selected) {
@@ -2671,7 +2674,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, display.width(), listLineH);
 #else
-          display.fillRect(0, y + 5, display.width(), listLineH);
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -2695,7 +2698,7 @@ private:
       y += 12;
       display.setCursor(0, y);
       display.print("Password:");
-      y += 10;
+      y += _prefs->smallLineH() + 1;
       display.setCursor(0, y);
       // Show masked password with brief reveal of last char
       char passBuf[WEB_WIFI_PASS_LEN + 2];
@@ -2771,7 +2774,7 @@ private:
 
     if (isNetworkAvailable()) {
       display.print("Web Reader");
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::GREEN);
       if (isWiFiConnected()) {
         IPAddress ip = WiFi.localIP();
@@ -2797,7 +2800,7 @@ private:
     const int footerY = display.height() - 12;
     const int viewportH = display.height() - headerY - footerH;
     const int scrollbarW = 4;
-    const int listLineH = 8;
+    const int listLineH = _prefs ? _prefs->smallLineH() : 9;
     const int sepH = 8;            // Separator between IRC and web sections
     const int sectionH = listLineH; // Section header height
     int maxChars = _charsPerLine - 2; // Account for "> " prefix
@@ -2875,7 +2878,7 @@ private:
     if (totalContentH <= viewportH) _homeScrollY = 0;
 
     // ---- Render pass (with scroll offset) ----
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     int y = headerY - _homeScrollY;  // Start Y in screen coords
     itemIdx = 0;
     bool needsScroll = (totalContentH > viewportH);
@@ -2895,7 +2898,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #else
-          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -2934,7 +2937,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #else
-          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -2971,7 +2974,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #else
-          display.fillRect(0, y + 5, display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width() - (needsScroll ? scrollbarW + 1 : 0), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -3024,7 +3027,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
             display.fillRect(0, y, contentW, itemH);
 #else
-            display.fillRect(0, y + 5, contentW, itemH);
+            display.fillRect(0, y + _prefs->smallHighlightOff(), contentW, itemH);
 #endif
             display.setColor(DisplayDriver::DARK);
           } else {
@@ -3076,7 +3079,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
             display.fillRect(0, y, contentW, itemH);
 #else
-            display.fillRect(0, y + 5, contentW, itemH);
+            display.fillRect(0, y + _prefs->smallHighlightOff(), contentW, itemH);
 #endif
             display.setColor(DisplayDriver::DARK);
           } else {
@@ -3198,7 +3201,7 @@ private:
     display.setCursor(10, 20);
     display.print("Loading...");
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
 
     // Word-wrap the URL across multiple lines
@@ -3243,7 +3246,7 @@ private:
       display.print("Download Complete");
       display.drawRect(0, 11, display.width(), 1);
 
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, 16);
       display.print("Saved to /books/:");
@@ -3277,7 +3280,7 @@ private:
       display.print("Download Failed");
       display.drawRect(0, 11, display.width(), 1);
 
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, 18);
       display.print(_fetchError.c_str());
@@ -3314,7 +3317,7 @@ private:
       return;
     }
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
 
     // Determine page bounds
@@ -3476,9 +3479,16 @@ private:
   // ---- Layout Initialization ----
 
   void initLayout(DisplayDriver& display) {
+    // Re-init if font preference changed since last layout
+    uint8_t curFont = _prefs ? _prefs->large_font : 0;
+    if (_initialized && curFont != _lastFontPref) {
+      _initialized = false;
+      Serial.println("WebReader: font changed, recalculating layout");
+    }
     if (_initialized) return;
+    _lastFontPref = curFont;
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     uint16_t mWidth = display.getTextWidth("M");
     if (mWidth > 0) {
       _charsPerLine = display.width() / mWidth;
@@ -3486,6 +3496,19 @@ private:
     } else {
       _charsPerLine = 40;
       _lineHeight = 5;
+    }
+    // Proportional font: use average-width measurement instead of M-width
+    if (_prefs && _prefs->large_font && mWidth > 0) {
+      const char* sample = "the quick brown fox jumps over lazy dog";
+      uint16_t sampleW = display.getTextWidth(sample);
+      int sampleLen = strlen(sample);
+      if (sampleW > 0 && sampleLen > 0) {
+        _charsPerLine = (display.width() * sampleLen * 70) / ((int)sampleW * 100);
+      }
+    }
+    // Large font: formula above assumes built-in 6x8 ratio — too small for 9pt
+    if (_prefs && _prefs->large_font) {
+      _lineHeight = _prefs->smallLineH();
     }
 
     _footerHeight = 14;
@@ -3931,7 +3954,7 @@ private:
     if (_activeForm < 0 || _activeForm >= _formCount) return;
     WebForm& form = _forms[_activeForm];
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
 
     // Header
     display.setColor(DisplayDriver::GREEN);
@@ -3954,7 +3977,7 @@ private:
     display.drawRect(0, 9, display.width(), 1);
 
     int y = 12;
-    int lineH = 10; // Taller lines for form fields
+    int lineH = _prefs->smallLineH() + 1; // Taller lines for form fields
     int visCount = getVisibleFieldCount(form);
 
     // Render each visible field
@@ -4662,9 +4685,9 @@ private:
     display.print("IRC Setup");
     display.drawRect(0, 11, display.width(), 1);
 
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     int y = 16;
-    int lineH = 10;
+    int lineH = _prefs->smallLineH() + 1;
 
     const char* labels[] = {"Server:", "Port:", "Nick:", "Channel:", "[ Connect ]"};
     const char* chanDisp = (_ircChannel[0] != '\0') ? _ircChannel : "(none)";
@@ -4822,7 +4845,7 @@ private:
     display.print(header);
 
     // Connection indicator on right
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     if (!_ircConnected) {
       display.setColor(DisplayDriver::YELLOW);
       display.setCursor(display.width() - 42, -3);
@@ -4848,7 +4871,7 @@ private:
 
     if (_ircComposing) {
       // Compose text just above separator (tiny font to match messages)
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(0, footerY - 12);
       char compDisp[IRC_COMPOSE_MAX + 4];
@@ -4878,10 +4901,10 @@ private:
     }
 
     // Message area
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     int msgAreaTop = 14;
     int msgAreaBottom = _ircComposing ? footerY - 16 : footerY - 4;
-    int lineH = 8;
+    int lineH = _prefs->smallLineH() - 1;
     int scrollBarW = 4;
     int lineW = _charsPerLine - 1;  // Reserve space for scroll bar
     _ircLinesPerPage = (msgAreaBottom - msgAreaTop) / lineH;
@@ -5065,8 +5088,8 @@ private:
   }
 
 public:
-  WebReaderScreen(UITask* task)
-    : _task(task), _mode(HOME), _initialized(false), _display(nullptr),
+  WebReaderScreen(UITask* task, NodePrefs* prefs = nullptr)
+    : _task(task), _prefs(prefs), _mode(HOME), _initialized(false), _lastFontPref(0), _display(nullptr),
       _charsPerLine(40), _linesPerPage(15), _lineHeight(5), _footerHeight(14),
       _wifiState(WIFI_IDLE), _ssidCount(0), _selectedSSID(0), _wifiPassLen(0),
       _urlLen(0), _urlCursor(0),
@@ -5150,7 +5173,7 @@ public:
       _display->print("Web Reader");
       _display->drawRect(0, 11, _display->width(), 1);
       _display->setColor(DisplayDriver::LIGHT);
-      _display->setTextSize(0);
+      _display->setTextSize(_prefs->smallTextSize());
       _display->setCursor(0, 18);
       _display->print("Connecting to WiFi...");
       _display->endFrame();

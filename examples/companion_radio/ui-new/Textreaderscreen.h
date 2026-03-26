@@ -6,6 +6,7 @@
 #include <vector>
 #include "Utf8CP437.h"
 #include "EpubProcessor.h"
+#include "../NodePrefs.h"
 
 // Forward declarations
 class UITask;
@@ -327,12 +328,13 @@ inline int indexPagesWordWrap(File& file, long startPos,
 inline int indexPagesWordWrapPixel(File& file, long startPos,
                                     std::vector<long>& pagePositions,
                                     int linesPerPage, int maxChars,
-                                    DisplayDriver* display, int maxPages) {
+                                    DisplayDriver* display, int maxPages,
+                                    NodePrefs* prefs = nullptr) {
   const int BUF_SIZE = READER_BUF_SIZE;  // Match page buffer to avoid chunk boundary wrap mismatches
   char buffer[BUF_SIZE];
 
   // Ensure body font is active for pixel measurement
-  display->setTextSize(0);
+  display->setTextSize(prefs ? prefs->smallTextSize() : 0);
 
   file.seek(startPos);
   int pagesAdded = 0;
@@ -396,9 +398,11 @@ public:
 
 private:
   UITask* _task;
+  NodePrefs* _prefs;
   Mode _mode;
   bool _sdReady;
   bool _initialized;       // Layout metrics calculated
+  uint8_t _lastFontPref;   // Font preference at last layout init (detect changes)
   bool _bootIndexed;       // Boot-time pre-indexing done
   DisplayDriver* _display; // Stored reference for splash screens
 
@@ -1084,8 +1088,8 @@ private:
       display.setCursor(0, 42);
       display.print("/books/ on SD card");
     } else {
-      display.setTextSize(0);  // Tiny font for file list
-      int listLineH = 8;  // Approximate tiny font line height in virtual coords
+      display.setTextSize(_prefs->smallTextSize());  // Tiny font for file list
+      int listLineH = _prefs->smallLineH();
       int startY = 14;
       int maxVisible = (display.height() - startY - _footerHeight) / listLineH;
       if (maxVisible < 3) maxVisible = 3;
@@ -1106,7 +1110,7 @@ private:
 #else
           // setCursor adds +5 to y internally, but fillRect does not.
           // Offset fillRect by +5 to align highlight bar with text.
-          display.fillRect(0, y + 5, display.width(), listLineH);
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -1114,8 +1118,6 @@ private:
         }
 
         // Set cursor AFTER fillRect so text draws on top of highlight
-        display.setCursor(0, y);
-
         int type = itemTypeAt(i);
         String line = selected ? "> " : "  ";
 
@@ -1125,10 +1127,6 @@ private:
         } else if (type == 1) {
           // Subdirectory
           line += "/" + dirNameAt(i);
-          // Truncate if needed
-          if ((int)line.length() > _charsPerLine) {
-            line = line.substring(0, _charsPerLine - 3) + "...";
-          }
         } else {
           // File
           int fi = fileIndexAt(i);
@@ -1141,16 +1139,11 @@ private:
               suffix = " *";
             }
           }
-
-          // Truncate if needed
-          int maxLen = _charsPerLine - 4 - suffix.length();
-          if ((int)name.length() > maxLen) {
-            name = name.substring(0, maxLen - 3) + "...";
-          }
           line += name + suffix;
         }
 
-        display.print(line.c_str());
+        // Pixel-aware ellipsis — small margin prevents GxEPD edge wrapping
+        display.drawTextEllipsized(0, y, display.width() - 4, line.c_str());
         y += listLineH;
       }
       display.setTextSize(1);  // Restore
@@ -1163,7 +1156,7 @@ private:
     display.setColor(DisplayDriver::YELLOW);
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: home");
 #else
     display.setCursor(0, footerY);
@@ -1177,7 +1170,7 @@ private:
 
   void renderPage(DisplayDriver& display) {
     // Use tiny font for maximum text density
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::LIGHT);
 
     int y = 0;
@@ -1270,7 +1263,7 @@ private:
     }
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setCursor(0, footerY);
     display.print(status);
     const char* right = "Swipe:Page  Tap:GoTo  Hold:Close";
@@ -1287,8 +1280,8 @@ private:
   }
 
 public:
-  TextReaderScreen(UITask* task)
-    : _task(task), _mode(FILE_LIST), _sdReady(false), _initialized(false),
+  TextReaderScreen(UITask* task, NodePrefs* prefs = nullptr)
+    : _task(task), _prefs(prefs), _mode(FILE_LIST), _sdReady(false), _initialized(false), _lastFontPref(0),
       _bootIndexed(false), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5),
       _textAreaHeight(100), _headerHeight(14), _footerHeight(14),
@@ -1313,16 +1306,24 @@ public:
 
   // Call once after display is available to calculate layout metrics
   void initLayout(DisplayDriver& display) {
+    // Re-init if font preference changed since last layout
+    uint8_t curFont = _prefs ? _prefs->large_font : 0;
+    if (_initialized && curFont != _lastFontPref) {
+      _initialized = false;
+      Serial.println("TextReader: font changed, recalculating layout");
+    }
     if (_initialized) return;
+    _lastFontPref = curFont;
 
     // Store display reference for splash screens during openBook
     _display = &display;
 
     // Measure tiny font metrics using the display driver
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
 
-    // Measure character width: use 10 M's for monospace (T-Deck Pro).
-    // T5S3 overrides this below with average-width measurement.
+    // Measure character width: use 10 M's for monospace (T-Deck Pro tiny font).
+    // Proportional fonts (T5S3 and T-Deck Pro large_font) override below with
+    // average-width measurement since M is the widest glyph (~40% wider than average).
     uint16_t tenCharsW = display.getTextWidth("MMMMMMMMMM");
     if (tenCharsW > 0) {
       _charsPerLine = (display.width() * 10) / tenCharsW;
@@ -1343,6 +1344,15 @@ public:
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 80) _charsPerLine = 80;
 #else
+    // T-Deck Pro: large_font uses FreeSans9pt (proportional) — same fix
+    if (_prefs && _prefs->large_font) {
+      const char* sample = "the quick brown fox jumps over lazy dog";
+      uint16_t sampleW = display.getTextWidth(sample);
+      int sampleLen = strlen(sample);
+      if (sampleW > 0 && sampleLen > 0) {
+        _charsPerLine = (display.width() * sampleLen * 70) / ((int)sampleW * 100);
+      }
+    }
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 60) _charsPerLine = 60;
 #endif
@@ -1362,12 +1372,16 @@ public:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // T5S3 uses FreeSans12pt/FreeSerif12pt for size 0 (yAdvance=29px).
-    // Line height in virtual coords depends on orientation:
-    //   Landscape: 29px / scale_y(4.22) ≈ 7 + 1 spacing = 8
-    //   Portrait:  29px / scale_y(7.50) ≈ 4 + 1 spacing = 5
     {
       extern DISPLAY_CLASS display;
       _lineHeight = display.isPortraitMode() ? 5 : 8;
+    }
+#else
+    // T-Deck Pro large_font uses FreeSans9pt (yAdvance=22px at scale 1.5625×).
+    // The 6x8 formula above gives ~5-7 which is way too small — lines overlap.
+    // Use smallLineH() which is already tuned for this font.
+    if (_prefs && _prefs->large_font) {
+      _lineHeight = _prefs->smallLineH();
     }
 #endif
 
@@ -1574,11 +1588,12 @@ public:
   // Returns: 0=miss, 1=moved, 2=tapped current row.
   int selectRowAtVY(int vy) {
     if (_mode != FILE_LIST) return 0;
-    const int startY = 14, footerH = 14, listLineH = 8;
+    const int startY = 14, footerH = 14;
+    const int listLineH = _prefs ? _prefs->smallLineH() : 9;
 #if defined(LilyGo_T5S3_EPaper_Pro)
     const int bodyTop = startY;
 #else
-    const int bodyTop = startY + 5;  // GxEPD baseline offset
+    const int bodyTop = startY + (_prefs ? _prefs->smallHighlightOff() : 5);
 #endif
     if (vy < bodyTop || vy >= 128 - footerH) return 0;
 

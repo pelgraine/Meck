@@ -637,8 +637,8 @@ public:
       }
 
       // Render inbox list
-      display.setTextSize(0);
-      int lineH = 9;
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+      int lineH = the_mesh.getNodePrefs()->smallLineH();
       int headerH = 14;
       int footerH = 14;
       int maxY = display.height() - footerH;
@@ -672,7 +672,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
             display.fillRect(0, y, display.width(), lineH);
 #else
-            display.fillRect(0, y + 5, display.width(), lineH);
+            display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), display.width(), lineH);
 #endif
             display.setColor(DisplayDriver::DARK);
           } else {
@@ -745,8 +745,8 @@ public:
     
     // --- Path detail overlay ---
     if (_showPathOverlay) {
-      display.setTextSize(0);
-      int lineH = 9;
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+      int lineH = the_mesh.getNodePrefs()->smallLineH();
       int y = 14;
       
       ChannelMessage* msg = getNewestReceivedMsg();
@@ -942,7 +942,7 @@ public:
     }
     
     if (channelMsgCount == 0) {
-      display.setTextSize(0);  // Tiny font for body text
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());  // Tiny font for body text
       display.setCursor(0, 20);
       display.setColor(DisplayDriver::LIGHT);
       if (_viewChannelIdx == 0xFF) {
@@ -975,8 +975,8 @@ public:
       // =================================================================
       // DM Inbox: list of contacts/rooms you have DM history with
       // =================================================================
-      display.setTextSize(0);
-      int lineHeight = 9;
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+      int lineHeight = the_mesh.getNodePrefs()->smallLineH();
       int headerHeight = 14;
       int footerHeight = 14;
       int maxY = display.height() - footerHeight;
@@ -1056,7 +1056,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
             display.fillRect(0, y, display.width(), lineHeight);
 #else
-            display.fillRect(0, y + 5, display.width(), lineHeight);
+            display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), display.width(), lineHeight);
 #endif
             display.setColor(DisplayDriver::DARK);
           } else {
@@ -1094,8 +1094,8 @@ public:
       }
       display.setTextSize(1);
     } else {
-      display.setTextSize(0);  // Tiny font for message body
-      int lineHeight = 9;   // 8px font + 1px spacing
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());  // Tiny font for message body
+      int lineHeight = the_mesh.getNodePrefs()->smallLineH();   // 8px font + 1px spacing
       int headerHeight = 14;
       int footerHeight = 14;
       int scrollBarW = 4;   // Width of scroll indicator on right edge
@@ -1163,7 +1163,7 @@ public:
           #if defined(LilyGo_T5S3_EPaper_Pro)
           display.fillRect(0, y, contentW, maxFillH);
 #else
-          display.fillRect(0, y + 5, contentW, maxFillH);
+          display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), contentW, maxFillH);
 #endif
         }
         
@@ -1324,7 +1324,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
             display.fillRect(0, y, contentW, maxFillH - usedH);
 #else
-            display.fillRect(0, y + 5, contentW, maxFillH - usedH);
+            display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), contentW, maxFillH - usedH);
 #endif
           }
         }
@@ -1646,7 +1646,26 @@ public:
           }
         }
       } else if (_viewChannelIdx > 0) {
-        _viewChannelIdx--;
+        // Skip backwards over any empty/gap slots
+        uint8_t prev = _viewChannelIdx - 1;
+        bool found = false;
+        while (true) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(prev, ch) && ch.name[0] != '\0') {
+            _viewChannelIdx = prev;
+            found = true;
+            break;
+          }
+          if (prev == 0) break;
+          prev--;
+        }
+        if (!found) {
+          // No valid channel below → wrap to DM tab
+          _viewChannelIdx = 0xFF;
+          _dmInboxMode = true;
+          _dmInboxScroll = 0;
+          _dmFilterName[0] = '\0';
+        }
       } else {
         // Channel 0 → wrap to DM tab
         _viewChannelIdx = 0xFF;
@@ -1667,11 +1686,17 @@ public:
         // DM tab → wrap to channel 0
         _viewChannelIdx = 0;
       } else {
-        ChannelDetails ch;
-        uint8_t nextIdx = _viewChannelIdx + 1;
-        if (the_mesh.getChannel(nextIdx, ch) && ch.name[0] != '\0') {
-          _viewChannelIdx = nextIdx;
-        } else {
+        // Skip forward over any empty/gap slots
+        bool found = false;
+        for (uint8_t next = _viewChannelIdx + 1; next < MAX_GROUP_CHANNELS; next++) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(next, ch) && ch.name[0] != '\0') {
+            _viewChannelIdx = next;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
           // Past last channel → go to DM tab
           _viewChannelIdx = 0xFF;
           _dmInboxMode = true;

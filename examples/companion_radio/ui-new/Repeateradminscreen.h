@@ -777,8 +777,8 @@ private:
   // =====================================================================
 
   void renderCategoryMenu(DisplayDriver& display, int y, int bodyHeight) {
-    display.setTextSize(0);
-    int lineHeight = 9;
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+    int lineHeight = the_mesh.getNodePrefs()->smallLineH();
 
     // Clock drift info line
     if (_serverTime > 0) {
@@ -862,8 +862,8 @@ private:
   // =====================================================================
 
   void renderCommandMenu(DisplayDriver& display, int y, int bodyHeight) {
-    display.setTextSize(0);
-    int lineHeight = 9;
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+    int lineHeight = the_mesh.getNodePrefs()->smallLineH();
     const AdminCategoryDef& cat = CATEGORIES[_catSel];
 
     // Category title
@@ -1025,7 +1025,7 @@ private:
     if (_pendingCmd) display.print(_pendingCmd->label);
 
     y += 14;
-    display.setTextSize(0);
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
     display.setCursor(0, y);
 
     // Show the param value if one was collected
@@ -1033,7 +1033,7 @@ private:
       char preview[80];
       snprintf(preview, sizeof(preview), "Value: %s", _paramBuf);
       display.print(preview);
-      y += 10;
+      y += the_mesh.getNodePrefs()->smallLineH() + 1;
       display.setCursor(0, y);
     }
 
@@ -1071,8 +1071,8 @@ private:
   // =====================================================================
 
   void renderResponse(DisplayDriver& display, int y, int bodyHeight) {
-    display.setTextSize(0);
-    int lineHeight = 9;
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+    int lineHeight = the_mesh.getNodePrefs()->smallLineH();
 
     display.setColor((_state == STATE_ERROR) ? DisplayDriver::YELLOW : DisplayDriver::LIGHT);
 
@@ -1166,7 +1166,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.fillRect(0, y, display.width(), lineHeight);
 #else
-      display.fillRect(0, y + 5, display.width(), lineHeight);
+      display.fillRect(0, y + the_mesh.getNodePrefs()->smallHighlightOff(), display.width(), lineHeight);
 #endif
       display.setColor(DisplayDriver::DARK);
     } else if (warn) {

@@ -112,6 +112,7 @@ enum SettingsRowType : uint8_t {
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
+  ROW_LARGE_FONT,     // Font size toggle: 0=tiny (default), 1=larger
 #if defined(LilyGo_T5S3_EPaper_Pro)
   ROW_PORTRAIT_MODE,  // Portrait orientation toggle
 #endif
@@ -352,12 +353,12 @@ private:
       }
     } else if (_subScreen == SUB_CHANNELS) {
       // --- Channels sub-screen: only channel-related rows ---
+      // Scan ALL slots — companion app may write non-contiguously, and
+      // gaps can appear after channel deletion if compaction is incomplete.
       for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
         ChannelDetails ch;
         if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
           addRow(ROW_CHANNEL, i);
-        } else {
-          break;
         }
       }
       addRow(ROW_ADD_CHANNEL);
@@ -375,6 +376,7 @@ private:
       addRow(ROW_GPS_BAUD);
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DARK_MODE);
+      addRow(ROW_LARGE_FONT);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
 #endif
@@ -504,14 +506,12 @@ private:
     ChannelDetails empty;
     memset(&empty, 0, sizeof(empty));
 
-    // Find total channel count
+    // Find highest used channel slot (scan all — gaps may exist)
     int total = 0;
     for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
       ChannelDetails ch;
       if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
         total = i + 1;
-      } else {
-        break;
       }
     }
 
@@ -606,13 +606,13 @@ public:
   // and move cursor there. Returns: 0=miss, 1=moved to new row, 2=tapped current row.
   int selectRowAtVY(int vy) {
     if (_editMode != EDIT_NONE) return 0;  // Don't change cursor while editing
-    const int headerH = 14, footerH = 14, lineH = 9;
-    // T-Deck Pro render offsets fillRect by +5 (GxEPD baseline compensation),
-    // so visual rows start 5 units below headerH. T5S3 renders at y directly.
+    const int headerH = 14, footerH = 14, lineH = _prefs->smallLineH();
+    // bodyTop must match where the visual rows start (highlight bar position).
+    // T5S3 renders highlight at y directly. T-Deck Pro offsets by smallHighlightOff().
 #if defined(LilyGo_T5S3_EPaper_Pro)
     const int bodyTop = headerH;
 #else
-    const int bodyTop = headerH + 5;
+    const int bodyTop = headerH + _prefs->smallHighlightOff();
 #endif
     if (vy < bodyTop || vy >= 128 - footerH) return 0;  // Outside body area
 
@@ -979,7 +979,7 @@ public:
         display.fillRect(2, 14, display.width() - 4, display.height() - 28);
         display.setColor(DisplayDriver::LIGHT);
         display.drawRect(2, 14, display.width() - 4, display.height() - 28);
-        display.setTextSize(0);
+        display.setTextSize(_prefs->smallTextSize());
         display.drawTextCentered(display.width() / 2, 22, "Flashing Firmware");
         snprintf(tmp, sizeof(tmp), "%d / %d KB", (int)(totalWritten / 1024), (int)(fileSize / 1024));
         display.drawTextCentered(display.width() / 2, 42, tmp);
@@ -1053,7 +1053,7 @@ public:
     display.fillRect(2, 14, display.width() - 4, display.height() - 28);
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(2, 14, display.width() - 4, display.height() - 28);
-    display.setTextSize(0);
+    display.setTextSize(_prefs->smallTextSize());
     display.setColor(DisplayDriver::GREEN);
     display.drawTextCentered(display.width() / 2, 30, "Update Complete!");
     display.setColor(DisplayDriver::LIGHT);
@@ -1133,8 +1133,8 @@ public:
     display.drawRect(0, 11, display.width(), 1);
 
     // === Body ===
-    display.setTextSize(0);  // tiny font
-    int lineHeight = 9;
+    display.setTextSize(_prefs->smallTextSize());  // tiny font
+    int lineHeight = _prefs->smallLineH();
     int headerH = 14;
     int footerH = 14;
     int maxY = display.height() - footerH;
@@ -1159,7 +1159,7 @@ public:
         // Highlight needs to start above the baseline to cover ascenders.
         display.fillRect(0, y, display.width(), lineHeight);
 #else
-        display.fillRect(0, y + 5, display.width(), lineHeight);
+        display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), lineHeight);
 #endif
         display.setColor(DisplayDriver::DARK);
       } else {
@@ -1252,7 +1252,7 @@ public:
           break;
 
         case ROW_MSG_NOTIFY:
-          snprintf(tmp, sizeof(tmp), "Msg Rcvd LED Light Pulse: %s",
+          snprintf(tmp, sizeof(tmp), "Msg LED Flash: %s",
                    _prefs->kb_flash_notify ? "ON" : "OFF");
           display.print(tmp);
           break;
@@ -1282,6 +1282,12 @@ public:
         case ROW_DARK_MODE:
           snprintf(tmp, sizeof(tmp), "Dark Mode: %s",
                    _prefs->dark_mode ? "ON" : "OFF");
+          display.print(tmp);
+          break;
+
+        case ROW_LARGE_FONT:
+          snprintf(tmp, sizeof(tmp), "Font Size: %s",
+                   _prefs->large_font ? "LARGER" : "TINY");
           display.print(tmp);
           break;
 
@@ -1525,7 +1531,7 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.drawRect(bx, by, bw, bh);
 
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       if (_confirmAction == 1) {
         uint8_t chIdx = _rows[_cursor].param;
         ChannelDetails ch;
@@ -1553,7 +1559,7 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.drawRect(bx, by, bw, bh);
 
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       int wy = by + 4;
 
       if (_wifiPhase == WIFI_PHASE_SCANNING) {
@@ -1639,7 +1645,7 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.drawRect(bx, by, bw, bh);
 
-      display.setTextSize(0);
+      display.setTextSize(_prefs->smallTextSize());
       int oy = by + 4;
 
       if (_otaPhase == OTA_PHASE_CONFIRM) {
@@ -2329,6 +2335,12 @@ public:
           the_mesh.savePrefs();
           Serial.printf("Settings: Dark mode = %s\n",
                         _prefs->dark_mode ? "ON" : "OFF");
+          break;
+        case ROW_LARGE_FONT:
+          _prefs->large_font = _prefs->large_font ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Font size = %s\n",
+                        _prefs->large_font ? "LARGER" : "TINY");
           break;
 #if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:

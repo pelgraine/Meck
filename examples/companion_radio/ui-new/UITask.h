@@ -306,6 +306,7 @@ public:
   UIScreen* getContactsScreen() const { return contacts_screen; }
   UIScreen* getChannelScreen() const { return channel_screen; }
   UIScreen* getSettingsScreen() const { return settings_screen; }
+  NodePrefs* getNodePrefs() const { return _node_prefs; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
 #ifdef MECK_AUDIO_VARIANT
