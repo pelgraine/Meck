@@ -28,6 +28,7 @@
     #include <SD.h>
   #endif
   #include <WebServer.h>
+  #include <DNSServer.h>
   #include <Update.h>
   #include <esp_ota_ops.h>
 #endif
@@ -297,6 +298,7 @@ private:
   // File manager state
   FmPhase _fmPhase;
   const char* _fmError;
+  DNSServer* _dnsServer;
   #endif
 
   // ---------------------------------------------------------------------------
@@ -416,12 +418,12 @@ private:
       // Folder rows for sub-screens
       addRow(ROW_CONTACTS_SUBMENU);
       addRow(ROW_CHANNELS_SUBMENU);
-
-      // Info section (stays at top level)
-      addRow(ROW_INFO_HEADER);
       #ifdef MECK_OTA_UPDATE
       addRow(ROW_OTA_TOOLS_SUBMENU);
       #endif
+
+      // Info section (stays at top level)
+      addRow(ROW_INFO_HEADER);
       addRow(ROW_PUB_KEY);
       addRow(ROW_FIRMWARE);
 
@@ -580,6 +582,7 @@ public:
     _otaError = nullptr;
     _fmPhase = FM_PHASE_CONFIRM;
     _fmError = nullptr;
+    _dnsServer = nullptr;
     #endif
   }
 
@@ -1036,6 +1039,10 @@ public:
         _otaServer->handleClient();
       }
     }
+    // Process DNS for captive portal redirect (file manager only)
+    if (_dnsServer && _editMode == EDIT_FILEMGR && _fmPhase == FM_PHASE_WAITING) {
+      _dnsServer->processNextRequest();
+    }
   }
 
   // Called from main loop — detect upload completion and trigger flash.
@@ -1132,52 +1139,67 @@ public:
     Serial.printf("FM: AP '%s' started, IP: %s\n",
                   _otaApName, WiFi.softAPIP().toString().c_str());
 
+    // Start DNS server — redirect ALL DNS lookups to our AP IP.
+    // This triggers captive portal detection on phones, which opens the
+    // page in a real browser instead of the restricted captive webview.
+    if (_dnsServer) { delete _dnsServer; }
+    _dnsServer = new DNSServer();
+    _dnsServer->start(53, "*", WiFi.softAPIP());
+    Serial.println("FM: DNS captive portal started");
+
     // Start web server
     if (_otaServer) { _otaServer->stop(); delete _otaServer; }
     _otaServer = new WebServer(80);
 
-    // --- Serve the file manager SPA ---
-    _otaServer->on("/", HTTP_GET, [this]() {
-      _otaServer->send(200, "text/html", fileMgrPageHTML());
+    // --- Captive portal detection handlers ---
+    // Phones/OS probe these URLs to detect captive portals. Redirecting
+    // them to our page causes the OS to open a real browser.
+    // iOS / macOS
+    _otaServer->on("/hotspot-detect.html", HTTP_GET, [this]() {
+      Serial.println("FM: captive probe (Apple)");
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    // Android
+    _otaServer->on("/generate_204", HTTP_GET, [this]() {
+      Serial.println("FM: captive probe (Android)");
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    _otaServer->on("/gen_204", HTTP_GET, [this]() {
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    // Windows
+    _otaServer->on("/connecttest.txt", HTTP_GET, [this]() {
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    _otaServer->on("/redirect", HTTP_GET, [this]() {
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    // Firefox
+    _otaServer->on("/canonical.html", HTTP_GET, [this]() {
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
+    });
+    _otaServer->on("/success.txt", HTTP_GET, [this]() {
+      _otaServer->send(200, "text/plain", "success");
     });
 
-    // --- Directory listing: GET /api/ls?path=/ ---
-    _otaServer->on("/api/ls", HTTP_GET, [this]() {
+    // --- Main page: server-rendered directory listing (no JS needed) ---
+    _otaServer->on("/", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
       if (path.isEmpty()) path = "/";
-      File dir = SD.open(path);
-      if (!dir || !dir.isDirectory()) {
-        dir.close(); digitalWrite(SDCARD_CS, HIGH);
-        _otaServer->send(404, "application/json", "{\"error\":\"Not found\"}");
-        return;
-      }
-      String json = "[";
-      bool first = true;
-      File entry;
-      while ((entry = dir.openNextFile())) {
-        if (!first) json += ",";
-        first = false;
-        // Extract basename — entry.name() may return full path on some ESP32 cores
-        const char* fullName = entry.name();
-        const char* baseName = strrchr(fullName, '/');
-        baseName = baseName ? baseName + 1 : fullName;
-        json += "{\"n\":\"";
-        json += baseName;
-        json += "\",\"s\":";
-        json += String((unsigned long)entry.size());
-        json += ",\"d\":";
-        json += entry.isDirectory() ? "1" : "0";
-        json += "}";
-        entry.close();
-      }
-      dir.close();
-      digitalWrite(SDCARD_CS, HIGH);
-      json += "]";
-      _otaServer->send(200, "application/json", json);
+      String msg = _otaServer->arg("msg");
+      Serial.printf("FM: page request path='%s'\n", path.c_str());
+      String html = fmBuildPage(path, msg);
+      _otaServer->send(200, "text/html", html);
     });
 
-    // --- File download: GET /api/dl?path=/file.txt ---
-    _otaServer->on("/api/dl", HTTP_GET, [this]() {
+    // --- File download: GET /dl?path=/file.txt ---
+    _otaServer->on("/dl", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
       File f = SD.open(path, FILE_READ);
       if (!f || f.isDirectory()) {
@@ -1186,14 +1208,11 @@ public:
         _otaServer->send(404, "text/plain", "Not found");
         return;
       }
-      // Extract filename for Content-Disposition
       String name = path;
       int lastSlash = name.lastIndexOf('/');
       if (lastSlash >= 0) name = name.substring(lastSlash + 1);
       _otaServer->sendHeader("Content-Disposition",
         "attachment; filename=\"" + name + "\"");
-
-      // Stream file in chunks — no full-file RAM allocation
       size_t fileSize = f.size();
       _otaServer->setContentLength(fileSize);
       _otaServer->send(200, "application/octet-stream", "");
@@ -1210,10 +1229,13 @@ public:
       digitalWrite(SDCARD_CS, HIGH);
     });
 
-    // --- File upload: POST /api/upload?dir=/ ---
-    _otaServer->on("/api/upload", HTTP_POST,
+    // --- File upload: POST /upload?dir=/ → redirect back to listing ---
+    _otaServer->on("/upload", HTTP_POST,
       [this]() {
-        _otaServer->send(200, "application/json", "{\"ok\":true}");
+        String dir = _otaServer->arg("dir");
+        if (dir.isEmpty()) dir = "/";
+        _otaServer->sendHeader("Location", "/?path=" + dir + "&msg=Upload+complete");
+        _otaServer->send(303, "text/plain", "Redirecting...");
       },
       [this]() {
         HTTPUpload& upload = _otaServer->upload();
@@ -1226,14 +1248,10 @@ public:
           String fullPath = dir + upload.filename;
           Serial.printf("FM: Upload start: %s\n", fullPath.c_str());
           fmUploadFile = SD.open(fullPath, FILE_WRITE);
-          if (!fmUploadFile) {
-            Serial.println("FM: Failed to open file for write");
-          }
+          if (!fmUploadFile) Serial.println("FM: Failed to open file for write");
 
         } else if (upload.status == UPLOAD_FILE_WRITE) {
-          if (fmUploadFile) {
-            fmUploadFile.write(upload.buf, upload.currentSize);
-          }
+          if (fmUploadFile) fmUploadFile.write(upload.buf, upload.currentSize);
 
         } else if (upload.status == UPLOAD_FILE_END) {
           if (fmUploadFile) {
@@ -1251,24 +1269,33 @@ public:
       }
     );
 
-    // --- Create directory: GET /api/mkdir?path=/newfolder ---
-    _otaServer->on("/api/mkdir", HTTP_GET, [this]() {
-      String path = _otaServer->arg("path");
-      if (path.isEmpty()) {
-        _otaServer->send(400, "application/json", "{\"error\":\"No path\"}");
+    // --- Create directory: GET /mkdir?name=xxx&dir=/path ---
+    _otaServer->on("/mkdir", HTTP_GET, [this]() {
+      String dir = _otaServer->arg("dir");
+      String name = _otaServer->arg("name");
+      if (dir.isEmpty()) dir = "/";
+      if (name.isEmpty()) {
+        _otaServer->sendHeader("Location", "/?path=" + dir + "&msg=No+name");
+        _otaServer->send(303);
         return;
       }
-      bool ok = SD.mkdir(path);
+      String full = dir + (dir.endsWith("/") ? "" : "/") + name;
+      bool ok = SD.mkdir(full);
       digitalWrite(SDCARD_CS, HIGH);
-      _otaServer->send(ok ? 200 : 500, "application/json",
-        ok ? "{\"ok\":true}" : "{\"error\":\"mkdir failed\"}");
+      Serial.printf("FM: mkdir '%s' %s\n", full.c_str(), ok ? "OK" : "FAIL");
+      _otaServer->sendHeader("Location",
+        "/?path=" + dir + "&msg=" + (ok ? "Folder+created" : "mkdir+failed"));
+      _otaServer->send(303);
     });
 
-    // --- Delete file/folder: GET /api/rm?path=/file.txt ---
-    _otaServer->on("/api/rm", HTTP_GET, [this]() {
+    // --- Delete file/folder: GET /rm?path=/file&ret=/parent ---
+    _otaServer->on("/rm", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
+      String ret = _otaServer->arg("ret");
+      if (ret.isEmpty()) ret = "/";
       if (path.isEmpty() || path == "/") {
-        _otaServer->send(400, "application/json", "{\"error\":\"Bad path\"}");
+        _otaServer->sendHeader("Location", "/?path=" + ret + "&msg=Bad+path");
+        _otaServer->send(303);
         return;
       }
       File f = SD.open(path);
@@ -1279,8 +1306,44 @@ public:
         ok = isDir ? SD.rmdir(path) : SD.remove(path);
       }
       digitalWrite(SDCARD_CS, HIGH);
-      _otaServer->send(ok ? 200 : 500, "application/json",
-        ok ? "{\"ok\":true}" : "{\"error\":\"Delete failed\"}");
+      Serial.printf("FM: rm '%s' %s\n", path.c_str(), ok ? "OK" : "FAIL");
+      _otaServer->sendHeader("Location",
+        "/?path=" + ret + "&msg=" + (ok ? "Deleted" : "Delete+failed"));
+      _otaServer->send(303);
+    });
+
+    // --- Confirm delete page: GET /confirm-rm?path=/file&ret=/parent ---
+    _otaServer->on("/confirm-rm", HTTP_GET, [this]() {
+      String path = _otaServer->arg("path");
+      String ret = _otaServer->arg("ret");
+      if (ret.isEmpty()) ret = "/";
+      String name = path;
+      int sl = name.lastIndexOf('/');
+      if (sl >= 0) name = name.substring(sl + 1);
+      String html = "<!DOCTYPE html><html><head>"
+        "<meta charset='UTF-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Confirm Delete</title>"
+        "<style>"
+        "body{font-family:-apple-system,sans-serif;max-width:480px;margin:40px auto;"
+        "padding:0 20px;background:#1a1a2e;color:#e0e0e0;text-align:center}"
+        ".b{display:inline-block;padding:10px 24px;border-radius:6px;text-decoration:none;"
+        "font-weight:bold;margin:8px;font-size:1em}"
+        ".br{background:#e74c3c;color:#fff}.bg{background:#4ecca3;color:#1a1a2e}"
+        "</style></head><body>"
+        "<h2 style='color:#e74c3c'>Delete?</h2>"
+        "<p style='font-size:1.1em'>" + fmHtmlEscape(name) + "</p>"
+        "<a class='b br' href='/rm?path=" + fmUrlEncode(path) + "&ret=" + fmUrlEncode(ret) + "'>Delete</a>"
+        "<a class='b bg' href='/?path=" + fmUrlEncode(ret) + "'>Cancel</a>"
+        "</body></html>";
+      _otaServer->send(200, "text/html", html);
+    });
+
+    // Catch-all: redirect unknown URLs to file manager (catches captive portal probes)
+    _otaServer->onNotFound([this]() {
+      Serial.printf("FM: redirect %s -> /\n", _otaServer->uri().c_str());
+      _otaServer->sendHeader("Location", "http://192.168.4.1/");
+      _otaServer->send(302, "text/plain", "");
     });
 
     _otaServer->begin();
@@ -1290,6 +1353,7 @@ public:
 
   void stopFileMgr() {
     if (_otaServer) { _otaServer->stop(); delete _otaServer; _otaServer = nullptr; }
+    if (_dnsServer) { _dnsServer->stop(); delete _dnsServer; _dnsServer = nullptr; }
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
     delay(100);
@@ -1303,10 +1367,51 @@ public:
     Serial.println("FM: Stopped, AP down, radio resumed");
   }
 
-  // --- File manager SPA HTML ---
-  static const char* fileMgrPageHTML() {
-    return
-      "<!DOCTYPE html><html><head>"
+  // --- Helpers for server-rendered HTML ---
+
+  static String fmHtmlEscape(const String& s) {
+    String r;
+    r.reserve(s.length());
+    for (unsigned int i = 0; i < s.length(); i++) {
+      char c = s[i];
+      if (c == '&') r += "&amp;";
+      else if (c == '<') r += "&lt;";
+      else if (c == '>') r += "&gt;";
+      else if (c == '"') r += "&quot;";
+      else r += c;
+    }
+    return r;
+  }
+
+  static String fmUrlEncode(const String& s) {
+    String r;
+    for (unsigned int i = 0; i < s.length(); i++) {
+      char c = s[i];
+      if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '/' || c == '~') {
+        r += c;
+      } else {
+        char hex[4];
+        snprintf(hex, sizeof(hex), "%%%02X", (uint8_t)c);
+        r += hex;
+      }
+    }
+    return r;
+  }
+
+  static String fmFormatSize(size_t bytes) {
+    if (bytes < 1024) return String(bytes) + " B";
+    if (bytes < 1048576) return String(bytes / 1024) + " KB";
+    return String(bytes / 1048576) + "." + String((bytes % 1048576) * 10 / 1048576) + " MB";
+  }
+
+  // Build the complete HTML page with inline directory listing
+  String fmBuildPage(const String& path, const String& msg) {
+    String html;
+    html.reserve(4096);
+
+    // --- Head + CSS ---
+    html += "<!DOCTYPE html><html><head>"
+      "<meta charset='UTF-8'>"
       "<meta name='viewport' content='width=device-width,initial-scale=1'>"
       "<title>Meck SD Files</title>"
       "<style>"
@@ -1317,123 +1422,127 @@ public:
       "font-family:monospace;font-size:0.9em;word-break:break-all}"
       ".tb{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}"
       ".b{background:#4ecca3;color:#1a1a2e;border:none;padding:7px 14px;"
-      "border-radius:5px;font-size:0.85em;font-weight:bold;cursor:pointer}"
+      "border-radius:5px;font-size:0.85em;font-weight:bold;cursor:pointer;"
+      "text-decoration:none;display:inline-block}"
       ".b:active{background:#3ba88f}"
-      ".br{background:#e74c3c;color:#fff}.br:active{background:#c0392b}"
-      "ul{list-style:none;padding:0;margin:0}"
+      ".br{background:#e74c3c;color:#fff;padding:3px 8px;font-size:0.75em}.br:active{background:#c0392b}"
       ".it{display:flex;align-items:center;padding:8px 4px;border-bottom:1px solid #16213e;gap:6px}"
       ".ic{font-size:1.1em;width:22px;text-align:center}"
-      ".nm{flex:1;word-break:break-all;cursor:pointer;color:#e0e0e0;text-decoration:none}"
+      ".nm{flex:1;word-break:break-all;color:#e0e0e0;text-decoration:none}"
       ".nm:hover{color:#4ecca3}"
       ".sz{color:#888;font-size:0.8em;min-width:54px;text-align:right;margin-right:4px}"
       ".up{background:#16213e;border:2px dashed #4ecca3;border-radius:8px;"
       "padding:14px;margin:10px 0;text-align:center}"
-      ".up.dg{border-color:#fff;background:#1f2847}"
-      "#pr{display:none;margin:8px 0}"
-      ".ba{background:#16213e;border-radius:4px;height:18px;overflow:hidden}"
-      ".fi{background:#4ecca3;height:100%;width:0%;transition:width 0.2s}"
       ".em{color:#888;text-align:center;padding:20px}"
-      ".mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);"
-      "display:flex;align-items:center;justify-content:center;z-index:10}"
-      ".mb{background:#16213e;padding:18px;border-radius:8px;max-width:280px;text-align:center}"
-      ".mb p{margin:10px 0}.mg{display:flex;gap:8px;justify-content:center}"
-      "</style></head><body>"
-      "<h1>Meck SD File Manager</h1>"
-      "<div class='pa' id='pa'>/</div>"
-      "<div class='tb'>"
-      "<button class='b' onclick='U()'>.. Up</button>"
-      "<button class='b' onclick='MK()'>+ Folder</button>"
-      "<button class='b' onclick='R()'>Refresh</button>"
-      "</div>"
-      "<ul id='ls'></ul>"
-      "<div class='up' id='dr'>"
-      "<p>Tap to select files or drag and drop</p>"
-      "<input type='file' id='fs' multiple onchange='UF(this.files)'>"
-      "</div>"
-      "<div id='pr'><div class='ba'><div class='fi' id='fi'></div></div>"
-      "<div id='pt' style='font-size:0.85em;margin-top:4px'></div></div>"
-      "<div id='mo'></div>"
-      "<script>"
-      "var D='/';"
-      "function A(u){return fetch(u).then(function(r){return r.json()})}"
-      "function R(){"
-        "A('/api/ls?path='+encodeURIComponent(D)).then(function(f){"
-          "var l=document.getElementById('ls');"
-          "document.getElementById('pa').textContent=D;"
-          "if(!f.length){l.innerHTML='<li class=\"em\">Empty folder</li>';return}"
-          "f.sort(function(a,b){return b.d-a.d||a.n.localeCompare(b.n)});"
-          "l.innerHTML=f.map(function(e){"
-            "var fp=D+(D.endsWith('/')?'':'/')+e.n;"
-            "return '<li class=\"it\">'"
-              "+'<span class=\"ic\">'+(e.d?'\\uD83D\\uDCC1':'\\uD83D\\uDCC4')+'</span>'"
-              "+'<span class=\"nm\" onclick=\"'+(e.d?\"G('\"+E(fp)+\"')\":\"DL('\"+E(fp)+\"')\")+'\">'"
-              "+E(e.n)+'</span>'"
-              "+'<span class=\"sz\">'+(e.d?'':SZ(e.s))+'</span>'"
-              "+'<button class=\"b br\" style=\"padding:3px 8px;font-size:0.75em\" "
-              "onclick=\"RM(\\''+E(fp)+'\\','+e.d+')\">Del</button>'"
-              "+'</li>';"
-          "}).join('');"
-        "}).catch(function(e){document.getElementById('ls').innerHTML="
-          "'<li class=\"em\">Error: '+e+'</li>'});"
-      "}"
-      "function E(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,\"\\\\'\")}"
-      "function SZ(b){"
-        "if(b<1024)return b+'B';"
-        "if(b<1048576)return(b/1024).toFixed(1)+'K';"
-        "return(b/1048576).toFixed(1)+'M';"
-      "}"
-      "function G(p){D=p;R()}"
-      "function U(){"
-        "if(D==='/')return;"
-        "var p=D.split('/').filter(Boolean);p.pop();"
-        "D=p.length?'/'+p.join('/'):'/';"
-        "R();"
-      "}"
-      "function DL(p){window.location='/api/dl?path='+encodeURIComponent(p)}"
-      "function RM(p,d){"
-        "var n=p.split('/').pop();"
-        "document.getElementById('mo').innerHTML="
-          "'<div class=\"mo\"><div class=\"mb\"><p>Delete '+(d?'folder':'file')+"
-          "':<br><b>'+E(n)+'</b>?</p><div class=\"mg\">"
-          "+'<button class=\"b br\" onclick=\"DR(\\''+E(p)+'\\')\">"
-          "Delete</button><button class=\"b\" onclick=\"CM()\">Cancel</button>"
-          "+'</div></div></div>';"
-      "}"
-      "function DR(p){CM();A('/api/rm?path='+encodeURIComponent(p)).then(R)}"
-      "function CM(){document.getElementById('mo').innerHTML=''}"
-      "function MK(){"
-        "var n=prompt('New folder name:');if(!n)return;"
-        "var p=D+(D.endsWith('/')?'':'/')+n;"
-        "A('/api/mkdir?path='+encodeURIComponent(p)).then(R);"
-      "}"
-      "function UF(fl){"
-        "if(!fl.length)return;"
-        "var pr=document.getElementById('pr'),fi=document.getElementById('fi'),"
-        "pt=document.getElementById('pt');"
-        "pr.style.display='block';var i=0;"
-        "function nx(){"
-          "if(i>=fl.length){pr.style.display='none';fi.style.width='0%';"
-          "document.getElementById('fs').value='';R();return;}"
-          "var f=fl[i];"
-          "pt.textContent='Uploading '+f.name+' ('+(i+1)+'/'+fl.length+')';"
-          "var fd=new FormData();fd.append('file',f);"
-          "var x=new XMLHttpRequest();"
-          "x.open('POST','/api/upload?dir='+encodeURIComponent(D));"
-          "x.upload.onprogress=function(e){"
-            "if(e.lengthComputable)fi.style.width=Math.round(e.loaded/e.total*100)+'%';"
-          "};"
-          "x.onload=function(){i++;fi.style.width='0%';nx()};"
-          "x.onerror=function(){pt.textContent='Error uploading '+f.name};"
-          "x.send(fd);"
-        "}"
-        "nx();"
-      "}"
-      "var dr=document.getElementById('dr');"
-      "dr.ondragover=function(e){e.preventDefault();dr.classList.add('dg')};"
-      "dr.ondragleave=function(){dr.classList.remove('dg')};"
-      "dr.ondrop=function(e){e.preventDefault();dr.classList.remove('dg');UF(e.dataTransfer.files)};"
-      "R();"
-      "</script></body></html>";
+      ".ms{background:#16213e;padding:8px 12px;border-radius:6px;margin:8px 0;"
+      "border-left:3px solid #4ecca3;font-size:0.9em}"
+      "</style></head><body>";
+
+    // --- Title + path ---
+    html += "<h1>Meck SD File Manager</h1>";
+    html += "<div class='pa'>" + fmHtmlEscape(path) + "</div>";
+
+    // --- Status message (from redirects) ---
+    if (msg.length() > 0) {
+      html += "<div class='ms'>" + fmHtmlEscape(msg) + "</div>";
+    }
+
+    // --- Navigation buttons ---
+    html += "<div class='tb'>";
+    if (path != "/") {
+      // Compute parent
+      String parent = path;
+      if (parent.endsWith("/")) parent = parent.substring(0, parent.length() - 1);
+      int sl = parent.lastIndexOf('/');
+      parent = (sl <= 0) ? "/" : parent.substring(0, sl);
+      html += "<a class='b' href='/?path=" + fmUrlEncode(parent) + "'>.. Up</a>";
+    }
+    html += "<a class='b' href='/?path=" + fmUrlEncode(path) + "'>Refresh</a>";
+    html += "</div>";
+
+    // --- Directory listing (server-rendered) ---
+    File dir = SD.open(path, FILE_READ);
+    if (!dir || !dir.isDirectory()) {
+      if (dir) dir.close();
+      digitalWrite(SDCARD_CS, HIGH);
+      html += "<div class='em'>Cannot open directory</div>";
+    } else {
+      // Collect entries into arrays for sorting (dirs first, then alpha)
+      struct FmEntry { String name; size_t size; bool isDir; };
+      FmEntry entries[128];  // max entries to display
+      int count = 0;
+      File entry = dir.openNextFile();
+      while (entry && count < 128) {
+        const char* fullName = entry.name();
+        const char* baseName = strrchr(fullName, '/');
+        baseName = baseName ? baseName + 1 : fullName;
+        entries[count].name = baseName;
+        entries[count].size = entry.size();
+        entries[count].isDir = entry.isDirectory();
+        count++;
+        entry.close();
+        entry = dir.openNextFile();
+      }
+      dir.close();
+      digitalWrite(SDCARD_CS, HIGH);
+
+      Serial.printf("FM: listing %d entries for '%s'\n", count, path.c_str());
+
+      // Sort: dirs first, then alphabetical
+      for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+          bool swap = false;
+          if (entries[i].isDir != entries[j].isDir) {
+            swap = !entries[i].isDir && entries[j].isDir;
+          } else {
+            swap = entries[i].name.compareTo(entries[j].name) > 0;
+          }
+          if (swap) {
+            FmEntry tmp = entries[i];
+            entries[i] = entries[j];
+            entries[j] = tmp;
+          }
+        }
+      }
+
+      if (count == 0) {
+        html += "<div class='em'>Empty folder</div>";
+      } else {
+        for (int i = 0; i < count; i++) {
+          String fp = path + (path.endsWith("/") ? "" : "/") + entries[i].name;
+          html += "<div class='it'>";
+          html += "<span class='ic'>" + String(entries[i].isDir ? "\xF0\x9F\x93\x81" : "\xF0\x9F\x93\x84") + "</span>";
+          if (entries[i].isDir) {
+            html += "<a class='nm' href='/?path=" + fmUrlEncode(fp) + "'>" + fmHtmlEscape(entries[i].name) + "</a>";
+          } else {
+            html += "<a class='nm' href='/dl?path=" + fmUrlEncode(fp) + "'>" + fmHtmlEscape(entries[i].name) + "</a>";
+            html += "<span class='sz'>" + fmFormatSize(entries[i].size) + "</span>";
+          }
+          html += "<a class='b br' href='/confirm-rm?path=" + fmUrlEncode(fp) + "&ret=" + fmUrlEncode(path) + "'>Del</a>";
+          html += "</div>";
+        }
+      }
+    }
+
+    // --- Upload form (standard HTML form, no JS needed) ---
+    html += "<div class='up'>"
+      "<form method='POST' action='/upload?dir=" + fmUrlEncode(path) + "' enctype='multipart/form-data'>"
+      "<p>Select files to upload</p>"
+      "<input type='file' name='file' multiple><br><br>"
+      "<button class='b' type='submit'>Upload</button>"
+      "</form></div>";
+
+    // --- New folder (tiny inline form) ---
+    html += "<form action='/mkdir' method='GET' style='margin:8px 0;display:flex;gap:6px'>"
+      "<input type='hidden' name='dir' value='" + fmHtmlEscape(path) + "'>"
+      "<input type='text' name='name' placeholder='New folder name' "
+      "style='flex:1;padding:7px;border-radius:5px;border:1px solid #4ecca3;"
+      "background:#16213e;color:#e0e0e0'>"
+      "<button class='b' type='submit'>Create</button>"
+      "</form>";
+
+    html += "</body></html>";
+    return html;
   }
 
   #endif
@@ -2121,10 +2230,10 @@ public:
         display.print("Start WiFi file server?");
         oy += 10;
         display.setCursor(bx + 4, oy);
-        display.print("Browse, upload and download");
+        display.print("Upload and download files");
         oy += 8;
         display.setCursor(bx + 4, oy);
-        display.print("SD card files via browser.");
+        display.print("on SD card via browser.");
         oy += 10;
         display.setCursor(bx + 4, oy);
         display.setColor(DisplayDriver::YELLOW);
