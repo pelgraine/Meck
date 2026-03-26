@@ -143,7 +143,9 @@ enum SettingsRowType : uint8_t {
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
   ROW_INFO_HEADER,    // "--- Info ---" separator
   #ifdef MECK_OTA_UPDATE
+  ROW_OTA_TOOLS_SUBMENU, // Folder row → enters OTA Tools sub-screen
   ROW_FW_UPDATE,      // "Firmware Update" — WiFi upload + flash
+  ROW_SD_FILE_MGR,    // "SD File Manager" — WiFi file browser
   #endif
   ROW_PUB_KEY,        // Public key display
   ROW_FIRMWARE,       // Firmware version
@@ -168,6 +170,7 @@ enum EditMode : uint8_t {
   #endif
   #ifdef MECK_OTA_UPDATE
   EDIT_OTA,          // OTA firmware update flow (multi-phase overlay)
+  EDIT_FILEMGR,      // SD file manager flow (WiFi file browser)
   #endif
 };
 
@@ -178,6 +181,9 @@ enum SubScreen : uint8_t {
   SUB_NONE,        // Top-level settings list
   SUB_CONTACTS,    // Contacts settings sub-screen
   SUB_CHANNELS,    // Channels management sub-screen
+  #ifdef MECK_OTA_UPDATE
+  SUB_OTA_TOOLS,   // OTA Tools sub-screen (FW update + File Manager)
+  #endif
 };
 
 #ifdef MECK_OTA_UPDATE
@@ -191,6 +197,13 @@ enum OtaPhase : uint8_t {
   OTA_PHASE_FLASH,      // Writing to flash — DO NOT POWER OFF
   OTA_PHASE_DONE,       // Success, rebooting
   OTA_PHASE_ERROR,      // Error with message
+};
+
+// File manager phases
+enum FmPhase : uint8_t {
+  FM_PHASE_CONFIRM,     // "Start SD file manager? Enter:Yes Q:No"
+  FM_PHASE_WAITING,     // AP up, file browser active
+  FM_PHASE_ERROR,       // Error with message
 };
 #endif
 
@@ -281,6 +294,9 @@ private:
   bool _otaUploadOk;
   char _otaApName[24];
   const char* _otaError;
+  // File manager state
+  FmPhase _fmPhase;
+  const char* _fmError;
   #endif
 
   // ---------------------------------------------------------------------------
@@ -362,6 +378,12 @@ private:
         }
       }
       addRow(ROW_ADD_CHANNEL);
+    #ifdef MECK_OTA_UPDATE
+    } else if (_subScreen == SUB_OTA_TOOLS) {
+      // --- OTA Tools sub-screen ---
+      addRow(ROW_FW_UPDATE);
+      addRow(ROW_SD_FILE_MGR);
+    #endif
     } else {
       // --- Top-level settings list ---
       addRow(ROW_NAME);
@@ -398,7 +420,7 @@ private:
       // Info section (stays at top level)
       addRow(ROW_INFO_HEADER);
       #ifdef MECK_OTA_UPDATE
-      addRow(ROW_FW_UPDATE);
+      addRow(ROW_OTA_TOOLS_SUBMENU);
       #endif
       addRow(ROW_PUB_KEY);
       addRow(ROW_FIRMWARE);
@@ -556,6 +578,8 @@ public:
     _otaBytesReceived = 0;
     _otaUploadOk = false;
     _otaError = nullptr;
+    _fmPhase = FM_PHASE_CONFIRM;
+    _fmError = nullptr;
     #endif
   }
 
@@ -1003,10 +1027,14 @@ public:
     return true;
   }
 
-  // Called from render loop AND main loop to poll the web server
+  // Called from render loop AND main loop to poll the web server.
+  // Handles both OTA firmware upload and SD file manager modes.
   void pollOTAServer() {
-    if (_otaServer && (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) {
-      _otaServer->handleClient();
+    if (_otaServer) {
+      if ((_editMode == EDIT_OTA && (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) ||
+          (_editMode == EDIT_FILEMGR && _fmPhase == FM_PHASE_WAITING)) {
+        _otaServer->handleClient();
+      }
     }
   }
 
@@ -1073,6 +1101,341 @@ public:
     ESP.restart();
   }
 
+  // ---------------------------------------------------------------------------
+  // SD File Manager — WiFi file browser, upload, download, delete
+  // ---------------------------------------------------------------------------
+
+  void startFileMgr() {
+    _editMode = EDIT_FILEMGR;
+    _fmPhase = FM_PHASE_CONFIRM;
+    _fmError = nullptr;
+  }
+
+  void startFileMgrServer() {
+    // Build AP name with last 4 of MAC for uniqueness
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    snprintf(_otaApName, sizeof(_otaApName), "Meck-Files-%02X%02X", mac[4], mac[5]);
+
+    // Pause LoRa radio — SD and LoRa share the same SPI bus on both
+    // platforms. Incoming packets during SD writes cause bus contention.
+    extern void otaPauseRadio();
+    otaPauseRadio();
+
+    // Clean WiFi init from any state
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(200);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(_otaApName);
+    delay(500);
+    Serial.printf("FM: AP '%s' started, IP: %s\n",
+                  _otaApName, WiFi.softAPIP().toString().c_str());
+
+    // Start web server
+    if (_otaServer) { _otaServer->stop(); delete _otaServer; }
+    _otaServer = new WebServer(80);
+
+    // --- Serve the file manager SPA ---
+    _otaServer->on("/", HTTP_GET, [this]() {
+      _otaServer->send(200, "text/html", fileMgrPageHTML());
+    });
+
+    // --- Directory listing: GET /api/ls?path=/ ---
+    _otaServer->on("/api/ls", HTTP_GET, [this]() {
+      String path = _otaServer->arg("path");
+      if (path.isEmpty()) path = "/";
+      File dir = SD.open(path);
+      if (!dir || !dir.isDirectory()) {
+        dir.close(); digitalWrite(SDCARD_CS, HIGH);
+        _otaServer->send(404, "application/json", "{\"error\":\"Not found\"}");
+        return;
+      }
+      String json = "[";
+      bool first = true;
+      File entry;
+      while ((entry = dir.openNextFile())) {
+        if (!first) json += ",";
+        first = false;
+        // Extract basename — entry.name() may return full path on some ESP32 cores
+        const char* fullName = entry.name();
+        const char* baseName = strrchr(fullName, '/');
+        baseName = baseName ? baseName + 1 : fullName;
+        json += "{\"n\":\"";
+        json += baseName;
+        json += "\",\"s\":";
+        json += String((unsigned long)entry.size());
+        json += ",\"d\":";
+        json += entry.isDirectory() ? "1" : "0";
+        json += "}";
+        entry.close();
+      }
+      dir.close();
+      digitalWrite(SDCARD_CS, HIGH);
+      json += "]";
+      _otaServer->send(200, "application/json", json);
+    });
+
+    // --- File download: GET /api/dl?path=/file.txt ---
+    _otaServer->on("/api/dl", HTTP_GET, [this]() {
+      String path = _otaServer->arg("path");
+      File f = SD.open(path, FILE_READ);
+      if (!f || f.isDirectory()) {
+        if (f) f.close();
+        digitalWrite(SDCARD_CS, HIGH);
+        _otaServer->send(404, "text/plain", "Not found");
+        return;
+      }
+      // Extract filename for Content-Disposition
+      String name = path;
+      int lastSlash = name.lastIndexOf('/');
+      if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+      _otaServer->sendHeader("Content-Disposition",
+        "attachment; filename=\"" + name + "\"");
+
+      // Stream file in chunks — no full-file RAM allocation
+      size_t fileSize = f.size();
+      _otaServer->setContentLength(fileSize);
+      _otaServer->send(200, "application/octet-stream", "");
+      uint8_t* buf = (uint8_t*)ps_malloc(4096);
+      if (!buf) buf = (uint8_t*)malloc(4096);
+      if (buf) {
+        while (f.available()) {
+          int n = f.read(buf, 4096);
+          if (n > 0) _otaServer->sendContent((const char*)buf, n);
+        }
+        free(buf);
+      }
+      f.close();
+      digitalWrite(SDCARD_CS, HIGH);
+    });
+
+    // --- File upload: POST /api/upload?dir=/ ---
+    _otaServer->on("/api/upload", HTTP_POST,
+      [this]() {
+        _otaServer->send(200, "application/json", "{\"ok\":true}");
+      },
+      [this]() {
+        HTTPUpload& upload = _otaServer->upload();
+        static File fmUploadFile;
+
+        if (upload.status == UPLOAD_FILE_START) {
+          String dir = _otaServer->arg("dir");
+          if (dir.isEmpty()) dir = "/";
+          if (!dir.endsWith("/")) dir += "/";
+          String fullPath = dir + upload.filename;
+          Serial.printf("FM: Upload start: %s\n", fullPath.c_str());
+          fmUploadFile = SD.open(fullPath, FILE_WRITE);
+          if (!fmUploadFile) {
+            Serial.println("FM: Failed to open file for write");
+          }
+
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+          if (fmUploadFile) {
+            fmUploadFile.write(upload.buf, upload.currentSize);
+          }
+
+        } else if (upload.status == UPLOAD_FILE_END) {
+          if (fmUploadFile) {
+            fmUploadFile.close();
+            digitalWrite(SDCARD_CS, HIGH);
+            Serial.printf("FM: Upload done: %s (%d bytes)\n",
+                          upload.filename.c_str(), upload.totalSize);
+          }
+
+        } else if (upload.status == UPLOAD_FILE_ABORTED) {
+          if (fmUploadFile) fmUploadFile.close();
+          digitalWrite(SDCARD_CS, HIGH);
+          Serial.println("FM: Upload aborted");
+        }
+      }
+    );
+
+    // --- Create directory: GET /api/mkdir?path=/newfolder ---
+    _otaServer->on("/api/mkdir", HTTP_GET, [this]() {
+      String path = _otaServer->arg("path");
+      if (path.isEmpty()) {
+        _otaServer->send(400, "application/json", "{\"error\":\"No path\"}");
+        return;
+      }
+      bool ok = SD.mkdir(path);
+      digitalWrite(SDCARD_CS, HIGH);
+      _otaServer->send(ok ? 200 : 500, "application/json",
+        ok ? "{\"ok\":true}" : "{\"error\":\"mkdir failed\"}");
+    });
+
+    // --- Delete file/folder: GET /api/rm?path=/file.txt ---
+    _otaServer->on("/api/rm", HTTP_GET, [this]() {
+      String path = _otaServer->arg("path");
+      if (path.isEmpty() || path == "/") {
+        _otaServer->send(400, "application/json", "{\"error\":\"Bad path\"}");
+        return;
+      }
+      File f = SD.open(path);
+      bool ok = false;
+      if (f) {
+        bool isDir = f.isDirectory();
+        f.close();
+        ok = isDir ? SD.rmdir(path) : SD.remove(path);
+      }
+      digitalWrite(SDCARD_CS, HIGH);
+      _otaServer->send(ok ? 200 : 500, "application/json",
+        ok ? "{\"ok\":true}" : "{\"error\":\"Delete failed\"}");
+    });
+
+    _otaServer->begin();
+    Serial.println("FM: Web server started on port 80");
+    _fmPhase = FM_PHASE_WAITING;
+  }
+
+  void stopFileMgr() {
+    if (_otaServer) { _otaServer->stop(); delete _otaServer; _otaServer = nullptr; }
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
+    _editMode = EDIT_NONE;
+    extern void otaResumeRadio();
+    otaResumeRadio();
+    #ifdef MECK_WIFI_COMPANION
+    WiFi.mode(WIFI_STA);
+    wifiReconnectSaved();
+    #endif
+    Serial.println("FM: Stopped, AP down, radio resumed");
+  }
+
+  // --- File manager SPA HTML ---
+  static const char* fileMgrPageHTML() {
+    return
+      "<!DOCTYPE html><html><head>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<title>Meck SD Files</title>"
+      "<style>"
+      "body{font-family:-apple-system,sans-serif;max-width:600px;margin:20px auto;"
+      "padding:0 16px;background:#1a1a2e;color:#e0e0e0}"
+      "h1{color:#4ecca3;font-size:1.3em;margin:8px 0}"
+      ".pa{background:#16213e;padding:8px 12px;border-radius:6px;margin:8px 0;"
+      "font-family:monospace;font-size:0.9em;word-break:break-all}"
+      ".tb{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap}"
+      ".b{background:#4ecca3;color:#1a1a2e;border:none;padding:7px 14px;"
+      "border-radius:5px;font-size:0.85em;font-weight:bold;cursor:pointer}"
+      ".b:active{background:#3ba88f}"
+      ".br{background:#e74c3c;color:#fff}.br:active{background:#c0392b}"
+      "ul{list-style:none;padding:0;margin:0}"
+      ".it{display:flex;align-items:center;padding:8px 4px;border-bottom:1px solid #16213e;gap:6px}"
+      ".ic{font-size:1.1em;width:22px;text-align:center}"
+      ".nm{flex:1;word-break:break-all;cursor:pointer;color:#e0e0e0;text-decoration:none}"
+      ".nm:hover{color:#4ecca3}"
+      ".sz{color:#888;font-size:0.8em;min-width:54px;text-align:right;margin-right:4px}"
+      ".up{background:#16213e;border:2px dashed #4ecca3;border-radius:8px;"
+      "padding:14px;margin:10px 0;text-align:center}"
+      ".up.dg{border-color:#fff;background:#1f2847}"
+      "#pr{display:none;margin:8px 0}"
+      ".ba{background:#16213e;border-radius:4px;height:18px;overflow:hidden}"
+      ".fi{background:#4ecca3;height:100%;width:0%;transition:width 0.2s}"
+      ".em{color:#888;text-align:center;padding:20px}"
+      ".mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);"
+      "display:flex;align-items:center;justify-content:center;z-index:10}"
+      ".mb{background:#16213e;padding:18px;border-radius:8px;max-width:280px;text-align:center}"
+      ".mb p{margin:10px 0}.mg{display:flex;gap:8px;justify-content:center}"
+      "</style></head><body>"
+      "<h1>Meck SD File Manager</h1>"
+      "<div class='pa' id='pa'>/</div>"
+      "<div class='tb'>"
+      "<button class='b' onclick='U()'>.. Up</button>"
+      "<button class='b' onclick='MK()'>+ Folder</button>"
+      "<button class='b' onclick='R()'>Refresh</button>"
+      "</div>"
+      "<ul id='ls'></ul>"
+      "<div class='up' id='dr'>"
+      "<p>Tap to select files or drag and drop</p>"
+      "<input type='file' id='fs' multiple onchange='UF(this.files)'>"
+      "</div>"
+      "<div id='pr'><div class='ba'><div class='fi' id='fi'></div></div>"
+      "<div id='pt' style='font-size:0.85em;margin-top:4px'></div></div>"
+      "<div id='mo'></div>"
+      "<script>"
+      "var D='/';"
+      "function A(u){return fetch(u).then(function(r){return r.json()})}"
+      "function R(){"
+        "A('/api/ls?path='+encodeURIComponent(D)).then(function(f){"
+          "var l=document.getElementById('ls');"
+          "document.getElementById('pa').textContent=D;"
+          "if(!f.length){l.innerHTML='<li class=\"em\">Empty folder</li>';return}"
+          "f.sort(function(a,b){return b.d-a.d||a.n.localeCompare(b.n)});"
+          "l.innerHTML=f.map(function(e){"
+            "var fp=D+(D.endsWith('/')?'':'/')+e.n;"
+            "return '<li class=\"it\">'"
+              "+'<span class=\"ic\">'+(e.d?'\\uD83D\\uDCC1':'\\uD83D\\uDCC4')+'</span>'"
+              "+'<span class=\"nm\" onclick=\"'+(e.d?\"G('\"+E(fp)+\"')\":\"DL('\"+E(fp)+\"')\")+'\">'"
+              "+E(e.n)+'</span>'"
+              "+'<span class=\"sz\">'+(e.d?'':SZ(e.s))+'</span>'"
+              "+'<button class=\"b br\" style=\"padding:3px 8px;font-size:0.75em\" "
+              "onclick=\"RM(\\''+E(fp)+'\\','+e.d+')\">Del</button>'"
+              "+'</li>';"
+          "}).join('');"
+        "}).catch(function(e){document.getElementById('ls').innerHTML="
+          "'<li class=\"em\">Error: '+e+'</li>'});"
+      "}"
+      "function E(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,\"\\\\'\")}"
+      "function SZ(b){"
+        "if(b<1024)return b+'B';"
+        "if(b<1048576)return(b/1024).toFixed(1)+'K';"
+        "return(b/1048576).toFixed(1)+'M';"
+      "}"
+      "function G(p){D=p;R()}"
+      "function U(){"
+        "if(D==='/')return;"
+        "var p=D.split('/').filter(Boolean);p.pop();"
+        "D=p.length?'/'+p.join('/'):'/';"
+        "R();"
+      "}"
+      "function DL(p){window.location='/api/dl?path='+encodeURIComponent(p)}"
+      "function RM(p,d){"
+        "var n=p.split('/').pop();"
+        "document.getElementById('mo').innerHTML="
+          "'<div class=\"mo\"><div class=\"mb\"><p>Delete '+(d?'folder':'file')+"
+          "':<br><b>'+E(n)+'</b>?</p><div class=\"mg\">"
+          "+'<button class=\"b br\" onclick=\"DR(\\''+E(p)+'\\')\">"
+          "Delete</button><button class=\"b\" onclick=\"CM()\">Cancel</button>"
+          "+'</div></div></div>';"
+      "}"
+      "function DR(p){CM();A('/api/rm?path='+encodeURIComponent(p)).then(R)}"
+      "function CM(){document.getElementById('mo').innerHTML=''}"
+      "function MK(){"
+        "var n=prompt('New folder name:');if(!n)return;"
+        "var p=D+(D.endsWith('/')?'':'/')+n;"
+        "A('/api/mkdir?path='+encodeURIComponent(p)).then(R);"
+      "}"
+      "function UF(fl){"
+        "if(!fl.length)return;"
+        "var pr=document.getElementById('pr'),fi=document.getElementById('fi'),"
+        "pt=document.getElementById('pt');"
+        "pr.style.display='block';var i=0;"
+        "function nx(){"
+          "if(i>=fl.length){pr.style.display='none';fi.style.width='0%';"
+          "document.getElementById('fs').value='';R();return;}"
+          "var f=fl[i];"
+          "pt.textContent='Uploading '+f.name+' ('+(i+1)+'/'+fl.length+')';"
+          "var fd=new FormData();fd.append('file',f);"
+          "var x=new XMLHttpRequest();"
+          "x.open('POST','/api/upload?dir='+encodeURIComponent(D));"
+          "x.upload.onprogress=function(e){"
+            "if(e.lengthComputable)fi.style.width=Math.round(e.loaded/e.total*100)+'%';"
+          "};"
+          "x.onload=function(){i++;fi.style.width='0%';nx()};"
+          "x.onerror=function(){pt.textContent='Error uploading '+f.name};"
+          "x.send(fd);"
+        "}"
+        "nx();"
+      "}"
+      "var dr=document.getElementById('dr');"
+      "dr.ondragover=function(e){e.preventDefault();dr.classList.add('dg')};"
+      "dr.ondragleave=function(){dr.classList.remove('dg')};"
+      "dr.ondrop=function(e){e.preventDefault();dr.classList.remove('dg');UF(e.dataTransfer.files)};"
+      "R();"
+      "</script></body></html>";
+  }
+
   #endif
 
   // ---------------------------------------------------------------------------
@@ -1121,6 +1484,10 @@ public:
       display.print("Settings > Contacts");
     } else if (_subScreen == SUB_CHANNELS) {
       display.print("Settings > Channels");
+    #ifdef MECK_OTA_UPDATE
+    } else if (_subScreen == SUB_OTA_TOOLS) {
+      display.print("Settings > OTA Tools");
+    #endif
     } else {
       display.print("Settings");
     }
@@ -1446,8 +1813,17 @@ public:
           break;
 
         #ifdef MECK_OTA_UPDATE
+        case ROW_OTA_TOOLS_SUBMENU:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("OTA Tools >>");
+          break;
+
         case ROW_FW_UPDATE:
           display.print("Firmware Update");
+          break;
+
+        case ROW_SD_FILE_MGR:
+          display.print("SD File Manager");
           break;
         #endif
 
@@ -1725,6 +2101,75 @@ public:
 
       display.setTextSize(1);
     }
+
+    // === File Manager overlay ===
+    if (_editMode == EDIT_FILEMGR) {
+      int bx = 2, by = 14, bw = display.width() - 4;
+      int bh = display.height() - 28;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, bh);
+
+      display.setTextSize(_prefs->smallTextSize());
+      int oy = by + 4;
+
+      if (_fmPhase == FM_PHASE_CONFIRM) {
+        display.drawTextCentered(display.width() / 2, oy, "SD File Manager");
+        oy += 14;
+        display.setCursor(bx + 4, oy);
+        display.print("Start WiFi file server?");
+        oy += 10;
+        display.setCursor(bx + 4, oy);
+        display.print("Browse, upload and download");
+        oy += 8;
+        display.setCursor(bx + 4, oy);
+        display.print("SD card files via browser.");
+        oy += 10;
+        display.setCursor(bx + 4, oy);
+        display.setColor(DisplayDriver::YELLOW);
+        display.print("LoRa paused while active.");
+        display.setColor(DisplayDriver::LIGHT);
+
+      } else if (_fmPhase == FM_PHASE_WAITING) {
+        display.drawTextCentered(display.width() / 2, oy, "SD File Manager");
+        oy += 14;
+        display.setCursor(bx + 4, oy);
+        display.print("Connect to WiFi network:");
+        oy += 10;
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(bx + 4, oy);
+        display.print(_otaApName);
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 12;
+        display.setCursor(bx + 4, oy);
+        display.print("Then open browser:");
+        oy += 10;
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(bx + 4, oy);
+        char ipBuf[32];
+        snprintf(ipBuf, sizeof(ipBuf), "http://%s", WiFi.softAPIP().toString().c_str());
+        display.print(ipBuf);
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 12;
+        display.setCursor(bx + 4, oy);
+        display.print("File server active...");
+
+        pollOTAServer();
+
+      } else if (_fmPhase == FM_PHASE_ERROR) {
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, oy, "File Manager Error");
+        display.setColor(DisplayDriver::LIGHT);
+        oy += 14;
+        if (_fmError) {
+          display.setCursor(bx + 4, oy);
+          display.print(_fmError);
+        }
+      }
+
+      display.setTextSize(1);
+    }
     #endif
 
     // === Footer ===
@@ -1737,7 +2182,12 @@ public:
     if (_editMode == EDIT_NONE) {
       if (_subScreen != SUB_NONE) {
         display.print("Boot:Back");
-        const char* r = (_subScreen == SUB_CHANNELS) ? "Tap:Select  Hold:Del" : "Tap:Toggle  Hold:Edit";
+        const char* r;
+        if (_subScreen == SUB_CHANNELS) r = "Tap:Select  Hold:Del";
+        #ifdef MECK_OTA_UPDATE
+        else if (_subScreen == SUB_OTA_TOOLS) r = "Tap:Select";
+        #endif
+        else r = "Tap:Toggle  Hold:Edit";
         display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
         display.print(r);
       } else {
@@ -1786,6 +2236,19 @@ public:
       } else {
         display.print("Please wait...");
       }
+    } else if (_editMode == EDIT_FILEMGR) {
+      if (_fmPhase == FM_PHASE_CONFIRM) {
+        display.print("Boot:Cancel");
+        const char* r = "Tap:Start";
+        display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+        display.print(r);
+      } else if (_fmPhase == FM_PHASE_WAITING) {
+        display.print("Boot:Stop");
+      } else if (_fmPhase == FM_PHASE_ERROR) {
+        display.print("Boot:Back");
+      } else {
+        display.print("Please wait...");
+      }
     #endif
     } else if (_editMode == EDIT_TEXT) {
       display.print("Hold:Type");
@@ -1823,6 +2286,16 @@ public:
       } else {
         display.print("Please wait...");
       }
+    } else if (_editMode == EDIT_FILEMGR) {
+      if (_fmPhase == FM_PHASE_CONFIRM) {
+        display.print("Enter:Start  Q:Cancel");
+      } else if (_fmPhase == FM_PHASE_WAITING) {
+        display.print("Q:Stop");
+      } else if (_fmPhase == FM_PHASE_ERROR) {
+        display.print("Q:Back");
+      } else {
+        display.print("Please wait...");
+      }
     #endif
     } else if (_editMode == EDIT_PICKER) {
       display.print("A/D:Choose Enter:Ok");
@@ -1843,9 +2316,10 @@ public:
 #endif
 
     #ifdef MECK_OTA_UPDATE
-    // Poll web server frequently during OTA waiting/receiving phases
-    if (_editMode == EDIT_OTA &&
-        (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) {
+    // Poll web server frequently during OTA waiting/receiving or file manager phases
+    if ((_editMode == EDIT_OTA &&
+         (_otaPhase == OTA_PHASE_WAITING || _otaPhase == OTA_PHASE_RECEIVING)) ||
+        (_editMode == EDIT_FILEMGR && _fmPhase == FM_PHASE_WAITING)) {
       return 200;  // 200ms — fast enough for web server responsiveness
     }
     #endif
@@ -1910,6 +2384,32 @@ public:
         }
       }
       // Consume all keys during OTA
+      return true;
+    }
+
+    // --- File Manager flow ---
+    if (_editMode == EDIT_FILEMGR) {
+      if (_fmPhase == FM_PHASE_CONFIRM) {
+        if (c == '\r' || c == 13) {
+          startFileMgrServer();
+          return true;
+        }
+        if (c == 'q' || c == 'Q') {
+          _editMode = EDIT_NONE;
+          return true;
+        }
+      } else if (_fmPhase == FM_PHASE_WAITING) {
+        if (c == 'q' || c == 'Q') {
+          stopFileMgr();
+          return true;
+        }
+      } else if (_fmPhase == FM_PHASE_ERROR) {
+        if (c == 'q' || c == 'Q') {
+          stopFileMgr();
+          return true;
+        }
+      }
+      // Consume all keys during file manager
       return true;
     }
     #endif
@@ -2484,8 +2984,19 @@ public:
           startEditText("");
           break;
         #ifdef MECK_OTA_UPDATE
+        case ROW_OTA_TOOLS_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_OTA_TOOLS;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered OTA Tools sub-screen");
+          break;
         case ROW_FW_UPDATE:
           startOTA();
+          break;
+        case ROW_SD_FILE_MGR:
+          startFileMgr();
           break;
         #endif
         case ROW_CHANNEL:

@@ -489,7 +489,7 @@
   static int16_t touchLastX = 0;
   static int16_t touchLastY = 0;
   static unsigned long lastTouchSeenMs = 0;
-  #define TOUCH_LONG_PRESS_MS  500
+  #define TOUCH_LONG_PRESS_MS  750
   #if defined(LilyGo_T5S3_EPaper_Pro)
     #define TOUCH_SWIPE_THRESHOLD 60   // T5S3: 960×540 — 60px ≈ 6% of width
   #else
@@ -931,6 +931,12 @@ static void lastHeardToggleContact() {
       return KEY_ENTER;  // Editing mode or header/footer tap
     }
 
+    // SMS screen: dedicated dialer/touch handler runs separately (HAS_4G_MODEM block)
+    // Return 0 so the general handler doesn't inject spurious keys
+    #ifdef HAS_4G_MODEM
+    if (ui_task.isOnSMSScreen()) return 0;
+    #endif
+
     // All other screens: tap = select
     return KEY_ENTER;
   }
@@ -938,6 +944,11 @@ static void lastHeardToggleContact() {
   // Map a swipe direction to a key
   static char mapTouchSwipe(int16_t dx, int16_t dy) {
     bool horizontal = abs(dx) > abs(dy);
+
+    // SMS screen: dedicated touch handler covers all interaction
+    #ifdef HAS_4G_MODEM
+    if (ui_task.isOnSMSScreen()) return 0;
+    #endif
 
     // Reader (reading mode): swipe left/right for page turn
     if (ui_task.isOnTextReader()) {
@@ -1002,6 +1013,11 @@ static void lastHeardToggleContact() {
 
   // Map a long press to a key
   static char mapTouchLongPress(int16_t x, int16_t y) {
+    // SMS screen: dedicated touch handler covers all interaction
+    #ifdef HAS_4G_MODEM
+    if (ui_task.isOnSMSScreen()) return 0;
+    #endif
+
     // Home screen: long press = activate current page action
     // (BLE toggle, send advert, hibernate, GPS toggle, etc.)
     if (ui_task.isOnHomeScreen()) {
@@ -1819,7 +1835,7 @@ void loop() {
   the_mesh.loop();
   #ifdef MECK_OTA_UPDATE
   } else {
-    // OTA active — poll the web server from the main loop for fast response.
+    // OTA/File Manager active — poll the web server from the main loop for fast response.
     // The render cycle on T5S3 (960×540 FastEPD) can block for 500ms+ during
     // e-ink refresh, causing the browser to timeout before handleClient() runs.
     // Polling here gives us ~1-5ms response time instead.
@@ -2178,7 +2194,7 @@ void loop() {
   // Gestures:
   //   Tap = finger down + up with minimal movement → select/open
   //   Swipe = finger drag > threshold → scroll/page turn
-  //   Long press = finger held > 500ms without moving → edit/enter
+  //   Long press = finger held > 750ms without moving → edit/enter
   // After processing an event, cooldown waits for finger lift before next event.
   // Touch is disabled while lock screen is active.
   // When virtual keyboard is active (T5S3), taps route to keyboard.
@@ -2189,6 +2205,15 @@ void loop() {
     bool touchBlocked = ui_task.isLocked();
 #if defined(LilyGo_T5S3_EPaper_Pro)
     touchBlocked = touchBlocked || ui_task.isVKBActive();
+#endif
+#ifdef HAS_4G_MODEM
+    // SMS dialer has its own dedicated touch handler — don't consume touch data here
+    if (smsMode) {
+      SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        touchBlocked = true;
+      }
+    }
 #endif
 
     if (!touchBlocked)
