@@ -1403,6 +1403,107 @@ public:
   // Called from setup() after SD card init. Scans files, pre-indexes first
   // 100 pages of each, and shows progress on the e-ink display.
 
+  // Pre-index files inside one level of subdirectories so navigating
+  // into them later is instant (idx files already on SD).
+  void bootIndexSubfolders() {
+    // Work from the root-level _dirList that scanFiles() already populated.
+    // Copy it -- scanFiles() will overwrite _dirList when we scan each subfolder.
+    std::vector<String> subDirs = _dirList;
+    if (subDirs.empty()) return;
+
+    Serial.printf("TextReader: Pre-indexing %d subfolders\n", (int)subDirs.size());
+
+    int totalSubFiles = 0;
+    int cachedSubFiles = 0;
+    int indexedSubFiles = 0;
+
+    for (int d = 0; d < (int)subDirs.size(); d++) {
+      String subPath = String(BOOKS_FOLDER) + "/" + subDirs[d];
+      _currentPath = subPath;
+      scanFiles();  // populates _fileList for this subfolder
+
+      // Also pick up previously converted EPUB cache files for this subfolder
+      String epubCachePath = subPath + "/.epub_cache";
+      if (SD.exists(epubCachePath.c_str())) {
+        File cacheDir = SD.open(epubCachePath.c_str());
+        if (cacheDir && cacheDir.isDirectory()) {
+          File cf = cacheDir.openNextFile();
+          while (cf && _fileList.size() < READER_MAX_FILES) {
+            if (!cf.isDirectory()) {
+              String cname = String(cf.name());
+              int cslash = cname.lastIndexOf('/');
+              if (cslash >= 0) cname = cname.substring(cslash + 1);
+              if (cname.endsWith(".txt") || cname.endsWith(".TXT")) {
+                bool dup = false;
+                for (int k = 0; k < (int)_fileList.size(); k++) {
+                  if (_fileList[k] == cname) { dup = true; break; }
+                }
+                if (!dup) _fileList.push_back(cname);
+              }
+            }
+            cf = cacheDir.openNextFile();
+          }
+          cacheDir.close();
+        }
+      }
+
+      for (int i = 0; i < (int)_fileList.size(); i++) {
+        totalSubFiles++;
+
+        // Try loading existing .idx cache -- if hit, skip
+        FileCache tempCache;
+        if (loadIndex(_fileList[i], tempCache)) {
+          cachedSubFiles++;
+          continue;
+        }
+
+        // Skip .epub files (converted on first open)
+        if (_fileList[i].endsWith(".epub") || _fileList[i].endsWith(".EPUB")) continue;
+
+        // Index this .txt file
+        String fullPath = _currentPath + "/" + _fileList[i];
+        File file = SD.open(fullPath.c_str(), FILE_READ);
+        if (!file) {
+          // Try epub cache fallback
+          String cacheFallback = epubCachePath + "/" + _fileList[i];
+          file = SD.open(cacheFallback.c_str(), FILE_READ);
+        }
+        if (!file) continue;
+
+        indexedSubFiles++;
+        String displayName = subDirs[d] + "/" + _fileList[i];
+        drawBootSplash(indexedSubFiles, 0, displayName);
+
+        FileCache cache;
+        cache.filename = _fileList[i];
+        cache.fileSize = file.size();
+        cache.fullyIndexed = false;
+        cache.lastReadPage = 0;
+        cache.pagePositions.clear();
+        cache.pagePositions.push_back(0);
+
+        indexPagesWordWrap(file, 0, cache.pagePositions,
+                           _linesPerPage, _charsPerLine,
+                           PREINDEX_PAGES - 1,
+                           _textAreaHeight, _lineHeight);
+        cache.fullyIndexed = !file.available();
+        file.close();
+
+        saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
+                  cache.fullyIndexed, 0);
+
+        Serial.printf("TextReader: %s/%s - indexed %d pages%s\n",
+                      subDirs[d].c_str(), _fileList[i].c_str(),
+                      (int)cache.pagePositions.size(),
+                      cache.fullyIndexed ? " (complete)" : "");
+        yield();  // Feed WDT between files
+      }
+    }
+
+    Serial.printf("TextReader: Subfolder pre-index: %d files (%d cached, %d newly indexed)\n",
+                  totalSubFiles, cachedSubFiles, indexedSubFiles);
+  }
+
   void bootIndex(DisplayDriver& display) {
     if (!_sdReady) return;
 
@@ -1444,11 +1545,17 @@ public:
       }
     }
 
-    if (_fileList.size() == 0) {
-      Serial.println("TextReader: No files to index");
+    if (_fileList.size() == 0 && _dirList.size() == 0) {
+      Serial.println("TextReader: No files or folders to index");
       _bootIndexed = true;
       return;
     }
+
+    int cachedCount = 0;
+    int needsIndexCount = 0;
+
+    // --- Pass 1 & 2: Index root-level files ---
+    if (_fileList.size() > 0) {
 
     // --- Pass 1: Fast cache load (no per-file splash screens) ---
     // Try to load existing .idx files from SD for every file.
@@ -1456,8 +1563,6 @@ public:
     _fileCache.clear();
     _fileCache.resize(_fileList.size());  // Pre-allocate slots to maintain alignment with _fileList
 
-    int cachedCount = 0;
-    int needsIndexCount = 0;
 
     for (int i = 0; i < (int)_fileList.size(); i++) {
       if (loadIndex(_fileList[i], _fileCache[i])) {
@@ -1522,6 +1627,26 @@ public:
                       cache.fullyIndexed ? " (complete)" : "");
       }
     }
+
+    } // end if (_fileList.size() > 0)
+
+    // --- Pass 3: Pre-index files inside subfolders (one level deep) ---
+    // Save root state -- bootIndexSubfolders() will overwrite _fileList/_dirList
+    // via scanFiles() as it iterates each subdirectory.
+    if (_dirList.size() > 0) {
+      std::vector<String> savedFileList = _fileList;
+      std::vector<String> savedDirList  = _dirList;
+      std::vector<FileCache> savedFileCache = _fileCache;
+
+      bootIndexSubfolders();
+
+      // Restore root state
+      _currentPath = String(BOOKS_FOLDER);
+      _fileList  = savedFileList;
+      _dirList   = savedDirList;
+      _fileCache = savedFileCache;
+    }
+
 
     // Deselect SD to free SPI bus
     digitalWrite(SDCARD_CS, HIGH);
