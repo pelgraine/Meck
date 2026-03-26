@@ -23,7 +23,7 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
     uint8_t buf[MAX_FRAME_SIZE];
   };
 
-  #define FRAME_QUEUE_SIZE  4
+  #define FRAME_QUEUE_SIZE  8
   int recv_queue_len;
   Frame recv_queue[FRAME_QUEUE_SIZE];
   int send_queue_len;
