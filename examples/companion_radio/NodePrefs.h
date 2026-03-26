@@ -40,6 +40,8 @@ struct NodePrefs {  // persisted to file
   uint8_t auto_lock_minutes;      // 0=disabled, 2/5/10/15/30=auto-lock after idle
   uint8_t hint_shown;             // 0=show nav hint on boot, 1=already shown (dismiss permanently)
   uint8_t large_font;             // 0=tiny (built-in 6x8), 1=larger (FreeSans9pt) — T-Deck Pro only
+  uint8_t tx_fail_reset_threshold;  // 0=disabled, 1-10, default 3
+  uint8_t rx_fail_reboot_threshold; // 0=disabled, 1-10, default 3
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.

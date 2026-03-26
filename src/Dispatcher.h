@@ -122,6 +122,8 @@ class Dispatcher {
   bool  prev_isrecv_mode;
   uint32_t n_sent_flood, n_sent_direct;
   uint32_t n_recv_flood, n_recv_direct;
+  uint8_t tx_fail_count;
+  uint8_t rx_stuck_count;
 
   void processRecvPacket(Packet* pkt);
 
@@ -142,6 +144,8 @@ protected:
     _err_flags = 0;
     radio_nonrx_start = 0;
     prev_isrecv_mode = true;
+    tx_fail_count = 0;
+    rx_stuck_count = 0;
   }
 
   virtual DispatcherAction onRecvPacket(Packet* pkt) = 0;
@@ -159,6 +163,11 @@ protected:
   virtual uint32_t getCADFailMaxDuration() const;
   virtual int getInterferenceThreshold() const { return 0; }    // disabled by default
   virtual int getAGCResetInterval() const { return 0; }    // disabled by default
+  virtual uint8_t getTxFailResetThreshold() const { return 3; }  // reset radio after N consecutive TX failures; 0=disabled
+  virtual void onTxStuck() { _radio->resetAGC(); }              // override to use doFullRadioReset() when available
+  virtual uint8_t getRxFailRebootThreshold() const { return 3; } // reboot after N failed RX recovery attempts; 0=disabled
+  virtual void onRxStuck() { _radio->resetAGC(); }              // called each time RX stuck for 8s; override for deeper reset
+  virtual void onRxUnrecoverable() { }                           // called when reboot threshold exceeded; override to call _board->reboot()
 
 public:
   void begin();

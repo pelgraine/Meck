@@ -264,6 +264,16 @@ int MyMesh::getInterferenceThreshold() const {
   return _prefs.interference_threshold;
 }
 
+uint8_t MyMesh::getTxFailResetThreshold() const {
+  return _prefs.tx_fail_reset_threshold;
+}
+uint8_t MyMesh::getRxFailRebootThreshold() const {
+  return _prefs.rx_fail_reboot_threshold;
+}
+void MyMesh::onRxUnrecoverable() {
+  board.reboot();
+}
+
 int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
   if (_prefs.rx_delay_base <= 0.0f) return 0;
   return (int)((pow(_prefs.rx_delay_base, 0.85f - score) - 1.0) * air_time);
@@ -2255,6 +2265,10 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  > %d\n", _prefs.multi_acks);
       } else if (strcmp(key, "int.thresh") == 0) {
         Serial.printf("  > %d\n", _prefs.interference_threshold);
+      } else if (strcmp(key, "tx.fail.threshold") == 0) {
+        Serial.printf("  > %d\n", _prefs.tx_fail_reset_threshold);
+      } else if (strcmp(key, "rx.fail.threshold") == 0) {
+        Serial.printf("  > %d\n", _prefs.rx_fail_reboot_threshold);
       } else if (strcmp(key, "gps.baud") == 0) {
         uint32_t effective = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
         Serial.printf("  > %lu (effective: %lu)\n",
@@ -2315,6 +2329,8 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  af:         %.1f\n", _prefs.airtime_factor);
         Serial.printf("  multi.acks: %d\n", _prefs.multi_acks);
         Serial.printf("  int.thresh: %d\n", _prefs.interference_threshold);
+        Serial.printf("  tx.fail:    %d\n", _prefs.tx_fail_reset_threshold);
+        Serial.printf("  rx.fail:    %d\n", _prefs.rx_fail_reboot_threshold);
         {
           uint32_t eff_baud = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
           Serial.printf("  gps.baud:   %lu\n", (unsigned long)eff_baud);
@@ -2710,6 +2726,30 @@ void MyMesh::checkCLIRescueCmd() {
           Serial.println("  Error: use 0 (disabled) or 14+ (typical: 14)");
         }
 
+      } else if (memcmp(config, "tx.fail.threshold ", 18) == 0) {
+        int val = atoi(&config[18]);
+        if (val < 0) val = 0;
+        if (val > 10) val = 10;
+        _prefs.tx_fail_reset_threshold = (uint8_t)val;
+        savePrefs();
+        if (val == 0) {
+          Serial.println("  > tx fail reset disabled");
+        } else {
+          Serial.printf("  > tx fail reset after %d failures\n", val);
+        }
+
+      } else if (memcmp(config, "rx.fail.threshold ", 18) == 0) {
+        int val = atoi(&config[18]);
+        if (val < 0) val = 0;
+        if (val > 10) val = 10;
+        _prefs.rx_fail_reboot_threshold = (uint8_t)val;
+        savePrefs();
+        if (val == 0) {
+          Serial.println("  > rx fail reboot disabled");
+        } else {
+          Serial.printf("  > reboot after %d rx recovery failures\n", val);
+        }
+
       } else if (memcmp(config, "gps.baud ", 9) == 0) {
         uint32_t val = (uint32_t)atol(&config[9]);
         if (val == 0 || val == 4800 || val == 9600 || val == 19200 ||
@@ -2807,6 +2847,8 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    af <0-9>               Airtime factor");
       Serial.println("    multi.acks <0|1>       Redundant ACKs (default: 1)");
       Serial.println("    int.thresh <0|14+>     Interference threshold dB (0=off, 14=typical)");
+      Serial.println("    tx.fail.threshold <0-10>  TX fail radio reset (0=off, default 3)");
+      Serial.println("    rx.fail.threshold <0-10>  RX stuck reboot (0=off, default 3)");
       Serial.println("    gps.baud <rate>        GPS baud (0=default, reboot to apply)");
       Serial.println("");
       Serial.println("  Clock:");
