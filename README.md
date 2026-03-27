@@ -33,6 +33,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Emoji Picker](#emoji-picker)
   - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
   - [Web Browser & IRC](#web-browser--irc)
+  - [Alarm Clock (Audio only)](#alarm-clock-audio-only)
   - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
   - [Build Variants](#t5s3-build-variants)
@@ -138,7 +139,7 @@ If you're loading firmware from an SD card via the LilyGo Launcher firmware, use
 Once Meck is installed, you can update firmware directly from your phone — no computer or serial cable required. The device creates a temporary WiFi access point and you upload the new `.bin` via your phone's browser.
 
 1. Download the new **non-merged** `.bin` to your phone (from GitHub Releases, Discord, etc.)
-2. On the device: **Settings → Firmware Update → Enter** (T-Deck Pro) or **tap** (T5S3)
+2. On the device: **Settings → OTA Tools → Firmware Update → Enter** (T-Deck Pro) or **tap** (T5S3)
 3. The device starts a WiFi network called `Meck-Update-XXXX` and displays connection details
 4. On your phone: connect to the `Meck-Update` WiFi network, open a browser, go to `192.168.4.1`
 5. Tap **Choose File**, select the `.bin`, tap **Upload**
@@ -147,6 +148,8 @@ Once Meck is installed, you can update firmware directly from your phone — no 
 The partition layout supports dual OTA slots — the old firmware remains on the inactive partition as an automatic rollback target. If the new firmware fails to boot, the ESP32 bootloader reverts to the previous working version automatically.
 
 > **Note:** Use the **non-merged** `.bin` for OTA updates. The merged binary is only needed for first-time USB flashing.
+
+**OTA Tools (v1.5+):** The firmware update has moved into **Settings → OTA Tools**, a submenu that also contains the new **SD File Manager**. The file manager creates the same WiFi access point and serves a browser-based interface where you can browse, upload, download, and delete files on the SD card from your phone — useful for managing audiobooks, alarm sounds, e-books, and notes without ejecting the SD card. Both OTA tools work on all variants including standalone builds.
 
 ---
 
@@ -206,6 +209,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | B | Open web browser (BLE and 4G variants only) |
 | T | Open SMS & Phone app (4G variant only) |
 | P | Open audiobook player (audio variant only) |
+| K | Open alarm clock (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
 | G | Open map screen (shows contacts with GPS positions) |
@@ -348,6 +352,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
 | Dark Mode | Toggle inverted display — white text on black background (Enter to toggle) |
+| Larger Font | Toggle larger text size on channel messages, contacts, DM inbox, and repeater admin screens (Enter to toggle) |
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
@@ -425,6 +430,55 @@ The web reader home screen provides access to the **IRC client**, the **URL bar*
 The browser is a text-centric reader best suited to text-heavy websites. It also includes basic web search via DuckDuckGo Lite, and can download EPUB files — follow a link to an `.epub` and it will be saved to the books folder on your SD card for reading later in the e-book reader.
 
 For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web_App_Guide.md).
+
+### Alarm Clock (Audio only)
+
+Press **K** from the home screen to open the alarm clock. This is available on the audio variant of the T-Deck Pro (PCM5102A DAC). Set up to five daily alarms that play custom MP3 files through the headphone jack.
+
+**Setup:**
+
+1. Place MP3 files (44100 Hz sample rate) in `/alarms/` on the SD card
+2. Press **K** to open the alarm clock
+3. Select an alarm slot (1–5) with **W / S** and press **Enter** to edit
+4. Set the hour and minute, then choose an MP3 file from the list
+5. Press **Enter** to save the alarm
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate alarm slots / adjust time |
+| A / D | Switch between hour and minute fields |
+| Enter | Edit slot / save alarm / select MP3 |
+| X | Delete selected alarm |
+| Q | Back to home screen |
+
+**When an alarm fires:**
+
+The selected MP3 plays through the headphone jack, even if you're on another screen or playing an audiobook.
+
+| Key | Action |
+|-----|--------|
+| Z | Snooze for 5 minutes |
+| Any other key | Dismiss alarm |
+
+Alarm configuration is stored in `/alarms/.alarmcfg` on the SD card. Alarms persist across reboots — if the RTC has valid time (via GPS or companion app sync), alarms fire at the correct time after a restart.
+
+> **Note:** MP3 files should be encoded at **44100 Hz** sample rate. Lower sample rates may cause distortion due to ESP32-S3 I2S hardware limitations (same requirement as the audiobook player).
+
+**SD Card Folder Structure:**
+
+```
+SD Card
+├── alarms/
+│   ├── .alarmcfg             (auto-created, stores alarm slot config)
+│   ├── morning-chime.mp3
+│   ├── rooster.mp3
+│   └── gentle-bells.mp3
+├── audiobooks/               (existing — audiobook player)
+│   └── ...
+├── books/                    (existing — text reader)
+│   └── ...
+└── ...
+```
 
 ### Lock Screen (T-Deck Pro)
 
@@ -530,6 +584,7 @@ The T5S3 Settings screen includes one additional display option not available on
 | Setting | Description |
 |---------|-------------|
 | **Dark Mode** | Inverts the display — white text on black background. Tap to toggle on/off. Available on both T-Deck Pro and T5S3. |
+| **Larger Font** | Increases text size on channel messages, contacts, DM inbox, and repeater admin screens. Tap to toggle on/off. Available on both T-Deck Pro and T5S3. |
 | **Portrait Mode** | Rotates the display 90° from landscape (960×540) to portrait (540×960). Touch coordinates are automatically remapped. Text reader layout recalculates on orientation change. T5S3 only. |
 
 These settings are persisted and survive reboots.
@@ -754,12 +809,13 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] OTA firmware update via phone
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
+- [X] Alarm clock with custom MP3 sounds (audio variant)
+- [X] Customised user option for larger-font mode
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
 - [ ] Figure out a way to silence the ringtone
 - [ ] Figure out a way to customise the ringtone
-- [ ] Customised user option for larger-font mode
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
@@ -780,8 +836,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] OTA firmware update via phone (WiFi variant)
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
+- [X] Customised user option for larger-font mode
 - [ ] Improve EPUB rendering and EPUB format handling
-- [ ] Customised user option for larger-font mode
 
 ## 📞 Get Support
 
