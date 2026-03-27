@@ -57,6 +57,7 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get radio` | All radio params in one line |
 | `get utc` | UTC offset (hours) |
 | `get notify` | Keyboard flash notification (on/off) |
+| `get largefont` | Larger font mode (on/off) |
 | `get gps` | GPS status and interval |
 | `get pin` | BLE pairing PIN |
 | `get path.hash.mode` | Path hash size (0=1-byte, 1=2-byte, 2=3-byte) |
@@ -64,6 +65,8 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get af` | Airtime factor |
 | `get multi.acks` | Redundant ACKs (0 or 1) |
 | `get int.thresh` | Interference threshold (0=disabled) |
+| `get tx.fail.reset` | TX fail reset threshold (0=disabled, default 3) |
+| `get rx.fail.reboot` | RX stuck reboot threshold (0=disabled, default 3) |
 | `get gps.baud` | GPS baud rate (0=compile-time default) |
 | `get channels` | List all channels with index numbers |
 | `get presets` | List all radio presets with parameters |
@@ -164,6 +167,15 @@ set notify on
 set notify off
 ```
 
+#### Larger Font Mode
+
+Toggle larger text on channel messages, contacts, DM inbox, and repeater admin screens:
+
+```
+set largefont on
+set largefont off
+```
+
 #### BLE PIN
 
 ```
@@ -230,6 +242,28 @@ set int.thresh 0
 ```
 
 Values: 0 (disabled, default) or 14+ (14 is the typical setting). Values between 1–13 are not functional and will be rejected.
+
+#### TX Fail Reset Threshold (tx.fail.reset)
+
+Automatically resets the radio hardware after this many consecutive failed transmission attempts. This recovers from "zombie radio" states where the SX1262 stops responding to send commands.
+
+```
+set tx.fail.reset 3
+set tx.fail.reset 0
+```
+
+Values: 0 (disabled) or 1–10 (default: 3). After the threshold is reached, the radio is reset and the failed packet is re-queued.
+
+#### RX Stuck Reboot Threshold (rx.fail.reboot)
+
+Automatically reboots the device after this many consecutive RX-stuck recovery failures. An RX-stuck event occurs when the radio is not in receive mode for 8 seconds despite automatic recovery attempts.
+
+```
+set rx.fail.reboot 3
+set rx.fail.reboot 0
+```
+
+Values: 0 (disabled) or 1–10 (default: 3). A full device reboot is a last resort — this should only trigger in rare cases of persistent radio hardware malfunction.
 
 #### GPS Baud Rate (gps.baud)
 
