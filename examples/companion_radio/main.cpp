@@ -74,7 +74,11 @@
     #include "Audio.h"
     Audio* audio = nullptr;
   #endif
+  #ifdef MECK_AUDIO_VARIANT
+    #include "VoiceMessageScreen.h"
+  #endif
   static bool audiobookMode = false;
+  static bool voiceMode = false;
 
   #ifdef HAS_4G_MODEM
     #include "ModemManager.h"
@@ -650,6 +654,78 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 );
 
 /* END GLOBAL OBJECTS */
+
+// ---------------------------------------------------------------------------
+// Voice-over-LoRa: incoming raw packet handler (dz0ny VE3 protocol)
+// Registered with the_mesh.setVoiceHandler() when voice screen is created.
+// Called from onRawDataRecv for magic 0x56 (voice data) and 0x72 (fetch req).
+// ---------------------------------------------------------------------------
+#ifdef MECK_AUDIO_VARIANT
+// Helper: ensure voice screen exists (lazy-init for incoming voice)
+static VoiceMessageScreen* ensureVoiceScreen() {
+  VoiceMessageScreen* voiceScr = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+  if (!voiceScr) {
+    Serial.println("Voice: Auto-creating voice screen for incoming message");
+    if (!audio) audio = new Audio();
+    voiceScr = new VoiceMessageScreen(&ui_task, audio);
+    voiceScr->setSDReady(sdCardReady);
+    ui_task.setVoiceScreen(voiceScr);
+  }
+  return voiceScr;
+}
+
+static void voiceRawCallback(uint8_t magic, const uint8_t* payload, uint8_t len) {
+  VoiceMessageScreen* voiceScr = ensureVoiceScreen();
+
+  if (magic == 0x72 && len >= 6) {
+    // Fetch request: [0x72][sessionId:4B][flags:1B][requesterKey6:6B][missingCount:1B][indices...]
+    uint32_t sessionId;
+    memcpy(&sessionId, &payload[1], 4);
+    Serial.printf("Voice: Fetch request for session 0x%08X\n", sessionId);
+
+    if (voiceScr->getOutSessionId() == sessionId && voiceScr->hasValidOutSession()) {
+      uint8_t pktBuf[184];
+      int totalPkts = voiceScr->getOutSessionPacketCount();
+      Serial.printf("Voice: Serving %d packets for session 0x%08X\n", totalPkts, sessionId);
+
+      // Requester's 6-byte key prefix is at payload[6..11].
+      // Look them up to get their path for sendDirect.
+      if (len >= 12) {
+        ContactInfo* requester = the_mesh.lookupContactByPubKey(&payload[6], 6);
+        if (requester && requester->out_path_len != OUT_PATH_UNKNOWN) {
+          for (int p = 0; p < totalPkts; p++) {
+            int pktLen = voiceScr->buildVoicePacket(pktBuf, sizeof(pktBuf), sessionId, p);
+            if (pktLen > 0) {
+              mesh::Packet* raw = the_mesh.createRawData(pktBuf, pktLen);
+              if (raw) {
+                the_mesh.sendDirect(raw, requester->out_path, requester->out_path_len, p * 100);
+              }
+            }
+          }
+          Serial.printf("Voice: Served %d packets to %s\n", totalPkts, requester->name);
+        } else {
+          Serial.println("Voice: Fetch requester not found or no direct path");
+        }
+      }
+    } else {
+      Serial.printf("Voice: No cached session 0x%08X for fetch\n", sessionId);
+    }
+  } else if (magic == 0x56 && len > 6) {
+    // Incoming voice data packet — feed to incoming session accumulator
+    voiceScr->onVoicePacketReceived(payload, len);
+  }
+}
+
+// Voice envelope callback — called from MyMesh::onMessageRecv when a VE3: DM arrives
+static void voiceEnvelopeCallback(const char* senderName, const char* ve3Text) {
+  VoiceMessageScreen* voiceScr = ensureVoiceScreen();
+  voiceScr->onVE3Received(senderName, ve3Text);
+  // Defer SD contact saves while voice packets are arriving —
+  // SD writes block the SPI bus shared with LoRa radio
+  the_mesh.setDeferSaves(true);
+  Serial.println("Voice: Deferring contact saves during voice receive");
+}
+#endif
 
 // Last Heard: add/remove contact for selected entry.
 // Called from both touch double-tap (mapTouchTap) and keyboard Enter handler.
@@ -1800,6 +1876,14 @@ void setup() {
   }
   #endif
 
+  // Register voice-over-LoRa callbacks early so incoming VE3 envelopes and
+  // raw voice packets are handled even before user opens the voice screen.
+  // The callbacks null-check the voice screen pointer, so they're safe at boot.
+  #ifdef MECK_AUDIO_VARIANT
+  the_mesh.setVoiceHandler(voiceRawCallback);
+  the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
+  #endif
+
   Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
@@ -1991,6 +2075,159 @@ void loop() {
   }
   #endif
 
+  // Voice message: service mic DMA capture + playback audio decode
+  #if defined(LilyGo_TDeck_Pro) && defined(MECK_AUDIO_VARIANT)
+  {
+    VoiceMessageScreen* voiceScr = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+    if (voiceScr) {
+      voiceScr->voiceTick();
+
+      // Sync shared audio pointer — playFile() may have recreated Audio*
+      Audio* voiceAudio = voiceScr->getAudio();
+      if (voiceAudio != audio) {
+        Serial.println("Voice: Syncing shared Audio* after recreation");
+        audio = voiceAudio;
+        AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+        if (alarmScr) alarmScr->setAudio(audio);
+      }
+
+      // Service audio decode for voice playback (shared Audio* object)
+      if (voiceScr->isAudioActive()) {
+        if (audio) audio->loop();
+        cpuPower.setBoost();
+      }
+
+      // Detect end-of-playback and refresh UI
+      voiceScr->checkPlaybackFinished();
+      if (voiceScr->consumePlaybackFinished()) {
+        ui_task.forceRefresh();
+      }
+
+      // --- Contact picker: load contacts when mode transitions to CONTACT_PICK ---
+      static bool pickContactsLoaded = false;
+      if (voiceScr->getMode() == VoiceMessageScreen::CONTACT_PICK) {
+        if (!pickContactsLoaded) {
+          // Build list of chat contacts with direct paths
+          VoiceMessageScreen::PickContact pickBuf[40];
+          int pickCount = 0;
+          ContactInfo ci;
+          for (int idx = 0; idx < the_mesh.getNumContacts() && pickCount < 40; idx++) {
+            if (!the_mesh.getContactByIdx(idx, ci)) continue;
+            if (ci.type != ADV_TYPE_CHAT) continue;  // Only chat nodes
+            if (ci.name[0] == '\0') continue;
+            pickBuf[pickCount].meshIdx = idx;
+            strncpy(pickBuf[pickCount].name, ci.name, 31);
+            pickBuf[pickCount].name[31] = '\0';
+            pickBuf[pickCount].type = ci.type;
+            pickBuf[pickCount].hasDirect = (ci.out_path_len != OUT_PATH_UNKNOWN);
+            pickCount++;
+          }
+          // Sort: direct-path contacts first, then alphabetical within each group
+          std::sort(pickBuf, pickBuf + pickCount,
+            [](const VoiceMessageScreen::PickContact& a, const VoiceMessageScreen::PickContact& b) {
+              if (a.hasDirect != b.hasDirect) return a.hasDirect > b.hasDirect;
+              return strcasecmp(a.name, b.name) < 0;
+            });
+          voiceScr->loadPickContacts(pickBuf, pickCount);
+          pickContactsLoaded = true;
+          ui_task.forceRefresh();
+        }
+      } else {
+        pickContactsLoaded = false;
+      }
+
+      // --- Detect confirmed send from contact picker ---
+      // Queue all packets at once using sendDirect's built-in delay parameter.
+      // This lets the Mesh Dispatcher handle timing internally, spacing
+      // transmissions so the SPI bus (shared with SD card) isn't contended.
+      int sendIdx = voiceScr->consumePendingSend();
+      if (sendIdx >= 0 && voiceScr->hasCodec2Data()) {
+        cpuPower.setBoost();
+        uint32_t sessionId = (uint32_t)(millis() & 0xFFFFFFFF);
+
+        char envelope[64];
+        voiceScr->formatEnvelope(envelope, sizeof(envelope), sessionId);
+
+        ui_task.showAlert("Sending voice...", 10000);
+        bool dmOk = the_mesh.uiSendDirectMessage(sendIdx, envelope);
+        Serial.printf("Voice: VE3 DM '%s' to idx %d: %s\n",
+                      envelope, sendIdx, dmOk ? "OK" : "FAIL");
+
+        if (dmOk) {
+          // Look up recipient for direct sendDirect calls
+          ContactInfo ci;
+          the_mesh.getContactByIdx(sendIdx, ci);
+          ContactInfo* recipient = the_mesh.lookupContactByPubKey(ci.id.pub_key, PUB_KEY_SIZE);
+
+          int totalPkts = voiceScr->getOutSessionPacketCount();
+          int sentPkts = 0;
+
+          if (recipient && recipient->out_path_len != OUT_PATH_UNKNOWN) {
+            for (int p = 0; p < totalPkts; p++) {
+              uint8_t pktBuf[184];
+              int pktLen = voiceScr->buildVoicePacket(pktBuf, sizeof(pktBuf), sessionId, p);
+              if (pktLen > 0) {
+                mesh::Packet* raw = the_mesh.createRawData(pktBuf, pktLen);
+                if (raw) {
+                  // Stagger packets: first at 3s (after VE3 + ACK + contact save),
+                  // each subsequent 3s apart. The Dispatcher queues them all now
+                  // and transmits at the specified delay offsets.
+                  uint32_t delayMs = 3000 + (uint32_t)p * 3000;
+                  the_mesh.sendDirect(raw, recipient->out_path, recipient->out_path_len, delayMs);
+                  sentPkts++;
+                  Serial.printf("Voice: Queued packet %d/%d (delay %dms)\n",
+                                p + 1, totalPkts, delayMs);
+                }
+              }
+            }
+          }
+          Serial.printf("Voice: Queued %d/%d voice packets to %s\n",
+                        sentPkts, totalPkts, recipient ? recipient->name : "?");
+          voiceScr->onSendComplete(sentPkts == totalPkts);
+          ui_task.showAlert(sentPkts == totalPkts ? "Voice sent!" : "Send partial", 2000);
+        } else {
+          voiceScr->onSendComplete(false);
+          ui_task.showAlert("Send failed!", 1500);
+        }
+        ui_task.forceRefresh();
+      }
+
+      // --- Auto-play incoming voice session when all packets received ---
+      if (voiceScr->isIncomingReady()) {
+        the_mesh.setDeferSaves(false);  // Resume contact saves
+        Serial.println("Voice: Incoming session complete — auto-playing");
+        cpuPower.setBoost();
+        if (voiceScr->playIncoming()) {
+          ui_task.showAlert("Voice msg received!", 2000);
+          ui_task.gotoVoiceScreen();
+        } else {
+          ui_task.showAlert("Voice decode failed", 1500);
+        }
+        ui_task.forceRefresh();
+      }
+
+      // Safety timeout: if saves are deferred for more than 15s, resume them
+      // (in case voice packets never arrive or session is abandoned)
+      static unsigned long deferStarted = 0;
+      if (the_mesh.isDeferSaves()) {
+        if (deferStarted == 0) deferStarted = millis();
+        if (millis() - deferStarted > 15000) {
+          the_mesh.setDeferSaves(false);
+          deferStarted = 0;
+          Serial.println("Voice: Save defer timeout — resuming saves");
+        }
+      } else {
+        deferStarted = 0;
+      }
+
+      // During recording: keep CPU fast for DMA reads
+      if (voiceScr->isRecording()) {
+        cpuPower.setBoost();
+      }
+    }
+  }
+  #endif
+
   // SMS: poll for incoming messages from modem
   #ifdef HAS_4G_MODEM
   {
@@ -2168,6 +2405,9 @@ void loop() {
   readerMode = ui_task.isOnTextReader();
   notesMode = ui_task.isOnNotesScreen();
   audiobookMode = ui_task.isOnAudiobookPlayer();
+  #ifdef MECK_AUDIO_VARIANT
+    voiceMode = ui_task.isOnVoiceScreen();
+  #endif
   #ifdef HAS_4G_MODEM
     smsMode = ui_task.isOnSMSScreen();
   #endif
@@ -2648,6 +2888,10 @@ void handleKeyboardInput() {
     }
     
     // In compose mode - handle text input
+    
+    // Ignore mic key press/release while composing text
+    if (key == KB_KEY_MIC || key == KB_KEY_MIC_RELEASE) return;
+
     if (key == '\r') {
       // Enter - send the message
       Serial.println("Compose: Enter pressed, sending...");
@@ -2837,6 +3081,38 @@ void handleKeyboardInput() {
     return;
   }
   #endif // !HAS_4G_MODEM
+
+  // *** VOICE MESSAGE MODE ***
+  #ifdef MECK_AUDIO_VARIANT
+  if (voiceMode) {
+    VoiceMessageScreen* voiceScr = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+    if (!voiceScr) { voiceMode = false; }
+    else {
+      // Mic key press starts recording (PTT)
+      if (key == KB_KEY_MIC) {
+        voiceScr->onMicPress();
+        ui_task.forceRefresh();
+        return;
+      }
+      // Mic key release stops recording
+      if (key == KB_KEY_MIC_RELEASE) {
+        voiceScr->onMicRelease();
+        ui_task.forceRefresh();
+        return;
+      }
+      // Q from message list exits voice screen
+      if (key == 'q' && voiceScr->getMode() == VoiceMessageScreen::MESSAGE_LIST) {
+        Serial.println("Exiting voice message screen");
+        ui_task.gotoHomeScreen();
+        return;
+      }
+      // All other keys pass through to voice screen
+      voiceScr->handleInput(key);
+      ui_task.forceRefresh();
+      return;
+    }
+  }
+  #endif // MECK_AUDIO_VARIANT
 
   // *** TEXT READER MODE ***
   if (readerMode) {
@@ -3195,6 +3471,35 @@ void handleKeyboardInput() {
 #endif
 
   // Normal mode - not composing
+
+  // Mic key release outside voice screen — ignore (PTT only matters on voice screen)
+  if (key == KB_KEY_MIC_RELEASE) return;
+
+  // Mic key press from any non-modal screen — open voice message screen
+  #ifdef MECK_AUDIO_VARIANT
+  if (key == KB_KEY_MIC) {
+    Serial.println("Opening voice message screen (mic key)");
+    if (!ui_task.getVoiceScreen()) {
+      Serial.printf("Voice: lazy init - free heap: %d, largest block: %d\n",
+                     ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+      if (!audio) audio = new Audio();
+      VoiceMessageScreen* voiceScr = new VoiceMessageScreen(&ui_task, audio);
+      voiceScr->setSDReady(sdCardReady);
+      ui_task.setVoiceScreen(voiceScr);
+      Serial.printf("Voice: init complete - free heap: %d\n", ESP.getFreeHeap());
+    } else {
+      // Ensure Audio* is shared (may have been created by audiobook/alarm)
+      VoiceMessageScreen* voiceScr = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+      if (!audio) audio = new Audio();
+      voiceScr->setAudio(audio);
+    }
+    ui_task.gotoVoiceScreen();
+    // Don't start recording here — user tapped mic to navigate.
+    // Recording starts on mic press when already on voice screen.
+    return;
+  }
+  #endif
+
   switch (key) {
     case 'c':
       // Open contacts list

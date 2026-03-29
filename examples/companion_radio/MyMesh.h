@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 10
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "28 March 2026"
+#define FIRMWARE_BUILD_DATE "29 March 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.5"
+#define FIRMWARE_VERSION "Meck v1.6"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -133,6 +133,25 @@ public:
   // Send a direct message from the UI (no BLE dependency)
   bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
 
+  // Send raw binary data to a contact (PAYLOAD_TYPE_RAW_CUSTOM, direct route only)
+  // Used for dz0ny VE3 voice protocol: voice packets (0x56) and fetch requests (0x72)
+  bool uiSendRawToContact(uint32_t contact_idx, const uint8_t* data, uint8_t len);
+
+  // Voice-over-LoRa: callback for incoming raw voice packets (dz0ny VE3 protocol)
+  // magic 0x56 = voice data packet, 0x72 = fetch request
+  typedef void (*VoiceRawHandler)(uint8_t magic, const uint8_t* payload, uint8_t len);
+  void setVoiceHandler(VoiceRawHandler h) { _voiceHandler = h; }
+
+  // Voice-over-LoRa: callback for incoming VE3 envelope in a DM
+  // Called with sender name and the VE3 text (e.g. "VE3:a:1:3:2")
+  typedef void (*VoiceEnvelopeHandler)(const char* senderName, const char* ve3Text);
+  void setVoiceEnvelopeHandler(VoiceEnvelopeHandler h) { _voiceEnvHandler = h; }
+
+  // Defer contact saves while voice packets are being received
+  // (SD writes block SPI bus shared with LoRa radio)
+  void setDeferSaves(bool defer) { _deferSaves = defer; }
+  bool isDeferSaves() const { return _deferSaves; }
+
   // Repeater admin - UI-initiated operations
   bool uiLoginToRepeater(uint32_t contact_idx, const char* password, uint32_t& est_timeout_ms);
   bool uiSendCliCommand(uint32_t contact_idx, const char* command);
@@ -230,6 +249,9 @@ private:
 
   DataStore* _store;
   NodePrefs _prefs;
+  VoiceRawHandler _voiceHandler = nullptr;
+  VoiceEnvelopeHandler _voiceEnvHandler = nullptr;
+  bool _deferSaves = false;
   uint32_t pending_login;
   uint32_t pending_status;
   uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ

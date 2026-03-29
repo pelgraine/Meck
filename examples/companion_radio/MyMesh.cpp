@@ -604,6 +604,13 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
+
+  // Detect VE3 voice envelope and notify voice handler
+  if (_voiceEnvHandler && text && strncmp(text, "VE3:", 4) == 0) {
+    MESH_DEBUG_PRINTLN("Voice: VE3 envelope from %s: %s", from.name, text);
+    _voiceEnvHandler(from.name, text);
+  }
+
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -743,6 +750,31 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
   MESH_DEBUG_PRINTLN("UI: DM sent to %s (%s), ack=0x%08X timeout=%dms",
                      recipient->name, result == MSG_SEND_SENT_FLOOD ? "flood" : "direct",
                      expected_ack, est_timeout);
+  return true;
+}
+
+bool MyMesh::uiSendRawToContact(uint32_t contact_idx, const uint8_t* data, uint8_t len) {
+  ContactInfo contact;
+  if (!getContactByIdx(contact_idx, contact)) return false;
+
+  ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+  if (!recipient) return false;
+
+  // Raw custom packets are direct-route only — cannot flood
+  if (recipient->out_path_len == OUT_PATH_UNKNOWN) {
+    MESH_DEBUG_PRINTLN("UI: Raw send to %s failed — no direct path", recipient->name);
+    return false;
+  }
+
+  mesh::Packet* pkt = createRawData(data, len);
+  if (!pkt) {
+    MESH_DEBUG_PRINTLN("UI: Raw send to %s failed — packet pool empty", recipient->name);
+    return false;
+  }
+
+  sendDirect(pkt, recipient->out_path, recipient->out_path_len);
+  MESH_DEBUG_PRINTLN("UI: Raw sent %d bytes to %s (direct, path_len=0x%02X)",
+                     len, recipient->name, recipient->out_path_len);
   return true;
 }
 
@@ -1095,6 +1127,32 @@ void MyMesh::onRawDataRecv(mesh::Packet *packet) {
     MESH_DEBUG_PRINTLN("onRawDataRecv(), payload_len too long: %d", packet->payload_len);
     return;
   }
+
+  // Log ALL incoming raw packets for diagnosis
+  Serial.printf("onRawDataRecv: len=%d, magic=0x%02X, route=%s\n",
+                packet->payload_len,
+                packet->payload_len > 0 ? packet->payload[0] : 0,
+                packet->isRouteDirect() ? "direct" : "flood");
+
+  // Voice-over-LoRa (dz0ny VE3 protocol): intercept voice packets and fetch requests
+  // before forwarding to BLE companion. In standalone mode (no BLE), this is the
+  // only way to handle them. In BLE mode, we still intercept so on-device voice works.
+  if (packet->payload_len > 1 && _voiceHandler) {
+    uint8_t magic = packet->payload[0];
+    if (magic == 0x56 || magic == 0x72) {  // Voice data (V) or fetch request (r)
+      Serial.printf("onRawDataRecv: voice %s, payload_len=%d, first6=[%02X %02X %02X %02X %02X %02X]\n",
+                     magic == 0x56 ? "PKT" : "FETCH", packet->payload_len,
+                     packet->payload[0],
+                     packet->payload_len > 1 ? packet->payload[1] : 0,
+                     packet->payload_len > 2 ? packet->payload[2] : 0,
+                     packet->payload_len > 3 ? packet->payload[3] : 0,
+                     packet->payload_len > 4 ? packet->payload[4] : 0,
+                     packet->payload_len > 5 ? packet->payload[5] : 0);
+      _voiceHandler(magic, packet->payload, packet->payload_len);
+      // Don't return — still forward to BLE companion if connected
+    }
+  }
+
   int i = 0;
   out_frame[i++] = PUSH_CODE_RAW_DATA;
   out_frame[i++] = (int8_t)(_radio->getLastSNR() * 4);
@@ -3073,14 +3131,17 @@ void MyMesh::loop() {
 
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    if (!_store->isSaveInProgress()) {
+    if (_deferSaves) {
+      // Voice session receiving — push save forward to avoid SPI contention
+      dirty_contacts_expiry = futureMillis(2000);
+    } else if (!_store->isSaveInProgress()) {
       _store->beginSaveContacts(this);
+      dirty_contacts_expiry = 0;
     }
-    dirty_contacts_expiry = 0;
   }
 
   // Drive chunked contact save — write a batch each loop iteration
-  if (_store->isSaveInProgress()) {
+  if (_store->isSaveInProgress() && !_deferSaves) {
     if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
       _store->finishSaveContacts();  // Done or error — verify and commit
     }

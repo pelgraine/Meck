@@ -88,6 +88,7 @@ class UITask : public AbstractUITask {
   UIScreen* audiobook_screen; // Audiobook player screen (null if not available)
 #ifdef MECK_AUDIO_VARIANT
   UIScreen* alarm_screen;     // Alarm clock screen (audio variant only)
+  UIScreen* voice_screen;     // Voice message screen (audio variant only)
 #endif
 #ifdef HAS_4G_MODEM
   UIScreen* sms_screen;      // SMS messaging screen (4G variant only)
@@ -188,6 +189,7 @@ public:
   void gotoAudiobookPlayer(); // Navigate to audiobook player
 #ifdef MECK_AUDIO_VARIANT
   void gotoAlarmScreen();     // Navigate to alarm clock
+  void gotoVoiceScreen();     // Navigate to voice message recorder
 #endif
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoRepeaterAdminDirect(int contactIdx);  // Auto-login admin (L key from conversation)
@@ -240,6 +242,7 @@ public:
   bool isOnAudiobookPlayer() const { return curr == audiobook_screen; }
 #ifdef MECK_AUDIO_VARIANT
   bool isOnAlarmScreen() const { return curr == alarm_screen; }
+  bool isOnVoiceScreen() const { return curr == voice_screen; }
 #endif
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
@@ -312,6 +315,8 @@ public:
 #ifdef MECK_AUDIO_VARIANT
   UIScreen* getAlarmScreen() const { return alarm_screen; }
   void setAlarmScreen(UIScreen* s) { alarm_screen = s; }
+  UIScreen* getVoiceScreen() const { return voice_screen; }
+  void setVoiceScreen(UIScreen* s) { voice_screen = s; }
 #endif
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }

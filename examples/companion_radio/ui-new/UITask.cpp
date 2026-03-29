@@ -58,6 +58,7 @@
 #include "SettingsScreen.h"
 #ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
+#include "VoiceMessageScreen.h"
 #endif
 #ifdef HAS_4G_MODEM
   #include "SMSScreen.h"
@@ -1298,6 +1299,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef MECK_AUDIO_VARIANT
   alarm_screen = nullptr;      // Created and assigned from main.cpp if audio hardware present
+  voice_screen = nullptr;      // Created and assigned from main.cpp on first mic key press
 #endif
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
@@ -2648,6 +2650,20 @@ void UITask::gotoAlarmScreen() {
     alarmScr->enter(*_display);
   }
   setCurrScreen(alarm_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoVoiceScreen() {
+  if (voice_screen == nullptr) return;
+  VoiceMessageScreen* voiceScr = (VoiceMessageScreen*)voice_screen;
+  if (_display != NULL) {
+    voiceScr->enter(*_display);
+  }
+  setCurrScreen(voice_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
