@@ -3,6 +3,7 @@
 #include "../MyMesh.h"
 #include "NotesScreen.h"
 #include "RepeaterAdminScreen.h"
+#include "PathEditorScreen.h"
 #include "DiscoveryScreen.h"
 #include "LastHeardScreen.h"
 #ifdef MECK_WEB_READER
@@ -1291,6 +1292,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   notes_screen = new NotesScreen(this, node_prefs);
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
+  path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
@@ -2774,6 +2776,23 @@ void UITask::gotoRepeaterAdminDirect(int contactIdx) {
     // If password was pre-filled from cache, simulate Enter to submit login
     admin->handleInput('\r');
   }
+}
+
+void UITask::gotoPathEditor(int contactIdx) {
+  // Lazy-initialize on first use
+  if (path_editor == nullptr) {
+    path_editor = new PathEditorScreen(this, &rtc_clock);
+  }
+
+  PathEditorScreen* editor = (PathEditorScreen*)path_editor;
+  editor->openForContact(contactIdx);
+  setCurrScreen(path_editor);
+
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
 }
 
 void UITask::gotoDiscoveryScreen() {

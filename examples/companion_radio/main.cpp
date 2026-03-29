@@ -23,6 +23,7 @@
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
   #include "LastHeardScreen.h"
+  #include "PathEditorScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -366,6 +367,7 @@
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
   #include "LastHeardScreen.h"
+  #include "PathEditorScreen.h"
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -962,6 +964,20 @@ static void lastHeardToggleContact() {
       return 0;
     }
 
+    // Path editor screen: tap to select row, tap same to activate
+    if (ui_task.isOnPathEditor()) {
+      PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
+      if (pe) {
+        int result = pe->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;
+        }
+        if (result == 2) return KEY_ENTER;
+      }
+      return 0;
+    }
+
     // Discovery screen: tap to select, tap same to add
     if (ui_task.isOnDiscoveryScreen()) {
       DiscoveryScreen* ds = (DiscoveryScreen*)ui_task.getDiscoveryScreen();
@@ -1230,6 +1246,11 @@ static void lastHeardToggleContact() {
     // Discovery screen: long press = rescan
     if (ui_task.isOnDiscoveryScreen()) {
       return 'f';
+    }
+
+    // Path editor: long press = Enter (select item)
+    if (ui_task.isOnPathEditor()) {
+      return KEY_ENTER;
     }
 
     // Repeater admin: long press → open keyboard for password or CLI
@@ -2510,6 +2531,13 @@ void loop() {
           char c = mapTouchLongPress(touchDownX, touchDownY);
           if (c) {
             ui_task.injectKey(c);
+            // Path editor: check if Save & Exit was triggered
+            if (ui_task.isOnPathEditor()) {
+              PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
+              if (pe && pe->wantsExit()) {
+                ui_task.gotoContactsScreen();
+              }
+            }
             cpuPower.setBoost();
           }
           lastTouchEventMs = now;
@@ -2522,6 +2550,13 @@ void loop() {
           char c = mapTouchTap(touchDownX, touchDownY);
           if (c) {
             ui_task.injectKey(c);
+            // Path editor: check if Save & Exit was triggered
+            if (ui_task.isOnPathEditor()) {
+              PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
+              if (pe && pe->wantsExit()) {
+                ui_task.gotoContactsScreen();
+              }
+            }
           }
           cpuPower.setBoost();
           lastTouchEventMs = now;
@@ -2728,6 +2763,13 @@ void loop() {
                     ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
                   }
                 }
+              } else if (ui_task.isOnPathEditor()) {
+                // Path editor handles Enter internally
+                ui_task.injectKey('\r');
+                PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
+                if (pe && pe->wantsExit()) {
+                  ui_task.gotoContactsScreen();
+                }
               } else {
                 // All other screens: pass Enter through for native handling
                 // (settings toggle, discovery add-contact, last heard, text reader, notes file list, etc.)
@@ -2735,12 +2777,26 @@ void loop() {
               }
             } else {
               // Non-Enter keys: remap arrows to WASD, pass others through
-              switch (ckb) {
-                case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
-                case (char)0xF1: ui_task.injectKey('s'); break;  // Down → scroll down
-                case (char)0xF3: ui_task.injectKey('a'); break;  // Left → prev channel/category
-                case (char)0xF4: ui_task.injectKey('d'); break;  // Right → next channel/category
-                default:         ui_task.injectKey(ckb); break;
+              // Special: 'p' on contacts screen opens path editor
+              if ((ckb == 'p' || ckb == 'P') && ui_task.isOnContactsScreen()) {
+                ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+                if (cs) {
+                  int idx = cs->getSelectedContactIdx();
+                  if (idx >= 0) {
+                    ui_task.gotoPathEditor(idx);
+                  }
+                }
+              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnPathEditor()) {
+                // Q on path editor → back to contacts
+                ui_task.gotoContactsScreen();
+              } else {
+                switch (ckb) {
+                  case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
+                  case (char)0xF1: ui_task.injectKey('s'); break;  // Down → scroll down
+                  case (char)0xF3: ui_task.injectKey('a'); break;  // Left → prev channel/category
+                  case (char)0xF4: ui_task.injectKey('d'); break;  // Right → next channel/category
+                  default:         ui_task.injectKey(ckb); break;
+                }
               }
             }
           }
@@ -3519,9 +3575,23 @@ void handleKeyboardInput() {
       ui_task.gotoTextReader();
       break;
     
-    #ifndef HAS_4G_MODEM
     case 'p':
-      // Open audiobook player - lazy-init Audio + screen on first use
+      // On contacts screen: open path editor for selected contact
+      if (ui_task.isOnContactsScreen()) {
+        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+        if (cs) {
+          int idx = cs->getSelectedContactIdx();
+          if (idx >= 0) {
+            char pname[32];
+            cs->getSelectedContactName(pname, sizeof(pname));
+            Serial.printf("Opening path editor for %s (idx %d)\n", pname, idx);
+            ui_task.gotoPathEditor(idx);
+          }
+        }
+        break;
+      }
+    #ifndef HAS_4G_MODEM
+      // Otherwise: open audiobook player - lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
         Serial.printf("Audiobook: lazy init - free heap: %d, largest block: %d\n",
@@ -3533,8 +3603,8 @@ void handleKeyboardInput() {
         Serial.printf("Audiobook: init complete - free heap: %d\n", ESP.getFreeHeap());
       }
       ui_task.gotoAudiobookPlayer();
-      break;
     #endif
+      break;
 
     #ifdef MECK_AUDIO_VARIANT
     case 'k':
@@ -3653,6 +3723,7 @@ void handleKeyboardInput() {
       // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -3672,6 +3743,7 @@ void handleKeyboardInput() {
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -3690,6 +3762,7 @@ void handleKeyboardInput() {
     case 'a':
       // Navigate left or switch channel (on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -3704,6 +3777,7 @@ void handleKeyboardInput() {
     case 'd':
       // Navigate right or switch channel (on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -3716,9 +3790,16 @@ void handleKeyboardInput() {
       break;
       
     case '\r':
-      // Select/Enter - if on contacts screen, enter DM compose for chat contacts
-      //                or repeater admin for repeater contacts
-      if (ui_task.isOnContactsScreen()) {
+      // Select/Enter - path editor handles Enter internally
+      if (ui_task.isOnPathEditor()) {
+        ui_task.injectKey('\r');
+        // Check if Save & Exit was selected
+        PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
+        if (pe && pe->wantsExit()) {
+          Serial.println("PathEditor: Save & Exit — returning to contacts");
+          ui_task.gotoContactsScreen();
+        }
+      } else if (ui_task.isOnContactsScreen()) {
         ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
         int idx = cs->getSelectedContactIdx();
         uint8_t ctype = cs->getSelectedContactType();
@@ -3982,6 +4063,12 @@ void handleKeyboardInput() {
       if (ui_task.isOnDiscoveryScreen()) {
         the_mesh.stopDiscovery();
         Serial.println("Nav: Discovery -> Contacts");
+        ui_task.gotoContactsScreen();
+        break;
+      }
+      // Path editor: Q goes back to contacts (discards unsaved changes)
+      if (ui_task.isOnPathEditor()) {
+        Serial.println("Nav: PathEditor -> Contacts");
         ui_task.gotoContactsScreen();
         break;
       }

@@ -94,6 +94,7 @@ class UITask : public AbstractUITask {
   UIScreen* sms_screen;      // SMS messaging screen (4G variant only)
 #endif
   UIScreen* repeater_admin;   // Repeater admin screen
+  UIScreen* path_editor;      // Custom path editor screen (lazy-init)
   UIScreen* discovery_screen;  // Node discovery scan screen
   UIScreen* last_heard_screen; // Last heard passive advert list
 #ifdef MECK_WEB_READER
@@ -193,6 +194,7 @@ public:
 #endif
   void gotoRepeaterAdmin(int contactIdx);  // Navigate to repeater admin
   void gotoRepeaterAdminDirect(int contactIdx);  // Auto-login admin (L key from conversation)
+  void gotoPathEditor(int contactIdx);     // Navigate to custom path editor
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
   void gotoLastHeardScreen();              // Navigate to last heard passive list
 #if HAS_GPS
@@ -245,6 +247,7 @@ public:
   bool isOnVoiceScreen() const { return curr == voice_screen; }
 #endif
   bool isOnRepeaterAdmin() const { return curr == repeater_admin; }
+  bool isOnPathEditor() const { return curr == path_editor; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
@@ -319,6 +322,7 @@ public:
   void setVoiceScreen(UIScreen* s) { voice_screen = s; }
 #endif
   UIScreen* getRepeaterAdminScreen() const { return repeater_admin; }
+  UIScreen* getPathEditorScreen() const { return path_editor; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
   UIScreen* getLastHeardScreen() const { return last_heard_screen; }
   UIScreen* getMapScreen() const { return map_screen; }

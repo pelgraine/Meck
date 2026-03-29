@@ -873,6 +873,43 @@ bool MyMesh::uiSendTelemetryRequest(uint32_t contact_idx) {
   return true;
 }
 
+bool MyMesh::setCustomPath(int contactIdx, const uint8_t* path, uint8_t pathLen, bool lock) {
+  ContactInfo contact;
+  if (!getContactByIdx(contactIdx, contact)) return false;
+
+  ContactInfo* c = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+  if (!c) return false;
+
+  c->out_path_len = pathLen;
+  int byteLen = mesh::Packet::getPathByteLenFor(pathLen);
+  if (byteLen > MAX_PATH_SIZE) byteLen = MAX_PATH_SIZE;
+  memcpy(c->out_path, path, byteLen);
+  c->lastmod = getRTCClock()->getCurrentTime();
+
+  if (lock) {
+    c->flags |= CONTACT_FLAG_CUSTOM_PATH;
+  }
+
+  MESH_DEBUG_PRINTLN("setCustomPath: contact %s, pathLen=0x%02X (%d hops, %dB/hop), lock=%d",
+                     c->name, pathLen, pathLen & 0x3F, ((pathLen >> 6) & 3) + 1, lock);
+  return true;
+}
+
+void MyMesh::clearCustomPath(int contactIdx) {
+  ContactInfo contact;
+  if (!getContactByIdx(contactIdx, contact)) return;
+
+  ContactInfo* c = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
+  if (!c) return;
+
+  c->out_path_len = OUT_PATH_UNKNOWN;
+  memset(c->out_path, 0, MAX_PATH_SIZE);
+  c->flags &= ~CONTACT_FLAG_CUSTOM_PATH;
+  c->lastmod = getRTCClock()->getCurrentTime();
+
+  MESH_DEBUG_PRINTLN("clearCustomPath: contact %s — reverted to auto-discovery", c->name);
+}
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
@@ -1043,6 +1080,13 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
     }
   }
   // let base class handle received path and data
+  // BUT: if this contact has a custom (manually set) path lock, don't let
+  // auto-discovery overwrite it.  Skip the base class call entirely — ACKs
+  // embedded in path responses will still be delivered via separate ACK packets.
+  if (contact.flags & CONTACT_FLAG_CUSTOM_PATH) {
+    MESH_DEBUG_PRINTLN("onContactPathRecv: skipping path update for custom-path contact %s", contact.name);
+    return false;
+  }
   return BaseChatMesh::onContactPathRecv(contact, in_path, in_path_len, out_path, out_path_len, extra_type, extra, extra_len);
 }
 

@@ -300,10 +300,19 @@ public:
 
         // Reserve space for hops + age on right side
         char hopStr[6];
-        if (contact.out_path_len == 0xFF || contact.out_path_len == 0) {
-          strcpy(hopStr, "D");  // direct
+        if (contact.out_path_len == 0xFF) {
+          strcpy(hopStr, "?");  // unknown path
+        } else if (contact.out_path_len == 0) {
+          bool customDirect = (contact.flags & CONTACT_FLAG_CUSTOM_PATH) != 0;
+          strcpy(hopStr, customDirect ? "D*" : "D");
         } else {
-          snprintf(hopStr, sizeof(hopStr), "%d", contact.out_path_len);
+          int hops = contact.out_path_len & 0x3F;  // lower 6 bits = hop count
+          bool customPath = (contact.flags & CONTACT_FLAG_CUSTOM_PATH) != 0;
+          if (customPath) {
+            snprintf(hopStr, sizeof(hopStr), "%d*", hops);  // asterisk = custom/locked path
+          } else {
+            snprintf(hopStr, sizeof(hopStr), "%d", hops);
+          }
         }
 
         char ageStr[6];
@@ -352,8 +361,8 @@ public:
     display.setCursor(0, footerY);
     display.print("Q:Bk A/D:Filter");
 
-    // Right: Tap/Ent:Select
-    const char* right = "Tap/Ent:Select";
+    // Right: P:Path Ent:Sel
+    const char* right = "P:Path Ent:Sel";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

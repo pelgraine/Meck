@@ -70,6 +70,11 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 
+// Custom path lock flag — bit 7 of ContactInfo.flags
+// When set, onContactPathRecv skips auto-updating this contact's out_path.
+// Bits 0-6 remain available (bit 0 = favourite, bits 1-3 = telemetry perms).
+#define CONTACT_FLAG_CUSTOM_PATH  0x80
+
 /* -------------------------------------------------------------------------------------- */
 
 #define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
@@ -157,6 +162,11 @@ public:
   bool uiSendCliCommand(uint32_t contact_idx, const char* command);
   bool uiSendTelemetryRequest(uint32_t contact_idx);
   int  getAdminContactIdx() const { return _admin_contact_idx; }
+
+  // Custom path editor — set or clear a manually configured path for a contact
+  // When locked, automatic path discovery will not overwrite this contact's path.
+  bool setCustomPath(int contactIdx, const uint8_t* path, uint8_t pathLen, bool lock);
+  void clearCustomPath(int contactIdx);
 
 
 protected:
