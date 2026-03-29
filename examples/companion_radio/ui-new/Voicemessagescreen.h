@@ -52,7 +52,7 @@ class MyMesh;
 // Configuration
 // ---------------------------------------------------------------------------
 #define VOICE_FOLDER        "/voice"
-#define VOICE_MAX_SECONDS   5
+#define VOICE_MAX_SECONDS   12
 #define VOICE_SAMPLE_RATE   16000
 #define VOICE_BITS          16
 #define VOICE_CHANNELS      1
@@ -195,10 +195,10 @@ private:
   struct IncomingSession {
     uint32_t sessionId;
     uint8_t  data[VOICE_C2_MAX_BYTES];   // Accumulated Codec2 data
-    uint16_t pktOffset[8];               // Byte offset for each packet's data
-    uint16_t pktSize[8];                 // Byte count for each packet's codec2 chunk
+    uint16_t pktOffset[16];              // Byte offset for each packet's data
+    uint16_t pktSize[16];                // Byte count for each packet's codec2 chunk
     uint8_t  totalPackets;               // Expected total (from VE3 envelope)
-    uint8_t  receivedBitmap;             // Bitmask of received packet indices
+    uint16_t receivedBitmap;             // Bitmask of received packet indices
     uint8_t  receivedCount;              // Number of distinct packets received
     uint32_t dataBytes;                  // Total accumulated bytes
     uint8_t  durationSec;
@@ -514,9 +514,7 @@ private:
     // Normalize audio levels before saving
     normalizeRecording();
 
-    // Encode to Codec2 (must happen before WAV write, uses PSRAM scratch space)
-    encodeCodec2();
-
+    // Save WAV with actual recorded samples (before Codec2 frame padding)
     uint32_t dataBytes = _recSamples * sizeof(int16_t);
     writeWavHeader(f, dataBytes, VOICE_SAMPLE_RATE, VOICE_BITS, VOICE_CHANNELS);
     f.write((const uint8_t*)_recBuffer, dataBytes);
@@ -524,6 +522,10 @@ private:
 
     Serial.printf("Voice: Saved %s (%d bytes, %.1fs)\n",
                   fullPath, 44 + dataBytes, _recSamples / (float)VOICE_SAMPLE_RATE);
+
+    // Encode to Codec2 (pads _recSamples to frame boundary — after WAV save)
+    encodeCodec2();
+
     return true;
   }
 
@@ -664,6 +666,60 @@ private:
     return false;
   }
 
+  // Load a WAV file from the voice folder into the recording buffer,
+  // then Codec2-encode it so it can be sent via the contact picker.
+  bool loadWavForSend(const char* filename) {
+    char fullPath[96];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", VOICE_FOLDER, filename);
+
+    File f = SD.open(fullPath, FILE_READ);
+    if (!f) {
+      Serial.printf("Voice: Failed to open %s for send\n", fullPath);
+      return false;
+    }
+
+    uint32_t fileSize = f.size();
+    if (fileSize <= 44) {
+      Serial.printf("Voice: File too small: %d bytes\n", fileSize);
+      f.close();
+      return false;
+    }
+
+    // Skip 44-byte WAV header
+    f.seek(44);
+    uint32_t dataBytes = fileSize - 44;
+    uint32_t samples = dataBytes / sizeof(int16_t);
+
+    // Clamp to buffer size
+    if (samples > VOICE_BUF_SAMPLES) samples = VOICE_BUF_SAMPLES;
+
+    // Ensure PSRAM buffer exists
+    if (!ensureRecBuffer()) {
+      f.close();
+      return false;
+    }
+
+    f.read((uint8_t*)_recBuffer, samples * sizeof(int16_t));
+    f.close();
+
+    _recSamples = samples;
+    Serial.printf("Voice: Loaded %s — %d samples (%.1fs)\n",
+                  filename, samples, samples / (float)VOICE_SAMPLE_RATE);
+
+    // Encode to Codec2
+    encodeCodec2();
+    if (!_c2Valid) {
+      Serial.println("Voice: Codec2 encode failed for loaded file");
+      return false;
+    }
+
+    // Set review filename so the UI can display it
+    strncpy(_reviewFilename, filename, sizeof(_reviewFilename) - 1);
+    _reviewFilename[sizeof(_reviewFilename) - 1] = '\0';
+
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // VE3 Voice Protocol (dz0ny) — helpers
   // ---------------------------------------------------------------------------
@@ -739,7 +795,7 @@ private:
     // Reassemble codec2 data in packet order (packets may arrive out of order)
     uint8_t ordered[VOICE_C2_MAX_BYTES];
     uint32_t orderedLen = 0;
-    for (int p = 0; p < _inSession.totalPackets && p < 8; p++) {
+    for (int p = 0; p < _inSession.totalPackets && p < 16; p++) {
       if (_inSession.pktSize[p] > 0 && orderedLen + _inSession.pktSize[p] <= VOICE_C2_MAX_BYTES) {
         memcpy(&ordered[orderedLen], &_inSession.data[_inSession.pktOffset[p]], _inSession.pktSize[p]);
         orderedLen += _inSession.pktSize[p];
@@ -980,8 +1036,10 @@ private:
     display.setCursor(0, footerY);
     if (_listPlaying) {
       display.print("Playing... Q:Stop");
+    } else if (!_fileList.empty()) {
+      display.print("Mic:Rec Ent:Ply F:Snd D:Del");
     } else {
-      display.print("Mic:Rec Ent:Play D:Del Q:Exit");
+      display.print("Mic:Record Q:Exit");
     }
   }
 
@@ -1232,7 +1290,7 @@ public:
     uint8_t  totalPkts = (uint8_t)fromBase36(fields[2]);
     uint8_t  durSec    = (fieldIdx >= 3) ? (uint8_t)fromBase36(fields[3]) : 0;
 
-    if (totalPkts == 0 || totalPkts > 8) {
+    if (totalPkts == 0 || totalPkts > 16) {
       Serial.printf("Voice: VE3 invalid packet count: %d\n", totalPkts);
       return;
     }
@@ -1270,7 +1328,7 @@ public:
       Serial.printf("Voice: Ignoring packet for unknown session 0x%08X\n", sessionId);
       return;
     }
-    if (pktIdx >= _inSession.totalPackets || pktIdx >= 8) {
+    if (pktIdx >= _inSession.totalPackets || pktIdx >= 16) {
       Serial.printf("Voice: Packet index %d out of range (total=%d)\n",
                     pktIdx, _inSession.totalPackets);
       return;
@@ -1481,6 +1539,16 @@ private:
           scanVoiceFolder();
           if (_selectedFile >= (int)_fileList.size() && _selectedFile > 0) {
             _selectedFile--;
+          }
+        }
+        break;
+
+      case 'f': case 'F':  // Forward/send selected file
+        if (!_fileList.empty() && _selectedFile < (int)_fileList.size()) {
+          stopPlayback();
+          if (loadWavForSend(_fileList[_selectedFile].name)) {
+            enterContactPick();
+            // main.cpp will detect CONTACT_PICK mode and load contacts
           }
         }
         break;
