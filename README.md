@@ -34,7 +34,15 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
   - [Web Browser & IRC](#web-browser--irc)
   - [Alarm Clock (Audio only)](#alarm-clock-audio-only)
+  - [Voice Notes Over LoRa (Audio only)](#voice-notes-over-lora-audio-only)
+  - [Contact Management — Select, Export & Import](#contact-management--select-export--import)
   - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
+- [Remote Repeater (T-Deck Pro 4G)](#remote-repeater-t-deck-pro-4g)
+  - [Remote Repeater Build Variant](#remote-repeater-build-variant)
+  - [Setting Up HiveMQ Cloud (Free MQTT Broker)](#setting-up-hivemq-cloud-free-mqtt-broker)
+  - [SD Card Configuration](#remote-repeater-sd-card-configuration)
+  - [Deploying the Remote Repeater](#deploying-the-remote-repeater)
+  - [Remote Dashboard (Meck-Mycelium)](#remote-dashboard-meck-mycelium)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
   - [Build Variants](#t5s3-build-variants)
   - [Touch Navigation](#touch-navigation)
@@ -50,6 +58,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 - [Text & EPUB Reader](TXT___EPUB_Reader_Guide.md)
 - [Web Browser & IRC Guide](Web_App_Guide.md)
 - [SMS & Phone App Guide](SMS___Phone_App_Guide.md)
+- [Meck-Mycelium Web App](#meck-mycelium-web-app)
 - [About MeshCore](#about-meshcore)
 - [What is MeshCore?](#what-is-meshcore)
 - [Key Features](#key-features)
@@ -187,8 +196,9 @@ For a detailed explanation of what multibyte path hash means and why it matters,
 | 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 500 |
 | 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 1,500 |
 | 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 1,500 |
+| Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
 
-The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive.
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. The remote repeater variant operates as a dedicated MeshCore repeater with cellular MQTT management — see [Remote Repeater](#remote-repeater-t-deck-pro-4g) below.
 
 ### T-Deck Pro Keyboard Controls
 
@@ -210,6 +220,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | T | Open SMS & Phone app (4G variant only) |
 | P | Open audiobook player (audio variant only) |
 | K | Open alarm clock (audio variant only) |
+| Mic (0) | Open voice messages (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
 | G | Open map screen (shows contacts with GPS positions) |
@@ -281,11 +292,15 @@ Press **C** from the home screen to open the contacts list. All known mesh conta
 | W / S | Scroll up / down through contacts |
 | A / D | Cycle filter: All → Chat → Repeater → Room → Sensor → Favourites |
 | Enter | Open DM compose (Chat contact) or repeater admin (Repeater contact) |
-| X | Export contacts to SD card (wait 5–10 seconds for confirmation popup) |
-| R | Import contacts from SD card (wait 5–10 seconds for confirmation popup) |
+| Long-press Enter | Enter select mode (see [Contact Management](#contact-management--select-export--import)) |
+| P | Open Path Editor for selected contact (set direct or multi-hop path) |
+| X | Export contacts to SD card — exports selected contacts if in select mode, or all contacts otherwise |
+| R | Import contacts from SD card (auto-selects most recent export by timestamp) |
 | Q | Back to home screen |
 
 **Contact limits:** Standalone and WiFi variants support up to 1,500 contacts (stored in PSRAM). BLE variants (Audio-BLE and 4G-BLE) are limited to 500 contacts due to BLE protocol constraints.
+
+For detailed documentation on select mode, bulk operations, export format, and companion app interoperability, see [Contact Management — Select, Export & Import](#contact-management--select-export--import).
 
 ### Sending a Direct Message
 
@@ -480,6 +495,55 @@ SD Card
 └── ...
 ```
 
+### Voice Notes Over LoRa (Audio only)
+
+Press the **Microphone key** (the zero key on the keyboard) to open the Voice Messages screen. This is available on the audio variant of the T-Deck Pro (PCM5102A DAC).
+
+Record and send voice messages of up to 12 seconds over LoRa. Audio is encoded on-device using Codec2 at 1200 bps, compressing each second of speech into a single 150-byte LoRa packet. Voice notes use very little airtime relative to what they deliver — a 5-second message is just 5 packets.
+
+Voice notes can be sent to another T-Deck Pro Audio device (plays automatically through the headphone jack) or to any MeshCore companion device connected to the [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) (plays through your phone's speaker as a tappable bubble in the DM view).
+
+**Before sending, your contact must have a path set.** Go to Contacts (press **C**), select your contact, and press **P** to open the Path Editor. Set a direct (zero-hop) or multi-hop path and save.
+
+**Sending a voice note:**
+
+1. Press the **Microphone key** to open the Voice Messages screen
+2. Press and **hold** the Microphone key to record — release to stop (max 12 seconds)
+3. Press **S** to open the contact picker — contacts with a direct path appear at the top
+4. Tap or scroll to your contact, then press **Enter** to send
+
+Packets are sent with staggered 3-second delays to avoid congesting the channel. On a 62.5 kHz / SF7 radio preset (e.g. Australia Narrow), a 5-second voice note arrives in roughly 20 seconds and a 12-second recording in about 42 seconds.
+
+**Receiving voice notes:**
+
+* **On a T-Deck Pro Audio device:** the voice message screen opens automatically and the message plays through the headphone jack. **Headphones are recommended** — the built-in speaker is very quiet.
+* **Via Meck-Mycelium:** voice messages appear as "🎙️ Voice message" bubbles in the DM view. Tap to play. Codec2 decoding happens entirely in the browser via WebAssembly.
+
+> **Note:** Voice recording and sending requires the **Audio variant** hardware (PCM5102A DAC). 4G and standalone variants cannot record or send voice notes, but any device connected to Meck-Mycelium can receive and play them.
+
+### Contact Management — Select, Export & Import
+
+The contacts screen supports a **select mode** for fine-grained contact management, as well as full export and import with MeshCore companion app compatibility.
+
+**Select mode (T-Deck Pro):** Long-press **Enter** on the Contacts screen to enter select mode. Use **W / S** to scroll and press **Enter** to toggle selection on individual contacts.
+
+**Select mode (T5S3):** Long-press the screen on the Contacts screen to enter select mode. Tap individual contacts to toggle their selection.
+
+| Action | T-Deck Pro | T5S3 |
+|--------|-----------|------|
+| Enter select mode | Long-press Enter | Long-press screen |
+| Toggle selection | Enter | Tap |
+| Export selected | X | — |
+| Bulk delete selected | Shift+Del (double-confirm) | — |
+| Toggle favourite | F | — |
+| Exit select mode | Q | Boot button |
+
+**Exporting contacts:** Press **X** to export. If contacts are selected in select mode, only those contacts are exported. If no contacts are selected (pressing **X** outside select mode), all contacts are exported. Contacts are saved as a JSON file to `/meshcore/meshcore_contacts.json` on the SD card with a timestamp in the filename. The JSON format is compatible with MeshCore companion apps — you can transfer the file to your phone or computer and import it into the Android, iOS, or web companion app.
+
+**Importing contacts:** Press **R** on the Contacts screen (outside select mode) to import. The importer automatically finds the most recent export file by looking at the timestamp in the filename. Import is a non-destructive merge — new contacts are added without removing existing ones.
+
+**Viewing and transferring exports:** Browse and download your exported JSON files using **OTA Tools → SD File Manager** (Settings → OTA Tools → SD File Manager — connects via WiFi AP and browser), or remove the SD card and copy the files directly.
+
 ### Lock Screen (T-Deck Pro)
 
 Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
@@ -487,6 +551,95 @@ Double-click the Boot button to lock the screen. The lock screen shows the curre
 Double-click the Boot button again to unlock and return to whatever screen you were on.
 
 An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
+
+---
+
+## Remote Repeater (T-Deck Pro 4G)
+
+The remote repeater firmware turns a T-Deck Pro 4G into a self-contained MeshCore repeater with remote management over the internet. Insert an active SIM card with a data plan, configure your MQTT broker credentials on the SD card, and you can log in and manage the repeater from anywhere in the world via the [Meck-Mycelium remote dashboard](https://pelgraine.github.io/Meck-Mycelium).
+
+The device connects to a free HiveMQ Cloud MQTT broker over the cellular network, publishing status updates (uptime, battery, signal strength, temperature, neighbour count) and subscribing to commands. The web dashboard lets you view live telemetry, sync the repeater's clock, trigger adverts, reboot the device, and more — all from a browser.
+
+This is ideal for deploying repeaters in remote or hard-to-reach locations where you can't physically visit to administer them, but where cellular coverage exists.
+
+### Remote Repeater Build Variant
+
+| Variant | Environment | Companion | 4G Modem | Audio | Max Contacts |
+|---------|------------|-----------|----------|-------|-------------|
+| Remote Repeater (4G) | `meck_remote_repeater` | — | A7682E (MQTT) | — | — |
+
+The remote repeater variant does not function as a companion device or chat client. It operates exclusively as a MeshCore repeater node with cellular MQTT telemetry and remote command support.
+
+### Setting Up HiveMQ Cloud (Free MQTT Broker)
+
+The remote repeater requires an MQTT broker to relay telemetry and commands between the device and the web dashboard. [HiveMQ Cloud](https://www.hivemq.com/mqtt-cloud-broker/) offers a free tier that is more than sufficient.
+
+**Step 1 — Create a HiveMQ Cloud account:**
+
+1. Go to https://console.hivemq.cloud/ and sign up for a free account
+2. After logging in, a **Serverless** cluster is created automatically
+3. Note the **cluster URL** shown on the overview page — it will look something like `abc123def456.s1.eu.hivemq.cloud`
+4. Note the **port** — for the T-Deck Pro 4G, use the TLS port which is typically **8883**
+
+**Step 2 — Create MQTT credentials:**
+
+1. In the HiveMQ console, go to **Access Management**
+2. Create a new set of credentials — enter a **username** and **password**
+3. Save these — you'll need them for the SD card configuration file
+
+**Step 3 — Note your connection details:**
+
+You'll need these four values for the config file:
+- **Host:** your cluster URL (e.g. `abc123def456.s1.eu.hivemq.cloud`)
+- **Port:** `8883`
+- **Username:** the credentials you just created
+- **Password:** the credentials you just created
+
+### Remote Repeater SD Card Configuration
+
+Create a file called `mqtt.cfg` in the root of the SD card with your MQTT broker details:
+
+```
+abc123.s1.eu.hivemq.cloud 
+8883 
+your_hivemq_username 
+your_hivemq_password 
+repeater-name
+```
+
+The `topic` field sets the base MQTT topic. The device publishes status to `<topic>/status` and subscribes to commands on `<topic>/cmd`. If you're running multiple remote repeaters, give each one a unique topic (e.g. `meck/repeater/hilltop`, `meck/repeater/valley`).
+
+**SD Card Folder Structure:**
+
+```
+SD Card
+├── mqtt.cfg                   (MQTT broker credentials — required)
+├── meshcore/
+│   ├── contacts.bin           (auto-created, repeater contact table)
+│   └── ...
+└── ...
+```
+
+### Deploying the Remote Repeater
+
+1. Flash `v1.6-Meck-Remote-Repeater-merged.bin` to your T-Deck Pro 4G using the MeshCore Web Flasher or esptool.py
+2. Insert a nano SIM card with an active data plan
+3. Insert an SD card with your `mqtt.cfg` file
+4. Power on the device — the modem will register on the cellular network (red LED indicates modem power)
+5. The device boots as a MeshCore repeater, connects to the cellular network, and begins publishing status updates to your MQTT broker
+6. Open the Meck-Mycelium remote dashboard to connect and manage it
+
+The e-ink display shows the repeater's current status including node name, uptime, battery level, LoRa activity, cellular signal strength, and MQTT connection state.
+
+### Remote Dashboard (Meck-Mycelium)
+
+Open https://pelgraine.github.io/Meck-Mycelium and navigate to the **Remote** tab. Enter the same MQTT broker credentials and topic from your `mqtt.cfg` file. The dashboard connects directly to HiveMQ Cloud via secure WebSocket (no data passes through any third-party server) and displays live telemetry from your remote repeater.
+
+**Dashboard features:**
+- Live status: uptime, battery, cellular signal strength, temperature, neighbour count
+- Clock sync: push your browser's clock to the repeater
+- Send advert: trigger a MeshCore advertisement broadcast
+- Reboot: remotely restart the device
 
 ---
 
@@ -717,6 +870,17 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 
 ---
 
+## Meck-Mycelium Web App
+
+[Meck-Mycelium](https://pelgraine.github.io/Meck-Mycelium) is a browser-based companion app that connects to your MeshCore device via BLE (using WebBLE in Chrome). It is a fork of [WattleFoxxo's Mycelium](https://github.com/WattleFoxxo/Mycelium) PWA, extended with Meck-specific features:
+
+- **Voice message playback** — voice notes sent from a Meck Audio device appear as tappable "🎙️ Voice message" bubbles in the DM view. Codec2 decoding happens entirely in the browser via WebAssembly — no native app or plugin required.
+- **Remote repeater dashboard** — connect to your MQTT broker to view live telemetry from remote repeater devices, send commands, sync clocks, and reboot remotely.
+
+Open **https://pelgraine.github.io/Meck-Mycelium** in Chrome on your phone or computer. WebBLE requires Chrome or a Chromium-based browser (Edge, Brave, etc.) — Firefox and Safari do not support WebBLE.
+
+---
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
@@ -811,6 +975,9 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Roomserver message handling and mark-read on login
 - [X] Alarm clock with custom MP3 sounds (audio variant)
 - [X] Customised user option for larger-font mode
+- [X] Voice notes over LoRa (audio variant) with Meck-Mycelium web app playback
+- [X] Remote repeater firmware with cellular MQTT management (4G variant)
+- [X] Contact management: select mode, selective export, JSON import/export, bulk delete
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
