@@ -43,6 +43,10 @@ private:
   // Pointer to per-contact DM unread array (owned by UITask, set via setter)
   const uint8_t* _dmUnread = nullptr;
 
+  // --- Select mode state ---
+  bool _selectMode;
+  uint8_t* _selectedBits;   // Bitfield: 1 bit per MAX_CONTACTS raw index
+
   // --- helpers ---
 
   static const char* filterLabel(FilterMode f) {
@@ -133,16 +137,30 @@ private:
     }
   }
 
+  // --- Bitfield helpers ---
+  bool isSelectedRaw(int rawIdx) const {
+    if (rawIdx < 0 || rawIdx >= MAX_CONTACTS) return false;
+    return (_selectedBits[rawIdx / 8] & (1 << (rawIdx % 8))) != 0;
+  }
+  void setSelectedRaw(int rawIdx, bool sel) {
+    if (rawIdx < 0 || rawIdx >= MAX_CONTACTS) return;
+    if (sel) _selectedBits[rawIdx / 8] |= (1 << (rawIdx % 8));
+    else     _selectedBits[rawIdx / 8] &= ~(1 << (rawIdx % 8));
+  }
+
 public:
   ContactsScreen(UITask* task, mesh::RTCClock* rtc)
     : _task(task), _rtc(rtc), _scrollPos(0), _filter(FILTER_ALL),
-      _filteredCount(0), _cacheValid(false), _rowsPerPage(5) {
+      _filteredCount(0), _cacheValid(false), _rowsPerPage(5),
+      _selectMode(false) {
   #if defined(ESP32) && defined(BOARD_HAS_PSRAM)
     _filteredIdx = (uint16_t*)ps_calloc(MAX_CONTACTS, sizeof(uint16_t));
     _filteredTs = (uint32_t*)ps_calloc(MAX_CONTACTS, sizeof(uint32_t));
+    _selectedBits = (uint8_t*)ps_calloc((MAX_CONTACTS + 7) / 8, 1);
   #else
     _filteredIdx = new uint16_t[MAX_CONTACTS]();
     _filteredTs = new uint32_t[MAX_CONTACTS]();
+    _selectedBits = new uint8_t[(MAX_CONTACTS + 7) / 8]();
   #endif
   }
 
@@ -157,6 +175,58 @@ public:
   }
 
   FilterMode getFilter() const { return _filter; }
+
+  // --- Select mode API ---
+  bool isInSelectMode() const { return _selectMode; }
+
+  void enterSelectMode() {
+    _selectMode = true;
+    memset(_selectedBits, 0, (MAX_CONTACTS + 7) / 8);
+    // Pre-select the currently highlighted contact
+    if (_filteredCount > 0 && _scrollPos < _filteredCount) {
+      setSelectedRaw(_filteredIdx[_scrollPos], true);
+    }
+  }
+
+  void exitSelectMode() {
+    _selectMode = false;
+    memset(_selectedBits, 0, (MAX_CONTACTS + 7) / 8);
+  }
+
+  void toggleSelected() {
+    if (_filteredCount == 0 || _scrollPos >= _filteredCount) return;
+    int rawIdx = _filteredIdx[_scrollPos];
+    setSelectedRaw(rawIdx, !isSelectedRaw(rawIdx));
+  }
+
+  void selectAll() {
+    for (int i = 0; i < _filteredCount; i++) {
+      setSelectedRaw(_filteredIdx[i], true);
+    }
+  }
+
+  void deselectAll() {
+    memset(_selectedBits, 0, (MAX_CONTACTS + 7) / 8);
+  }
+
+  int getSelectedCount() const {
+    int count = 0;
+    for (int i = 0; i < _filteredCount; i++) {
+      if (isSelectedRaw(_filteredIdx[i])) count++;
+    }
+    return count;
+  }
+
+  // Fill outBuf with raw contact table indices of selected contacts
+  int getSelectedRawIndices(uint16_t* outBuf, int maxOut) const {
+    int count = 0;
+    for (int i = 0; i < _filteredCount && count < maxOut; i++) {
+      if (isSelectedRaw(_filteredIdx[i])) {
+        outBuf[count++] = _filteredIdx[i];
+      }
+    }
+    return count;
+  }
 
   // Tap-to-select: given virtual Y, select contact row.
   // Returns: 0=miss, 1=moved, 2=tapped current row.
@@ -219,7 +289,12 @@ public:
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, 0);
-    snprintf(tmp, sizeof(tmp), "Contacts [%s]", filterLabel(_filter));
+    if (_selectMode) {
+      int selCount = getSelectedCount();
+      snprintf(tmp, sizeof(tmp), "%d Selected [%s]", selCount, filterLabel(_filter));
+    } else {
+      snprintf(tmp, sizeof(tmp), "Contacts [%s]", filterLabel(_filter));
+    }
     display.print(tmp);
 
     // Count on right: All → total/max, filtered → matched/total
@@ -268,6 +343,7 @@ public:
         if (!the_mesh.getContactByIdx(_filteredIdx[i], contact)) continue;
 
         bool selected = (i == _scrollPos);
+        bool sel = _selectMode && isSelectedRaw(_filteredIdx[i]);
 
         // Highlight: fill LIGHT rect first, then draw DARK text on top
         if (selected) {
@@ -285,9 +361,13 @@ public:
         // Set cursor AFTER fillRect so text draws on top of highlight
         display.setCursor(0, y);
 
-        // Prefix: "> " for selected, type char + space for others
+        // Prefix: select mode uses * for selected, normal uses > for cursor
         char prefix[4];
-        if (selected) {
+        if (_selectMode) {
+          snprintf(prefix, sizeof(prefix), "%c%c",
+                   sel ? '*' : (selected ? '>' : ' '),
+                   typeChar(contact.type));
+        } else if (selected) {
           snprintf(prefix, sizeof(prefix), ">%c", typeChar(contact.type));
         } else {
           snprintf(prefix, sizeof(prefix), " %c", typeChar(contact.type));
@@ -352,19 +432,30 @@ public:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setCursor(0, footerY);
-    display.print("Swipe:Filter");
-    const char* right = "Hold:DM/Admin";
-    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
-    display.print(right);
+    if (_selectMode) {
+      display.print("Swipe:All/Clr");
+      const char* right = "Tap:Tog Hold:Exit";
+      display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+      display.print(right);
+    } else {
+      display.print("Swipe:Filter");
+      const char* right = "Hold:DM/Admin";
+      display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+      display.print(right);
+    }
 #else
-    // Left: Q:Bk
     display.setCursor(0, footerY);
-    display.print("Q:Bk A/D:Filter");
-
-    // Right: P:Path Ent:Sel
-    const char* right = "P:Path Ent:Sel";
-    display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
-    display.print(right);
+    if (_selectMode) {
+      display.print("A:All D:Clr");
+      const char* right = "X:Exp F:Fav Q:Done";
+      display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+      display.print(right);
+    } else {
+      display.print("Q:Bk A/D:Filter");
+      const char* right = "P:Path Ent:Sel";
+      display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+      display.print(right);
+    }
 #endif
 
     return 5000;  // e-ink: next render after 5s
@@ -386,6 +477,29 @@ public:
         return true;
       }
     }
+
+    // --- Select mode key handling ---
+    if (_selectMode) {
+      // Enter/tap: toggle selection on current contact
+      if (c == 13 || c == KEY_ENTER) {
+        toggleSelected();
+        return true;
+      }
+      // A: select all in current filter
+      if (c == 'a' || c == 'A') {
+        selectAll();
+        return true;
+      }
+      // D: deselect all
+      if (c == 'd' || c == 'D') {
+        deselectAll();
+        return true;
+      }
+      // Q, X, F, Backspace — handled by main.cpp (needs mesh/SD access)
+      return false;
+    }
+
+    // --- Normal mode key handling ---
 
     // A - previous filter
     if (c == 'a' || c == 'A') {

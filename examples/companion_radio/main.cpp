@@ -104,6 +104,10 @@
   // SD-backed persistence state
   static bool sdCardReady = false;
 
+  // Contacts screen: deferred Enter for long-press detection
+  static bool contactsEnterPending = false;
+  static unsigned long contactsEnterTime = 0;
+
   // ---------------------------------------------------------------------------
   // SD Settings Backup / Restore
   // ---------------------------------------------------------------------------
@@ -343,6 +347,322 @@
     Serial.printf("Contacts import: %d added, %d already present, %d total\n",
                   added, skipped, (int)the_mesh.getNumContacts());
     return added;
+  }
+
+  // -----------------------------------------------------------------------
+  // JSON export: write selected contacts (by raw index) to SD card.
+  // Compatible with MeshCore companion app's meshcore_contacts.json format.
+  // If indices is NULL, exports ALL contacts.
+  // Returns number of contacts exported, or -1 on error.
+  // -----------------------------------------------------------------------
+  int exportContactsJSON(const uint16_t* indices, int numIndices) {
+    if (!sdCardReady) {
+      Serial.println("JSON Export: SD card not ready");
+      return -1;
+    }
+
+    if (!SD.exists("/meshcore")) SD.mkdir("/meshcore");
+
+    // Build timestamped filename: meshcore_contacts_YYYYMMDD_HHMM.json
+    char jsonPath[64];
+    uint32_t epoch = rtc_clock.getCurrentTime();
+    int8_t utcOff = the_mesh.getNodePrefs()->utc_offset_hours;
+    time_t localEpoch = (time_t)epoch + (utcOff * 3600);
+    struct tm tmBuf;
+    gmtime_r(&localEpoch, &tmBuf);
+    snprintf(jsonPath, sizeof(jsonPath),
+             "/meshcore/meshcore_contacts_%04d%02d%02d_%02d%02d.json",
+             tmBuf.tm_year + 1900, tmBuf.tm_mon + 1, tmBuf.tm_mday,
+             tmBuf.tm_hour, tmBuf.tm_min);
+
+    File f = SD.open(jsonPath, "w", true);
+    if (!f) {
+      Serial.printf("JSON Export: failed to open %s\n", jsonPath);
+      digitalWrite(SDCARD_CS, HIGH);
+      return -1;
+    }
+
+    f.print("{\n  \"contacts\": [\n");
+
+    int written = 0;
+    uint32_t total = the_mesh.getNumContacts();
+
+    // When indices is NULL, export all contacts (scan = rawIdx).
+    // When indices is provided, scan iterates over the indices array.
+    int loopCount = (indices != NULL) ? numIndices : (int)total;
+
+    for (int scan = 0; scan < loopCount; scan++) {
+      int rawIdx = (indices != NULL) ? indices[scan] : scan;
+
+      ContactInfo c;
+      if (!the_mesh.getContactByIdx(rawIdx, c)) continue;
+
+      if (written > 0) f.print(",\n");
+
+      // Public key -> 64-char hex string
+      char hexKey[65];
+      mesh::Utils::toHex(hexKey, c.id.pub_key, PUB_KEY_SIZE);
+
+      // GPS: int32 -> decimal string (6 decimal places)
+      char latStr[16], lonStr[16];
+      snprintf(latStr, sizeof(latStr), "%.6f", (double)c.gps_lat / 1000000.0);
+      snprintf(lonStr, sizeof(lonStr), "%.6f", (double)c.gps_lon / 1000000.0);
+
+      // Escape name for JSON (backslash and double-quote)
+      char safeName[80];
+      int si = 0;
+      for (int ni = 0; c.name[ni] && si < (int)sizeof(safeName) - 2; ni++) {
+        if (c.name[ni] == '"' || c.name[ni] == '\\') safeName[si++] = '\\';
+        safeName[si++] = c.name[ni];
+      }
+      safeName[si] = '\0';
+
+      f.printf("    {\n");
+      f.printf("      \"type\": %d,\n", c.type);
+      f.printf("      \"name\": \"%s\",\n", safeName);
+      f.printf("      \"custom_name\": null,\n");
+      f.printf("      \"public_key\": \"%s\",\n", hexKey);
+      f.printf("      \"flags\": %d,\n", c.flags);
+      f.printf("      \"latitude\": \"%s\",\n", latStr);
+      f.printf("      \"longitude\": \"%s\",\n", lonStr);
+      f.printf("      \"last_advert\": %lu,\n", (unsigned long)c.last_advert_timestamp);
+      f.printf("      \"last_modified\": %lu,\n", (unsigned long)c.lastmod);
+      f.printf("      \"out_path_list\": null\n");
+      f.printf("    }");
+
+      written++;
+    }
+
+    f.print("\n  ]\n}\n");
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    Serial.printf("JSON Export: %d contacts to %s\n", written, jsonPath);
+    return written;
+  }
+
+  // -----------------------------------------------------------------------
+  // JSON import: merge contacts from newest meshcore_contacts*.json on SD.
+  // Scans /meshcore/ for the most recent file matching the pattern.
+  // Compatible with MeshCore companion app export format.
+  // Skips contacts already present (by pub_key match).
+  // Returns number of NEW contacts added, or -1 on error.
+  // -----------------------------------------------------------------------
+  int importContactsJSON() {
+    if (!sdCardReady) return -1;
+    if (!SD.exists("/meshcore")) return -1;
+
+    // Scan /meshcore/ for the newest meshcore_contacts*.json file.
+    // Timestamped filenames (YYYYMMDD_HHMM) sort lexicographically by recency.
+    // Also matches the plain "meshcore_contacts.json" from the MeshCore app.
+    char bestPath[64] = {0};
+    char bestName[48] = {0};
+
+    File dir = SD.open("/meshcore");
+    if (!dir || !dir.isDirectory()) return -1;
+
+    File entry = dir.openNextFile();
+    while (entry) {
+      if (!entry.isDirectory()) {
+        const char* name = entry.name();
+        // SD library may return full path or bare filename — strip to bare name
+        const char* slash = strrchr(name, '/');
+        if (slash) name = slash + 1;
+        // Match: starts with "meshcore_contacts" and ends with ".json"
+        if (strncmp(name, "meshcore_contacts", 17) == 0) {
+          int nlen = strlen(name);
+          if (nlen > 5 && strcmp(name + nlen - 5, ".json") == 0) {
+            // Keep the lexicographically greatest filename (= newest timestamp)
+            if (bestName[0] == '\0' || strcmp(name, bestName) > 0) {
+              strncpy(bestName, name, sizeof(bestName) - 1);
+              snprintf(bestPath, sizeof(bestPath), "/meshcore/%s", name);
+            }
+          }
+        }
+      }
+      entry = dir.openNextFile();
+    }
+    dir.close();
+
+    if (bestPath[0] == '\0') {
+      Serial.println("JSON Import: no meshcore_contacts*.json found");
+      return -1;
+    }
+
+    Serial.printf("JSON Import: opening %s\n", bestPath);
+    File f = SD.open(bestPath, "r");
+    if (!f) return -1;
+
+    int added = 0, skipped = 0;
+
+    // Simple line-by-line parser — no ArduinoJson dependency.
+    ContactInfo c;
+    bool inContact = false;
+    uint8_t pubkey[PUB_KEY_SIZE];
+    bool gotPubkey = false;
+    bool gotType = false;
+    char lineBuf[256];
+
+    while (f.available()) {
+      int len = 0;
+      while (f.available() && len < (int)sizeof(lineBuf) - 1) {
+        char ch = f.read();
+        if (ch == '\n') break;
+        lineBuf[len++] = ch;
+      }
+      lineBuf[len] = '\0';
+
+      // Trim leading whitespace
+      char* line = lineBuf;
+      while (*line == ' ' || *line == '\t') line++;
+
+      // Detect contact block boundaries
+      if (strstr(line, "{") && !strstr(line, "\"contacts\"")) {
+        memset(&c, 0, sizeof(c));
+        gotPubkey = false;
+        gotType = false;
+        c.out_path_len = OUT_PATH_UNKNOWN;
+        c.shared_secret_valid = false;
+        inContact = true;
+        continue;
+      }
+
+      if (inContact && line[0] == '}') {
+        // End of contact object — try to import
+        if (gotPubkey && gotType) {
+          c.id = mesh::Identity(pubkey);
+          if (the_mesh.lookupContactByPubKey(pubkey, PUB_KEY_SIZE) != NULL) {
+            skipped++;
+          } else if (the_mesh.addContact(c)) {
+            added++;
+          } else {
+            Serial.printf("JSON Import: table full after %d added\n", added);
+            break;
+          }
+        }
+        inContact = false;
+        continue;
+      }
+
+      if (!inContact) continue;
+
+      // Parse key-value pairs
+      char* q1 = strchr(line, '"');
+      if (!q1) continue;
+      char* q2 = strchr(q1 + 1, '"');
+      if (!q2) continue;
+      *q2 = '\0';
+      const char* key = q1 + 1;
+
+      // Find the value after ": "
+      char* valStart = q2 + 1;
+      while (*valStart == ':' || *valStart == ' ' || *valStart == '\t') valStart++;
+
+      // Strip trailing comma and whitespace
+      int vlen = strlen(valStart);
+      while (vlen > 0 && (valStart[vlen-1] == ',' || valStart[vlen-1] == '\n' ||
+             valStart[vlen-1] == '\r' || valStart[vlen-1] == ' ')) {
+        valStart[--vlen] = '\0';
+      }
+
+      if (strcmp(key, "type") == 0) {
+        c.type = (uint8_t)atoi(valStart);
+        gotType = true;
+      }
+      else if (strcmp(key, "name") == 0) {
+        if (valStart[0] == '"') valStart++;
+        int slen = strlen(valStart);
+        if (slen > 0 && valStart[slen-1] == '"') valStart[slen-1] = '\0';
+        // Unescape \" and \\ in-place
+        int wi = 0;
+        for (int ri = 0; valStart[ri] && wi < 31; ri++) {
+          if (valStart[ri] == '\\' && valStart[ri+1]) { ri++; }
+          c.name[wi++] = valStart[ri];
+        }
+        c.name[wi] = '\0';
+      }
+      else if (strcmp(key, "public_key") == 0) {
+        if (valStart[0] == '"') valStart++;
+        int slen = strlen(valStart);
+        if (slen > 0 && valStart[slen-1] == '"') valStart[slen-1] = '\0';
+        if (mesh::Utils::fromHex(pubkey, PUB_KEY_SIZE, valStart)) {
+          gotPubkey = true;
+        }
+      }
+      else if (strcmp(key, "flags") == 0) {
+        c.flags = (uint8_t)atoi(valStart);
+      }
+      else if (strcmp(key, "latitude") == 0) {
+        if (valStart[0] == '"') valStart++;
+        int slen = strlen(valStart);
+        if (slen > 0 && valStart[slen-1] == '"') valStart[slen-1] = '\0';
+        c.gps_lat = (int32_t)(atof(valStart) * 1000000.0);
+      }
+      else if (strcmp(key, "longitude") == 0) {
+        if (valStart[0] == '"') valStart++;
+        int slen = strlen(valStart);
+        if (slen > 0 && valStart[slen-1] == '"') valStart[slen-1] = '\0';
+        c.gps_lon = (int32_t)(atof(valStart) * 1000000.0);
+      }
+      else if (strcmp(key, "last_advert") == 0) {
+        c.last_advert_timestamp = (uint32_t)strtoul(valStart, NULL, 10);
+      }
+      else if (strcmp(key, "last_modified") == 0) {
+        c.lastmod = (uint32_t)strtoul(valStart, NULL, 10);
+      }
+      // custom_name, out_path_list — ignored
+    }
+
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+
+    if (added > 0) {
+      the_mesh.saveContacts();
+    }
+
+    Serial.printf("JSON Import: %d added, %d skipped, %d total\n",
+                  added, skipped, (int)the_mesh.getNumContacts());
+    return added;
+  }
+
+  // -----------------------------------------------------------------------
+  // Select mode actions — delete selected contacts, toggle favourite
+  // -----------------------------------------------------------------------
+  int deleteSelectedContacts(const uint16_t* indices, int count) {
+    // Delete in reverse order so indices remain valid
+    int deleted = 0;
+    for (int i = count - 1; i >= 0; i--) {
+      ContactInfo c;
+      if (the_mesh.getContactByIdx(indices[i], c)) {
+        if (the_mesh.removeContact(c)) {
+          deleted++;
+        }
+      }
+    }
+    if (deleted > 0) {
+      the_mesh.saveContacts();
+    }
+    Serial.printf("Deleted %d/%d selected contacts\n", deleted, count);
+    return deleted;
+  }
+
+  int toggleFavouriteSelected(const uint16_t* indices, int count) {
+    int toggled = 0;
+    for (int i = 0; i < count; i++) {
+      ContactInfo tmp;
+      if (the_mesh.getContactByIdx(indices[i], tmp)) {
+        ContactInfo* cp = the_mesh.lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+        if (cp) {
+          cp->flags ^= 0x01;  // Toggle favourite bit
+          toggled++;
+        }
+      }
+    }
+    if (toggled > 0) {
+      the_mesh.saveContacts();
+    }
+    Serial.printf("Toggled favourite on %d contacts\n", toggled);
+    return toggled;
   }
 #endif
 
@@ -951,6 +1271,7 @@ static void lastHeardToggleContact() {
     }
 
     // Contacts screen: tap to select row, tap same row to activate
+    // In select mode: tap same row toggles checkbox instead
     if (ui_task.isOnContactsScreen()) {
       ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
       if (cs) {
@@ -959,7 +1280,14 @@ static void lastHeardToggleContact() {
           ui_task.forceRefresh();
           return 0;  // Moved cursor
         }
-        if (result == 2) return KEY_ENTER;  // Same row — activate
+        if (result == 2) {
+          if (cs->isInSelectMode()) {
+            cs->toggleSelected();
+            ui_task.forceRefresh();
+            return 0;
+          }
+          return KEY_ENTER;  // Normal mode — activate
+        }
       }
       return 0;
     }
@@ -1196,49 +1524,25 @@ static void lastHeardToggleContact() {
 #endif
     }
 
-    // Contacts screen: long press → DM for chat contacts, admin for repeaters
+    // Contacts screen: long press
+    //   If NOT in select mode → enter select mode
+    //   If already in select mode → exit select mode
     if (ui_task.isOnContactsScreen()) {
       ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
       if (cs) {
-        int idx = cs->getSelectedContactIdx();
-        uint8_t ctype = cs->getSelectedContactType();
-#if defined(LilyGo_T5S3_EPaper_Pro)
-        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-          if (ui_task.hasDMUnread(idx)) {
-            char cname[32];
-            cs->getSelectedContactName(cname, sizeof(cname));
-            ui_task.clearDMUnread(idx);
-            ui_task.gotoDMConversation(cname);
-            return 0;
-          }
-          char dname[32];
-          cs->getSelectedContactName(dname, sizeof(dname));
-          char label[40];
-          snprintf(label, sizeof(label), "DM: %s", dname);
-          ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
-          return 0;
-        } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
-          ui_task.gotoRepeaterAdmin(idx);
-          return 0;
-        } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
-          // Room server: open login (after login, auto-redirects to conversation)
-          ui_task.gotoRepeaterAdmin(idx);
-          return 0;
-        } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
-          char cname[32];
-          cs->getSelectedContactName(cname, sizeof(cname));
-          ui_task.clearDMUnread(idx);
-          ui_task.gotoDMConversation(cname);
+        if (!cs->isInSelectMode()) {
+          // Enter select mode on long press
+          cs->enterSelectMode();
+          ui_task.forceRefresh();
+          Serial.println("Contacts: entered select mode (touch long press)");
           return 0;
         }
-#else
-        // T-Deck Pro: repeater admin works directly, DM via keyboard compose
-        if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
-          ui_task.gotoRepeaterAdmin(idx);
-          return 0;
-        }
-        return KEY_ENTER;
-#endif
+        // Already in select mode: long press exits select mode on both platforms
+        // (T-Deck Pro uses keyboard for actions; T5S3 can use CardKB if attached)
+        cs->exitSelectMode();
+        ui_task.forceRefresh();
+        Serial.println("Contacts: exited select mode (touch long press)");
+        return 0;
       }
       return KEY_ENTER;
     }
@@ -2448,6 +2752,61 @@ void loop() {
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
+
+    // Deferred Enter processing for contacts screen long-press detection.
+    // Enter is captured in handleKeyboardInput() but action is deferred so
+    // we can distinguish short press (DM/admin) from long press (select mode).
+    if (contactsEnterPending && ui_task.isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+      bool inSelect = cs && cs->isInSelectMode();
+
+      if (!keyboard.isEnterHeld()) {
+        // Released — short press
+        contactsEnterPending = false;
+        if (inSelect) {
+          // In select mode: toggle current contact's checkbox
+          if (cs) { cs->toggleSelected(); ui_task.forceRefresh(); }
+        } else {
+          // Normal mode: fire the DM/admin action
+          if (cs) {
+            int idx = cs->getSelectedContactIdx();
+            uint8_t ctype = cs->getSelectedContactType();
+            if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+              if (ui_task.hasDMUnread(idx)) {
+                char cname[32];
+                cs->getSelectedContactName(cname, sizeof(cname));
+                ui_task.clearDMUnread(idx);
+                ui_task.gotoDMConversation(cname);
+              } else {
+                composeDM = true;
+                composeDMContactIdx = idx;
+                cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
+                composeMode = true;
+                composeBuffer[0] = '\0';
+                composePos = 0;
+                drawComposeScreen();
+                lastComposeRefresh = millis();
+              }
+            } else if (idx >= 0 && (ctype == ADV_TYPE_REPEATER || ctype == ADV_TYPE_ROOM)) {
+              ui_task.gotoRepeaterAdmin(idx);
+            } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+              char cname[32];
+              cs->getSelectedContactName(cname, sizeof(cname));
+              ui_task.clearDMUnread(idx);
+              ui_task.gotoDMConversation(cname);
+            }
+          }
+        }
+      } else if (keyboard.enterHeldMs() >= 600 && !inSelect) {
+        // Long press threshold — enter select mode
+        contactsEnterPending = false;
+        if (cs) {
+          cs->enterSelectMode();
+          ui_task.forceRefresh();
+          Serial.println("Contacts: entered select mode (long press)");
+        }
+      }
+    }
   #endif
 
   // ---------------------------------------------------------------------------
@@ -2722,9 +3081,13 @@ void loop() {
                   }
                 }
               } else if (ui_task.isOnContactsScreen()) {
-                // DM compose for chat contacts, admin for repeaters
                 ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
-                if (cs) {
+                if (cs && cs->isInSelectMode()) {
+                  // Select mode: Enter toggles checkbox
+                  cs->toggleSelected();
+                  ui_task.forceRefresh();
+                } else if (cs) {
+                  // Normal mode: DM compose for chat contacts, admin for repeaters
                   int idx = cs->getSelectedContactIdx();
                   uint8_t ctype = cs->getSelectedContactType();
                   if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
@@ -3556,6 +3919,129 @@ void handleKeyboardInput() {
   }
   #endif
 
+  // ---------------------------------------------------------------------------
+  // Contacts select mode — intercept keys before normal navigation
+  // ---------------------------------------------------------------------------
+  if (ui_task.isOnContactsScreen()) {
+    ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+    if (cs && cs->isInSelectMode()) {
+      switch (key) {
+        case 'q':
+          // Exit select mode (don't go home)
+          cs->exitSelectMode();
+          ui_task.forceRefresh();
+          Serial.println("Contacts: exited select mode");
+          return;
+
+        case '\b': {
+          // Backspace in select mode:
+          //   Shift+Backspace = delete selected (with confirmation)
+          //   Plain backspace = exit select mode
+          if (keyboard.wasShiftConsumed()) {
+            static unsigned long lastDeleteAttempt = 0;
+            int selCount = cs->getSelectedCount();
+            if (selCount == 0) {
+              ui_task.showAlert("None selected", 1500);
+              return;
+            }
+            if (millis() - lastDeleteAttempt < 3000) {
+              uint16_t* selBuf = (uint16_t*)malloc(selCount * sizeof(uint16_t));
+              if (!selBuf) { ui_task.showAlert("Memory error", 1500); return; }
+              int n = cs->getSelectedRawIndices(selBuf, selCount);
+              int deleted = deleteSelectedContacts(selBuf, n);
+              free(selBuf);
+              char msg[48];
+              snprintf(msg, sizeof(msg), "Deleted %d contacts", deleted);
+              ui_task.showAlert(msg, 2000);
+              cs->exitSelectMode();
+              cs->invalidateCache();
+              ui_task.forceRefresh();
+              lastDeleteAttempt = 0;
+            } else {
+              lastDeleteAttempt = millis();
+              char msg[48];
+              snprintf(msg, sizeof(msg), "Delete %d? Shift+Del again", selCount);
+              ui_task.showAlert(msg, 2500);
+            }
+          } else {
+            // Plain backspace = exit select mode
+            cs->exitSelectMode();
+            ui_task.forceRefresh();
+            Serial.println("Contacts: exited select mode (backspace)");
+          }
+          return;
+        }
+
+        case 'x': {
+          // Export selected contacts as JSON
+          int selCount = cs->getSelectedCount();
+          if (selCount == 0) {
+            ui_task.showAlert("None selected", 1500);
+            return;
+          }
+          uint16_t* selBuf = (uint16_t*)malloc(selCount * sizeof(uint16_t));
+          if (!selBuf) { ui_task.showAlert("Memory error", 1500); return; }
+          int n = cs->getSelectedRawIndices(selBuf, selCount);
+          int exported = exportContactsJSON(selBuf, n);
+          free(selBuf);
+          if (exported >= 0) {
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Exported %d to SD (JSON)", exported);
+            ui_task.showAlert(msg, 2500);
+            cs->exitSelectMode();
+          } else {
+            ui_task.showAlert("Export failed", 2000);
+          }
+          ui_task.forceRefresh();
+          return;
+        }
+
+        case 'r': {
+          // Import contacts from JSON
+          int added = importContactsJSON();
+          if (added == -1) added = importContactsFromSD();
+          if (added > 0) {
+            cs->invalidateCache();
+            cs->exitSelectMode();
+            char msg[48];
+            snprintf(msg, sizeof(msg), "+%d imported (JSON)", added);
+            ui_task.showAlert(msg, 2500);
+          } else if (added == 0) {
+            ui_task.showAlert("No new contacts", 2000);
+          } else {
+            ui_task.showAlert("Import failed (no file?)", 2000);
+          }
+          ui_task.forceRefresh();
+          return;
+        }
+
+        case 'f': {
+          // Toggle favourite on selected contacts
+          int selCount = cs->getSelectedCount();
+          if (selCount == 0) {
+            ui_task.showAlert("None selected", 1500);
+            return;
+          }
+          uint16_t* selBuf = (uint16_t*)malloc(selCount * sizeof(uint16_t));
+          if (!selBuf) { ui_task.showAlert("Memory error", 1500); return; }
+          int n = cs->getSelectedRawIndices(selBuf, selCount);
+          int toggled = toggleFavouriteSelected(selBuf, n);
+          free(selBuf);
+          char msg[48];
+          snprintf(msg, sizeof(msg), "Toggled fav on %d", toggled);
+          ui_task.showAlert(msg, 1500);
+          cs->invalidateCache();
+          ui_task.forceRefresh();
+          return;
+        }
+
+        // W, S, A, D, Enter — handled by ContactsScreen::handleInput
+        default:
+          break;  // Fall through to normal switch
+      }
+    }
+  }
+
   switch (key) {
     case 'c':
       // Open contacts list
@@ -3800,51 +4286,10 @@ void handleKeyboardInput() {
           ui_task.gotoContactsScreen();
         }
       } else if (ui_task.isOnContactsScreen()) {
-        ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
-        int idx = cs->getSelectedContactIdx();
-        uint8_t ctype = cs->getSelectedContactType();
-        if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-          // If unread DMs exist, go to conversation view to read first
-          if (ui_task.hasDMUnread(idx)) {
-            char cname[32];
-            cs->getSelectedContactName(cname, sizeof(cname));
-            ui_task.clearDMUnread(idx);
-            ui_task.gotoDMConversation(cname);
-            Serial.printf("Unread DMs from %s — opening conversation\n", cname);
-          } else {
-            composeDM = true;
-            composeDMContactIdx = idx;
-            cs->getSelectedContactName(composeDMName, sizeof(composeDMName));
-            composeMode = true;
-            composeBuffer[0] = '\0';
-            composePos = 0;
-            Serial.printf("Entering DM compose to %s (idx %d)\n", composeDMName, idx);
-            drawComposeScreen();
-            lastComposeRefresh = millis();
-          }
-        } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
-          // Open repeater admin screen
-          char rname[32];
-          cs->getSelectedContactName(rname, sizeof(rname));
-          Serial.printf("Opening repeater admin for %s (idx %d)\n", rname, idx);
-          ui_task.gotoRepeaterAdmin(idx);
-        } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
-          // Room server: open login screen (after login, auto-redirects to conversation)
-          char rname[32];
-          cs->getSelectedContactName(rname, sizeof(rname));
-          Serial.printf("Room %s — opening login\n", rname);
-          ui_task.gotoRepeaterAdmin(idx);
-        } else if (idx >= 0) {
-          // Other contacts with unreads
-          if (ui_task.hasDMUnread(idx)) {
-            char cname[32];
-            cs->getSelectedContactName(cname, sizeof(cname));
-            ui_task.clearDMUnread(idx);
-            ui_task.gotoDMConversation(cname);
-          } else {
-            Serial.printf("Selected contact type=%d idx=%d\n", ctype, idx);
-          }
-        }
+        // Defer Enter for long-press detection (select mode vs DM/admin)
+        contactsEnterPending = true;
+        contactsEnterTime = millis();
+        Serial.println("Contacts: Enter pressed, deferring for long-press check");
       } else if (ui_task.isOnChannelScreen()) {
         // If path overlay is showing, Enter copies path text to compose buffer
         ChannelScreen* chScr2 = (ChannelScreen*)ui_task.getChannelScreen();
@@ -3966,8 +4411,10 @@ void handleKeyboardInput() {
       if (ui_task.isOnMapScreen()) {
         ui_task.injectKey('x');
       } else if (ui_task.isOnContactsScreen()) {
-        Serial.println("Contacts: Exporting to SD...");
-        int exported = exportContactsToSD();
+        // Normal mode: export ALL as JSON + binary backup
+        Serial.println("Contacts: Exporting all to SD...");
+        exportContactsToSD();  // Binary backup (legacy)
+        int exported = exportContactsJSON(NULL, 0);  // JSON (interchangeable)
         if (exported >= 0) {
           char alertBuf[48];
           snprintf(alertBuf, sizeof(alertBuf), "Exported %d to SD", exported);
@@ -3983,10 +4430,14 @@ void handleKeyboardInput() {
       if (ui_task.isOnChannelScreen()) {
         ui_task.injectKey('r');
       } else if (ui_task.isOnContactsScreen()) {
+        // Try JSON first, fall back to binary
         Serial.println("Contacts: Importing from SD...");
-        int added = importContactsFromSD();
+        int added = importContactsJSON();
+        if (added == -1) {
+          // No JSON file — try legacy binary
+          added = importContactsFromSD();
+        }
         if (added > 0) {
-          // Invalidate the contacts screen cache so it rebuilds
           ContactsScreen* cs2 = (ContactsScreen*)ui_task.getContactsScreen();
           if (cs2) cs2->invalidateCache();
           char alertBuf[48];
@@ -3996,7 +4447,7 @@ void handleKeyboardInput() {
         } else if (added == 0) {
           ui_task.showAlert("No new contacts to add", 2000);
         } else {
-          ui_task.showAlert("Import failed (no backup?)", 2000);
+          ui_task.showAlert("Import failed (no file?)", 2000);
         }
       }
       break;
@@ -4059,6 +4510,17 @@ void handleKeyboardInput() {
         }
       }
 #endif
+      // Contacts select mode: Q/backspace exits select mode (doesn't go home)
+      if (ui_task.isOnContactsScreen()) {
+        ContactsScreen* csq = (ContactsScreen*)ui_task.getContactsScreen();
+        if (csq && csq->isInSelectMode()) {
+          csq->exitSelectMode();
+          ui_task.forceRefresh();
+          Serial.println("Contacts: exited select mode (Q/backspace)");
+          break;
+        }
+        // Normal mode: fall through to go home
+      }
       // Discovery screen: Q goes back to contacts (not home)
       if (ui_task.isOnDiscoveryScreen()) {
         the_mesh.stopDiscovery();

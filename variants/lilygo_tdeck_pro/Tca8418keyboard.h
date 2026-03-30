@@ -38,6 +38,8 @@ private:
   bool _symActive;     // Sticky sym (one-shot)
   bool _micHeld;       // Mic key physically held down (for PTT release detection)
   unsigned long _lastShiftTime;  // For Shift+key combos
+  bool _enterHeld;              // Enter key physically held down
+  unsigned long _enterPressTime; // millis() when Enter was pressed
 
   uint8_t readReg(uint8_t reg) {
     _wire->beginTransmission(_addr);
@@ -154,7 +156,8 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0) {}
+      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
+      _enterHeld(false), _enterPressTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -256,6 +259,11 @@ public:
     }
 
     // Only act on key press, not release
+    // (Enter release tracked for long-press detection)
+    if (!pressed && keyCode == 21) {
+      _enterHeld = false;
+      return 0;
+    }
     if (!pressed || keyCode == 0) {
       return 0;
     }
@@ -278,6 +286,13 @@ public:
       _symActive = true;
       Serial.println("KB: Sym activated");
       return 0;
+    }
+
+    // Track Enter press for long-press detection
+    if (keyCode == 21) {
+      _enterHeld = true;
+      _enterPressTime = millis();
+      // Fall through to normal processing — '\r' is returned below
     }
     
     // Handle dedicated $ key (key code 22, next to M)
@@ -367,5 +382,11 @@ public:
   // (immune to e-ink refresh timing unlike wasShiftRecentlyPressed)
   bool wasShiftConsumed() const {
     return _shiftConsumed;
+  }
+
+  // Enter long-press detection
+  bool isEnterHeld() const { return _enterHeld; }
+  unsigned long enterHeldMs() const {
+    return _enterHeld ? (millis() - _enterPressTime) : 0;
   }
 };
