@@ -792,8 +792,20 @@ restart:
     goto restart;
   }
 
-  mqttSubscribe(_topicCmd);
-  mqttSubscribe(_topicOta);
+// Allow MQTT session to stabilise before subscribing
+  vTaskDelay(pdMS_TO_TICKS(2000));
+
+  // Subscribe with retry — the modem sometimes misses the first prompt
+  for (int i = 0; i < 3; i++) {
+    if (mqttSubscribe(_topicCmd)) break;
+    Serial.printf("[Cell] Subscribe retry %d for cmd topic\n", i + 1);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  for (int i = 0; i < 3; i++) {
+    if (mqttSubscribe(_topicOta)) break;
+    Serial.printf("[Cell] Subscribe retry %d for ota topic\n", i + 1);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 
   _state = CellState::CONNECTED;
   _reconnectDelay = MQTT_RECONNECT_MIN;
