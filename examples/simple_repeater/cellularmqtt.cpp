@@ -5,7 +5,8 @@
 #include <SD.h>
 #include <esp_mac.h>
 #include <time.h> 
-#include <sys/time.h> 
+#include <sys/time.h>
+#include <Update.h>
 
 CellularMQTT cellularMQTT;
 
@@ -77,6 +78,17 @@ void CellularMQTT::updateTelemetry(const TelemetryData& data) {
   }
 }
 
+void CellularMQTT::requestOTA(const char* url) {
+  if (_state == CellState::OTA_IN_PROGRESS) {
+    Serial.println("[OTA] Already in progress");
+    return;
+  }
+  strncpy(_otaUrl, url, sizeof(_otaUrl) - 1);
+  _otaUrl[sizeof(_otaUrl) - 1] = '\0';
+  _otaPending = true;
+  Serial.printf("[OTA] Requested: %s\n", url);
+}
+
 int CellularMQTT::getSignalBars() const {
   if (_csq == 99 || _csq == 0) return 0;
   if (_csq <= 5)  return 1;
@@ -97,6 +109,7 @@ const char* CellularMQTT::stateString() const {
     case CellState::MQTT_CONNECTING: return "MQTT CONN";
     case CellState::CONNECTED:       return "CONNECTED";
     case CellState::RECONNECTING:    return "RECONN";
+    case CellState::OTA_IN_PROGRESS: return "OTA";
     case CellState::ERROR:           return "ERROR";
     default:                         return "???";
   }
@@ -104,12 +117,6 @@ const char* CellularMQTT::stateString() const {
 
 // ---------------------------------------------------------------------------
 // Config file: /remote/mqtt.cfg
-// Format (one value per line):
-//   broker.hivemq.cloud
-//   8883
-//   myusername
-//   mypassword
-//   mydeviceid          (optional — auto-generated from MAC if omitted)
 // ---------------------------------------------------------------------------
 
 bool CellularMQTT::loadConfig(MQTTConfig& cfg) {
@@ -133,7 +140,6 @@ bool CellularMQTT::loadConfig(MQTTConfig& cfg) {
   line = f.readStringUntil('\n'); line.trim();
   strncpy(cfg.password, line.c_str(), sizeof(cfg.password) - 1);
 
-  // Optional device ID
   if (f.available()) {
     line = f.readStringUntil('\n'); line.trim();
     if (line.length() > 0) {
@@ -143,7 +149,6 @@ bool CellularMQTT::loadConfig(MQTTConfig& cfg) {
 
   f.close();
 
-  // Auto-generate device ID from ESP32 MAC if not provided
   if (cfg.deviceId[0] == '\0') {
     uint8_t mac[6];
     esp_efuse_mac_get_default(mac);
@@ -155,7 +160,7 @@ bool CellularMQTT::loadConfig(MQTTConfig& cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// Modem power-on (same sequence as ModemManager)
+// Modem power-on
 // ---------------------------------------------------------------------------
 
 bool CellularMQTT::modemPowerOn() {
@@ -366,11 +371,8 @@ void CellularMQTT::handleMqttRxPayload(const char* data, int len) {
       Serial.println("[Cell] Command queue full, dropping");
     }
   } else if (strstr(_rxTopic, "/ota")) {
-    MQTTCommand cmd;
-    memset(&cmd, 0, sizeof(cmd));
-    snprintf(cmd.cmd, sizeof(cmd.cmd), "ota:%s", data);
-    xQueueSend(_cmdQueue, &cmd, 0);
-    Serial.printf("[Cell] Queued OTA URL: %s\n", data);
+    // Handle OTA directly in the modem task (not queued through main loop)
+    requestOTA(data);
   }
 }
 
@@ -386,11 +388,10 @@ void CellularMQTT::handleMqttConnLost(const char* line) {
 }
 
 // ---------------------------------------------------------------------------
-// APN resolution (reuses Meck's ApnDatabase)
+// APN resolution
 // ---------------------------------------------------------------------------
 
 void CellularMQTT::resolveAPN() {
-  // 1. Check SD config
   File f = SD.open("/remote/apn.cfg", FILE_READ);
   if (f) {
     String line = f.readStringUntil('\n');
@@ -406,7 +407,6 @@ void CellularMQTT::resolveAPN() {
     }
   }
 
-  // 2. Check modem's current APN
   if (sendAT("AT+CGDCONT?", "OK", 3000)) {
     char* p = strstr(_atBuf, "+CGDCONT:");
     if (p) {
@@ -429,7 +429,6 @@ void CellularMQTT::resolveAPN() {
     }
   }
 
-  // 3. Auto-detect from IMSI
   if (_imsi[0]) {
     const ApnEntry* entry = apnLookupFromIMSI(_imsi);
     if (entry) {
@@ -447,7 +446,7 @@ void CellularMQTT::resolveAPN() {
 }
 
 // ---------------------------------------------------------------------------
-// Data connection — activate PDP context
+// Data connection
 // ---------------------------------------------------------------------------
 
 bool CellularMQTT::activateData() {
@@ -462,7 +461,6 @@ bool CellularMQTT::activateData() {
     }
   }
 
-  // Query IP address
   if (sendAT("AT+CGPADDR=1", "OK", 5000)) {
     char* p = strstr(_atBuf, "+CGPADDR:");
     if (p) {
@@ -497,7 +495,6 @@ bool CellularMQTT::mqttStart() {
     }
   }
 
-  // Acquire client with SSL enabled (third param = 1 for SSL)
   char cmd[120];
   snprintf(cmd, sizeof(cmd), "AT+CMQTTACCQ=0,\"%s\",1", _config.deviceId);
   if (!sendAT(cmd, "OK", 5000)) {
@@ -505,16 +502,9 @@ bool CellularMQTT::mqttStart() {
     return false;
   }
 
-  // Configure TLS 1.2 (sslversion 4 = TLS 1.2)
   sendAT("AT+CSSLCFG=\"sslversion\",0,4", "OK", 3000);
-
-  // Skip certificate verification (no CA cert loaded on device)
   sendAT("AT+CSSLCFG=\"authmode\",0,0", "OK", 3000);
-
-  // Enable SNI — required for HiveMQ Cloud (shared IP, multiple clusters)
   sendAT("AT+CSSLCFG=\"enableSNI\",0,1", "OK", 3000);
-
-  // Bind SSL config to MQTT session
   sendAT("AT+CMQTTSSLCFG=0,0", "OK", 3000);
 
   return true;
@@ -529,11 +519,9 @@ bool CellularMQTT::mqttConnect() {
 
   Serial.printf("[Cell] TX: AT+CMQTTCONNECT=0,\"ssl://%s:%d\",...\n",
                 _config.broker, _config.port);
-                Serial.printf("[Cell] Full cmd (%d chars): %s\n", strlen(cmd), cmd);
+  Serial.printf("[Cell] Full cmd (%d chars): %s\n", strlen(cmd), cmd);
   MODEM_SERIAL.println(cmd);
 
-  // Wait for +CMQTTCONNECT URC (any result code, not just success)
-  // Don't use waitResponse — it bails on "ERROR" before we see the code
   unsigned long start = millis();
   int pos = 0;
   _atBuf[0] = '\0';
@@ -545,10 +533,8 @@ bool CellularMQTT::mqttConnect() {
         _atBuf[pos++] = c;
         _atBuf[pos] = '\0';
       }
-      // Check for the URC regardless of what else is in the buffer
       char* p = strstr(_atBuf, "+CMQTTCONNECT:");
       if (p) {
-        // Give it a moment to complete the line
         vTaskDelay(pdMS_TO_TICKS(100));
         while (MODEM_SERIAL.available() && pos < AT_BUF_SIZE - 1) {
           _atBuf[pos++] = MODEM_SERIAL.read();
@@ -570,7 +556,6 @@ bool CellularMQTT::mqttConnect() {
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 
-  // Timeout — dump what we got
   int len = strlen(_atBuf);
   while (len > 0 && (_atBuf[len-1] == '\r' || _atBuf[len-1] == '\n')) _atBuf[--len] = '\0';
   Serial.printf("[Cell] MQTT connect timeout. Buffer: %.200s\n", _atBuf);
@@ -596,7 +581,6 @@ bool CellularMQTT::mqttPublish(const char* topic, const char* payload) {
   int tlen = strlen(topic);
   int plen = strlen(payload);
 
-  // Step 1: Set topic
   char cmd[80];
   snprintf(cmd, sizeof(cmd), "AT+CMQTTTOPIC=0,%d", tlen);
   MODEM_SERIAL.println(cmd);
@@ -611,7 +595,6 @@ bool CellularMQTT::mqttPublish(const char* topic, const char* payload) {
     return false;
   }
 
-  // Step 2: Set payload
   snprintf(cmd, sizeof(cmd), "AT+CMQTTPAYLOAD=0,%d", plen);
   MODEM_SERIAL.println(cmd);
   if (!waitPrompt(5000)) {
@@ -624,14 +607,12 @@ bool CellularMQTT::mqttPublish(const char* topic, const char* payload) {
     return false;
   }
 
-  // Step 3: Publish QoS 1, 60s timeout
   if (!sendAT("AT+CMQTTPUB=0,1,60", "OK", 15000)) {
     _pubFailCount++;
     Serial.printf("[Cell] Publish failed (%d consecutive)\n", _pubFailCount);
     return false;
   }
 
-  // Success — reset failure counter
   _pubFailCount = 0;
   return true;
 }
@@ -640,6 +621,256 @@ void CellularMQTT::mqttDisconnect() {
   sendAT("AT+CMQTTDISC=0,60", "OK", 5000);
   sendAT("AT+CMQTTREL=0", "OK", 3000);
   sendAT("AT+CMQTTSTOP", "OK", 5000);
+}
+
+// ---------------------------------------------------------------------------
+// OTA — HTTP download + ESP32 flash
+// ---------------------------------------------------------------------------
+
+void CellularMQTT::otaPublish(const char* msg) {
+  Serial.printf("[OTA] %s\n", msg);
+  mqttPublish(_topicRsp, msg);
+}
+
+int CellularMQTT::readRawBytes(uint8_t* dest, int count, uint32_t timeout_ms) {
+  unsigned long start = millis();
+  int received = 0;
+  while (received < count && millis() - start < timeout_ms) {
+    while (MODEM_SERIAL.available() && received < count) {
+      dest[received++] = MODEM_SERIAL.read();
+    }
+    if (received < count) vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  return received;
+}
+
+int CellularMQTT::httpGet(const char* url) {
+  // Terminate any previous HTTP session
+  sendAT("AT+HTTPTERM", "OK", 2000);
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  if (!sendAT("AT+HTTPINIT", "OK", 5000)) {
+    Serial.println("[OTA] HTTPINIT failed");
+    return -1;
+  }
+
+  // Set URL via prompt pattern
+  int urlLen = strlen(url);
+  char cmd[40];
+  snprintf(cmd, sizeof(cmd), "AT+HTTPPARA=\"URL\",%d", urlLen);
+  MODEM_SERIAL.println(cmd);
+  if (!waitPrompt(5000)) {
+    Serial.println("[OTA] No prompt for HTTPPARA URL");
+    httpTerm();
+    return -1;
+  }
+  MODEM_SERIAL.write((const uint8_t*)url, urlLen);
+  if (!waitResponse("OK", 10000, _atBuf, AT_BUF_SIZE)) {
+    Serial.println("[OTA] HTTPPARA URL failed");
+    httpTerm();
+    return -1;
+  }
+
+  // SSL config for HTTPS
+  if (strncmp(url, "https://", 8) == 0) {
+    sendAT("AT+HTTPPARA=\"SSLCFG\",0", "OK", 3000);
+  }
+
+  // Follow redirects (GitHub releases use 302)
+  sendAT("AT+HTTPPARA=\"REDIR\",1", "OK", 2000);
+
+  // Execute GET — response: +HTTPACTION: 0,<status>,<content_length>
+  MODEM_SERIAL.println("AT+HTTPACTION=0");
+
+  // Wait for +HTTPACTION URC — download can take minutes over Cat-1
+  unsigned long start = millis();
+  int pos = 0;
+  _atBuf[0] = '\0';
+
+  while (millis() - start < 180000) {  // 3 minute timeout
+    while (MODEM_SERIAL.available()) {
+      char c = MODEM_SERIAL.read();
+      if (pos < AT_BUF_SIZE - 1) {
+        _atBuf[pos++] = c;
+        _atBuf[pos] = '\0';
+      }
+      char* p = strstr(_atBuf, "+HTTPACTION:");
+      if (p) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        while (MODEM_SERIAL.available() && pos < AT_BUF_SIZE - 1) {
+          _atBuf[pos++] = MODEM_SERIAL.read();
+          _atBuf[pos] = '\0';
+        }
+
+        int method, status, contentLen;
+        if (sscanf(p, "+HTTPACTION: %d,%d,%d", &method, &status, &contentLen) == 3) {
+          Serial.printf("[OTA] HTTP status=%d content_length=%d\n", status, contentLen);
+          if (status == 200 && contentLen > 0) {
+            return contentLen;
+          }
+          Serial.printf("[OTA] HTTP download failed (status %d)\n", status);
+          httpTerm();
+          return -1;
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+
+  Serial.println("[OTA] HTTP download timeout");
+  httpTerm();
+  return -1;
+}
+
+bool CellularMQTT::httpReadChunk(int offset, int len, uint8_t* dest, int* bytesRead) {
+  *bytesRead = 0;
+
+  // AT+HTTPREAD=<offset>,<length>
+  // Response: +HTTPREAD: <actual_len>\r\n<binary data>\r\nOK
+  char cmd[40];
+  snprintf(cmd, sizeof(cmd), "AT+HTTPREAD=%d,%d", offset, len);
+  MODEM_SERIAL.println(cmd);
+
+  // Wait for +HTTPREAD: <len> header
+  unsigned long start = millis();
+  int pos = 0;
+  _atBuf[0] = '\0';
+
+  while (millis() - start < 10000) {
+    while (MODEM_SERIAL.available()) {
+      char c = MODEM_SERIAL.read();
+      if (pos < AT_BUF_SIZE - 1) {
+        _atBuf[pos++] = c;
+        _atBuf[pos] = '\0';
+      }
+
+      char* p = strstr(_atBuf, "+HTTPREAD:");
+      if (p) {
+        char* nl = strchr(p, '\n');
+        if (nl) {
+          int actualLen = 0;
+          sscanf(p, "+HTTPREAD: %d", &actualLen);
+          if (actualLen <= 0 || actualLen > len) {
+            Serial.printf("[OTA] Bad HTTPREAD len: %d\n", actualLen);
+            return false;
+          }
+
+          // Read exactly actualLen binary bytes
+          int got = readRawBytes(dest, actualLen, 15000);
+          if (got != actualLen) {
+            Serial.printf("[OTA] Short read: got %d expected %d\n", got, actualLen);
+            return false;
+          }
+
+          *bytesRead = actualLen;
+
+          // Drain trailing \r\nOK\r\n
+          waitResponse("OK", 3000, _atBuf, AT_BUF_SIZE);
+          return true;
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+
+  Serial.println("[OTA] HTTPREAD timeout");
+  return false;
+}
+
+void CellularMQTT::httpTerm() {
+  sendAT("AT+HTTPTERM", "OK", 3000);
+}
+
+void CellularMQTT::performOTA() {
+  _otaPending = false;
+  _state = CellState::OTA_IN_PROGRESS;
+
+  otaPublish("OTA: Starting download...");
+  Serial.printf("[OTA] URL: %s\n", _otaUrl);
+
+  // Disconnect MQTT — modem can only do one thing at a time
+  mqttDisconnect();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  // Download firmware via HTTP
+  int fileSize = httpGet(_otaUrl);
+  if (fileSize <= 0) {
+    Serial.println("[OTA] Download failed");
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  Serial.printf("[OTA] Downloaded %d bytes, flashing...\n", fileSize);
+
+  // Begin ESP32 OTA
+  if (!Update.begin(fileSize)) {
+    Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  // Allocate chunk buffer
+  uint8_t* chunk = (uint8_t*)malloc(OTA_CHUNK_SIZE);
+  if (!chunk) {
+    Serial.println("[OTA] malloc failed");
+    Update.abort();
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  int offset = 0;
+  int lastPct = -1;
+
+  while (offset < fileSize) {
+    int remaining = fileSize - offset;
+    int toRead = (remaining < OTA_CHUNK_SIZE) ? remaining : OTA_CHUNK_SIZE;
+
+    int bytesRead = 0;
+    if (!httpReadChunk(offset, toRead, chunk, &bytesRead) || bytesRead == 0) {
+      Serial.printf("[OTA] Read failed at offset %d\n", offset);
+      free(chunk);
+      Update.abort();
+      httpTerm();
+      _state = CellState::RECONNECTING;
+      return;
+    }
+
+    size_t written = Update.write(chunk, bytesRead);
+    if (written != (size_t)bytesRead) {
+      Serial.printf("[OTA] Write failed: wrote %d of %d\n", written, bytesRead);
+      free(chunk);
+      Update.abort();
+      httpTerm();
+      _state = CellState::RECONNECTING;
+      return;
+    }
+
+    offset += bytesRead;
+
+    int pct = (offset * 100) / fileSize;
+    if (pct / 10 != lastPct / 10) {
+      Serial.printf("[OTA] Flash progress: %d%% (%d/%d)\n", pct, offset, fileSize);
+      lastPct = pct;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));  // Yield to watchdog
+  }
+
+  free(chunk);
+  httpTerm();
+
+  if (!Update.end(true)) {
+    Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  Serial.println("[OTA] SUCCESS — rebooting in 3 seconds");
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  ESP.restart();
 }
 
 // ---------------------------------------------------------------------------
@@ -710,7 +941,6 @@ restart:
     if (!registered) Serial.println("[Cell] Registration timeout — continuing");
   }
 
-  // Operator name
   sendAT("AT+COPS=3,0", "OK", 2000);
   if (sendAT("AT+COPS?", "OK", 5000)) {
     char* p = strchr(_atBuf, '"');
@@ -736,7 +966,7 @@ restart:
   Serial.printf("[Cell] Registered: oper=%s CSQ=%d APN=%s IMEI=%s\n",
                 _operator, _csq, _apn[0] ? _apn : "(none)", _imei);
 
-// Sync ESP32 system clock from modem network time
+  // Sync ESP32 system clock from modem network time
   for (int attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(2000));
     if (sendAT("AT+CCLK?", "OK", 3000)) {
@@ -744,7 +974,7 @@ restart:
       if (p) {
         int yy=0, mo=0, dd=0, hh=0, mm=0, ss=0, tz=0;
         if (sscanf(p, "+CCLK: \"%d/%d/%d,%d:%d:%d", &yy, &mo, &dd, &hh, &mm, &ss) >= 6) {
-          if (yy < 24 || yy > 50) continue;  // Not synced yet
+          if (yy < 24 || yy > 50) continue;
           char* tzp = p + 7;
           while (*tzp && *tzp != '+' && *tzp != '-') tzp++;
           if (*tzp) tz = atoi(tzp);
@@ -792,10 +1022,9 @@ restart:
     goto restart;
   }
 
-// Allow MQTT session to stabilise before subscribing
+  // Allow MQTT session to stabilise before subscribing
   vTaskDelay(pdMS_TO_TICKS(2000));
 
-  // Subscribe with retry — the modem sometimes misses the first prompt
   for (int i = 0; i < 3; i++) {
     if (mqttSubscribe(_topicCmd)) break;
     Serial.printf("[Cell] Subscribe retry %d for cmd topic\n", i + 1);
@@ -818,9 +1047,15 @@ restart:
   unsigned long lastTelem = 0;
 
   while (true) {
+    // Check for pending OTA request
+    if (_otaPending && _state == CellState::CONNECTED) {
+      performOTA();
+      continue;  // After OTA failure, reconnect loop handles recovery
+    }
+
     drainURCs();
 
-    // Health check: too many consecutive publish failures = silent disconnect
+    // Health check
     if (_pubFailCount >= MQTT_PUB_FAIL_MAX && _state == CellState::CONNECTED) {
       Serial.printf("[Cell] %d consecutive publish failures — forcing reconnect\n", _pubFailCount);
       _state = CellState::RECONNECTING;
@@ -835,7 +1070,6 @@ restart:
       mqttDisconnect();
       vTaskDelay(pdMS_TO_TICKS(2000));
 
-      // Check data is still active
       if (!sendAT("AT+CGACT?", "OK", 5000) || !strstr(_atBuf, ",1")) {
         if (!activateData()) {
           vTaskDelay(pdMS_TO_TICKS(10000));
@@ -844,7 +1078,7 @@ restart:
       }
 
       if (!mqttStart() || !mqttConnect()) {
-        continue;  // Retry with backoff
+        continue;
       }
 
       mqttSubscribe(_topicCmd);

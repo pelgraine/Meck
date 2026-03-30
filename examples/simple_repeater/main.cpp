@@ -43,12 +43,10 @@ void setup() {
 
 #ifdef DISPLAY_CLASS
   if (display.begin()) {
-#ifndef HAS_4G_MODEM
     display.startFrame();
     display.setCursor(0, 0);
     display.print("Please wait...");
     display.endFrame();
-#endif
   }
 #endif
 
@@ -124,16 +122,7 @@ void setup() {
       #endif
       delay(200);
     }
-Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
-
-    // Re-claim SPI bus for display — SD.begin() steals the shared
-    // GPIO pins (36/47/33) from the display's HSPI peripheral
-    extern SPIClass displaySpi;
-    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
-
-   // Re-claim shared HSPI bus — SD.begin() steals GPIO 36/47/33
-    extern SPIClass displaySpi;
-    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+    Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
   }
 
   // Start cellular MQTT
@@ -187,15 +176,6 @@ void loop() {
   {
     MQTTCommand mqttCmd;
     while (cellularMQTT.recvCommand(mqttCmd)) {
-      // Check for OTA command
-      if (strncmp(mqttCmd.cmd, "ota:", 4) == 0) {
-        const char* url = &mqttCmd.cmd[4];
-        Serial.printf("[MQTT] OTA request: %s\n", url);
-        // TODO: RemoteOTA — download firmware from URL and flash
-        cellularMQTT.sendResponse(cellularMQTT.getRspTopic(), "{\"ota\":\"not yet implemented\"}");
-        continue;
-      }
-
       // CLI command — process through the same handler as serial/LoRa admin
       Serial.printf("[MQTT] CLI: %s\n", mqttCmd.cmd);
       char reply[512];
