@@ -22,7 +22,7 @@
 
 // T-Deck Pro battery capacity (all variants use 1400 mAh cell)
 #ifndef BQ27220_DESIGN_CAPACITY_MAH
-#define BQ27220_DESIGN_CAPACITY_MAH  2000
+#define BQ27220_DESIGN_CAPACITY_MAH  1400
 #endif
 
 class TDeckBoard : public ESP32Board {
