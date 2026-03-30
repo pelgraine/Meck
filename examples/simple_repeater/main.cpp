@@ -3,6 +3,11 @@
 
 #include "MyMesh.h"
 
+#ifdef HAS_4G_MODEM
+#include <SD.h>
+#include "CellularMQTT.h"
+#endif
+
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
   static UITask ui_task(display);
@@ -23,6 +28,10 @@ static char command[160];
 unsigned long lastActive = 0; // mark last active time
 unsigned long nextSleepinSecs = 120; // next sleep in seconds. The first sleep (if enabled) is after 2 minutes from boot
 
+#ifdef HAS_4G_MODEM
+static bool sdCardReady = false;
+#endif
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -34,10 +43,12 @@ void setup() {
 
 #ifdef DISPLAY_CLASS
   if (display.begin()) {
+#ifndef HAS_4G_MODEM
     display.startFrame();
     display.setCursor(0, 0);
     display.print("Please wait...");
     display.endFrame();
+#endif
   }
 #endif
 
@@ -83,6 +94,52 @@ void setup() {
 
   the_mesh.begin(fs);
 
+  // ---------------------------------------------------------------------------
+  // SD card init — needed for CellularMQTT config (/remote/mqtt.cfg)
+  // SD, LoRa, and e-ink share the same SPI bus on T-Deck Pro.
+  // ---------------------------------------------------------------------------
+#ifdef HAS_4G_MODEM
+  {
+    // Deselect all SPI devices before SD init to prevent bus contention
+    #ifdef SDCARD_CS
+      pinMode(SDCARD_CS, OUTPUT);
+      digitalWrite(SDCARD_CS, HIGH);
+    #endif
+    #ifdef PIN_DISPLAY_CS
+      pinMode(PIN_DISPLAY_CS, OUTPUT);
+      digitalWrite(PIN_DISPLAY_CS, HIGH);
+    #endif
+    #ifdef P_LORA_NSS
+      pinMode(P_LORA_NSS, OUTPUT);
+      digitalWrite(P_LORA_NSS, HIGH);
+    #endif
+    delay(100);
+
+    for (int i = 0; i < 3; i++) {
+      #ifdef SDCARD_CS
+      if (SD.begin(SDCARD_CS)) { sdCardReady = true; break; }
+      #else
+      if (SD.begin(SPI_CS)) { sdCardReady = true; break; }
+      #endif
+      delay(200);
+    }
+Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
+
+    // Re-claim SPI bus for display — SD.begin() steals the shared
+    // GPIO pins (36/47/33) from the display's HSPI peripheral
+    extern SPIClass displaySpi;
+    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+  }
+
+  // Start cellular MQTT
+  if (sdCardReady) {
+    cellularMQTT.begin();
+    Serial.println("Cellular MQTT starting...");
+  } else {
+    Serial.println("Cellular MQTT skipped — no SD card for config");
+  }
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
@@ -117,6 +174,64 @@ void loop() {
 
     command[0] = 0;  // reset command buffer
   }
+
+  // ---------------------------------------------------------------------------
+  // MQTT → CLI bridge: process incoming commands from MQTT
+  // ---------------------------------------------------------------------------
+#ifdef HAS_4G_MODEM
+  {
+    MQTTCommand mqttCmd;
+    while (cellularMQTT.recvCommand(mqttCmd)) {
+      // Check for OTA command
+      if (strncmp(mqttCmd.cmd, "ota:", 4) == 0) {
+        const char* url = &mqttCmd.cmd[4];
+        Serial.printf("[MQTT] OTA request: %s\n", url);
+        // TODO: RemoteOTA — download firmware from URL and flash
+        cellularMQTT.sendResponse(cellularMQTT.getRspTopic(), "{\"ota\":\"not yet implemented\"}");
+        continue;
+      }
+
+      // CLI command — process through the same handler as serial/LoRa admin
+      Serial.printf("[MQTT] CLI: %s\n", mqttCmd.cmd);
+      char reply[512];
+      reply[0] = '\0';
+      the_mesh.handleCommand(0, mqttCmd.cmd, reply);
+
+      if (reply[0] == '\0') strcpy(reply, "OK");
+
+      cellularMQTT.sendResponse(cellularMQTT.getRspTopic(), reply);
+      Serial.printf("[MQTT] Reply: %.80s\n", reply);
+    }
+  }
+
+  // Periodic telemetry snapshot for MQTT publishing
+  {
+    static unsigned long lastTelemUpdate = 0;
+    if (millis() - lastTelemUpdate > 10000) {
+      NodePrefs* p = the_mesh.getNodePrefs();
+      TelemetryData td;
+      memset(&td, 0, sizeof(td));
+      td.uptime_secs = millis() / 1000;
+      td.battery_mv = board.getBattMilliVolts();
+      td.battery_pct = board.getBatteryPercent();
+      td.temperature = board.getBattTemperature();
+      td.csq = cellularMQTT.getCSQ();
+      td.freq = p->freq;
+      td.bw = p->bw;
+      td.sf = p->sf;
+      td.cr = p->cr;
+      td.tx_power = p->tx_power_dbm;
+      strncpy(td.node_name, p->node_name, sizeof(td.node_name) - 1);
+      strncpy(td.apn, cellularMQTT.getAPN(), sizeof(td.apn) - 1);
+      strncpy(td.oper, cellularMQTT.getOperator(), sizeof(td.oper) - 1);
+      td.mqtt_connected = cellularMQTT.isConnected();
+      td.neighbor_count = 0;  // TODO: expose from MyMesh
+
+      cellularMQTT.updateTelemetry(td);
+      lastTelemUpdate = millis();
+    }
+  }
+#endif
 
   the_mesh.loop();
   sensors.loop();

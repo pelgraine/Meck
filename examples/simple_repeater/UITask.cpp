@@ -2,7 +2,14 @@
 #include <Arduino.h>
 #include <helpers/CommonCLI.h>
 
-#define AUTO_OFF_MILLIS      20000  // 20 seconds
+#ifdef HAS_4G_MODEM
+#include "CellularMQTT.h"
+#define AUTO_OFF_DISABLED    true
+#else
+#define AUTO_OFF_DISABLED    false
+#endif
+
+#define AUTO_OFF_MILLIS      20000  // 20 seconds (ignored when AUTO_OFF_DISABLED)
 #define BOOT_SCREEN_MILLIS   4000   // 4 seconds
 
 // 'meshcore', 128x13px
@@ -28,55 +35,97 @@ void UITask::begin(NodePrefs* node_prefs, const char* build_date, const char* fi
   _node_prefs = node_prefs;
   _display->turnOn();
 
-  // strip off dash and commit hash by changing dash to null terminator
-  // e.g: v1.2.3-abcdef -> v1.2.3
   char *version = strdup(firmware_version);
   char *dash = strchr(version, '-');
-  if(dash){
-    *dash = 0;
-  }
+  if (dash) *dash = 0;
 
-  // v1.2.3 (1 Jan 2025)
-  sprintf(_version_info, "%s (%s)", version, build_date);
+  snprintf(_version_info, sizeof(_version_info), "%s (%s)", version, build_date);
+  free(version);
 }
 
 void UITask::renderCurrScreen() {
   char tmp[80];
-  if (millis() < BOOT_SCREEN_MILLIS) { // boot screen
-    // meshcore logo
+  if (millis() < BOOT_SCREEN_MILLIS) {
+    // Boot screen — logo + version
     _display->setColor(DisplayDriver::BLUE);
     int logoWidth = 128;
     _display->drawXbm((_display->width() - logoWidth) / 2, 3, meshcore_logo, logoWidth, 13);
 
-    // version info
     _display->setColor(DisplayDriver::LIGHT);
     _display->setTextSize(1);
     uint16_t versionWidth = _display->getTextWidth(_version_info);
     _display->setCursor((_display->width() - versionWidth) / 2, 22);
     _display->print(_version_info);
 
-    // node type
+#ifdef HAS_4G_MODEM
+    const char* node_type = "< Remote Repeater >";
+#else
     const char* node_type = "< Repeater >";
+#endif
     uint16_t typeWidth = _display->getTextWidth(node_type);
     _display->setCursor((_display->width() - typeWidth) / 2, 35);
     _display->print(node_type);
-  } else {  // home screen
-    // node name
+  } else {
+    // Home screen — node info + cellular status
     _display->setCursor(0, 0);
     _display->setTextSize(1);
     _display->setColor(DisplayDriver::GREEN);
     _display->print(_node_prefs->node_name);
 
-    // freq / sf
     _display->setCursor(0, 20);
     _display->setColor(DisplayDriver::YELLOW);
     sprintf(tmp, "FREQ: %06.3f SF%d", _node_prefs->freq, _node_prefs->sf);
     _display->print(tmp);
 
-    // bw / cr
     _display->setCursor(0, 30);
     sprintf(tmp, "BW: %03.2f CR: %d", _node_prefs->bw, _node_prefs->cr);
     _display->print(tmp);
+
+#ifdef HAS_4G_MODEM
+    int y = 44;
+
+    _display->setCursor(0, y);
+    _display->setColor(DisplayDriver::LIGHT);
+    sprintf(tmp, "4G: %s", cellularMQTT.stateString());
+    _display->print(tmp);
+    y += 10;
+
+    _display->setCursor(0, y);
+    sprintf(tmp, "CSQ: %d (%d bars)", cellularMQTT.getCSQ(), cellularMQTT.getSignalBars());
+    _display->print(tmp);
+    y += 10;
+
+    const char* oper = cellularMQTT.getOperator();
+    if (oper[0]) {
+      _display->setCursor(0, y);
+      sprintf(tmp, "Op: %.16s", oper);
+      _display->print(tmp);
+      y += 10;
+    }
+
+    _display->setCursor(0, y);
+    _display->setColor(cellularMQTT.isConnected() ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+    sprintf(tmp, "MQTT: %s", cellularMQTT.isConnected() ? "Connected" : "---");
+    _display->print(tmp);
+    y += 10;
+
+    const char* ip = cellularMQTT.getIPAddress();
+    if (ip[0]) {
+      _display->setColor(DisplayDriver::LIGHT);
+      _display->setCursor(0, y);
+      sprintf(tmp, "IP: %s", ip);
+      _display->print(tmp);
+      y += 10;
+    }
+
+    uint32_t upSec = millis() / 1000;
+    uint32_t upH = upSec / 3600;
+    uint32_t upM = (upSec % 3600) / 60;
+    _display->setColor(DisplayDriver::LIGHT);
+    _display->setCursor(0, y);
+    sprintf(tmp, "Up: %luh %lum  Heap:%dk", upH, upM, ESP.getFreeHeap() / 1024);
+    _display->print(tmp);
+#endif
   }
 }
 
@@ -85,17 +134,15 @@ void UITask::loop() {
   if (millis() >= _next_read) {
     int btnState = digitalRead(PIN_USER_BTN);
     if (btnState != _prevBtnState) {
-      if (btnState == LOW) {  // pressed?
-        if (_display->isOn()) {
-          // TODO: any action ?
-        } else {
+      if (btnState == LOW) {
+        if (!_display->isOn()) {
           _display->turnOn();
         }
-        _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
+        _auto_off = millis() + AUTO_OFF_MILLIS;
       }
       _prevBtnState = btnState;
     }
-    _next_read = millis() + 200;  // 5 reads per second
+    _next_read = millis() + 200;
   }
 #endif
 
@@ -105,9 +152,9 @@ void UITask::loop() {
       renderCurrScreen();
       _display->endFrame();
 
-      _next_refresh = millis() + 1000;   // refresh every second
+      _next_refresh = millis() + 10000;
     }
-    if (millis() > _auto_off) {
+    if (!AUTO_OFF_DISABLED && millis() > _auto_off) {
       _display->turnOff();
     }
   }
