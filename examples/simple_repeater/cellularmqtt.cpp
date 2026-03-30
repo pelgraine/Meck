@@ -4,6 +4,8 @@
 #include <Mesh.h>
 #include <SD.h>
 #include <esp_mac.h>
+#include <time.h> 
+#include <sys/time.h> 
 
 CellularMQTT cellularMQTT;
 
@@ -733,6 +735,37 @@ restart:
 
   Serial.printf("[Cell] Registered: oper=%s CSQ=%d APN=%s IMEI=%s\n",
                 _operator, _csq, _apn[0] ? _apn : "(none)", _imei);
+
+// Sync ESP32 system clock from modem network time
+  for (int attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(2000));
+    if (sendAT("AT+CCLK?", "OK", 3000)) {
+      char* p = strstr(_atBuf, "+CCLK:");
+      if (p) {
+        int yy=0, mo=0, dd=0, hh=0, mm=0, ss=0, tz=0;
+        if (sscanf(p, "+CCLK: \"%d/%d/%d,%d:%d:%d", &yy, &mo, &dd, &hh, &mm, &ss) >= 6) {
+          if (yy < 24 || yy > 50) continue;  // Not synced yet
+          char* tzp = p + 7;
+          while (*tzp && *tzp != '+' && *tzp != '-') tzp++;
+          if (*tzp) tz = atoi(tzp);
+          struct tm t = {};
+          t.tm_year = yy + 100;
+          t.tm_mon = mo - 1;
+          t.tm_mday = dd;
+          t.tm_hour = hh;
+          t.tm_min = mm;
+          t.tm_sec = ss;
+          time_t epoch = mktime(&t);
+          epoch -= (tz * 15 * 60);
+          struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+          settimeofday(&tv, nullptr);
+          Serial.printf("[Cell] Clock synced: %04d-%02d-%02d %02d:%02d:%02d UTC\n",
+                        yy+2000, mo, dd, hh, mm, ss);
+          break;
+        }
+      }
+    }
+  }
 
   // ---- Phase 4: Activate data ----
   _state = CellState::DATA_ACTIVATING;

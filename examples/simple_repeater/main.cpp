@@ -1,6 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
 #include <Mesh.h>
-
+#include <time.h> 
 #include "MyMesh.h"
 
 #ifdef HAS_4G_MODEM
@@ -117,7 +117,8 @@ void setup() {
 
     for (int i = 0; i < 3; i++) {
       #ifdef SDCARD_CS
-      if (SD.begin(SDCARD_CS)) { sdCardReady = true; break; }
+      extern SPIClass displaySpi;
+      if (SD.begin(SDCARD_CS, displaySpi)) { sdCardReady = true; break; }
       #else
       if (SD.begin(SPI_CS)) { sdCardReady = true; break; }
       #endif
@@ -127,6 +128,10 @@ Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
 
     // Re-claim SPI bus for display — SD.begin() steals the shared
     // GPIO pins (36/47/33) from the display's HSPI peripheral
+    extern SPIClass displaySpi;
+    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+
+   // Re-claim shared HSPI bus — SD.begin() steals GPIO 36/47/33
     extern SPIClass displaySpi;
     displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
   }
@@ -195,7 +200,7 @@ void loop() {
       Serial.printf("[MQTT] CLI: %s\n", mqttCmd.cmd);
       char reply[512];
       reply[0] = '\0';
-      the_mesh.handleCommand(0, mqttCmd.cmd, reply);
+      the_mesh.handleCommand((uint32_t)time(nullptr), mqttCmd.cmd, reply);
 
       if (reply[0] == '\0') strcpy(reply, "OK");
 
