@@ -8,6 +8,11 @@
 #include "CellularMQTT.h"
 #endif
 
+#ifdef MECK_WIFI_REMOTE
+#include <SD.h>
+#include "WiFiMQTT.h"
+#endif
+
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
   static UITask ui_task(display);
@@ -28,7 +33,7 @@ static char command[160];
 unsigned long lastActive = 0; // mark last active time
 unsigned long nextSleepinSecs = 120; // next sleep in seconds. The first sleep (if enabled) is after 2 minutes from boot
 
-#ifdef HAS_4G_MODEM
+#if defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)
 static bool sdCardReady = false;
 #endif
 
@@ -43,12 +48,10 @@ void setup() {
 
 #ifdef DISPLAY_CLASS
   if (display.begin()) {
-#ifndef HAS_4G_MODEM
     display.startFrame();
     display.setCursor(0, 0);
     display.print("Please wait...");
     display.endFrame();
-#endif
   }
 #endif
 
@@ -95,10 +98,10 @@ void setup() {
   the_mesh.begin(fs);
 
   // ---------------------------------------------------------------------------
-  // SD card init — needed for CellularMQTT config (/remote/mqtt.cfg)
+  // SD card init — needed for MQTT config (/remote/mqtt.cfg, /remote/wifi.cfg)
   // SD, LoRa, and e-ink share the same SPI bus on T-Deck Pro.
   // ---------------------------------------------------------------------------
-#ifdef HAS_4G_MODEM
+#if defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)
   {
     // Deselect all SPI devices before SD init to prevent bus contention
     #ifdef SDCARD_CS
@@ -124,19 +127,11 @@ void setup() {
       #endif
       delay(200);
     }
-Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
-
-    // Re-claim SPI bus for display — SD.begin() steals the shared
-    // GPIO pins (36/47/33) from the display's HSPI peripheral
-    extern SPIClass displaySpi;
-    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
-
-   // Re-claim shared HSPI bus — SD.begin() steals GPIO 36/47/33
-    extern SPIClass displaySpi;
-    displaySpi.begin(PIN_DISPLAY_SCLK, 47, PIN_DISPLAY_MOSI, PIN_DISPLAY_CS);
+    Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
   }
 
-  // Start cellular MQTT
+  // Start MQTT backhaul
+#ifdef HAS_4G_MODEM
   if (sdCardReady) {
     cellularMQTT.begin();
     Serial.println("Cellular MQTT starting...");
@@ -144,6 +139,17 @@ Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
     Serial.println("Cellular MQTT skipped — no SD card for config");
   }
 #endif
+
+#ifdef MECK_WIFI_REMOTE
+  if (sdCardReady) {
+    wifiMQTT.begin();
+    Serial.println("WiFi MQTT starting...");
+  } else {
+    Serial.println("WiFi MQTT skipped — no SD card for config");
+  }
+#endif
+
+#endif // HAS_4G_MODEM || MECK_WIFI_REMOTE
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
@@ -181,22 +187,12 @@ void loop() {
   }
 
   // ---------------------------------------------------------------------------
-  // MQTT → CLI bridge: process incoming commands from MQTT
+  // MQTT → CLI bridge: process incoming commands from MQTT (cellular)
   // ---------------------------------------------------------------------------
 #ifdef HAS_4G_MODEM
   {
     MQTTCommand mqttCmd;
     while (cellularMQTT.recvCommand(mqttCmd)) {
-      // Check for OTA command
-      if (strncmp(mqttCmd.cmd, "ota:", 4) == 0) {
-        const char* url = &mqttCmd.cmd[4];
-        Serial.printf("[MQTT] OTA request: %s\n", url);
-        // TODO: RemoteOTA — download firmware from URL and flash
-        cellularMQTT.sendResponse(cellularMQTT.getRspTopic(), "{\"ota\":\"not yet implemented\"}");
-        continue;
-      }
-
-      // CLI command — process through the same handler as serial/LoRa admin
       Serial.printf("[MQTT] CLI: %s\n", mqttCmd.cmd);
       char reply[512];
       reply[0] = '\0';
@@ -209,7 +205,7 @@ void loop() {
     }
   }
 
-  // Periodic telemetry snapshot for MQTT publishing
+  // Periodic telemetry snapshot for cellular MQTT
   {
     static unsigned long lastTelemUpdate = 0;
     if (millis() - lastTelemUpdate > 10000) {
@@ -238,6 +234,54 @@ void loop() {
   }
 #endif
 
+  // ---------------------------------------------------------------------------
+  // MQTT → CLI bridge: process incoming commands from MQTT (WiFi)
+  // ---------------------------------------------------------------------------
+#ifdef MECK_WIFI_REMOTE
+  wifiMQTT.loop();
+
+  {
+    MQTTCommand mqttCmd;
+    while (wifiMQTT.recvCommand(mqttCmd)) {
+      Serial.printf("[MQTT] CLI: %s\n", mqttCmd.cmd);
+      char reply[512];
+      reply[0] = '\0';
+      the_mesh.handleCommand((uint32_t)time(nullptr), mqttCmd.cmd, reply);
+
+      if (reply[0] == '\0') strcpy(reply, "OK");
+
+      wifiMQTT.sendResponse(wifiMQTT.getRspTopic(), reply);
+      Serial.printf("[MQTT] Reply: %.80s\n", reply);
+    }
+  }
+
+  // Periodic telemetry snapshot for WiFi MQTT
+  {
+    static unsigned long lastTelemUpdate = 0;
+    if (millis() - lastTelemUpdate > 10000) {
+      NodePrefs* p = the_mesh.getNodePrefs();
+      TelemetryData td;
+      memset(&td, 0, sizeof(td));
+      td.uptime_secs = millis() / 1000;
+      td.battery_mv = board.getBattMilliVolts();
+      td.battery_pct = board.getBatteryPercent();
+      td.temperature = board.getBattTemperature();
+      td.rssi = wifiMQTT.getRSSI();
+      td.freq = p->freq;
+      td.bw = p->bw;
+      td.sf = p->sf;
+      td.cr = p->cr;
+      td.tx_power = p->tx_power_dbm;
+      strncpy(td.node_name, p->node_name, sizeof(td.node_name) - 1);
+      td.mqtt_connected = wifiMQTT.isConnected();
+      td.neighbor_count = 0;
+
+      wifiMQTT.updateTelemetry(td);
+      lastTelemUpdate = millis();
+    }
+  }
+#endif
+
   the_mesh.loop();
   sensors.loop();
 #ifdef DISPLAY_CLASS
@@ -245,7 +289,7 @@ void loop() {
 #endif
   rtc_clock.tick();
 
-#ifndef HAS_4G_MODEM
+#if !defined(HAS_4G_MODEM) && !defined(MECK_WIFI_REMOTE)
   if (the_mesh.getNodePrefs()->powersaving_enabled &&
       the_mesh.millisHasNowPassed(lastActive + nextSleepinSecs * 1000)) {
     if (!the_mesh.hasPendingWork()) {

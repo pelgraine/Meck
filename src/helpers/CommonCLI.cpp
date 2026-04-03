@@ -81,7 +81,8 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.read((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier)); // 166
     file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
-    // 290
+    file.read((uint8_t *)&_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode)); // 290
+    // 291
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -107,6 +108,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
 
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
+    _prefs->path_hash_mode = constrain(_prefs->path_hash_mode, 0, 2);
 
     file.close();
   }
@@ -165,7 +167,8 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->discovery_mod_timestamp, sizeof(_prefs->discovery_mod_timestamp)); // 162
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
-    // 290
+    file.write((uint8_t *)&_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode)); // 290
+    // 291
 
     file.close();
   }
@@ -285,7 +288,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         sprintf(reply, "> %d", ((uint32_t) _prefs->advert_interval) * 2);
       } else if (memcmp(config, "guest.password", 14) == 0) {
         sprintf(reply, "> %s", _prefs->guest_password);
-      } else if (sender_timestamp == 0 && memcmp(config, "prv.key", 7) == 0) {  // from serial command line only
+      } else if (memcmp(config, "prv.key", 7) == 0) {  // from serial command line only
         uint8_t prv_key[PRV_KEY_SIZE];
         int len = _callbacks->getSelfId().writeTo(prv_key, PRV_KEY_SIZE);
         mesh::Utils::toHex(tmp, prv_key, len);
@@ -545,7 +548,7 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         savePrefs();
         _callbacks->setTxPower(_prefs->tx_power_dbm);
         strcpy(reply, "OK");
-      } else if (sender_timestamp == 0 && memcmp(config, "freq ", 5) == 0) {
+      } else if (memcmp(config, "freq ", 5) == 0) {
         _prefs->freq = atof(&config[5]);
         savePrefs();
         strcpy(reply, "OK - reboot to apply");
@@ -767,11 +770,11 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
     } else if (sender_timestamp == 0 && memcmp(command, "log", 3) == 0) {
       _callbacks->dumpLogFile();
       strcpy(reply, "   EOF");
-    } else if (sender_timestamp == 0 && memcmp(command, "stats-packets", 13) == 0 && (command[13] == 0 || command[13] == ' ')) {
+    } else if (memcmp(command, "stats-packets", 13) == 0 && (command[13] == 0 || command[13] == ' ')) {
       _callbacks->formatPacketStatsReply(reply);
-    } else if (sender_timestamp == 0 && memcmp(command, "stats-radio", 11) == 0 && (command[11] == 0 || command[11] == ' ')) {
+    } else if (memcmp(command, "stats-radio", 11) == 0 && (command[11] == 0 || command[11] == ' ')) {
       _callbacks->formatRadioStatsReply(reply);
-    } else if (sender_timestamp == 0 && memcmp(command, "stats-core", 10) == 0 && (command[10] == 0 || command[10] == ' ')) {
+    } else if (memcmp(command, "stats-core", 10) == 0 && (command[10] == 0 || command[10] == ' ')) {
       _callbacks->formatStatsReply(reply);
     } else {
       strcpy(reply, "Unknown command");

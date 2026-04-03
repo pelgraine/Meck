@@ -4,6 +4,13 @@
 
 #ifdef HAS_4G_MODEM
 #include "CellularMQTT.h"
+#endif
+
+#ifdef MECK_WIFI_REMOTE
+#include "WiFiMQTT.h"
+#endif
+
+#if defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)
 #define AUTO_OFF_DISABLED    true
 #else
 #define AUTO_OFF_DISABLED    false
@@ -57,8 +64,10 @@ void UITask::renderCurrScreen() {
     _display->setCursor((_display->width() - versionWidth) / 2, 22);
     _display->print(_version_info);
 
-#ifdef HAS_4G_MODEM
+#if defined(HAS_4G_MODEM)
     const char* node_type = "< Remote Repeater >";
+#elif defined(MECK_WIFI_REMOTE)
+    const char* node_type = "< WiFi Repeater >";
 #else
     const char* node_type = "< Repeater >";
 #endif
@@ -66,7 +75,7 @@ void UITask::renderCurrScreen() {
     _display->setCursor((_display->width() - typeWidth) / 2, 35);
     _display->print(node_type);
   } else {
-    // Home screen — node info + cellular status
+    // Home screen — node info + connection status
     _display->setCursor(0, 0);
     _display->setTextSize(1);
     _display->setColor(DisplayDriver::GREEN);
@@ -81,6 +90,7 @@ void UITask::renderCurrScreen() {
     sprintf(tmp, "BW: %03.2f CR: %d", _node_prefs->bw, _node_prefs->cr);
     _display->print(tmp);
 
+    // --- Cellular status (4G variant) ---
 #ifdef HAS_4G_MODEM
     int y = 44;
 
@@ -109,11 +119,55 @@ void UITask::renderCurrScreen() {
     _display->print(tmp);
     y += 10;
 
-    const char* ip = cellularMQTT.getIPAddress();
-    if (ip[0]) {
+    const char* ip4g = cellularMQTT.getIPAddress();
+    if (ip4g[0]) {
       _display->setColor(DisplayDriver::LIGHT);
       _display->setCursor(0, y);
-      sprintf(tmp, "IP: %s", ip);
+      sprintf(tmp, "IP: %s", ip4g);
+      _display->print(tmp);
+      y += 10;
+    }
+
+    uint32_t upSec = millis() / 1000;
+    uint32_t upH = upSec / 3600;
+    uint32_t upM = (upSec % 3600) / 60;
+    _display->setColor(DisplayDriver::LIGHT);
+    _display->setCursor(0, y);
+    sprintf(tmp, "Up: %luh %lum  Heap:%dk", upH, upM, ESP.getFreeHeap() / 1024);
+    _display->print(tmp);
+#endif
+
+    // --- WiFi status (WiFi variant) ---
+#ifdef MECK_WIFI_REMOTE
+    int y = 44;
+
+    _display->setCursor(0, y);
+    _display->setColor(DisplayDriver::LIGHT);
+    sprintf(tmp, "WiFi: %s", wifiMQTT.stateString());
+    _display->print(tmp);
+    y += 10;
+
+    _display->setCursor(0, y);
+    sprintf(tmp, "RSSI: %d (%d bars)", wifiMQTT.getRSSI(), wifiMQTT.getSignalBars());
+    _display->print(tmp);
+    y += 10;
+
+    _display->setCursor(0, y);
+    sprintf(tmp, "SSID: %.16s", wifiMQTT.getSSID());
+    _display->print(tmp);
+    y += 10;
+
+    _display->setCursor(0, y);
+    _display->setColor(wifiMQTT.isConnected() ? DisplayDriver::GREEN : DisplayDriver::YELLOW);
+    sprintf(tmp, "MQTT: %s", wifiMQTT.isConnected() ? "Connected" : "---");
+    _display->print(tmp);
+    y += 10;
+
+    const char* ipWifi = wifiMQTT.getIPAddress();
+    if (ipWifi[0]) {
+      _display->setColor(DisplayDriver::LIGHT);
+      _display->setCursor(0, y);
+      sprintf(tmp, "IP: %s", ipWifi);
       _display->print(tmp);
       y += 10;
     }

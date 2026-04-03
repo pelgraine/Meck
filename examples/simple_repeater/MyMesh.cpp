@@ -4,23 +4,23 @@
 /* ------------------------------ Config -------------------------------- */
 
 #ifndef LORA_FREQ
-  #define LORA_FREQ 915.0
+  #define LORA_FREQ 923.125
 #endif
 #ifndef LORA_BW
-  #define LORA_BW 250
+  #define LORA_BW 62.5
 #endif
 #ifndef LORA_SF
-  #define LORA_SF 10
+  #define LORA_SF 8
 #endif
 #ifndef LORA_CR
-  #define LORA_CR 5
+  #define LORA_CR 8
 #endif
 #ifndef LORA_TX_POWER
-  #define LORA_TX_POWER 20
+  #define LORA_TX_POWER 22
 #endif
 
 #ifndef ADVERT_NAME
-  #define ADVERT_NAME "repeater"
+  #define ADVERT_NAME "remote-repeater"
 #endif
 #ifndef ADVERT_LAT
   #define ADVERT_LAT 0.0
@@ -534,10 +534,10 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
       // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
       mesh::Packet* path = createPathReturn(sender, secret, packet->path, packet->path_len,
                                             PAYLOAD_TYPE_RESPONSE, reply_data, reply_len);
-      if (path) sendFlood(path, SERVER_RESPONSE_DELAY);
+      if (path) sendFlood(path, (uint32_t)SERVER_RESPONSE_DELAY, (uint8_t)(_prefs.path_hash_mode + 1));
     } else if (reply_path_len < 0) {
       mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply_data, reply_len);
-      if (reply) sendFlood(reply, SERVER_RESPONSE_DELAY);
+      if (reply) sendFlood(reply, (uint32_t)SERVER_RESPONSE_DELAY, (uint8_t)(_prefs.path_hash_mode + 1));
     } else {
       mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, sender, secret, reply_data, reply_len);
       if (reply) sendDirect(reply, reply_path, reply_path_len, SERVER_RESPONSE_DELAY);
@@ -609,7 +609,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
         // let this sender know path TO here, so they can use sendDirect(), and ALSO encode the response
         mesh::Packet *path = createPathReturn(client->id, secret, packet->path, packet->path_len,
                                               PAYLOAD_TYPE_RESPONSE, reply_data, reply_len);
-        if (path) sendFlood(path, SERVER_RESPONSE_DELAY);
+        if (path) sendFlood(path, (uint32_t)SERVER_RESPONSE_DELAY, (uint8_t)(_prefs.path_hash_mode + 1));
       } else {
         mesh::Packet *reply =
             createDatagram(PAYLOAD_TYPE_RESPONSE, client->id, secret, reply_data, reply_len);
@@ -617,7 +617,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
           if (client->out_path_len >= 0) { // we have an out_path, so send DIRECT
             sendDirect(reply, client->out_path, client->out_path_len, SERVER_RESPONSE_DELAY);
           } else {
-            sendFlood(reply, SERVER_RESPONSE_DELAY);
+            sendFlood(reply, (uint32_t)SERVER_RESPONSE_DELAY, (uint8_t)(_prefs.path_hash_mode + 1));
           }
         }
       }
@@ -648,7 +648,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
         mesh::Packet *ack = createAck(ack_hash);
         if (ack) {
           if (client->out_path_len < 0) {
-            sendFlood(ack, TXT_ACK_DELAY);
+            sendFlood(ack, (uint32_t)TXT_ACK_DELAY, (uint8_t)(_prefs.path_hash_mode + 1));
           } else {
             sendDirect(ack, client->out_path, client->out_path_len, TXT_ACK_DELAY);
           }
@@ -676,7 +676,7 @@ void MyMesh::onPeerDataRecv(mesh::Packet *packet, uint8_t type, int sender_idx, 
         auto reply = createDatagram(PAYLOAD_TYPE_TXT_MSG, client->id, secret, temp, 5 + text_len);
         if (reply) {
           if (client->out_path_len < 0) {
-            sendFlood(reply, CLI_REPLY_DELAY_MILLIS);
+            sendFlood(reply, (uint32_t)CLI_REPLY_DELAY_MILLIS, (uint8_t)(_prefs.path_hash_mode + 1));
           } else {
             sendDirect(reply, client->out_path, client->out_path_len, CLI_REPLY_DELAY_MILLIS);
           }
@@ -801,6 +801,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
   _prefs.advert_loc_policy = ADVERT_LOC_PREFS;
 
   _prefs.adc_multiplier = 0.0f; // 0.0f means use default board multiplier
+  _prefs.path_hash_mode = 0;   // 1-byte path hashes (legacy default)
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -857,7 +858,7 @@ bool MyMesh::formatFileSystem() {
 void MyMesh::sendSelfAdvertisement(int delay_millis) {
   mesh::Packet *pkt = createSelfAdvert();
   if (pkt) {
-    sendFlood(pkt, delay_millis);
+    sendFlood(pkt, (uint32_t)delay_millis, (uint8_t)(_prefs.path_hash_mode + 1));
   } else {
     MESH_DEBUG_PRINTLN("ERROR: unable to create advertisement packet!");
   }
@@ -1145,6 +1146,17 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     } else {
       strcpy(reply, "Err - ??");
     }
+  } else if (memcmp(command, "set path.hash.mode ", 19) == 0) {
+    int mode = atoi(&command[19]);
+    if (mode >= 0 && mode <= 2) {
+      _prefs.path_hash_mode = (uint8_t)mode;
+      savePrefs();
+      sprintf(reply, "OK - path.hash.mode = %d (%d-byte hashes)", mode, mode + 1);
+    } else {
+      strcpy(reply, "ERR: mode must be 0, 1, or 2");
+    }
+  } else if (strcmp(command, "get path.hash.mode") == 0) {
+    sprintf(reply, "> %d (%d-byte path hashes)", _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }
@@ -1159,7 +1171,7 @@ void MyMesh::loop() {
 
   if (next_flood_advert && millisHasNowPassed(next_flood_advert)) {
     mesh::Packet *pkt = createSelfAdvert();
-    if (pkt) sendFlood(pkt);
+if (pkt) sendFlood(pkt, (uint32_t)0, (uint8_t)(_prefs.path_hash_mode + 1));
 
     updateFloodAdvertTimer(); // schedule next flood advert
     updateAdvertTimer();      // also schedule local advert (so they don't overlap)

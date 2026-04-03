@@ -52,6 +52,8 @@ struct NodePrefs { // persisted to file
   uint32_t discovery_mod_timestamp;
   float adc_multiplier;
   char owner_info[120];
+  // Multi-byte path hash support (added for Meck remote repeater)
+  uint8_t path_hash_mode;    // 0=1-byte (legacy), 1=2-byte, 2=3-byte path hashes
 };
 
 class CommonCLICallbacks {
