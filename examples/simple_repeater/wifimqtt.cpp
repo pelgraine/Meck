@@ -270,7 +270,6 @@ bool WiFiMQTT::connectWiFi() {
       }
       time_t now = time(nullptr);
       if (now > 1700000000) {
-        extern AutoDiscoverRTCClock rtc_clock;
         rtc_clock.setCurrentTime((uint32_t)now);
         Serial.printf(" OK (%lu)\n", (unsigned long)now);
       } else {
