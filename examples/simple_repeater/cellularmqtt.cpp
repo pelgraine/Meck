@@ -5,7 +5,8 @@
 #include <SD.h>
 #include <esp_mac.h>
 #include <time.h> 
-#include <sys/time.h> 
+#include <sys/time.h>
+#include <Update.h>
 
 CellularMQTT cellularMQTT;
 
@@ -97,9 +98,21 @@ const char* CellularMQTT::stateString() const {
     case CellState::MQTT_CONNECTING: return "MQTT CONN";
     case CellState::CONNECTED:       return "CONNECTED";
     case CellState::RECONNECTING:    return "RECONN";
+    case CellState::OTA_IN_PROGRESS: return "OTA";
     case CellState::ERROR:           return "ERROR";
     default:                         return "???";
   }
+}
+
+void CellularMQTT::requestOTA(const char* url) {
+  if (_state == CellState::OTA_IN_PROGRESS) {
+    Serial.println("[OTA] Already in progress");
+    return;
+  }
+  strncpy(_otaUrl, url, sizeof(_otaUrl) - 1);
+  _otaUrl[sizeof(_otaUrl) - 1] = '\0';
+  _otaPending = true;
+  Serial.printf("[OTA] Requested: %s\n", url);
 }
 
 // ---------------------------------------------------------------------------
@@ -366,11 +379,7 @@ void CellularMQTT::handleMqttRxPayload(const char* data, int len) {
       Serial.println("[Cell] Command queue full, dropping");
     }
   } else if (strstr(_rxTopic, "/ota")) {
-    MQTTCommand cmd;
-    memset(&cmd, 0, sizeof(cmd));
-    snprintf(cmd.cmd, sizeof(cmd.cmd), "ota:%s", data);
-    xQueueSend(_cmdQueue, &cmd, 0);
-    Serial.printf("[Cell] Queued OTA URL: %s\n", data);
+    requestOTA(data);
   }
 }
 
@@ -643,6 +652,235 @@ void CellularMQTT::mqttDisconnect() {
 }
 
 // ---------------------------------------------------------------------------
+// OTA — HTTP download via A7682E + ESP32 flash
+// ---------------------------------------------------------------------------
+
+int CellularMQTT::readRawBytes(uint8_t* dest, int count, uint32_t timeout_ms) {
+  unsigned long start = millis();
+  int received = 0;
+  while (received < count && millis() - start < timeout_ms) {
+    while (MODEM_SERIAL.available() && received < count) {
+      dest[received++] = MODEM_SERIAL.read();
+    }
+    if (received < count) vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  return received;
+}
+
+int CellularMQTT::httpGet(const char* url) {
+  sendAT("AT+HTTPTERM", "OK", 2000);
+  vTaskDelay(pdMS_TO_TICKS(500));
+
+  if (!sendAT("AT+HTTPINIT", "OK", 5000)) {
+    Serial.println("[OTA] HTTPINIT failed");
+    return -1;
+  }
+
+  int urlLen = strlen(url);
+  char cmd[40];
+  snprintf(cmd, sizeof(cmd), "AT+HTTPPARA=\"URL\",%d", urlLen);
+  MODEM_SERIAL.println(cmd);
+  if (!waitPrompt(5000)) {
+    Serial.println("[OTA] No prompt for HTTPPARA URL");
+    httpTerm();
+    return -1;
+  }
+  MODEM_SERIAL.write((const uint8_t*)url, urlLen);
+  if (!waitResponse("OK", 10000, _atBuf, AT_BUF_SIZE)) {
+    Serial.println("[OTA] HTTPPARA URL failed");
+    httpTerm();
+    return -1;
+  }
+
+  if (strncmp(url, "https://", 8) == 0) {
+    sendAT("AT+HTTPPARA=\"SSLCFG\",0", "OK", 3000);
+  }
+
+  sendAT("AT+HTTPPARA=\"REDIR\",1", "OK", 2000);
+
+  MODEM_SERIAL.println("AT+HTTPACTION=0");
+
+  unsigned long start = millis();
+  int pos = 0;
+  _atBuf[0] = '\0';
+
+  while (millis() - start < 180000) {
+    while (MODEM_SERIAL.available()) {
+      char c = MODEM_SERIAL.read();
+      if (pos < AT_BUF_SIZE - 1) {
+        _atBuf[pos++] = c;
+        _atBuf[pos] = '\0';
+      }
+      char* p = strstr(_atBuf, "+HTTPACTION:");
+      if (p) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        while (MODEM_SERIAL.available() && pos < AT_BUF_SIZE - 1) {
+          _atBuf[pos++] = MODEM_SERIAL.read();
+          _atBuf[pos] = '\0';
+        }
+
+        int method, status, contentLen;
+        if (sscanf(p, "+HTTPACTION: %d,%d,%d", &method, &status, &contentLen) == 3) {
+          Serial.printf("[OTA] HTTP status=%d content_length=%d\n", status, contentLen);
+          if (status == 200 && contentLen > 0) {
+            return contentLen;
+          }
+          Serial.printf("[OTA] HTTP download failed (status %d)\n", status);
+          httpTerm();
+          return -1;
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+
+  Serial.println("[OTA] HTTP download timeout");
+  httpTerm();
+  return -1;
+}
+
+bool CellularMQTT::httpReadChunk(int offset, int len, uint8_t* dest, int* bytesRead) {
+  *bytesRead = 0;
+
+  char cmd[40];
+  snprintf(cmd, sizeof(cmd), "AT+HTTPREAD=%d,%d", offset, len);
+  MODEM_SERIAL.println(cmd);
+
+  unsigned long start = millis();
+  int pos = 0;
+  _atBuf[0] = '\0';
+
+  while (millis() - start < 10000) {
+    while (MODEM_SERIAL.available()) {
+      char c = MODEM_SERIAL.read();
+      if (pos < AT_BUF_SIZE - 1) {
+        _atBuf[pos++] = c;
+        _atBuf[pos] = '\0';
+      }
+
+      char* p = strstr(_atBuf, "+HTTPREAD:");
+      if (p) {
+        char* nl = strchr(p, '\n');
+        if (nl) {
+          int actualLen = 0;
+          sscanf(p, "+HTTPREAD: %d", &actualLen);
+          if (actualLen <= 0 || actualLen > len) {
+            Serial.printf("[OTA] Bad HTTPREAD len: %d\n", actualLen);
+            return false;
+          }
+
+          int got = readRawBytes(dest, actualLen, 15000);
+          if (got != actualLen) {
+            Serial.printf("[OTA] Short read: got %d expected %d\n", got, actualLen);
+            return false;
+          }
+
+          *bytesRead = actualLen;
+          waitResponse("OK", 3000, _atBuf, AT_BUF_SIZE);
+          return true;
+        }
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+
+  Serial.println("[OTA] HTTPREAD timeout");
+  return false;
+}
+
+void CellularMQTT::httpTerm() {
+  sendAT("AT+HTTPTERM", "OK", 3000);
+}
+
+void CellularMQTT::performOTA() {
+  _otaPending = false;
+  _state = CellState::OTA_IN_PROGRESS;
+
+  Serial.printf("[OTA] URL: %s\n", _otaUrl);
+
+  // Disconnect MQTT — modem can only do one thing at a time
+  mqttDisconnect();
+  vTaskDelay(pdMS_TO_TICKS(1000));
+
+  int fileSize = httpGet(_otaUrl);
+  if (fileSize <= 0) {
+    Serial.println("[OTA] Download failed");
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  Serial.printf("[OTA] Downloaded %d bytes, flashing...\n", fileSize);
+
+  if (!Update.begin(fileSize)) {
+    Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  uint8_t* chunk = (uint8_t*)malloc(OTA_CHUNK_SIZE);
+  if (!chunk) {
+    Serial.println("[OTA] malloc failed");
+    Update.abort();
+    httpTerm();
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  int offset = 0;
+  int lastPct = -1;
+
+  while (offset < fileSize) {
+    int remaining = fileSize - offset;
+    int toRead = (remaining < OTA_CHUNK_SIZE) ? remaining : OTA_CHUNK_SIZE;
+
+    int bytesRead = 0;
+    if (!httpReadChunk(offset, toRead, chunk, &bytesRead) || bytesRead == 0) {
+      Serial.printf("[OTA] Read failed at offset %d\n", offset);
+      free(chunk);
+      Update.abort();
+      httpTerm();
+      _state = CellState::RECONNECTING;
+      return;
+    }
+
+    size_t written = Update.write(chunk, bytesRead);
+    if (written != (size_t)bytesRead) {
+      Serial.printf("[OTA] Write failed: wrote %d of %d\n", written, bytesRead);
+      free(chunk);
+      Update.abort();
+      httpTerm();
+      _state = CellState::RECONNECTING;
+      return;
+    }
+
+    offset += bytesRead;
+
+    int pct = (offset * 100) / fileSize;
+    if (pct / 10 != lastPct / 10) {
+      Serial.printf("[OTA] Flash progress: %d%% (%d/%d)\n", pct, offset, fileSize);
+      lastPct = pct;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+
+  free(chunk);
+  httpTerm();
+
+  if (!Update.end(true)) {
+    Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
+    _state = CellState::RECONNECTING;
+    return;
+  }
+
+  Serial.println("[OTA] SUCCESS — rebooting in 3 seconds");
+  vTaskDelay(pdMS_TO_TICKS(3000));
+  ESP.restart();
+}
+
+// ---------------------------------------------------------------------------
 // FreeRTOS Task
 // ---------------------------------------------------------------------------
 
@@ -818,6 +1056,12 @@ restart:
   unsigned long lastTelem = 0;
 
   while (true) {
+    // Check for pending OTA request
+    if (_otaPending && _state == CellState::CONNECTED) {
+      performOTA();
+      continue;
+    }
+
     drainURCs();
 
     // Health check: too many consecutive publish failures = silent disconnect

@@ -389,37 +389,36 @@ void WiFiMQTT::performOTA() {
 
   Serial.printf("[OTA] URL: %s\n", _otaUrl);
 
-  _mqttClient.publish(_topicRsp, "OTA: Starting download...");
-  _mqttClient.loop();
+  // Disconnect MQTT cleanly — we need TLS resources for HTTP
+  _mqttClient.disconnect();
+
+  // Use a separate TLS client — don't reuse the MQTT one
+  WiFiClientSecure otaClient;
+  otaClient.setInsecure();
 
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setTimeout(180000);
 
-  if (!http.begin(_wifiClient, _otaUrl)) {
+  if (!http.begin(otaClient, _otaUrl)) {
     Serial.println("[OTA] HTTP begin failed");
-    _mqttClient.publish(_topicRsp, "OTA: HTTP begin failed");
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
   int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
     Serial.printf("[OTA] HTTP error: %d\n", httpCode);
-    char msg[60];
-    snprintf(msg, sizeof(msg), "OTA: HTTP error %d", httpCode);
-    _mqttClient.publish(_topicRsp, msg);
     http.end();
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
   int fileSize = http.getSize();
   if (fileSize <= 0) {
     Serial.println("[OTA] Unknown content length");
-    _mqttClient.publish(_topicRsp, "OTA: Unknown file size");
     http.end();
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
@@ -427,9 +426,8 @@ void WiFiMQTT::performOTA() {
 
   if (!Update.begin(fileSize)) {
     Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
-    _mqttClient.publish(_topicRsp, "OTA: Flash init failed");
     http.end();
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
@@ -461,10 +459,6 @@ void WiFiMQTT::performOTA() {
     int pct = (offset * 100) / fileSize;
     if (pct / 10 != lastPct / 10) {
       Serial.printf("[OTA] Progress: %d%% (%d/%d)\n", pct, offset, fileSize);
-      char msg[60];
-      snprintf(msg, sizeof(msg), "OTA: Flashing %d%%", pct);
-      _mqttClient.publish(_topicRsp, msg);
-      _mqttClient.loop();
       lastPct = pct;
     }
 
@@ -476,21 +470,17 @@ void WiFiMQTT::performOTA() {
   if (offset < fileSize) {
     Serial.printf("[OTA] Incomplete: %d of %d\n", offset, fileSize);
     Update.abort();
-    _mqttClient.publish(_topicRsp, "OTA: Download incomplete");
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
   if (!Update.end(true)) {
     Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
-    _mqttClient.publish(_topicRsp, "OTA: Verification failed");
-    _state = WiFiMQTTState::CONNECTED;
+    _state = WiFiMQTTState::MQTT_CONNECTING;
     return;
   }
 
   Serial.println("[OTA] SUCCESS — rebooting in 3 seconds");
-  _mqttClient.publish(_topicRsp, "OTA: Success! Rebooting...");
-  _mqttClient.loop();
   delay(3000);
   ESP.restart();
 }
