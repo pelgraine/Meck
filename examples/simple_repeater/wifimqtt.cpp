@@ -171,10 +171,21 @@ const char* WiFiMQTT::stateString() const {
 bool WiFiMQTT::loadConfig(WiFiMQTTConfig& cfg) {
   memset(&cfg, 0, sizeof(cfg));
 
+  // Determine filesystem: SD if available, otherwise SPIFFS
+  // Heltec V4 and other headless boards have no SD slot — config lives in SPIFFS.
+  // Upload config files via: pio run -t uploadfs (with data/ folder)
+#if defined(HAS_SDCARD) || defined(SDCARD_CS)
+  fs::FS& configFS = SD;
+  Serial.println("[WiFi] Config source: SD card");
+#else
+  fs::FS& configFS = SPIFFS;
+  Serial.println("[WiFi] Config source: SPIFFS");
+#endif
+
   // WiFi config: read SSID/password pairs
-  File wf = SD.open(WIFI_CONFIG_FILE, FILE_READ);
+  File wf = configFS.open(WIFI_CONFIG_FILE, FILE_READ);
   if (!wf) {
-    Serial.println("[WiFi] No /remote/wifi.cfg");
+    Serial.printf("[WiFi] No %s\n", WIFI_CONFIG_FILE);
     return false;
   }
 
@@ -195,9 +206,9 @@ bool WiFiMQTT::loadConfig(WiFiMQTTConfig& cfg) {
   }
 
   // MQTT config: /remote/mqtt.cfg (same format as cellular)
-  File mf = SD.open(MQTT_CONFIG_FILE, FILE_READ);
+  File mf = configFS.open(MQTT_CONFIG_FILE, FILE_READ);
   if (!mf) {
-    Serial.println("[WiFi] No /remote/mqtt.cfg");
+    Serial.printf("[WiFi] No %s\n", MQTT_CONFIG_FILE);
     return false;
   }
   String line;
@@ -270,6 +281,7 @@ bool WiFiMQTT::connectWiFi() {
       }
       time_t now = time(nullptr);
       if (now > 1700000000) {
+        extern AutoDiscoverRTCClock rtc_clock;
         rtc_clock.setCurrentTime((uint32_t)now);
         Serial.printf(" OK (%lu)\n", (unsigned long)now);
       } else {
@@ -388,36 +400,37 @@ void WiFiMQTT::performOTA() {
 
   Serial.printf("[OTA] URL: %s\n", _otaUrl);
 
-  // Disconnect MQTT cleanly — we need TLS resources for HTTP
-  _mqttClient.disconnect();
-
-  // Use a separate TLS client — don't reuse the MQTT one
-  WiFiClientSecure otaClient;
-  otaClient.setInsecure();
+  _mqttClient.publish(_topicRsp, "OTA: Starting download...");
+  _mqttClient.loop();
 
   HTTPClient http;
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.setTimeout(180000);
 
-  if (!http.begin(otaClient, _otaUrl)) {
+  if (!http.begin(_wifiClient, _otaUrl)) {
     Serial.println("[OTA] HTTP begin failed");
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _mqttClient.publish(_topicRsp, "OTA: HTTP begin failed");
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
   int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
     Serial.printf("[OTA] HTTP error: %d\n", httpCode);
+    char msg[60];
+    snprintf(msg, sizeof(msg), "OTA: HTTP error %d", httpCode);
+    _mqttClient.publish(_topicRsp, msg);
     http.end();
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
   int fileSize = http.getSize();
   if (fileSize <= 0) {
     Serial.println("[OTA] Unknown content length");
+    _mqttClient.publish(_topicRsp, "OTA: Unknown file size");
     http.end();
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
@@ -425,8 +438,9 @@ void WiFiMQTT::performOTA() {
 
   if (!Update.begin(fileSize)) {
     Serial.printf("[OTA] Update.begin failed: %s\n", Update.errorString());
+    _mqttClient.publish(_topicRsp, "OTA: Flash init failed");
     http.end();
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
@@ -458,6 +472,10 @@ void WiFiMQTT::performOTA() {
     int pct = (offset * 100) / fileSize;
     if (pct / 10 != lastPct / 10) {
       Serial.printf("[OTA] Progress: %d%% (%d/%d)\n", pct, offset, fileSize);
+      char msg[60];
+      snprintf(msg, sizeof(msg), "OTA: Flashing %d%%", pct);
+      _mqttClient.publish(_topicRsp, msg);
+      _mqttClient.loop();
       lastPct = pct;
     }
 
@@ -469,17 +487,21 @@ void WiFiMQTT::performOTA() {
   if (offset < fileSize) {
     Serial.printf("[OTA] Incomplete: %d of %d\n", offset, fileSize);
     Update.abort();
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _mqttClient.publish(_topicRsp, "OTA: Download incomplete");
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
   if (!Update.end(true)) {
     Serial.printf("[OTA] Update.end failed: %s\n", Update.errorString());
-    _state = WiFiMQTTState::MQTT_CONNECTING;
+    _mqttClient.publish(_topicRsp, "OTA: Verification failed");
+    _state = WiFiMQTTState::CONNECTED;
     return;
   }
 
   Serial.println("[OTA] SUCCESS — rebooting in 3 seconds");
+  _mqttClient.publish(_topicRsp, "OTA: Success! Rebooting...");
+  _mqttClient.loop();
   delay(3000);
   ESP.restart();
 }

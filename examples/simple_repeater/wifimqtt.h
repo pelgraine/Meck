@@ -21,7 +21,10 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#if defined(HAS_SDCARD) || defined(SDCARD_CS)
 #include <SD.h>
+#endif
+#include <SPIFFS.h>
 
 // ---------------------------------------------------------------------------
 // Configuration

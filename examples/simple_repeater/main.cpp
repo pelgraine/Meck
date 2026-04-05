@@ -9,7 +9,9 @@
 #endif
 
 #ifdef MECK_WIFI_REMOTE
+#if defined(HAS_SDCARD) || defined(SDCARD_CS)
 #include <SD.h>
+#endif
 #include "WiFiMQTT.h"
 #endif
 
@@ -33,7 +35,7 @@ static char command[160];
 unsigned long lastActive = 0; // mark last active time
 unsigned long nextSleepinSecs = 120; // next sleep in seconds. The first sleep (if enabled) is after 2 minutes from boot
 
-#if defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)
+#if (defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)) && (defined(HAS_SDCARD) || defined(SDCARD_CS))
 static bool sdCardReady = false;
 #endif
 
@@ -98,11 +100,12 @@ void setup() {
   the_mesh.begin(fs);
 
   // ---------------------------------------------------------------------------
-  // SD card init — needed for MQTT config (/remote/mqtt.cfg, /remote/wifi.cfg)
+  // SD card init — needed for MQTT config on devices with SD slots.
   // T-Deck Pro: SD shares display SPI bus (HSPI via displaySpi)
   // T5S3: SD shares LoRa SPI bus (SCK=14, MOSI=13, MISO=21)
+  // Heltec V4 and others without SD: config lives in SPIFFS (already init'd)
   // ---------------------------------------------------------------------------
-#if defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)
+#if (defined(HAS_4G_MODEM) || defined(MECK_WIFI_REMOTE)) && (defined(HAS_SDCARD) || defined(SDCARD_CS))
   {
     // Deselect all SPI devices before SD init to prevent bus contention
     #ifdef SDCARD_CS
@@ -135,6 +138,7 @@ void setup() {
     }
     Serial.printf("SD card: %s\n", sdCardReady ? "ready" : "FAILED");
   }
+#endif
 
   // Start MQTT backhaul
 #ifdef HAS_4G_MODEM
@@ -147,15 +151,19 @@ void setup() {
 #endif
 
 #ifdef MECK_WIFI_REMOTE
+  #if defined(HAS_SDCARD) || defined(SDCARD_CS)
   if (sdCardReady) {
     wifiMQTT.begin();
     Serial.println("WiFi MQTT starting...");
   } else {
     Serial.println("WiFi MQTT skipped — no SD card for config");
   }
+  #else
+  // No SD card slot — config lives in SPIFFS (already initialized above)
+  wifiMQTT.begin();
+  Serial.println("WiFi MQTT starting (SPIFFS config)...");
+  #endif
 #endif
-
-#endif // HAS_4G_MODEM || MECK_WIFI_REMOTE
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
@@ -220,8 +228,13 @@ void loop() {
       memset(&td, 0, sizeof(td));
       td.uptime_secs = millis() / 1000;
       td.battery_mv = board.getBattMilliVolts();
+#ifdef HAS_BQ27220
       td.battery_pct = board.getBatteryPercent();
       td.temperature = board.getBattTemperature();
+#else
+      td.battery_pct = 0;
+      td.temperature = 0;
+#endif
       td.csq = cellularMQTT.getCSQ();
       td.freq = p->freq;
       td.bw = p->bw;
@@ -270,8 +283,13 @@ void loop() {
       memset(&td, 0, sizeof(td));
       td.uptime_secs = millis() / 1000;
       td.battery_mv = board.getBattMilliVolts();
+#ifdef HAS_BQ27220
       td.battery_pct = board.getBatteryPercent();
       td.temperature = board.getBattTemperature();
+#else
+      td.battery_pct = 0;
+      td.temperature = 0;
+#endif
       td.rssi = wifiMQTT.getRSSI();
       td.freq = p->freq;
       td.bw = p->bw;
