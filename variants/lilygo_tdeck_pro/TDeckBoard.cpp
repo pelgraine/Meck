@@ -199,7 +199,7 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
     // Design Capacity correct, but check if Full Charge Capacity is sane.
     uint16_t fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
     Serial.printf("BQ27220: Design Capacity already correct, FCC=%d mAh\n", fcc);
-    if (fcc >= designCapacity_mAh * 3 / 2) {
+    if (fcc > designCapacity_mAh) {
       // FCC is >=150% of design — stale from factory defaults (typically 3000 mAh).
       uint16_t designEnergy = (uint16_t)((uint32_t)designCapacity_mAh * 37 / 10);
       Serial.printf("BQ27220: FCC %d >> DC %d, checking Design Energy (target %d mWh)\n",
@@ -344,7 +344,7 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
       fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
       Serial.printf("BQ27220: FCC after RESET: %d mAh (target <= %d)\n", fcc, designCapacity_mAh);
 
-      if (fcc > designCapacity_mAh * 3 / 2) {
+      if (fcc > designCapacity_mAh) {
         // RESET didn't fix FCC — the gauge IT algorithm is stubbornly
         // retaining its learned value. This typically resolves after one
         // full charge/discharge cycle. Software clamp in

@@ -166,7 +166,7 @@ void MyMesh::writeDisabledFrame() {
   _serial->writeFrame(buf, 1);
 }
 
-void MyMesh::writeContactRespFrame(uint8_t code, const ContactInfo &contact) {
+size_t MyMesh::writeContactRespFrame(uint8_t code, const ContactInfo &contact) {
   int i = 0;
   out_frame[i++] = code;
   memcpy(&out_frame[i], contact.id.pub_key, PUB_KEY_SIZE);
@@ -186,7 +186,7 @@ void MyMesh::writeContactRespFrame(uint8_t code, const ContactInfo &contact) {
   i += 4;
   memcpy(&out_frame[i], &contact.lastmod, 4);
   i += 4;
-  _serial->writeFrame(out_frame, i);
+  return _serial->writeFrame(out_frame, i);
 }
 
 void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, const uint8_t *frame, int len) {
@@ -3142,20 +3142,29 @@ void MyMesh::checkSerialInterface() {
   } else if (_iter_started              // check if our ContactsIterator is 'running'
              && !_serial->isWriteBusy() // don't spam the Serial Interface too quickly!
   ) {
+    // Batch-fill: queue multiple contacts per loop iteration so the BLE
+    // send queue stays saturated during sync.  writeFrame() returns 0
+    // when the queue is full, which naturally throttles us.
     ContactInfo contact;
-    if (_iter.hasNext(this, contact)) {
-      if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
-        writeContactRespFrame(RESP_CODE_CONTACT, contact);
-        if (contact.lastmod > _most_recent_lastmod) {
-          _most_recent_lastmod = contact.lastmod; // save for the RESP_CODE_END_OF_CONTACTS frame
+    bool done = false;
+    int queued = 0;
+    while (!done && queued < 8) {   // up to 8 per iteration to avoid starving loop()
+      if (_iter.hasNext(this, contact)) {
+        if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
+          if (writeContactRespFrame(RESP_CODE_CONTACT, contact) == 0) break;  // queue full
+          queued++;
+          if (contact.lastmod > _most_recent_lastmod) {
+            _most_recent_lastmod = contact.lastmod;
+          }
         }
+      } else { // EOF
+        out_frame[0] = RESP_CODE_END_OF_CONTACTS;
+        memcpy(&out_frame[1], &_most_recent_lastmod,
+               4); // include the most recent lastmod, so app can update their 'since'
+        _serial->writeFrame(out_frame, 5);
+        _iter_started = false;
+        done = true;
       }
-    } else { // EOF
-      out_frame[0] = RESP_CODE_END_OF_CONTACTS;
-      memcpy(&out_frame[1], &_most_recent_lastmod,
-             4); // include the most recent lastmod, so app can update their 'since'
-      _serial->writeFrame(out_frame, 5);
-      _iter_started = false;
     }
   //} else if (!_serial->isWriteBusy()) {
   //  checkConnections();    // TODO - deprecate the 'Connections' stuff
