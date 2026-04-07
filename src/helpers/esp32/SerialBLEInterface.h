@@ -14,6 +14,7 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   bool oldDeviceConnected;
   bool _isEnabled;
   uint16_t last_conn_id;
+  uint8_t _remote_bda[6];   // peer BDA, stored in onConnect for conn param updates
   uint32_t _pin_code;
   unsigned long _last_write;
   unsigned long adv_restart_time;
@@ -23,7 +24,7 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
     uint8_t buf[MAX_FRAME_SIZE];
   };
 
-  #define FRAME_QUEUE_SIZE  8
+  #define FRAME_QUEUE_SIZE  16
   int recv_queue_len;
   Frame recv_queue[FRAME_QUEUE_SIZE];
   int send_queue_len;
@@ -58,6 +59,7 @@ public:
     _isEnabled = false;
     _last_write = 0;
     last_conn_id = 0;
+    memset(_remote_bda, 0, 6);
     send_queue_len = recv_queue_len = 0;
   }
 

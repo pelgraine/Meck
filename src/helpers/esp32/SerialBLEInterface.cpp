@@ -1,4 +1,6 @@
 #include "SerialBLEInterface.h"
+#include "esp_bt.h"
+#include "esp_gap_ble_api.h"
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -26,6 +28,11 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
   BLEDevice::init(dev_name);
   BLEDevice::setSecurityCallbacks(this);
   BLEDevice::setMTU(MAX_FRAME_SIZE);
+
+  // Boost BLE TX power for improved range (+9 dBm, up from default +3 dBm)
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+  esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
 
   BLESecurity  sec;
   sec.setStaticPIN(pin_code);
@@ -77,6 +84,18 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
   if (cmpl.success) {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Success");
     deviceConnected = true;
+
+    // Request fast connection interval (15ms) for faster contact sync.
+    // Phone may negotiate higher, but most modern phones accept 15ms.
+    // Units are 1.25ms, so 12 = 15ms, 16 = 20ms.
+    esp_ble_conn_update_params_t conn_params;
+    memcpy(conn_params.bda, _remote_bda, 6);
+    conn_params.min_int = 12;   // 15ms   (12 × 1.25ms)
+    conn_params.max_int = 16;   // 20ms   (16 × 1.25ms)
+    conn_params.latency = 0;    // no skipped intervals
+    conn_params.timeout = 400;  // 4 seconds supervision timeout
+    esp_ble_gap_update_conn_params(&conn_params);
+    BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
 
@@ -94,6 +113,7 @@ void SerialBLEInterface::onConnect(BLEServer* pServer) {
 void SerialBLEInterface::onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) {
   BLE_DEBUG_PRINTLN("onConnect(), conn_id=%d, mtu=%d", param->connect.conn_id, pServer->getPeerMTU(param->connect.conn_id));
   last_conn_id = param->connect.conn_id;
+  memcpy(_remote_bda, param->connect.remote_bda, 6);
 }
 
 void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
@@ -185,7 +205,7 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   return 0;
 }
 
-#define  BLE_WRITE_MIN_INTERVAL   30
+#define  BLE_WRITE_MIN_INTERVAL   15
 
 bool SerialBLEInterface::isWriteBusy() const {
   return millis() < _last_write + BLE_WRITE_MIN_INTERVAL;   // still too soon to start another write?
