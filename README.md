@@ -72,15 +72,16 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 ## Supported Devices
 
-Meck currently targets two LilyGo devices and also supports the Heltec V4 as a WiFi repeater:
+Meck currently targets two LilyGo devices and also supports the Heltec V3 and V4 as remote repeaters:
 
 | Device | Display | Input | LoRa | Battery | GPS | RTC |
 |--------|---------|-------|------|---------|-----|-----|
 | **T-Deck Pro** | 240×320 e-ink (GxEPD2) | TCA8418 keyboard + optional touch | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes | No (uses GPS time) |
 | **T5S3 E-Paper Pro** (V2, H752-B) | 960×540 e-ink (FastEPD, parallel) | GT911 capacitive touch (no keyboard) | SX1262 | BQ27220 fuel gauge, 1500 mAh | No (non-GPS variant) | Yes (PCF8563 hardware RTC) |
-| **Heltec V4** (WiFi repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
+| **Heltec V3** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
+| **Heltec V4** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
 
-The T-Deck Pro and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The Heltec V4 uses the ESP32-S3 with 8 MB flash and 8 MB PSRAM.
+The T-Deck Pro and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The Heltec V3 and V4 use the ESP32-S3 with 8 MB flash and 8 MB PSRAM.
 
 ---
 
@@ -196,7 +197,7 @@ For a detailed explanation of what multibyte path hash means and why it matters,
 | Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
 | WiFi Repeater | `meck_wifi_repeater` | — | Yes (MQTT) | — | — | No | — |
 
-The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. The remote repeater variant operates as a dedicated MeshCore repeater with cellular MQTT management — see [Remote Repeater](#remote-repeater-t-deck-pro-4g) below. The WiFi repeater operates similarly but over WiFi — see [WiFi Repeater](#wifi-repeater).
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
 
 ### T-Deck Pro Keyboard Controls
 
@@ -605,7 +606,7 @@ An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5
 
 > **TODO — This section needs full documentation.** The feature is implemented and shipping. Draft outline below.
 
-The remote repeater variant (`meck_remote_repeater`) turns a T-Deck Pro 4G board into a dedicated MeshCore repeater with cellular MQTT remote management. The device connects to an MQTT broker (HiveMQ Cloud recommended — free tier available) over cellular data, publishing telemetry (uptime, battery, signal strength, temperature, neighbour count) and subscribing to commands. Manage the repeater from anywhere via the [Meck-Mycelium remote dashboard](https://pelgraine.github.io/Meck-Mycelium).
+The remote repeater variant (`meck_remote_repeater`) turns a T-Deck Pro 4G board into a dedicated MeshCore repeater with cellular MQTT remote management. The repeater functions as a normal MeshCore repeater on the mesh — it forwards packets and responds to guest logins — but **admin management (clock sync, send advert, reboot, get status, configuration) is performed remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. The device connects to an MQTT broker (HiveMQ Cloud recommended — free tier available) over cellular data, publishing telemetry (uptime, battery, signal strength, temperature, neighbour count) and subscribing to admin commands.
 
 **Sections to write:**
 
@@ -622,12 +623,13 @@ The remote repeater variant (`meck_remote_repeater`) turns a T-Deck Pro 4G board
 
 > **TODO — This section needs full documentation.** The feature is implemented. Draft outline below.
 
-The WiFi repeater variants turn a device into a dedicated MeshCore repeater with WiFi MQTT remote management — similar to the cellular remote repeater but using WiFi instead of 4G. Available for three platforms:
+The WiFi repeater variants turn a device into a dedicated MeshCore repeater with WiFi MQTT remote management — similar to the cellular remote repeater but using WiFi instead of 4G. The repeater forwards mesh traffic and responds to guest logins as normal, but **admin management is performed remotely via MQTT** through the Meck-Mycelium dashboard, not via the standard mesh admin password login. Available for the following platforms:
 
 | Variant | Environment | Platform |
 |---------|------------|----------|
 | T-Deck Pro WiFi Repeater | `meck_wifi_repeater` | LilyGo T-Deck Pro |
 | T5S3 WiFi Repeater | `meck_wifi_repeater_t5s3` | LilyGo T5S3 E-Paper Pro |
+| Heltec V3 WiFi Repeater | `meck_wifi_repeater_heltec_v3` | Heltec V3 |
 | Heltec V4 WiFi Repeater | `meck_wifi_repeater_heltec_v4` | Heltec V4 |
 | Heltec V4 WiFi Repeater (headless) | `meck_wifi_repeater_heltec_v4_headless` | Heltec V4 (no display) |
 
@@ -654,7 +656,7 @@ The LilyGo T5S3 E-Paper Pro (V2, H752-B) is a 4.7-inch e-ink device with capacit
 | WiFi Companion | `meck_t5s3_wifi` | — | Yes (TCP:5000) | Yes | 2,000 |
 | WiFi Repeater | `meck_wifi_repeater_t5s3` | — | Yes (MQTT) | No | — |
 
-The WiFi variant connects to the MeshCore web app or meshcore.js over your local network. The web reader shares the same WiFi connection — no extra setup needed.
+The WiFi variant connects to the MeshCore web app or meshcore.js over your local network. The web reader shares the same WiFi connection — no extra setup needed. The WiFi Repeater variant is a dedicated remote repeater — see [WiFi Repeater](#wifi-repeater) for details on MQTT-based admin management.
 
 ### Touch Navigation
 
@@ -718,7 +720,9 @@ Since the T5S3 has no physical keyboard, a full-screen QWERTY virtual keyboard a
 The virtual keyboard supports:
 - QWERTY letter layout with a symbol/number layer (tap the **123** key to switch)
 - Shift toggle for uppercase
-- Backspace and Enter keys
+- Backspace (UTF-8 aware — correctly deletes multi-byte emoji) and Enter keys
+- **Emoji picker** — tap the **$** key to open a scrollable grid of emoji sprites. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard.
+- Inline emoji rendering — emoji appear as pixel sprites in the text field as you type
 - Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
 
 Tap keys to type. Tap **Enter** to submit, or press the **Boot button** to cancel and close the keyboard.
@@ -797,13 +801,14 @@ The contacts list shows all known nodes sorted by most recently heard, with type
 
 > **Note:** The **Fav** filter shows only contacts you have marked as favourites. If it appears empty, no contacts have been favourited yet — use select mode (tap a contact) and then long-press to mark favourites.
 
-**Select mode** — tap any contact row to enter select mode. The tapped contact is pre-selected (shown with `*`). Swipe or tap to navigate and toggle selections.
+**Select mode** — tap any contact row to enter select mode. The tapped contact is pre-selected (shown with `*`). Swipe or tap to navigate and toggle selections. You can also use a **two-finger tap** anywhere on the contacts screen to toggle select mode on and off.
 
 | Gesture | Action |
 |---------|--------|
 | Tap | Toggle selection on tapped row |
 | Swipe left | Select all contacts in current filter |
 | Swipe right | Deselect all |
+| Two-finger tap | Toggle select mode on/off |
 | Long press | Exit select mode (confirm favourites / deletions first) |
 
 Batch operations (favourite toggle, delete) are triggered from the overlay that appears after exiting select mode with contacts selected.
@@ -907,7 +912,7 @@ The [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) is a brow
 **Features:**
 
 - **Voice message playback** — voice notes sent from a Meck Audio device appear as tappable playback bubbles in the DM view. Codec2 decoding happens entirely in the browser via WebAssembly — no app install or audio hardware needed on the receiving end.
-- **Remote repeater dashboard** — connect to your MQTT broker to view live telemetry from remote repeater devices (cellular or WiFi), send commands, sync clocks, trigger adverts, reboot, and more.
+- **Remote repeater dashboard** — connect to your MQTT broker to administer remote repeater devices (cellular or WiFi). View live telemetry, send admin commands (clock sync, send advert, reboot, get status), and manage repeaters that are out of LoRa range. This replaces the standard mesh admin password login for remote repeater variants.
 - **Standard companion features** — messaging, contacts, channel messages via BLE.
 
 Open **https://pelgraine.github.io/Meck-Mycelium** in Chrome on your phone or computer.
@@ -974,7 +979,7 @@ The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE vari
 
 ## 🛠 Hardware Compatibility
 
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, and Heltec V4 (WiFi repeater only).
+MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, Heltec V3 (remote repeater only), and Heltec V4 (remote repeater only).
 
 ## Contributing
 
@@ -1014,8 +1019,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Voice notes over LoRa (Codec2, audio variant)
 - [X] Contact select mode with batch favourite, export, import, and delete
 - [X] Path editor for manual contact route management
-- [X] Remote repeater with cellular MQTT management (4G variant)
-- [X] WiFi repeater with WiFi MQTT management
+- [X] Remote repeater with cellular MQTT admin management (4G variant)
+- [X] WiFi remote repeater with MQTT admin management
 - [X] SD File Manager via OTA Tools
 - [X] 2,000 contact support (PSRAM, all variants)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
@@ -1045,13 +1050,20 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Roomserver message handling and mark-read on login
 - [X] Customised user option for larger-font mode
 - [X] Contact select mode with batch favourite and delete
-- [X] WiFi repeater with WiFi MQTT management
+- [X] WiFi remote repeater with MQTT admin management
 - [X] 2,000 contact support (PSRAM, all variants)
 - [ ] Improve EPUB rendering and EPUB format handling
 
 **Heltec V4:**
-- [X] WiFi repeater with WiFi MQTT management
+- [X] WiFi remote repeater with MQTT admin management
 - [X] Headless WiFi repeater variant (no display)
+
+**Heltec V3:**
+- [X] WiFi remote repeater with MQTT admin management
+
+**In development (WIP):**
+- [ ] T-Deck Pro MAX — ESP32-S3 with XL9555 I/O expander, combined 4G (A7682E) + audio (ES8311), working e-ink front-light, 1500 mAh battery. LoRa mesh, keyboard, display, GPS, touch, SD card all working. Modem and ES8311 audio integration pending hardware validation.
+- [ ] T-Echo Card — nRF52840 (BLE-native) with SX1262, SSD1315 OLED (72×40), L76K GPS, speaker, PDM mic, IMU, solar charging, NFC. Preliminary variant files created; awaiting hardware.
 
 ## 📞 Get Support
 
