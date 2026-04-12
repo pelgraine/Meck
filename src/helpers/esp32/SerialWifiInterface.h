@@ -24,7 +24,7 @@ class SerialWifiInterface : public BaseSerialInterface {
 
   FrameHeader received_frame_header;
 
-  #define FRAME_QUEUE_SIZE  4
+  #define FRAME_QUEUE_SIZE  64
   int recv_queue_len;
   Frame recv_queue[FRAME_QUEUE_SIZE];
   int send_queue_len;
