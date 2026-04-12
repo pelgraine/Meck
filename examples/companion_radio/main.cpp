@@ -1525,24 +1525,60 @@ static void lastHeardToggleContact() {
     }
 
     // Contacts screen: long press
-    //   If NOT in select mode → enter select mode
-    //   If already in select mode → exit select mode
+    //   T-Deck Pro: toggle select mode (DM/admin handled by keyboard Enter)
+    //   T5S3: DM for chat contacts, admin for repeaters/rooms (no physical keyboard)
+    //         If in select mode, long press exits it on both platforms.
     if (ui_task.isOnContactsScreen()) {
       ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
       if (cs) {
-        if (!cs->isInSelectMode()) {
-          // Enter select mode on long press
-          cs->enterSelectMode();
+        if (cs->isInSelectMode()) {
+          // Both platforms: long press exits select mode
+          cs->exitSelectMode();
           ui_task.forceRefresh();
-          Serial.println("Contacts: entered select mode (touch long press)");
+          Serial.println("Contacts: exited select mode (touch long press)");
           return 0;
         }
-        // Already in select mode: long press exits select mode on both platforms
-        // (T-Deck Pro uses keyboard for actions; T5S3 can use CardKB if attached)
-        cs->exitSelectMode();
-        ui_task.forceRefresh();
-        Serial.println("Contacts: exited select mode (touch long press)");
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        // T5S3: long press = DM/admin/room action (primary interaction path)
+        {
+          int idx = cs->getSelectedContactIdx();
+          uint8_t ctype = cs->getSelectedContactType();
+          if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+            if (ui_task.hasDMUnread(idx)) {
+              char cname[32];
+              cs->getSelectedContactName(cname, sizeof(cname));
+              ui_task.clearDMUnread(idx);
+              ui_task.gotoDMConversation(cname);
+              return 0;
+            }
+            char dname[32];
+            cs->getSelectedContactName(dname, sizeof(dname));
+            char label[40];
+            snprintf(label, sizeof(label), "DM: %s", dname);
+            ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+            return 0;
+          }
+        }
         return 0;
+#else
+        // T-Deck Pro: long press enters select mode
+        cs->enterSelectMode();
+        ui_task.forceRefresh();
+        Serial.println("Contacts: entered select mode (touch long press)");
+        return 0;
+#endif
       }
       return KEY_ENTER;
     }

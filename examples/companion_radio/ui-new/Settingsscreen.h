@@ -1847,7 +1847,7 @@ public:
           break;
 
         case ROW_AUTOADD_CHAT:
-          snprintf(tmp, sizeof(tmp), "  Chat: %s",
+          snprintf(tmp, sizeof(tmp), "  Companion: %s",
                    (_prefs->autoadd_config & AUTO_ADD_CHAT) ? "ON" : "OFF");
           display.print(tmp);
           break;
