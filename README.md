@@ -34,7 +34,10 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
   - [Web Browser & IRC](#web-browser--irc)
   - [Alarm Clock (Audio only)](#alarm-clock-audio-only)
+  - [Voice Notes Over LoRa (Audio only)](#voice-notes-over-lora-audio-only)
   - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
+- [Remote Repeater (T-Deck Pro 4G)](#remote-repeater-t-deck-pro-4g)
+- [WiFi Repeater](#wifi-repeater)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
   - [Build Variants](#t5s3-build-variants)
   - [Touch Navigation](#touch-navigation)
@@ -50,6 +53,8 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 - [Text & EPUB Reader](TXT___EPUB_Reader_Guide.md)
 - [Web Browser & IRC Guide](Web_App_Guide.md)
 - [SMS & Phone App Guide](SMS___Phone_App_Guide.md)
+- [Audiobook Player Guide](Audiobook_Player_Guide.md)
+- [Meck-Mycelium Web App](#meck-mycelium-web-app)
 - [About MeshCore](#about-meshcore)
 - [What is MeshCore?](#what-is-meshcore)
 - [Key Features](#key-features)
@@ -67,14 +72,15 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 ## Supported Devices
 
-Meck currently targets two LilyGo devices:
+Meck currently targets two LilyGo devices and also supports the Heltec V4 as a WiFi repeater:
 
 | Device | Display | Input | LoRa | Battery | GPS | RTC |
 |--------|---------|-------|------|---------|-----|-----|
 | **T-Deck Pro** | 240×320 e-ink (GxEPD2) | TCA8418 keyboard + optional touch | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes | No (uses GPS time) |
 | **T5S3 E-Paper Pro** (V2, H752-B) | 960×540 e-ink (FastEPD, parallel) | GT911 capacitive touch (no keyboard) | SX1262 | BQ27220 fuel gauge, 1500 mAh | No (non-GPS variant) | Yes (PCF8563 hardware RTC) |
+| **Heltec V4** (WiFi repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
 
-Both devices use the ESP32-S3 with 16 MB flash and 8 MB PSRAM.
+The T-Deck Pro and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The Heltec V4 uses the ESP32-S3 with 8 MB flash and 8 MB PSRAM.
 
 ---
 
@@ -181,14 +187,16 @@ For a detailed explanation of what multibyte path hash means and why it matters,
 
 | Variant | Environment | BLE | WiFi | 4G Modem | Audio DAC | Web Reader | Max Contacts |
 |---------|------------|-----|------|----------|-----------|------------|-------------|
-| Audio + BLE | `meck_audio_ble` | Yes | Yes (via BLE stack) | — | PCM5102A | Yes | 2,000 |
+| Audio + BLE | `meck_audio_ble` | Yes | Yes (web reader only) | — | PCM5102A | Yes | 2,000 |
 | Audio + WiFi | `meck_audio_wifi` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 2,000 |
 | Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 2,000 |
 | 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 2,000 |
 | 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 2,000 |
 | 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 2,000 |
+| Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
+| WiFi Repeater | `meck_wifi_repeater` | — | Yes (MQTT) | — | — | No | — |
 
-The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive.
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. The remote repeater variant operates as a dedicated MeshCore repeater with cellular MQTT management — see [Remote Repeater](#remote-repeater-t-deck-pro-4g) below. The WiFi repeater operates similarly but over WiFi — see [WiFi Repeater](#wifi-repeater).
 
 ### T-Deck Pro Keyboard Controls
 
@@ -213,6 +221,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
 | G | Open map screen (shows contacts with GPS positions) |
+| Mic | Open voice messages (audio variant only) |
 | Q | Back to home screen |
 | Double-click Boot | Lock / unlock screen |
 
@@ -338,6 +347,12 @@ Contacts can be added three ways:
 
 Enter select mode (Enter), select the contacts to remove (Enter to toggle, A to select all), then press **Backspace** to delete. You will be returned to the contacts list once the deletion is complete.
 
+**Exporting and importing contacts**
+
+In select mode, press **X** to export. If contacts are selected, only those contacts are exported; if none are selected, all contacts are exported. Contacts are saved as a JSON file to `/meshcore/` on the SD card with a timestamp in the filename. The JSON format is compatible with MeshCore companion apps — you can copy the file from the SD card and import it into the Android, iOS, or web companion app.
+
+Press **R** on the contacts list (outside select mode) to import contacts from a JSON file on the SD card. The most recent export file in `/meshcore/` is used automatically.
+
 **Contact limits:** All variants support up to 2,000 contacts (stored in PSRAM).
 
 ### Sending a Direct Message
@@ -409,6 +424,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
+| OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
 | Device Info | Public key and firmware version (read-only) |
 
 **Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
@@ -469,7 +485,7 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 
 ### Emoji Picker
 
-While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 47 emoji is displayed in a 5-column layout.
+While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of emoji is displayed in a 5-column layout.
 
 | Key | Action |
 |-----|--------|
@@ -543,6 +559,38 @@ SD Card
 └── ...
 ```
 
+### Voice Notes Over LoRa (Audio only)
+
+Press the **Microphone key** (the zero key on the keyboard) to open the Voice Messages screen. This is available on the audio variant of the T-Deck Pro (PCM5102A DAC).
+
+Record and send voice messages of up to 12 seconds over LoRa. Audio is encoded on-device using Codec2 at 1200 bps, compressing each second of speech into a single 150-byte LoRa packet. Voice notes use very little airtime relative to what they deliver — a 5-second message is just 5 packets.
+
+Voice notes can be sent to another T-Deck Pro Audio device (plays automatically through the headphone jack) or to any MeshCore companion device connected to the [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) (plays through your phone's speaker as a tappable bubble in the DM view).
+
+**Sending a voice note:**
+
+1. Press the **Microphone key** to open the Voice Messages screen
+2. Press and **hold** the Microphone key to record — release to stop (max 12 seconds)
+3. Press **S** to open the contact picker — contacts with a direct path appear at the top
+4. Scroll to your contact and press **Enter** to send
+
+Packets are sent with staggered 3-second delays to avoid congesting the channel. On a 62.5 kHz / SF7 radio preset (e.g. Australia Narrow), a 5-second voice note arrives in roughly 20 seconds and a 12-second recording in about 42 seconds.
+
+**Receiving voice notes:**
+
+* **On a T-Deck Pro Audio device:** the voice message screen opens automatically and the message plays through the headphone jack. **Headphones are recommended** — the built-in speaker is very quiet.
+* **Via Meck-Mycelium:** voice messages appear as "🎙️ Voice message" bubbles in the DM view. Tap to play. Codec2 decoding happens entirely in the browser via WebAssembly.
+
+> **Note:** Voice recording and sending requires the **Audio variant** hardware (PCM5102A DAC). Receiving and playback works on all Audio variants. Non-audio Meck devices can receive and relay voice packets but cannot play them locally — use the Meck-Mycelium web app for playback on those devices.
+
+| Key | Action |
+|-----|--------|
+| Mic (hold) | Record voice note |
+| Mic (release) | Stop recording |
+| S | Open contact picker to send |
+| Enter | Send to selected contact |
+| Q | Back to home screen |
+
 ### Lock Screen (T-Deck Pro)
 
 Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
@@ -550,6 +598,46 @@ Double-click the Boot button to lock the screen. The lock screen shows the curre
 Double-click the Boot button again to unlock and return to whatever screen you were on.
 
 An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
+
+---
+
+## Remote Repeater (T-Deck Pro 4G)
+
+> **TODO — This section needs full documentation.** The feature is implemented and shipping. Draft outline below.
+
+The remote repeater variant (`meck_remote_repeater`) turns a T-Deck Pro 4G board into a dedicated MeshCore repeater with cellular MQTT remote management. The device connects to an MQTT broker (HiveMQ Cloud recommended — free tier available) over cellular data, publishing telemetry (uptime, battery, signal strength, temperature, neighbour count) and subscribing to commands. Manage the repeater from anywhere via the [Meck-Mycelium remote dashboard](https://pelgraine.github.io/Meck-Mycelium).
+
+**Sections to write:**
+
+- **Requirements** — T-Deck Pro 4G (A7682E), active SIM with data plan, SD card, MQTT broker account
+- **Setting up HiveMQ Cloud** — step-by-step free account creation, cluster setup, credentials
+- **SD card configuration** — `/remote/mqtt.cfg` (broker, port, username, password, device ID) and optional `/remote/apn.cfg`
+- **Deploying** — flash `meck_remote_repeater`, insert SIM and SD, boot sequence, display status indicators
+- **Dashboard usage** — connecting Meck-Mycelium to your MQTT broker, available commands (clock sync, send advert, reboot, get status), telemetry display
+- **Troubleshooting** — common issues (SIM not registering, MQTT auth failures, APN auto-detection)
+
+---
+
+## WiFi Repeater
+
+> **TODO — This section needs full documentation.** The feature is implemented. Draft outline below.
+
+The WiFi repeater variants turn a device into a dedicated MeshCore repeater with WiFi MQTT remote management — similar to the cellular remote repeater but using WiFi instead of 4G. Available for three platforms:
+
+| Variant | Environment | Platform |
+|---------|------------|----------|
+| T-Deck Pro WiFi Repeater | `meck_wifi_repeater` | LilyGo T-Deck Pro |
+| T5S3 WiFi Repeater | `meck_wifi_repeater_t5s3` | LilyGo T5S3 E-Paper Pro |
+| Heltec V4 WiFi Repeater | `meck_wifi_repeater_heltec_v4` | Heltec V4 |
+| Heltec V4 WiFi Repeater (headless) | `meck_wifi_repeater_heltec_v4_headless` | Heltec V4 (no display) |
+
+**Sections to write:**
+
+- **Requirements** — device, WiFi network, MQTT broker account, SD card (T-Deck Pro / T5S3) or SPIFFS config (Heltec V4)
+- **SD card configuration** — `/remote/wifi.cfg` (supports multiple SSIDs) and `/remote/mqtt.cfg`
+- **Heltec V4 specifics** — no SD card slot, config stored in SPIFFS, headless vs display variant
+- **OTA updates** — NTP time sync, HTTP firmware download over WiFi
+- **Dashboard** — same Meck-Mycelium dashboard as the cellular remote repeater
 
 ---
 
@@ -564,6 +652,7 @@ The LilyGo T5S3 E-Paper Pro (V2, H752-B) is a 4.7-inch e-ink device with capacit
 | Standalone | `meck_t5s3_standalone` | — | — | No | 2,000 |
 | BLE Companion | `meck_t5s3_ble` | Yes | — | No | 2,000 |
 | WiFi Companion | `meck_t5s3_wifi` | — | Yes (TCP:5000) | Yes | 2,000 |
+| WiFi Repeater | `meck_wifi_repeater_t5s3` | — | Yes (MQTT) | No | — |
 
 The WiFi variant connects to the MeshCore web app or meshcore.js over your local network. The web reader shares the same WiFi connection — no extra setup needed.
 
@@ -811,6 +900,22 @@ Tap a contact to enter select mode, select the contacts to remove, exit select m
 
 ---
 
+## Meck-Mycelium Web App
+
+The [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) is a browser-based companion that connects to your MeshCore device via BLE (using WebBLE in Chrome) or to your MQTT broker for remote repeater management.
+
+**Features:**
+
+- **Voice message playback** — voice notes sent from a Meck Audio device appear as tappable playback bubbles in the DM view. Codec2 decoding happens entirely in the browser via WebAssembly — no app install or audio hardware needed on the receiving end.
+- **Remote repeater dashboard** — connect to your MQTT broker to view live telemetry from remote repeater devices (cellular or WiFi), send commands, sync clocks, trigger adverts, reboot, and more.
+- **Standard companion features** — messaging, contacts, channel messages via BLE.
+
+Open **https://pelgraine.github.io/Meck-Mycelium** in Chrome on your phone or computer.
+
+> **Note:** WebBLE requires Chrome (or a Chromium-based browser). Safari and Firefox do not support WebBLE.
+
+---
+
 ## About MeshCore
 
 MeshCore is a lightweight, portable C++ library that enables multi-hop packet routing for embedded projects using LoRa and other packet radios. It is designed for developers who want to create resilient, decentralized communication networks that work without the internet.
@@ -861,6 +966,7 @@ The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE vari
 > **Note:** On both the T-Deck Pro and T5S3, BLE and WiFi are disabled by default at boot. On the T-Deck Pro, navigate to the Bluetooth or WiFi home page and press Enter to enable. On the T5S3, navigate to the Bluetooth home page and long-press the screen to toggle BLE on.
 
 - Web: https://app.meshcore.nz
+- Meck-Mycelium: https://pelgraine.github.io/Meck-Mycelium (voice playback, remote repeater dashboard)
 - Android: https://play.google.com/store/apps/details?id=com.liamcottle.meshcore.android
 - iOS: https://apps.apple.com/us/app/meshcore/id6742354151?platform=iphone
 - NodeJS: https://github.com/liamcottle/meshcore.js
@@ -868,7 +974,7 @@ The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE vari
 
 ## 🛠 Hardware Compatibility
 
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro and LilyGo T5S3 E-Paper Pro.
+MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, and Heltec V4 (WiFi repeater only).
 
 ## Contributing
 
@@ -905,6 +1011,13 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Roomserver message handling and mark-read on login
 - [X] Alarm clock with custom MP3 sounds (audio variant)
 - [X] Customised user option for larger-font mode
+- [X] Voice notes over LoRa (Codec2, audio variant)
+- [X] Contact select mode with batch favourite, export, import, and delete
+- [X] Path editor for manual contact route management
+- [X] Remote repeater with cellular MQTT management (4G variant)
+- [X] WiFi repeater with WiFi MQTT management
+- [X] SD File Manager via OTA Tools
+- [X] 2,000 contact support (PSRAM, all variants)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -931,7 +1044,14 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] DM inbox with per-contact unread indicators
 - [X] Roomserver message handling and mark-read on login
 - [X] Customised user option for larger-font mode
+- [X] Contact select mode with batch favourite and delete
+- [X] WiFi repeater with WiFi MQTT management
+- [X] 2,000 contact support (PSRAM, all variants)
 - [ ] Improve EPUB rendering and EPUB format handling
+
+**Heltec V4:**
+- [X] WiFi repeater with WiFi MQTT management
+- [X] Headless WiFi repeater variant (no display)
 
 ## 📞 Get Support
 
@@ -959,5 +1079,7 @@ However, this firmware links against libraries with different license terms. Bec
 | [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
 | [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
 | [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
+| [PubSubClient](https://github.com/knolleary/pubsubclient) | MIT | Nick O'Leary |
+| [Codec2](https://github.com/sh123/esp32_codec2_arduino) | LGPL-2.1 | sh123 (ESP32 port) |
 
 Full license texts for each dependency are available in their respective repositories linked above.
