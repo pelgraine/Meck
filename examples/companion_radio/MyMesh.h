@@ -131,6 +131,9 @@ public:
   int getContactBlob(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
     return getBlobByKey(key, key_len, dest_buf);
   }
+  // Force-add a contact from a raw advert blob, bypassing auto-add settings.
+  // Used by Last Heard and Discovery when the user explicitly selects a node to add.
+  bool forceImportContact(const uint8_t* blob, uint8_t len);
   
   // Queue a sent channel message for BLE app sync
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
@@ -261,6 +264,7 @@ private:
   NodePrefs _prefs;
   VoiceRawHandler _voiceHandler = nullptr;
   VoiceEnvelopeHandler _voiceEnvHandler = nullptr;
+  mutable bool _forceNextImport = false;
   bool _deferSaves = false;
   uint32_t pending_login;
   uint32_t pending_status;

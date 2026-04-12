@@ -315,6 +315,7 @@ bool MyMesh::isAutoAddEnabled() const {
 }
 
 bool MyMesh::shouldAutoAddContactType(uint8_t contact_type) const {
+  if (_forceNextImport) return true;  // explicit user add from Last Heard / Discovery
   if ((_prefs.manual_add_contacts & 1) == 0) {
     return true;
   }
@@ -360,6 +361,7 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  _forceNextImport = false;  // clear force-add flag (set by forceImportContact)
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact);
@@ -3259,6 +3261,13 @@ void MyMesh::stopDiscovery() {
   _discoveryActive = false;
 }
 
+bool MyMesh::forceImportContact(const uint8_t* blob, uint8_t len) {
+  _forceNextImport = true;
+  bool ok = importContact(blob, len);
+  if (!ok) _forceNextImport = false;  // clear if importContact failed (no loopback queued)
+  return ok;
+}
+
 bool MyMesh::addDiscoveredToContacts(int idx) {
   if (idx < 0 || idx >= _discoveredCount) return false;
   if (_discovered[idx].already_in_contacts) return true;  // already there
@@ -3267,7 +3276,7 @@ bool MyMesh::addDiscoveredToContacts(int idx) {
   uint8_t buf[256];
   int plen = getBlobByKey(_discovered[idx].contact.id.pub_key, PUB_KEY_SIZE, buf);
   if (plen > 0) {
-    bool ok = importContact(buf, (uint8_t)plen);
+    bool ok = forceImportContact(buf, (uint8_t)plen);
     if (ok) {
       _discovered[idx].already_in_contacts = true;
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);

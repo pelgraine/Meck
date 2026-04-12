@@ -1111,7 +1111,7 @@ static void lastHeardToggleContact() {
     uint8_t blob[256];
     int blobLen = the_mesh.getContactBlob(entry->pubkey_prefix, 8, blob);
     if (blobLen > 0) {
-      the_mesh.importContact(blob, blobLen);
+      the_mesh.forceImportContact(blob, blobLen);
       the_mesh.scheduleLazyContactSave();
       char alertBuf[40];
       snprintf(alertBuf, sizeof(alertBuf), "Added: %s", entry->name);
