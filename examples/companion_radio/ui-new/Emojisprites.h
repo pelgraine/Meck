@@ -3,7 +3,7 @@
 // Emoji sprites for e-ink display - dual size
 // Large (12x12) for compose/picker, Small (10x10) for channel view
 // MSB-first, 2 bytes per row
-// 65 total emoji: joy/thumbsup/frown first, then 43 original, then 19 new
+// 76 total emoji: joy/thumbsup/frown first, then 43 original, then 19 new, then 11 newest
 
 #include <stdint.h>
 #ifdef ESP32
@@ -331,25 +331,29 @@ static const uint8_t emoji_lg_signal_strength[] PROGMEM = {
 
 
 static const uint8_t* const EMOJI_SPRITES_LG[] PROGMEM = {
-  emoji_lg_joy, emoji_lg_thumbsup, emoji_lg_frown,
+  // Faces/emotion first
+  emoji_lg_joy, emoji_lg_frown, emoji_lg_loudly_crying,
+  emoji_lg_grimace, emoji_lg_zany_face, emoji_lg_cowboy,
+  // Thumbsup + heart
+  emoji_lg_thumbsup, emoji_lg_heart,
+  // Everything else in original relative order
   emoji_lg_wireless, emoji_lg_infinity, emoji_lg_trex, emoji_lg_skull, emoji_lg_cross,
   emoji_lg_lightning, emoji_lg_tophat, emoji_lg_motorcycle, emoji_lg_seedling, emoji_lg_flag_au,
   emoji_lg_umbrella, emoji_lg_nazar, emoji_lg_globe, emoji_lg_radioactive, emoji_lg_cow,
-  emoji_lg_alien, emoji_lg_invader, emoji_lg_dagger, emoji_lg_grimace,
+  emoji_lg_alien, emoji_lg_invader, emoji_lg_dagger,
   emoji_lg_mountain, emoji_lg_end_arrow, emoji_lg_hollow_circle, emoji_lg_dragon, emoji_lg_globe_meridians,
-  emoji_lg_eggplant, emoji_lg_shield, emoji_lg_goggles, emoji_lg_lizard, emoji_lg_zany_face,
+  emoji_lg_eggplant, emoji_lg_shield, emoji_lg_goggles, emoji_lg_lizard,
   emoji_lg_kangaroo, emoji_lg_feather, emoji_lg_bright, emoji_lg_part_alt, emoji_lg_motorboat,
-  emoji_lg_domino, emoji_lg_satellite, emoji_lg_customs, emoji_lg_cowboy, emoji_lg_wheel,
+  emoji_lg_domino, emoji_lg_satellite, emoji_lg_customs, emoji_lg_wheel,
   emoji_lg_koala, emoji_lg_control_knobs, emoji_lg_peach, emoji_lg_racing_car,
   emoji_lg_mouse, emoji_lg_mushroom, emoji_lg_biohazard, emoji_lg_panda,
   emoji_lg_anger, emoji_lg_dragon_face, emoji_lg_pager, emoji_lg_bee,
   emoji_lg_bulb, emoji_lg_cat, emoji_lg_fleur, emoji_lg_moon,
   emoji_lg_coffee, emoji_lg_tooth, emoji_lg_pretzel, emoji_lg_abacus,
   emoji_lg_moai, emoji_lg_tipping, emoji_lg_hedgehog,
-  emoji_lg_loudly_crying,  emoji_lg_heart,  emoji_lg_diamond_suit,
-  emoji_lg_spade_suit,  emoji_lg_pizza,  emoji_lg_four_leaf_clover,
-  emoji_lg_cloud,  emoji_lg_rocket,  emoji_lg_passport_control,
-  emoji_lg_eight_spoked_asterisk,  emoji_lg_signal_strength,
+  emoji_lg_diamond_suit, emoji_lg_spade_suit, emoji_lg_pizza, emoji_lg_four_leaf_clover,
+  emoji_lg_cloud, emoji_lg_rocket, emoji_lg_passport_control,
+  emoji_lg_eight_spoked_asterisk, emoji_lg_signal_strength,
 };
 
 // ======== SMALL 10x10 SPRITES ========
@@ -614,114 +618,114 @@ static const uint8_t emoji_sm_signal_strength[] PROGMEM = {
 };
 
 static const uint8_t* const EMOJI_SPRITES_SM[] PROGMEM = {
-  emoji_sm_joy, emoji_sm_thumbsup, emoji_sm_frown,
+  // Faces/emotion first
+  emoji_sm_joy, emoji_sm_frown, emoji_sm_loudly_crying,
+  emoji_sm_grimace, emoji_sm_zany_face, emoji_sm_cowboy,
+  // Thumbsup + heart
+  emoji_sm_thumbsup, emoji_sm_heart,
+  // Everything else in original relative order
   emoji_sm_wireless, emoji_sm_infinity, emoji_sm_trex, emoji_sm_skull, emoji_sm_cross,
   emoji_sm_lightning, emoji_sm_tophat, emoji_sm_motorcycle, emoji_sm_seedling, emoji_sm_flag_au,
   emoji_sm_umbrella, emoji_sm_nazar, emoji_sm_globe, emoji_sm_radioactive, emoji_sm_cow,
-  emoji_sm_alien, emoji_sm_invader, emoji_sm_dagger, emoji_sm_grimace,
+  emoji_sm_alien, emoji_sm_invader, emoji_sm_dagger,
   emoji_sm_mountain, emoji_sm_end_arrow, emoji_sm_hollow_circle, emoji_sm_dragon, emoji_sm_globe_meridians,
-  emoji_sm_eggplant, emoji_sm_shield, emoji_sm_goggles, emoji_sm_lizard, emoji_sm_zany_face,
+  emoji_sm_eggplant, emoji_sm_shield, emoji_sm_goggles, emoji_sm_lizard,
   emoji_sm_kangaroo, emoji_sm_feather, emoji_sm_bright, emoji_sm_part_alt, emoji_sm_motorboat,
-  emoji_sm_domino, emoji_sm_satellite, emoji_sm_customs, emoji_sm_cowboy, emoji_sm_wheel,
+  emoji_sm_domino, emoji_sm_satellite, emoji_sm_customs, emoji_sm_wheel,
   emoji_sm_koala, emoji_sm_control_knobs, emoji_sm_peach, emoji_sm_racing_car,
   emoji_sm_mouse, emoji_sm_mushroom, emoji_sm_biohazard, emoji_sm_panda,
   emoji_sm_anger, emoji_sm_dragon_face, emoji_sm_pager, emoji_sm_bee,
   emoji_sm_bulb, emoji_sm_cat, emoji_sm_fleur, emoji_sm_moon,
   emoji_sm_coffee, emoji_sm_tooth, emoji_sm_pretzel, emoji_sm_abacus,
   emoji_sm_moai, emoji_sm_tipping, emoji_sm_hedgehog,
-  emoji_sm_loudly_crying,
-  emoji_sm_heart,
-  emoji_sm_diamond_suit,
-  emoji_sm_spade_suit,
-  emoji_sm_pizza,
-  emoji_sm_four_leaf_clover,
-  emoji_sm_cloud,
-  emoji_sm_rocket,
-  emoji_sm_passport_control,
-  emoji_sm_eight_spoked_asterisk,
-  emoji_sm_signal_strength,
+  emoji_sm_diamond_suit, emoji_sm_spade_suit, emoji_sm_pizza, emoji_sm_four_leaf_clover,
+  emoji_sm_cloud, emoji_sm_rocket, emoji_sm_passport_control,
+  emoji_sm_eight_spoked_asterisk, emoji_sm_signal_strength,
 };
 
 // ---- Codepoint lookup for UTF-8 conversion ----
 struct EmojiCodepoint { uint32_t cp; uint32_t cp2; uint8_t escape; };
 
 static const EmojiCodepoint EMOJI_CODEPOINTS[EMOJI_COUNT] = {
+  // Faces/emotion first
   { 0x1F602, 0x0000, 0x80 }, // joy
-  { 0x1F44D, 0x0000, 0x81 }, // thumbsup
-  { 0x2639,  0x0000, 0x82 }, // frown
-  { 0x1F6DC, 0x0000, 0x83 }, // wireless
-  { 0x267E,  0x0000, 0x84 }, // infinity
-  { 0x1F996, 0x0000, 0x85 }, // trex
-  { 0x2620,  0x0000, 0x86 }, // skull
-  { 0x271D,  0x0000, 0x87 }, // cross
-  { 0x26A1,  0x0000, 0x88 }, // lightning
-  { 0x1F3A9, 0x0000, 0x89 }, // tophat
-  { 0x1F3CD, 0x0000, 0x8A }, // motorcycle
-  { 0x1F331, 0x0000, 0x8B }, // seedling
-  { 0x1F1E6, 0x1F1FA, 0x8C }, // flag_au
-  { 0x2602,  0x0000, 0x8D }, // umbrella
-  { 0x1F9FF, 0x0000, 0x8E }, // nazar
-  { 0x1F30F, 0x0000, 0x8F }, // globe
-  { 0x2622,  0x0000, 0x90 }, // radioactive
-  { 0x1F404, 0x0000, 0x91 }, // cow
-  { 0x1F47D, 0x0000, 0x92 }, // alien
-  { 0x1F47E, 0x0000, 0x93 }, // invader
-  { 0x1F5E1, 0x0000, 0x94 }, // dagger
-  { 0x1F62C, 0x0000, 0x95 }, // grimace
-  { 0x26F0,  0x0000, 0x96 }, // mountain
-  { 0x1F51A, 0x0000, 0x97 }, // end_arrow
-  { 0x2B55,  0x0000, 0x98 }, // hollow_circle
-  { 0x1F409, 0x0000, 0x99 }, // dragon
-  { 0x1F310, 0x0000, 0x9A }, // globe_meridians
-  { 0x1F346, 0x0000, 0x9B }, // eggplant
-  { 0x1F6E1, 0x0000, 0x9C }, // shield
-  { 0x1F97D, 0x0000, 0x9D }, // goggles
-  { 0x1F98E, 0x0000, 0x9E }, // lizard
-  { 0x1F92A, 0x0000, 0x9F }, // zany_face
-  { 0x1F998, 0x0000, 0xA0 }, // kangaroo
-  { 0x1FAB6, 0x0000, 0xA1 }, // feather
-  { 0x1F506, 0x0000, 0xA2 }, // bright
-  { 0x303D,  0x0000, 0xA3 }, // part_alt
-  { 0x1F6E5, 0x0000, 0xA4 }, // motorboat
-  { 0x1F030, 0x0000, 0xA5 }, // domino
-  { 0x1F4E1, 0x0000, 0xA6 }, // satellite
-  { 0x1F6C3, 0x0000, 0xA7 }, // customs
-  { 0x1F920, 0x0000, 0xA8 }, // cowboy
-  { 0x1F6DE, 0x0000, 0xA9 }, // wheel
-  { 0x1F428, 0x0000, 0xAA }, // koala
-  { 0x1F39B, 0x0000, 0xAB }, // control_knobs
-  { 0x1F351, 0x0000, 0xAC }, // peach
-  { 0x1F3CE, 0x0000, 0xAD }, // racing_car
-  { 0x1F42D, 0x0000, 0xAE }, // mouse
-  { 0x1F344, 0x0000, 0xAF }, // mushroom
-  { 0x2623,  0x0000, 0xB0 }, // biohazard
-  { 0x1F43C, 0x0000, 0xB1 }, // panda
-  { 0x1F4A2, 0x0000, 0xB2 }, // anger
-  { 0x1F432, 0x0000, 0xB3 }, // dragon_face
-  { 0x1F4DF, 0x0000, 0xB4 }, // pager
-  { 0x1F41D, 0x0000, 0xB5 }, // bee
-  { 0x1F4A1, 0x0000, 0xB6 }, // bulb
-  { 0x1F431, 0x0000, 0xB7 }, // cat
-  { 0x269C,  0x0000, 0xB8 }, // fleur
-  { 0x1F314, 0x0000, 0xB9 }, // moon
-  { 0x2615,  0x0000, 0xBA }, // coffee
-  { 0x1F9B7, 0x0000, 0xBB }, // tooth
-  { 0x1F968, 0x0000, 0xBC }, // pretzel
-  { 0x1F9EE, 0x0000, 0xBD }, // abacus
-  { 0x1F5FF, 0x0000, 0xBE }, // moai
-  { 0x1F481, 0x0000, 0xBF }, // tipping
-  { 0x1F994, 0x0000, 0xC0 }, // hedgehog
-  { 0x1F62D  , 0x0000 , 0xC1 }, // loudly_crying
-  { 0x2665   , 0x0000 , 0xC2 }, // heart
-  { 0x2666   , 0x0000 , 0xC3 }, // diamond_suit
-  { 0x2660   , 0x0000 , 0xC4 }, // spade_suit
-  { 0x1F355  , 0x0000 , 0xC5 }, // pizza
-  { 0x1F340  , 0x0000 , 0xC6 }, // four_leaf_clover
-  { 0x2601   , 0x0000 , 0xC7 }, // cloud
-  { 0x1F680  , 0x0000 , 0xC8 }, // rocket
-  { 0x1F6C2  , 0x0000 , 0xC9 }, // passport_control
-  { 0x2733   , 0x0000 , 0xCA }, // eight_spoked_asterisk
-  { 0x1F4F6  , 0x0000 , 0xCB }, // signal_strength
+  { 0x2639,  0x0000, 0x81 }, // frown
+  { 0x1F62D, 0x0000, 0x82 }, // loudly_crying
+  { 0x1F62C, 0x0000, 0x83 }, // grimace
+  { 0x1F92A, 0x0000, 0x84 }, // zany_face
+  { 0x1F920, 0x0000, 0x85 }, // cowboy
+  // Thumbsup + heart
+  { 0x1F44D, 0x0000, 0x86 }, // thumbsup
+  { 0x2665,  0x0000, 0x87 }, // heart
+  // Everything else in original relative order
+  { 0x1F6DC, 0x0000, 0x88 }, // wireless
+  { 0x267E,  0x0000, 0x89 }, // infinity
+  { 0x1F996, 0x0000, 0x8A }, // trex
+  { 0x2620,  0x0000, 0x8B }, // skull
+  { 0x271D,  0x0000, 0x8C }, // cross
+  { 0x26A1,  0x0000, 0x8D }, // lightning
+  { 0x1F3A9, 0x0000, 0x8E }, // tophat
+  { 0x1F3CD, 0x0000, 0x8F }, // motorcycle
+  { 0x1F331, 0x0000, 0x90 }, // seedling
+  { 0x1F1E6, 0x1F1FA, 0x91 }, // flag_au
+  { 0x2602,  0x0000, 0x92 }, // umbrella
+  { 0x1F9FF, 0x0000, 0x93 }, // nazar
+  { 0x1F30F, 0x0000, 0x94 }, // globe
+  { 0x2622,  0x0000, 0x95 }, // radioactive
+  { 0x1F404, 0x0000, 0x96 }, // cow
+  { 0x1F47D, 0x0000, 0x97 }, // alien
+  { 0x1F47E, 0x0000, 0x98 }, // invader
+  { 0x1F5E1, 0x0000, 0x99 }, // dagger
+  { 0x26F0,  0x0000, 0x9A }, // mountain
+  { 0x1F51A, 0x0000, 0x9B }, // end_arrow
+  { 0x2B55,  0x0000, 0x9C }, // hollow_circle
+  { 0x1F409, 0x0000, 0x9D }, // dragon
+  { 0x1F310, 0x0000, 0x9E }, // globe_meridians
+  { 0x1F346, 0x0000, 0x9F }, // eggplant
+  { 0x1F6E1, 0x0000, 0xA0 }, // shield
+  { 0x1F97D, 0x0000, 0xA1 }, // goggles
+  { 0x1F98E, 0x0000, 0xA2 }, // lizard
+  { 0x1F998, 0x0000, 0xA3 }, // kangaroo
+  { 0x1FAB6, 0x0000, 0xA4 }, // feather
+  { 0x1F506, 0x0000, 0xA5 }, // bright
+  { 0x303D,  0x0000, 0xA6 }, // part_alt
+  { 0x1F6E5, 0x0000, 0xA7 }, // motorboat
+  { 0x1F030, 0x0000, 0xA8 }, // domino
+  { 0x1F4E1, 0x0000, 0xA9 }, // satellite
+  { 0x1F6C3, 0x0000, 0xAA }, // customs
+  { 0x1F6DE, 0x0000, 0xAB }, // wheel
+  { 0x1F428, 0x0000, 0xAC }, // koala
+  { 0x1F39B, 0x0000, 0xAD }, // control_knobs
+  { 0x1F351, 0x0000, 0xAE }, // peach
+  { 0x1F3CE, 0x0000, 0xAF }, // racing_car
+  { 0x1F42D, 0x0000, 0xB0 }, // mouse
+  { 0x1F344, 0x0000, 0xB1 }, // mushroom
+  { 0x2623,  0x0000, 0xB2 }, // biohazard
+  { 0x1F43C, 0x0000, 0xB3 }, // panda
+  { 0x1F4A2, 0x0000, 0xB4 }, // anger
+  { 0x1F432, 0x0000, 0xB5 }, // dragon_face
+  { 0x1F4DF, 0x0000, 0xB6 }, // pager
+  { 0x1F41D, 0x0000, 0xB7 }, // bee
+  { 0x1F4A1, 0x0000, 0xB8 }, // bulb
+  { 0x1F431, 0x0000, 0xB9 }, // cat
+  { 0x269C,  0x0000, 0xBA }, // fleur
+  { 0x1F314, 0x0000, 0xBB }, // moon
+  { 0x2615,  0x0000, 0xBC }, // coffee
+  { 0x1F9B7, 0x0000, 0xBD }, // tooth
+  { 0x1F968, 0x0000, 0xBE }, // pretzel
+  { 0x1F9EE, 0x0000, 0xBF }, // abacus
+  { 0x1F5FF, 0x0000, 0xC0 }, // moai
+  { 0x1F481, 0x0000, 0xC1 }, // tipping
+  { 0x1F994, 0x0000, 0xC2 }, // hedgehog
+  { 0x2666,  0x0000, 0xC3 }, // diamond_suit
+  { 0x2660,  0x0000, 0xC4 }, // spade_suit
+  { 0x1F355, 0x0000, 0xC5 }, // pizza
+  { 0x1F340, 0x0000, 0xC6 }, // four_leaf_clover
+  { 0x2601,  0x0000, 0xC7 }, // cloud
+  { 0x1F680, 0x0000, 0xC8 }, // rocket
+  { 0x1F6C2, 0x0000, 0xC9 }, // passport_control
+  { 0x2733,  0x0000, 0xCA }, // eight_spoked_asterisk
+  { 0x1F4F6, 0x0000, 0xCB }, // signal_strength
 };
 
 // ---- Helper functions ----
@@ -731,7 +735,7 @@ static const EmojiCodepoint EMOJI_CODEPOINTS[EMOJI_COUNT] = {
 struct EmojiAlias { uint32_t cp; uint8_t escape; };
 #define EMOJI_ALIAS_COUNT 1
 static const EmojiAlias EMOJI_ALIASES[EMOJI_ALIAS_COUNT] = {
-  { 0x1F08E, 0xA5 }, // domino tile (MWD node signifier) -> domino sprite
+  { 0x1F08E, 0xA8 }, // domino tile (MWD node signifier) -> domino sprite
 };
 
 static uint32_t emojiDecodeUtf8(const uint8_t* s, int remaining, int* bytes_consumed) {
