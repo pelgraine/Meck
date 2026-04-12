@@ -181,12 +181,12 @@ For a detailed explanation of what multibyte path hash means and why it matters,
 
 | Variant | Environment | BLE | WiFi | 4G Modem | Audio DAC | Web Reader | Max Contacts |
 |---------|------------|-----|------|----------|-----------|------------|-------------|
-| Audio + BLE | `meck_audio_ble` | Yes | Yes (via BLE stack) | — | PCM5102A | Yes | 500 |
-| Audio + WiFi | `meck_audio_wifi` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 1,500 |
-| Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 1,500 |
-| 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 500 |
-| 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 1,500 |
-| 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 1,500 |
+| Audio + BLE | `meck_audio_ble` | Yes | Yes (via BLE stack) | — | PCM5102A | Yes | 2,000 |
+| Audio + WiFi | `meck_audio_wifi` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 2,000 |
+| Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 2,000 |
+| 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 2,000 |
+| 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 2,000 |
+| 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 2,000 |
 
 The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive.
 
@@ -236,8 +236,6 @@ The WiFi companion variants (`meck_audio_wifi`, `meck_4g_wifi`) connect to the M
 Connect the MeshCore web app or meshcore.js to `<device IP>:5000`.
 
 WiFi is also used by the web reader and IRC client on WiFi variants. The web reader shares the same connection — no extra setup needed.
-
-> **Tip:** WiFi variants support up to 1,500 contacts (vs 500 for BLE variants) because they are not constrained by the BLE protocol ceiling.
 
 ### Clock & Timezone
 
@@ -340,7 +338,7 @@ Contacts can be added three ways:
 
 Enter select mode (Enter), select the contacts to remove (Enter to toggle, A to select all), then press **Backspace** to delete. You will be returned to the contacts list once the deletion is complete.
 
-**Contact limits:** Standalone and WiFi variants support up to 1,500 contacts (stored in PSRAM). BLE variants are limited to 500 contacts due to BLE protocol constraints.
+**Contact limits:** All variants support up to 2,000 contacts (stored in PSRAM).
 
 ### Sending a Direct Message
 
@@ -563,9 +561,9 @@ The LilyGo T5S3 E-Paper Pro (V2, H752-B) is a 4.7-inch e-ink device with capacit
 
 | Variant | Environment | BLE | WiFi | Web Reader | Max Contacts |
 |---------|------------|-----|------|------------|-------------|
-| Standalone | `meck_t5s3_standalone` | — | — | No | 1,500 |
-| BLE Companion | `meck_t5s3_ble` | Yes | — | No | 500 |
-| WiFi Companion | `meck_t5s3_wifi` | — | Yes (TCP:5000) | Yes | 1,500 |
+| Standalone | `meck_t5s3_standalone` | — | — | No | 2,000 |
+| BLE Companion | `meck_t5s3_ble` | Yes | — | No | 2,000 |
+| WiFi Companion | `meck_t5s3_wifi` | — | Yes (TCP:5000) | Yes | 2,000 |
 
 The WiFi variant connects to the MeshCore web app or meshcore.js over your local network. The web reader shares the same WiFi connection — no extra setup needed.
 
