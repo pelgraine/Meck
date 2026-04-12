@@ -39,7 +39,7 @@ private:
   uint16_t* _filteredIdx;    // indices into contact table
   uint32_t* _filteredTs;     // cached lastmod for sorting
   int _filteredCount;                  // how many contacts match current filter
-  AdvertPath _hopBuf[12];    // recently heard advert paths for hop-count display
+  AdvertPath _hopBuf[40];    // recently heard advert paths for hop-count display
   int _hopBufCount;
   bool _cacheValid;
 
@@ -120,7 +120,7 @@ private:
     }
     _cacheValid = true;
     // Refresh hop-count cache from the 12 most recently heard adverts
-    _hopBufCount = the_mesh.getRecentlyHeard(_hopBuf, 12);
+    _hopBufCount = the_mesh.getRecentlyHeard(_hopBuf, 40);
     // Clamp scroll position
     if (_scrollPos >= _filteredCount) {
       _scrollPos = (_filteredCount > 0) ? _filteredCount - 1 : 0;

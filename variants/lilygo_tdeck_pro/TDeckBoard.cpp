@@ -199,11 +199,16 @@ bool TDeckBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
     // Design Capacity correct, but check if Full Charge Capacity is sane.
     uint16_t fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
     Serial.printf("BQ27220: Design Capacity already correct, FCC=%d mAh\n", fcc);
-    if (fcc > designCapacity_mAh) {
+    // Check if FCC is outside an acceptable band around design capacity.
+    // Catches both: FCC too high (stale factory 3000mAh) and FCC too low
+    // (gauge learned on a smaller battery, e.g. 1400mAh on a 2500mAh pack).
+    uint16_t fccLo = (designCapacity_mAh > 100) ? designCapacity_mAh - 100 : 0;
+    uint16_t fccHi = designCapacity_mAh + 100;
+    if (fcc < fccLo || fcc > fccHi) {
       // FCC is >=150% of design — stale from factory defaults (typically 3000 mAh).
       uint16_t designEnergy = (uint16_t)((uint32_t)designCapacity_mAh * 37 / 10);
-      Serial.printf("BQ27220: FCC %d >> DC %d, checking Design Energy (target %d mWh)\n",
-                    fcc, designCapacity_mAh, designEnergy);
+      Serial.printf("BQ27220: FCC %d outside target band [%d..%d], checking Design Energy (target %d mWh)\n",
+                    fcc, fccLo, fccHi, designEnergy);
 
       // Unseal to read data memory and issue RESET
       bq27220_writeControl(0x0414); delay(2);

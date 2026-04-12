@@ -1265,7 +1265,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
-  memset(advert_paths, 0, sizeof(advert_paths));
+  advert_paths = nullptr;  // PSRAM-allocated in begin()
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
@@ -1292,6 +1292,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 }
 
 void MyMesh::begin(bool has_display) {
+  advert_paths = (AdvertPath*)ps_calloc(ADVERT_PATH_TABLE_SIZE, sizeof(AdvertPath));
   BaseChatMesh::begin();
 
   if (!_store->loadMainIdentity(self_id)) {

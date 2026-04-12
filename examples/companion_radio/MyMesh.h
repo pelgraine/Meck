@@ -12,7 +12,7 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.6.1"
+#define FIRMWARE_VERSION "Meck v1.7"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -82,7 +82,7 @@
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
 
 struct AdvertPath {
-  uint8_t pubkey_prefix[7];
+  uint8_t pubkey_prefix[8];
   uint8_t path_len;
   uint8_t type;             // ADV_TYPE_* (Chat/Repeater/Room/Sensor)
   char    name[32];
@@ -305,8 +305,8 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
-  #define ADVERT_PATH_TABLE_SIZE   40
-  AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+  #define ADVERT_PATH_TABLE_SIZE   1000
+  AdvertPath* advert_paths;  // PSRAM-allocated in begin(), size = ADVERT_PATH_TABLE_SIZE
 
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4

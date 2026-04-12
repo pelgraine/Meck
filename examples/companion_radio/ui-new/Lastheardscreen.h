@@ -13,12 +13,15 @@ extern MyMesh the_mesh;
 // recency. Unlike Discovery (active zero-hop scan), this is purely passive
 // — it shows nodes whose adverts have been received over time.
 // ==========================================================================
+// Display cap — we never need to show all 200 storage entries at once
+#define LAST_HEARD_DISPLAY_SIZE 100
+
 class LastHeardScreen : public UIScreen {
   mesh::RTCClock* _rtc;
   int _scrollPos;
 
-  // Local sorted copy of advert paths (refreshed each render)
-  AdvertPath _entries[ADVERT_PATH_TABLE_SIZE];
+  // Local sorted copy of advert paths (PSRAM-allocated, refreshed each render)
+  AdvertPath* _entries;
   int _count;
 
   static char typeChar(uint8_t adv_type) {
@@ -46,7 +49,9 @@ class LastHeardScreen : public UIScreen {
 
 public:
   LastHeardScreen(mesh::RTCClock* rtc)
-    : _rtc(rtc), _scrollPos(0), _count(0) {}
+    : _rtc(rtc), _scrollPos(0), _count(0) {
+    _entries = (AdvertPath*)ps_calloc(LAST_HEARD_DISPLAY_SIZE, sizeof(AdvertPath));
+  }
 
   void resetScroll() { _scrollPos = 0; }
 
@@ -91,7 +96,7 @@ public:
 
   int render(DisplayDriver& display) override {
     // Refresh sorted list from mesh
-    _count = the_mesh.getRecentlyHeard(_entries, ADVERT_PATH_TABLE_SIZE);
+    _count = the_mesh.getRecentlyHeard(_entries, LAST_HEARD_DISPLAY_SIZE);
 
     // Filter out empty entries (recv_timestamp == 0)
     int validCount = 0;

@@ -274,18 +274,73 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 
 ### Contacts Screen
 
-Press **C** from the home screen to open the contacts list. All known mesh contacts are shown sorted by most recently seen, with their type (Chat, Repeater, Room, Sensor), hop count, and time since last advert.
+Press **C** from the home screen to open the contacts list. All known mesh contacts are shown sorted by most recently heard, with their type prefix, estimated hop count, and time since last advert.
+
+**Contact type prefixes**
+
+| Prefix | Type |
+|--------|------|
+| C | Chat node |
+| R | Repeater |
+| RS | Room server |
+| ? | Unknown / sensor |
+
+**Hop count display**
+
+| Display | Meaning |
+|---------|---------|
+| `D` | Direct path known (path exchange completed) |
+| `D*` | Direct path, manually locked |
+| `N` | N-hop path known (e.g. `2` = 2 hops) |
+| `N*` | N-hop path, manually locked |
+| `~D` | Heard direct via flood advert (no path exchange yet) |
+| `~N` | Estimated N hops via flood advert |
+| `?` | No path information available |
+
+Flood-based hop estimates (`~D`, `~N`) are shown for the 12 most recently heard contacts and reset to `?` on reboot until each contact re-advertises. Confirmed path values (`D`, `N`) persist until overwritten by a new path exchange.
+
+**Normal mode controls**
 
 | Key | Action |
 |-----|--------|
 | W / S | Scroll up / down through contacts |
-| A / D | Cycle filter: All → Chat → Repeater → Room → Sensor → Favourites |
-| Enter | Open DM compose (Chat contact) or repeater admin (Repeater contact) |
-| X | Export contacts to SD card (wait 5–10 seconds for confirmation popup) |
-| R | Import contacts from SD card (wait 5–10 seconds for confirmation popup) |
+| A / D | Cycle filter: All → Chat → Rptr → Room → Sens → Fav |
+| Enter | Enter select mode (highlights current contact, enables batch operations) |
+| P | Open path editor for the highlighted contact |
 | Q | Back to home screen |
 
-**Contact limits:** Standalone and WiFi variants support up to 1,500 contacts (stored in PSRAM). BLE variants (Audio-BLE and 4G-BLE) are limited to 500 contacts due to BLE protocol constraints.
+> **Note:** The **Fav** filter shows only contacts you have marked as favourites. If it appears empty, no contacts have been favourited yet — use select mode (Enter) and then **F** to mark contacts.
+
+**Select mode** — press Enter from the contacts list to enter select mode. The highlighted contact is pre-selected. Use W/S to scroll and Enter to toggle selection on any row.
+
+| Key | Action |
+|-----|--------|
+| W / S | Scroll up / down |
+| Enter | Toggle selection on current contact |
+| A | Select all contacts in current filter |
+| D | Deselect all |
+| F | Toggle favourite on all selected contacts |
+| X | Export selected contacts to SD card |
+| Backspace | Delete selected contacts |
+| Q | Exit select mode |
+
+**Adding contacts**
+
+Contacts can be added three ways:
+
+1. **Automatic** — if Settings → Contacts → Add Mode is set to *Auto All*, any node whose advert is heard is added automatically. *Custom* mode adds only nodes matching the enabled type toggles (Companion, Repeater, Room Server, Sensor) — each toggle controls whether receiving an advert of that type triggers an auto-add. *Manual Only* disables all auto-add.
+
+2. **From the Last Heard screen** — press **H** from the home screen to open the last-heard advert list. Scroll to the node you want and press **Enter** (or tap the row) to add it to contacts. Press **Enter** again on an existing contact to remove it (favourites require a second press within 3 seconds to confirm). Entries show `[+]` if already in contacts, `[★]` if a favourite.
+
+   > **Note:** The Last Heard list holds up to 1,000 entries in PSRAM, and advert data is stored persistently on the SD card — so contacts can be added long after the original advertisement was received, even across reboots. This makes Last Heard especially useful when auto-add is set to *Manual Only*, as it provides a passive catalogue of every node heard on the network.
+
+3. **From the Discovery screen** — press **F** from the home screen to run an active discovery scan. Nodes that respond appear in a list; press **Enter** on any entry to add it to contacts.
+
+**Deleting contacts**
+
+Enter select mode (Enter), select the contacts to remove (Enter to toggle, A to select all), then press **Backspace** to delete. You will be returned to the contacts list once the deletion is complete.
+
+**Contact limits:** Standalone and WiFi variants support up to 1,500 contacts (stored in PSRAM). BLE variants are limited to 500 contacts due to BLE protocol constraints.
 
 ### Sending a Direct Message
 
@@ -358,7 +413,17 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Channels >> | Opens the Channels sub-screen (see below) |
 | Device Info | Public key and firmware version (read-only) |
 
-**Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker (Auto All / Custom / Manual) and, when set to Custom, per-type toggles for Chat, Repeater, Room Server, Sensor, and an Overwrite Oldest option. Press Q to return to the top-level settings list.
+**Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
+
+| Toggle | Meaning when ON |
+|--------|----------------|
+| Companion | Auto-add a chat node when its advert is heard |
+| Repeater | Auto-add repeaters heard via advert |
+| Room Server | Auto-add room servers heard via advert |
+| Sensor | Auto-add sensor nodes heard via advert |
+| Overwrite Oldest | When the contact list is full, overwrite the oldest non-favourite entry instead of discarding the new contact |
+
+Press Q to return to the top-level settings list.
 
 **Channels sub-screen** — press Enter on the `Channels >>` row to open. Lists all current channels, with an option to add hashtag channels or delete non-primary channels (X). Press Q to return to the top-level settings list.
 
@@ -631,13 +696,44 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 
 #### Contacts
 
+The contacts list shows all known nodes sorted by most recently heard, with type prefix, estimated hop count, and time since last advert. See the [T-Deck Pro Contacts Screen](#contacts-screen) section for an explanation of the type prefix and hop count display — the same conventions apply on the T5S3.
+
+**Normal mode**
+
 | Gesture | Action |
 |---------|--------|
 | Swipe up / down | Scroll through contacts |
-| Swipe left / right | Cycle contact filter (All → Chat → Repeater → Room → Sensor → Favourites) |
-| Tap | Select contact |
+| Swipe left / right | Cycle contact filter (All → Chat → Rptr → Room → Sens → Fav) |
+| Tap | Enter select mode (tapped contact is pre-selected) |
 | Long press on Chat contact | View unread DMs (if any), then compose DM |
-| Long press on Repeater contact | Open repeater admin login |
+| Long press on Repeater/RS contact | Open repeater admin login |
+
+> **Note:** The **Fav** filter shows only contacts you have marked as favourites. If it appears empty, no contacts have been favourited yet — use select mode (tap a contact) and then long-press to mark favourites.
+
+**Select mode** — tap any contact row to enter select mode. The tapped contact is pre-selected (shown with `*`). Swipe or tap to navigate and toggle selections.
+
+| Gesture | Action |
+|---------|--------|
+| Tap | Toggle selection on tapped row |
+| Swipe left | Select all contacts in current filter |
+| Swipe right | Deselect all |
+| Long press | Exit select mode (confirm favourites / deletions first) |
+
+Batch operations (favourite toggle, delete) are triggered from the overlay that appears after exiting select mode with contacts selected.
+
+**Adding contacts**
+
+1. **Automatic** — if Settings → Contacts → Add Mode is set to *Auto All*, nodes are added as their adverts are heard. *Custom* mode adds only nodes matching the enabled type toggles (Companion, Repeater, Room Server, Sensor). *Manual Only* disables auto-add.
+
+2. **From the Last Heard screen** — tap the **Discover** tile (or access via the home page on non-WiFi builds) and navigate to Last Heard. Tap any entry to add it to contacts, or tap an existing contact to remove it (favourites require a second tap within 3 seconds to confirm). Entries show `[+]` if already in contacts, `[★]` if a favourite.
+
+   > **Note:** The Last Heard list holds up to 1,000 entries in PSRAM, and advert data is stored persistently on the SD card — so contacts can be added long after the original advertisement was received, even across reboots. This makes Last Heard especially useful when auto-add is set to *Manual Only*, as it provides a passive catalogue of every node heard on the network.
+
+3. **From the Discovery screen** — tap the Discover tile and run an active scan. Tap any result to add it to contacts.
+
+**Deleting contacts**
+
+Tap a contact to enter select mode, select the contacts to remove, exit select mode, and choose delete from the confirmation overlay.
 
 #### Text Reader (File List)
 

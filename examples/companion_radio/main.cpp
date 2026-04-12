@@ -38,7 +38,7 @@
   static uint8_t composeChannelIdx = 0;
   static unsigned long lastComposeRefresh = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 100  // ms before starting e-ink refresh after keypress (refresh itself takes ~644ms)
+  #define COMPOSE_REFRESH_INTERVAL 800  // ms — must exceed e-ink partial refresh time (~644ms) to prevent back-to-back refreshes
 
   // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
   // interfering with call view rendering and alert display
@@ -804,6 +804,22 @@
     }
     return false;
   }
+
+  // Read up to 2 touch points — returns actual finger count (0, 1 or 2)
+  static int readTouchMulti(int16_t* outX0, int16_t* outY0, int16_t* outX1, int16_t* outY1) {
+    if (!gt911Ready) return 0;
+    int16_t xs[2], ys[2];
+    uint8_t count = gt911Touch.getPoint(xs, ys, 2);
+    if (count == 0) return 0;
+    if (display.isPortraitMode()) {
+      *outX0 = xs[0]; *outY0 = ys[0];
+      if (count >= 2) { *outX1 = xs[1]; *outY1 = ys[1]; }
+    } else {
+      *outX0 = ys[0]; *outY0 = EPD_HEIGHT - 1 - xs[0];
+      if (count >= 2) { *outX1 = ys[1]; *outY1 = EPD_HEIGHT - 1 - xs[1]; }
+    }
+    return (int)count;
+  }
 #endif
 
 // --- Shared touch state machine variables ---
@@ -827,6 +843,13 @@
   static bool swipeHandled = false;
   static bool touchCooldown = false;
   static unsigned long lastTouchEventMs = 0;
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Two-finger tap detection state
+  static bool twoFingerDown = false;
+  static unsigned long twoFingerDownTime = 0;
+  #define TWO_FINGER_TAP_MS 350  // max ms from first finger down to both up
+#endif
 
   // Unified touch reader — returns physical screen coordinates
   static bool readTouch(int16_t* outX, int16_t* outY) {
@@ -2881,6 +2904,51 @@ void loop() {
       if (gotPoint) {
         lastTouchSeenMs = now;
       }
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // Two-finger tap detection — must run before single-finger state machine
+      // so it can suppress the single-finger path when two fingers are present.
+      {
+        int16_t x0, y0, x1, y1;
+        int fingers = readTouchMulti(&x0, &y0, &x1, &y1);
+        if (fingers >= 2) {
+          if (!twoFingerDown) {
+            twoFingerDown = true;
+            twoFingerDownTime = now;
+          }
+          // Suppress single-finger tracking while two fingers are down
+          lastTouchSeenMs = now;
+          touchDown = false;
+          longPressHandled = true;  // prevent long-press triggering
+          swipeHandled = true;      // prevent swipe triggering
+        } else if (twoFingerDown) {
+          // Both fingers lifted — check if it was a quick tap
+          if ((now - twoFingerDownTime) < TWO_FINGER_TAP_MS) {
+            if (ui_task.isOnContactsScreen()) {
+              ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+              if (cs) {
+                if (cs->isInSelectMode()) {
+                  cs->exitSelectMode();
+                  Serial.println("[Touch] Two-finger tap: exited contacts select mode");
+                } else {
+                  cs->enterSelectMode();
+                  Serial.println("[Touch] Two-finger tap: entered contacts select mode");
+                }
+                ui_task.forceRefresh();
+                touchCooldown = true;
+                lastTouchEventMs = now;
+              }
+            }
+          }
+          twoFingerDown = false;
+          longPressHandled = false;
+          swipeHandled = false;
+          touchDown = false;
+          touchCooldown = true;
+          lastTouchEventMs = now;
+        }
+      }
+#endif
 
       bool fingerPresent = (now - lastTouchSeenMs) < TOUCH_LIFT_DEBOUNCE_MS;
 

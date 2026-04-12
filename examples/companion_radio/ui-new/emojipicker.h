@@ -1,7 +1,7 @@
 #pragma once
 
 // Emoji Picker with scrolling grid and scroll bar
-// 5 columns, 4 visible rows, scrollable through all 65 emoji
+// 5 columns, 4 visible rows, scrollable through all 76 emoji
 // WASD navigation, Enter to select, $/Q/Backspace to cancel
 
 #include <helpers/ui/DisplayDriver.h>
@@ -77,6 +77,17 @@ static const char* EMOJI_LABELS[EMOJI_COUNT] = {
   "Moai",   // 62 moai
   "Hiii",   // 63 tipping
   "Hedg",   // 64 hedgehog
+  "Cry",    // 65 loudly_crying
+  "Love",   // 66 heart
+  "Diam",   // 67 diamond_suit
+  "Spde",   // 68 spade_suit
+  "Piza",   // 69 pizza
+  "Luck",   // 70 four_leaf_clover
+  "Cld",    // 71 cloud
+  "Rckt",   // 72 rocket
+  "Visa",   // 73 passport_control
+  "Star",   // 74 eight_spoked_asterisk
+  "Sig",    // 75 signal_strength
 };
 
 struct EmojiPicker {
