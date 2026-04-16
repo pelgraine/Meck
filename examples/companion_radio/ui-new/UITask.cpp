@@ -57,6 +57,9 @@
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
+#ifdef MORSE_COMPOSE_ENABLED
+  #include "MorseScreen.h"
+#endif
 #ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
 #include "VoiceMessageScreen.h"
@@ -64,6 +67,11 @@
 #ifdef HAS_4G_MODEM
   #include "SMSScreen.h"
   #include "ModemManager.h"
+#endif
+
+#ifdef MORSE_COMPOSE_ENABLED
+// File-scope screen pointer — avoids touching UITask.h, feature is purely optional.
+static MorseScreen* morse_screen = nullptr;
 #endif
 
 class SplashScreen : public UIScreen {
@@ -1283,7 +1291,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
+#ifndef HELTEC_MESH_POCKET
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
+#endif
   channel_screen = new ChannelScreen(this, &rtc_clock);
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
@@ -1310,6 +1320,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   map_screen = new MapScreen(this);
 #else
   map_screen = nullptr;
+#endif
+
+#ifdef MORSE_COMPOSE_ENABLED
+  morse_screen = new MorseScreen(&rtc_clock);
 #endif
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -1393,9 +1407,11 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
+#ifndef HELTEC_MESH_POCKET
   if (msgcount == 0 && curr == msg_preview) {
     gotoHomeScreen();
   }
+#endif
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
@@ -1421,7 +1437,9 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   _dedupIdx = (_dedupIdx + 1) % MSG_DEDUP_SIZE;
 
   // Add to preview screen (for notifications on non-keyboard devices)
+#ifndef HELTEC_MESH_POCKET
   ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
+#endif
   
   // Determine channel index by looking up the channel name
   // For channel messages, from_name is the channel name
@@ -1464,6 +1482,13 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   } else {
     ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
+#ifdef MORSE_COMPOSE_ENABLED
+    // Mirror Public channel (index 0) messages into the Morse inbox ring.
+    // MorseScreen keeps its own small buffer so it doesn't reach into ChannelScreen.
+    if (channel_idx == 0 && morse_screen != nullptr) {
+      morse_screen->notifyPublicMsg(from_name, text);
+    }
+#endif
   }
   
   // If user is currently viewing this channel, mark it as read immediately
@@ -1485,7 +1510,10 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
   
-#if defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(HELTEC_MESH_POCKET)
+  // Meshpocket: silent — no popup, no toast. Messages are still stored in
+  // channel history (and picked up by MorseScreen's inbox if enabled).
+#elif defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
   // Suppress toasts for room server messages (bulk sync would spam toasts)
@@ -1644,6 +1672,13 @@ void UITask::loop() {
   }
 #elif defined(PIN_USER_BTN)
   int ev = user_btn.check();
+#ifdef MORSE_COMPOSE_ENABLED
+  // While MorseScreen is active, it reads the button directly via poll().
+  // Swallow all click/long-press events so they don't fire nav actions.
+  if (morse_screen != nullptr && curr == morse_screen) {
+    ev = BUTTON_EVENT_NONE;
+  }
+#endif
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // T5S3: single click = cycle pages on home, go back to home from elsewhere
@@ -1805,6 +1840,37 @@ void UITask::loop() {
 #endif
 
 if (curr) curr->poll();
+
+#ifdef MORSE_COMPOSE_ENABLED
+  // When MorseScreen is active, poll its cross-screen flags.
+  if (morse_screen != nullptr && curr == morse_screen) {
+    // 1. Send request (AR prosign) — dispatch to Public channel (index 0)
+    const char* morseText = nullptr;
+    if (morse_screen->consumeSendRequest(&morseText) && morseText && morseText[0]) {
+      ChannelDetails channel;
+      if (the_mesh.getChannel(0, channel)) {
+        uint32_t timestamp = rtc_clock.getCurrentTime();
+        int textLen = (int)strlen(morseText);
+        const char* sender = the_mesh.getNodePrefs()->node_name;
+        if (the_mesh.sendGroupMessage(timestamp, channel.channel, sender, morseText, textLen)) {
+          addSentChannelMessage(0, sender, morseText);
+          the_mesh.queueSentChannelMessage(0, timestamp, sender, morseText);
+          showAlert("Sent!", 1200);
+          morse_screen->clearOutBuf();
+        } else {
+          showAlert("Send failed", 1500);
+        }
+      } else {
+        showAlert("No Public ch", 1500);
+      }
+    }
+    // 2. Exit gesture (long-hold) — return to home
+    if (morse_screen->wantsExit()) {
+      morse_screen->acknowledgeExit();
+      gotoHomeScreen();
+    }
+  }
+#endif
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
@@ -2143,7 +2209,19 @@ char UITask::handleTripleClick(char c) {
     board.setBacklight(true);
   }
 #else
+#ifdef MORSE_COMPOSE_ENABLED
+  // Triple-click from home screen → enter Morse compose mode.
+  // From any other screen, fall through to the existing buzzer toggle (no-op
+  // on Meshpocket but kept for other single-button variants).
+  if (morse_screen != nullptr && curr == home) {
+    morse_screen->activate();
+    setCurrScreen(morse_screen);
+  } else {
+    toggleBuzzer();
+  }
+#else
   toggleBuzzer();
+#endif
 #endif
   c = 0;
   return c;

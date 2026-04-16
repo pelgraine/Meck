@@ -504,9 +504,16 @@ bool DataStore::beginSaveContacts(DataStoreHost* host) {
   if (_saveInProgress) return false;  // Already saving
 
   FILESYSTEM* fs = _getContactsChannelsFS();
-  _saveFile = openWrite(fs, "/contacts3.tmp");
-  if (!_saveFile) {
+  // Defensive cleanup in case a previous save didn't reach finishSaveContacts()
+  if (_saveFile) {
+    _saveFile->close();
+    delete _saveFile;
+    _saveFile = nullptr;
+  }
+  _saveFile = new File(openWrite(fs, "/contacts3.tmp"));
+  if (!_saveFile || !*_saveFile) {
     Serial.println("DataStore: chunked save FAILED — cannot open tmp file");
+    if (_saveFile) { delete _saveFile; _saveFile = nullptr; }
     return false;
   }
 
@@ -527,18 +534,18 @@ bool DataStore::saveContactsChunk(int batchSize) {
   int written = 0;
 
   while (written < batchSize && _saveHost->getContactForSave(_saveIdx, c)) {
-    bool success = (_saveFile.write(c.id.pub_key, 32) == 32);
-    success = success && (_saveFile.write((uint8_t *)&c.name, 32) == 32);
-    success = success && (_saveFile.write(&c.type, 1) == 1);
-    success = success && (_saveFile.write(&c.flags, 1) == 1);
-    success = success && (_saveFile.write(&unused, 1) == 1);
-    success = success && (_saveFile.write((uint8_t *)&c.sync_since, 4) == 4);
-    success = success && (_saveFile.write((uint8_t *)&c.out_path_len, 1) == 1);
-    success = success && (_saveFile.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
-    success = success && (_saveFile.write(c.out_path, 64) == 64);
-    success = success && (_saveFile.write((uint8_t *)&c.lastmod, 4) == 4);
-    success = success && (_saveFile.write((uint8_t *)&c.gps_lat, 4) == 4);
-    success = success && (_saveFile.write((uint8_t *)&c.gps_lon, 4) == 4);
+    bool success = (_saveFile->write(c.id.pub_key, 32) == 32);
+    success = success && (_saveFile->write((uint8_t *)&c.name, 32) == 32);
+    success = success && (_saveFile->write(&c.type, 1) == 1);
+    success = success && (_saveFile->write(&c.flags, 1) == 1);
+    success = success && (_saveFile->write(&unused, 1) == 1);
+    success = success && (_saveFile->write((uint8_t *)&c.sync_since, 4) == 4);
+    success = success && (_saveFile->write((uint8_t *)&c.out_path_len, 1) == 1);
+    success = success && (_saveFile->write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+    success = success && (_saveFile->write(c.out_path, 64) == 64);
+    success = success && (_saveFile->write((uint8_t *)&c.lastmod, 4) == 4);
+    success = success && (_saveFile->write((uint8_t *)&c.gps_lat, 4) == 4);
+    success = success && (_saveFile->write((uint8_t *)&c.gps_lon, 4) == 4);
 
     if (!success) {
       _saveWriteOk = false;
@@ -562,7 +569,11 @@ bool DataStore::saveContactsChunk(int batchSize) {
 void DataStore::finishSaveContacts() {
   if (!_saveInProgress) return;
 
-  _saveFile.close();
+  if (_saveFile) {
+    _saveFile->close();
+    delete _saveFile;
+    _saveFile = nullptr;
+  }
   _saveInProgress = false;
 
   FILESYSTEM* fs = _getContactsChannelsFS();

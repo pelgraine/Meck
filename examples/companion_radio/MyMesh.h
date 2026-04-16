@@ -8,7 +8,7 @@
 #define FIRMWARE_VER_CODE 11
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "12 April 2026"
+#define FIRMWARE_BUILD_DATE "16 April 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
@@ -171,6 +171,14 @@ public:
   bool setCustomPath(int contactIdx, const uint8_t* path, uint8_t pathLen, bool lock);
   void clearCustomPath(int contactIdx);
 
+#ifdef HELTEC_MESH_POCKET
+  // Power saving: check if there is pending work (outbound packets queued, etc.)
+  // Used by main.cpp loop to decide whether board.sleep() is safe.
+  // Adapted from MeshCore PR #2286 (IoTThinks) — substitutes getOutboundCount(0xFFFFFFFF)
+  // for upstream's getOutboundTotal() which doesn't exist in this tree.
+  bool hasPendingWork() const;
+#endif
+
 
 protected:
   float getAirtimeBudgetFactor() const override;
@@ -309,8 +317,17 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
+  // Advert path table: stores paths we've heard back to us for sorting/recency.
+  // ESP32 variants (T-Deck Pro, T5S3, Heltec V4) have PSRAM, so can afford the
+  // large 1000-entry table (~50KB). nRF52 companion builds (Heltec Meshpocket,
+  // T-Echo Card) have no PSRAM and only 256KB total SRAM shared with BLE, so
+  // use a much smaller table sized for realistic handheld usage.
+#if defined(ESP32)
   #define ADVERT_PATH_TABLE_SIZE   1000
-  AdvertPath* advert_paths;  // PSRAM-allocated in begin(), size = ADVERT_PATH_TABLE_SIZE
+#else
+  #define ADVERT_PATH_TABLE_SIZE   50
+#endif
+  AdvertPath* advert_paths;  // PSRAM-allocated (ESP32) or heap-allocated (nRF52) in begin()
 
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4

@@ -50,7 +50,14 @@ class LastHeardScreen : public UIScreen {
 public:
   LastHeardScreen(mesh::RTCClock* rtc)
     : _rtc(rtc), _scrollPos(0), _count(0) {
+#if defined(ESP32)
+    // ESP32 variants have PSRAM — allocate the entries buffer there
     _entries = (AdvertPath*)ps_calloc(LAST_HEARD_DISPLAY_SIZE, sizeof(AdvertPath));
+#else
+    // nRF52 has no PSRAM — fall back to regular heap. At 100 entries × ~84
+    // bytes each this is ~8.4KB, manageable within Meshpocket's SRAM budget.
+    _entries = (AdvertPath*)calloc(LAST_HEARD_DISPLAY_SIZE, sizeof(AdvertPath));
+#endif
   }
 
   void resetScroll() { _scrollPos = 0; }

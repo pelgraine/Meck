@@ -12,6 +12,13 @@
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
 
+// Fallback for variants that don't define GPS_BAUDRATE (HAS_GPS=0 boards like
+// Heltec Meshpocket). Used in CLI "get/set gps.baud" handlers as the default
+// when node prefs haven't been configured. Zero means "not applicable".
+#ifndef GPS_BAUDRATE
+  #define GPS_BAUDRATE 0
+#endif
+
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
 #define CMD_SEND_CHANNEL_TXT_MSG      3
@@ -1294,7 +1301,15 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 }
 
 void MyMesh::begin(bool has_display) {
+#if defined(ESP32)
+  // ESP32 variants have PSRAM — allocate the large advert path table there
   advert_paths = (AdvertPath*)ps_calloc(ADVERT_PATH_TABLE_SIZE, sizeof(AdvertPath));
+#else
+  // nRF52 / other non-PSRAM platforms — fall back to regular heap. Table size
+  // is smaller on these platforms (see ADVERT_PATH_TABLE_SIZE in MyMesh.h) to
+  // avoid blowing the limited SRAM budget.
+  advert_paths = (AdvertPath*)calloc(ADVERT_PATH_TABLE_SIZE, sizeof(AdvertPath));
+#endif
   BaseChatMesh::begin();
 
   if (!_store->loadMainIdentity(self_id)) {
@@ -3287,3 +3302,19 @@ bool MyMesh::addDiscoveredToContacts(int idx) {
   MESH_DEBUG_PRINTLN("Discovery: no cached advert blob for contact '%s'", _discovered[idx].contact.name);
   return false;
 }
+#ifdef HELTEC_MESH_POCKET
+// =============================================================================
+// Power saving — adapted from MeshCore PR #2286 (IoTThinks)
+// Returns true if the radio has outbound packets queued (any priority, any
+// scheduling window). main.cpp loop() uses this to decide whether it's safe
+// to drop into board.sleep(0) until the next interrupt.
+//
+// Upstream uses _mgr->getOutboundTotal() which doesn't exist in this tree —
+// the equivalent call in Meck is getOutboundCount(0xFFFFFFFF) which passes
+// max uint32 as `now` so scheduled_for < now is always true. Already used
+// elsewhere in this file (see line ~2221 in the queue-stats block).
+// =============================================================================
+bool MyMesh::hasPendingWork() const {
+  return _mgr->getOutboundCount(0xFFFFFFFF) > 0;
+}
+#endif

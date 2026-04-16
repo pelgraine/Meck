@@ -2,14 +2,18 @@
 
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
-#include <SD.h>
-#include <vector>
-#include "Utf8CP437.h"
-#include "EpubProcessor.h"
+#ifdef ESP32
+  #include <SD.h>
+  #include <vector>
+  #include "Utf8CP437.h"
+  #include "EpubProcessor.h"
+#endif
 #include "../NodePrefs.h"
 
 // Forward declarations
 class UITask;
+
+#ifdef ESP32
 
 // ============================================================================
 // Configuration
@@ -1949,3 +1953,41 @@ public:
     _mode = FILE_LIST;
   }
 };
+#else  // !ESP32
+
+// Non-ESP32 stub: Meshpocket / T-Echo Card have no SD card hardware, so the
+// full EPUB/text reader can't work here. This stub keeps UITask.cpp and
+// main.cpp compilable by providing the same public interface as no-ops.
+// Navigating to the reader on a non-SD board just shows a placeholder.
+class TextReaderScreen : public UIScreen {
+public:
+  TextReaderScreen(UITask* task, NodePrefs* prefs = nullptr) {
+    (void)task; (void)prefs;
+  }
+
+  int render(DisplayDriver& display) override {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::LIGHT);
+    display.setCursor(0, 20);
+    display.print("Reader: SD card required");
+    display.setCursor(0, 30);
+    display.print("(not available)");
+    return 5000;
+  }
+
+  bool handleInput(char c) override { (void)c; return false; }
+
+  // No-op public API matching the ESP32 class for call-site compatibility
+  void invalidateLayout() {}
+  void bootIndex(DisplayDriver& display) { (void)display; }
+  void setSDReady(bool ready) { (void)ready; }
+  void enter(DisplayDriver& display) { (void)display; }
+  bool isReading() const { return false; }
+  bool isInFileList() const { return false; }
+  void gotoPage(int pageNum) { (void)pageNum; }
+  int getTotalPages() const { return 0; }
+  int selectRowAtVY(int vy) { (void)vy; return -1; }
+  void exitReader() {}
+};
+
+#endif // ESP32

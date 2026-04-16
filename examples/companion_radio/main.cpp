@@ -1,6 +1,6 @@
 #include <Arduino.h>   // needed for PlatformIO
-#ifdef BLE_PIN_CODE
-  #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
+#if defined(BLE_PIN_CODE) && defined(ESP32)
+  #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi) — ESP32 only
 #endif
 #ifdef MECK_OTA_UPDATE
   #include <esp_ota_ops.h>
@@ -11,19 +11,25 @@
 #include "target.h"    // For sensors, board, etc.
 #include "CPUPowerManager.h"
 
+// Core screens used by every Meck variant, regardless of display or keyboard
+// hardware. Kept unconditional here so main.cpp can reference the types on
+// any build (Meshpocket, Heltec V4, T-Deck Pro, T5S3). SD-dependent screens
+// (NotesScreen, TextReaderScreen) are header-stubbed for non-ESP32 so this
+// block is safe on nRF52 too.
+#include "ContactsScreen.h"
+#include "ChannelScreen.h"
+#include "SettingsScreen.h"
+#include "RepeaterAdminScreen.h"
+#include "DiscoveryScreen.h"
+#include "LastHeardScreen.h"
+#include "PathEditorScreen.h"
+#include "NotesScreen.h"
+#include "TextReaderScreen.h"
+
 // T-Deck Pro Keyboard support
 #if defined(LilyGo_TDeck_Pro)
   #include "TCA8418Keyboard.h"
   #include <SD.h>
-  #include "TextReaderScreen.h"
-  #include "NotesScreen.h"
-  #include "ContactsScreen.h"
-  #include "ChannelScreen.h"
-  #include "SettingsScreen.h"
-  #include "RepeaterAdminScreen.h"
-  #include "DiscoveryScreen.h"
-  #include "LastHeardScreen.h"
-  #include "PathEditorScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -679,15 +685,6 @@
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #include "TouchDrvGT911.hpp"
   #include <SD.h>
-  #include "TextReaderScreen.h"
-  #include "NotesScreen.h"
-  #include "ContactsScreen.h"
-  #include "ChannelScreen.h"
-  #include "SettingsScreen.h"
-  #include "RepeaterAdminScreen.h"
-  #include "DiscoveryScreen.h"
-  #include "LastHeardScreen.h"
-  #include "PathEditorScreen.h"
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -1675,6 +1672,7 @@ void setup() {
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
   MESH_DEBUG_PRINTLN("setup() - about to call display.begin()");
+  Serial.println("[DIAG] about to call display.begin()");
   
   // =========================================================================
   // T-Deck Pro V1.1: Initialize E-Ink reset pin BEFORE display.begin()
@@ -1702,16 +1700,21 @@ void setup() {
   
   if (display.begin()) {
     MESH_DEBUG_PRINTLN("setup() - display.begin() returned true");
+    Serial.println("[DIAG] display.begin() returned TRUE");
     disp = &display;
     disp->startFrame();
+    Serial.println("[DIAG] startFrame() done");
   #ifdef ST7789
     disp->setTextSize(2);
   #endif
     disp->drawTextCentered(disp->width() / 2, 28, "Loading...");
+    Serial.println("[DIAG] Loading text drawn");
     disp->endFrame();
+    Serial.println("[DIAG] endFrame() done — should show on screen now");
     MESH_DEBUG_PRINTLN("setup() - Loading screen drawn");
   } else {
     MESH_DEBUG_PRINTLN("setup() - display.begin() returned false!");
+    Serial.println("[DIAG] display.begin() returned FALSE — display NOT initialized");
   }
 #endif
 
@@ -2268,8 +2271,15 @@ void setup() {
   the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
   #endif
 
-  Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
-                 ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  #ifdef ESP32
+    Serial.printf("setup() complete - free heap: %d, largest block: %d\n",
+                   ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+  #else
+    // nRF52 has no ESP.xxx API; dbgMemInfo() prints mallinfo-based heap stats
+    // on Arduino-nRF52 core (dbgMemInfo() is declared in <Adafruit_TinyUSB.h>
+    // via rtos_support.h). Not available on all nRF52 cores so guard further.
+    Serial.println("setup() complete");
+  #endif
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
@@ -2800,7 +2810,10 @@ void loop() {
   #endif
 #endif
   rtc_clock.tick();
-  // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
+#ifdef ESP32
+  // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift.
+  // radio_reset_agc() is only defined in ESP32 variants' target.cpp. nRF52
+  // Meshpocket uses a different radio driver that manages AGC internally.
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused)
   #endif
@@ -2808,6 +2821,7 @@ void loop() {
     radio_reset_agc();
     lastAGCReset = millis();
   }
+#endif
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
@@ -3319,6 +3333,29 @@ void loop() {
   if (ui_task.isLocked()) {
     delay(50);
   }
+#endif
+
+#ifdef HELTEC_MESH_POCKET
+  // Power saving — DISABLED for now (April 2026).
+  //
+  // The sd_app_evt_wait() primitive inside HeltecMeshPocket::sleep() blocks
+  // indefinitely waiting for a SoftDevice event. Without BLE activity and
+  // without GPIO SENSE configured on the USER button, the device can get
+  // stuck here — UI render cycles never run, e-ink keeps showing stale
+  // content from before the flash.
+  //
+  // Re-enabling requires either:
+  //   (a) extending hasPendingWork() to include pending UI render work, or
+  //   (b) configuring PIN_USER_BTN with GPIO SENSE so button presses wake
+  //       the SoftDevice, and adding a timed RTC wake (e.g. 50ms) so UI
+  //       refresh still happens while idle.
+  //
+  // For now we leave the main loop free-running. DCDC converter alone
+  // (enabled via NRF52BoardDCDC::begin()) still provides meaningful power
+  // savings vs the LDO baseline.
+  // if (!the_mesh.hasPendingWork()) {
+  //   board.sleep(0);
+  // }
 #endif
 }
 

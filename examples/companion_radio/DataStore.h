@@ -25,7 +25,10 @@ class DataStore {
 #endif
 
   // Chunked save state
-  File _saveFile;
+  // Stored as a pointer (allocated in beginSaveContacts, freed in
+  // finishSaveContacts) because Adafruit_LittleFS::File has no default
+  // constructor — we can't keep one as a default-initialized value member.
+  File* _saveFile = nullptr;
   DataStoreHost* _saveHost = nullptr;
   uint32_t _saveIdx = 0;
   uint32_t _saveRecordsWritten = 0;

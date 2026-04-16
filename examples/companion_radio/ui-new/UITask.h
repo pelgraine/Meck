@@ -79,7 +79,9 @@ class UITask : public AbstractUITask {
 
   UIScreen* splash;
   UIScreen* home;
+#ifndef HELTEC_MESH_POCKET
   UIScreen* msg_preview;
+#endif
   UIScreen* channel_screen;  // Channel message history screen
   UIScreen* contacts_screen; // Contacts list screen
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
@@ -306,7 +308,9 @@ public:
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
+#ifndef HELTEC_MESH_POCKET
   UIScreen* getMsgPreviewScreen() const { return msg_preview; }
+#endif
   UIScreen* getTextReaderScreen() const { return text_reader; }  // *** NEW ***
   UIScreen* getNotesScreen() const { return notes_screen; }
   UIScreen* getContactsScreen() const { return contacts_screen; }

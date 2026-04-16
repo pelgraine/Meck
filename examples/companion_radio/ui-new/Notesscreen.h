@@ -2,13 +2,17 @@
 
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
-#include <SD.h>
-#include <vector>
-#include "Utf8CP437.h"
+#ifdef ESP32
+  #include <SD.h>
+  #include <vector>
+  #include "Utf8CP437.h"
+#endif
 #include "../NodePrefs.h"
 
 // Forward declarations
 class UITask;
+
+#ifdef ESP32
 
 // ============================================================================
 // Configuration
@@ -1369,3 +1373,41 @@ public:
     return false;
   }
 };
+
+#else  // !ESP32
+
+// Non-ESP32 stub: Meshpocket / T-Echo Card have no SD card hardware, so the
+// full notes editor (which depends on SD.h) can't work here. This stub keeps
+// UITask.cpp compilable by providing the same public interface as no-ops.
+// Navigating to notes from the home screen on a Meshpocket will just render
+// a placeholder message and do nothing.
+class NotesScreen : public UIScreen {
+public:
+  typedef uint32_t (*TimeGetterFn)();
+
+  NotesScreen(UITask* task, NodePrefs* prefs = nullptr) {
+    (void)task; (void)prefs;
+  }
+
+  int render(DisplayDriver& display) override {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::LIGHT);
+    display.setCursor(0, 20);
+    display.print("Notes: SD card required");
+    display.setCursor(0, 30);
+    display.print("(not available)");
+    return 5000;
+  }
+
+  bool handleInput(char c) override { (void)c; return false; }
+  bool isEditing() const { return false; }
+  void triggerSaveAndExit() {}
+  void exitNotes() {}
+  void enter(DisplayDriver& display) { (void)display; }
+  void setTimestamp(uint32_t rtcTime, int8_t utcOffset) {
+    (void)rtcTime; (void)utcOffset;
+  }
+  void setTimeGetter(TimeGetterFn fn) { (void)fn; }
+};
+
+#endif // ESP32
