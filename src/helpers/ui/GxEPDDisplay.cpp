@@ -98,6 +98,18 @@ void GxEPDDisplay::startFrame(Color bkg) {
 
 void GxEPDDisplay::setTextSize(int sz) {
   display_crc.update<int>(sz);
+  display_crc.update<uint8_t>(_fontStyle);
+
+  // Check for custom font style first (Noto Sans, Montserrat)
+  const GFXfont* customFont = meckGetFont(_fontStyle, sz);
+  if (customFont) {
+    display.setFont(customFont);
+    // textSize 5 (clock face) uses ×2 scaling even with custom fonts
+    display.setTextSize(sz == 5 ? 2 : 1);
+    return;
+  }
+
+  // Classic style (or fallback) — original FreeSans fonts
   switch(sz) {
     case 0:  // Tiny - built-in 6x8 pixel font
       display.setFont(NULL);

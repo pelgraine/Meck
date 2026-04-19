@@ -19,6 +19,7 @@
   #include "NotesScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -683,6 +684,7 @@
   #include "NotesScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -1171,7 +1173,7 @@ static void lastHeardToggleContact() {
         int row = (vy - gridY) / (tileH + gapY);
         if (row > 1) row = 1;
 
-        if (row == 0 && col == 0) { ui_task.gotoChannelScreen(); return 0; }
+        if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen(); return 0; }
         if (row == 0 && col == 2) { ui_task.gotoSettingsScreen(); return 0; }
         if (row == 1 && col == 0) { ui_task.gotoTextReader(); return 0; }
@@ -1291,6 +1293,20 @@ static void lastHeardToggleContact() {
         return 'v';  // Show path overlay
       }
       return 0;  // Tap on message area — consumed, no action
+    }
+
+    // Channel picker screen: tap to select (T5S3: direct open, T-Deck Pro: highlight/activate)
+    if (ui_task.isOnChannelPickerScreen()) {
+      ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+      if (pick) {
+        int result = pick->selectAtVxVy(vx, vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;  // Moved cursor
+        }
+        if (result == 2) return KEY_ENTER;  // Activate — wantsExit checked after injectKey
+      }
+      return 0;
     }
 
     // Contacts screen: tap to select row, tap same row to activate
@@ -1436,9 +1452,9 @@ static void lastHeardToggleContact() {
       return (dx < 0) ? 'd' : 'a';  // swipe left=next option, right=prev
     }
 
-    // Channel screen: horizontal swipe → a/d to switch channels
+    // Channel screen: horizontal swipe → a/d to open channel picker
     if (ui_task.isOnChannelScreen() && horizontal) {
-      return (dx < 0) ? 'd' : 'a';  // swipe left=next channel, right=prev
+      return (dx < 0) ? 'd' : 'a';  // swipe left/right opens channel picker
     }
 
     // Contacts screen: horizontal swipe → a/d to change filter
@@ -2053,13 +2069,17 @@ void setup() {
     }
   #endif
 
-  // RTC diagnostic + boot-time serial clock sync (T5S3 has no GPS)
-  #if defined(LilyGo_T5S3_EPaper_Pro)
+  // RTC diagnostic + boot-time serial clock sync
+  // Works on all Meck builds — T-Deck Pro has no hardware RTC and GPS may
+  // not fix immediately; T5S3 has hardware RTC but it needs initial setting.
+  #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   {
     uint32_t rtcTime = rtc_clock.getCurrentTime();
+    // Plausible range: Nov 2023 (1700000000) → May 2033 (2000000000)
+    bool validTime = (rtcTime > 1700000000 && rtcTime < 2000000000);
     Serial.printf("setup() - RTC time: %lu (valid=%s)\n", rtcTime, 
-                  rtcTime > 1700000000 ? "YES" : "NO");
-    if (rtcTime < 1700000000) {
+                  validTime ? "YES" : "NO");
+    if (!validTime) {
       // No valid time.  If a USB host has the serial port open (Serial
       // evaluates true on ESP32-S3 native CDC), request an automatic
       // clock sync.  The PlatformIO monitor filter "clock_sync" watches
@@ -2982,7 +3002,12 @@ void loop() {
           swipeHandled = true;
           char c = mapTouchSwipe(dx, dy);
           if (c) {
-            ui_task.injectKey(c);
+            // Channel screen: horizontal swipe opens picker instead of cycling
+            if (ui_task.isOnChannelScreen() && (c == 'a' || c == 'd')) {
+              ui_task.gotoChannelPickerScreen();
+            } else {
+              ui_task.injectKey(c);
+            }
             cpuPower.setBoost();
           }
           lastTouchEventMs = now;
@@ -2999,6 +3024,13 @@ void loop() {
               PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
               if (pe && pe->wantsExit()) {
                 ui_task.gotoContactsScreen();
+              }
+            }
+            // Channel picker: check if long-press Enter was handled (wantsExit)
+            if (ui_task.isOnChannelPickerScreen()) {
+              ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+              if (pick && pick->wantsExit()) {
+                ui_task.gotoChannelScreen(false);
               }
             }
             cpuPower.setBoost();
@@ -3018,6 +3050,13 @@ void loop() {
               PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
               if (pe && pe->wantsExit()) {
                 ui_task.gotoContactsScreen();
+              }
+            }
+            // Channel picker: check if Enter/Q was handled (wantsExit)
+            if (ui_task.isOnChannelPickerScreen()) {
+              ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+              if (pick && pick->wantsExit()) {
+                ui_task.gotoChannelScreen(false);
               }
             }
           }
@@ -3095,7 +3134,7 @@ void loop() {
             // ESC on home — no-op (already home)
           } else {
             switch (ckb) {
-              case 'm': ui_task.gotoChannelScreen(); break;
+              case 'm': ui_task.gotoChannelPickerScreen(); break;
               case 'c': ui_task.gotoContactsScreen(); break;
               case 'e': ui_task.gotoTextReader(); break;
               case 'n': ui_task.gotoNotesScreen(); break;
@@ -3148,7 +3187,22 @@ void loop() {
           if (!handled) {
             // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
             if (ckb == 0x1B) {
-              ui_task.injectKey('q');
+              // Channel picker: ESC goes home
+              if (ui_task.isOnChannelPickerScreen()) {
+                ui_task.gotoHomeScreen();
+              // Channel screen: ESC goes to picker
+              } else if (ui_task.isOnChannelScreen()) {
+                ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+                if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
+                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                } else if (chScr && chScr->isDMConversation()) {
+                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                } else {
+                  ui_task.gotoChannelPickerScreen();
+                }
+              } else {
+                ui_task.injectKey('q');
+              }
             } else if (ckb == '\r') {
               // Enter key — screen-specific compose or select
               if (ui_task.isOnChannelScreen()) {
@@ -3237,6 +3291,13 @@ void loop() {
                 if (pe && pe->wantsExit()) {
                   ui_task.gotoContactsScreen();
                 }
+              } else if (ui_task.isOnChannelPickerScreen()) {
+                // Channel picker: Enter selects channel
+                ui_task.injectKey('\r');
+                ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+                if (pick && pick->wantsExit()) {
+                  ui_task.gotoChannelScreen(false);
+                }
               } else {
                 // All other screens: pass Enter through for native handling
                 // (settings toggle, discovery add-contact, last heard, text reader, notes file list, etc.)
@@ -3256,6 +3317,22 @@ void loop() {
               } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnPathEditor()) {
                 // Q on path editor → back to contacts
                 ui_task.gotoContactsScreen();
+              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelPickerScreen()) {
+                // Q on picker → home
+                ui_task.gotoHomeScreen();
+              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelScreen()) {
+                // Q on channel screen → picker (unless overlay/DM conversation)
+                ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+                if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
+                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                } else if (chScr && chScr->isDMConversation()) {
+                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                } else {
+                  ui_task.gotoChannelPickerScreen();
+                }
+              } else if (ui_task.isOnChannelScreen() && (ckb == (char)0xF3 || ckb == (char)0xF4)) {
+                // Channel screen: Left/Right arrows open picker
+                ui_task.gotoChannelPickerScreen();
               } else {
                 switch (ckb) {
                   case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
@@ -4154,9 +4231,9 @@ void handleKeyboardInput() {
       break;
     
     case 'm':
-      // Go to channel message screen
-      Serial.println("Opening channel messages");
-      ui_task.gotoChannelScreen();
+      // Go to channel picker (channel directory)
+      Serial.println("Opening channel picker");
+      ui_task.gotoChannelPickerScreen();
       break;
     
     case 'e':
@@ -4313,7 +4390,7 @@ void handleKeyboardInput() {
       // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
-          || ui_task.isOnPathEditor()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4333,7 +4410,7 @@ void handleKeyboardInput() {
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
-          || ui_task.isOnPathEditor()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4350,14 +4427,16 @@ void handleKeyboardInput() {
       break;
       
     case 'a':
-      // Navigate left or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
-          || ui_task.isOnPathEditor()
+      // Navigate left — channel screen opens picker, others pass through
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.gotoChannelPickerScreen();
+      } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
          ) {
-        ui_task.injectKey('a');  // Pass directly for channel/contacts switching
+        ui_task.injectKey('a');  // Pass directly for contacts/map/picker navigation
       } else {
         Serial.println("Nav: Previous");
         ui_task.injectKey(0xF2);  // KEY_PREV
@@ -4365,14 +4444,16 @@ void handleKeyboardInput() {
       break;
       
     case 'd':
-      // Navigate right or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
-          || ui_task.isOnPathEditor()
+      // Navigate right — channel screen opens picker, others pass through
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.gotoChannelPickerScreen();
+      } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
          ) {
-        ui_task.injectKey('d');  // Pass directly for channel/contacts switching
+        ui_task.injectKey('d');  // Pass directly for contacts/map/picker navigation
       } else {
         Serial.println("Nav: Next");
         ui_task.injectKey(0xF1);  // KEY_NEXT
@@ -4388,6 +4469,12 @@ void handleKeyboardInput() {
         if (pe && pe->wantsExit()) {
           Serial.println("PathEditor: Save & Exit — returning to contacts");
           ui_task.gotoContactsScreen();
+        }
+      } else if (ui_task.isOnChannelPickerScreen()) {
+        ui_task.injectKey('\r');  // Picker handles Enter: selects channel + sets wantsExit
+        ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+        if (pick && pick->wantsExit()) {
+          ui_task.gotoChannelScreen(false);
         }
       } else if (ui_task.isOnContactsScreen()) {
         // Defer Enter for long-press detection (select mode vs DM/admin)
@@ -4602,6 +4689,12 @@ void handleKeyboardInput() {
           ui_task.injectKey('q');
           break;
         }
+        // DM inbox Q is handled by ChannelScreen (returns false → falls here).
+        // DM conversation Q is handled internally (returns true → never reaches here).
+        // Normal channel view or DM inbox: go back to picker.
+        Serial.println("Nav: Channel -> Picker");
+        ui_task.gotoChannelPickerScreen();
+        break;
       }
 #ifdef MECK_WEB_READER
       // If web reader is in reading/link/wifi mode, inject q for internal navigation
@@ -4659,6 +4752,12 @@ void handleKeyboardInput() {
       // Last Heard: Q goes back to home
       if (ui_task.isOnLastHeardScreen()) {
         Serial.println("Nav: Last Heard -> Home");
+        ui_task.gotoHomeScreen();
+        break;
+      }
+      // Channel picker: Q goes back to home
+      if (ui_task.isOnChannelPickerScreen()) {
+        Serial.println("Nav: ChannelPicker -> Home");
         ui_task.gotoHomeScreen();
         break;
       }

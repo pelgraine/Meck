@@ -117,13 +117,23 @@ void FastEPDDisplay::startFrame(Color bkg) {
   _frameCRC.reset();
   _frameCRC.update<bool>(_darkMode);
   _frameCRC.update<bool>(_portraitMode);
+  _frameCRC.update<uint8_t>(_fontStyle);
 }
 
 void FastEPDDisplay::setTextSize(int sz) {
   if (!_canvas) return;
   _frameCRC.update<int>(sz);
 
-  // Font mapping for 960×540 display at ~234 DPI
+  // Check for custom font style first (Noto Sans, Montserrat)
+  const GFXfont* customFont = meckGetFont(_fontStyle, sz);
+  if (customFont) {
+    _canvas->setFont(customFont);
+    // textSize 5 (clock face) uses ×5 scaling even with custom fonts
+    _canvas->setTextSize(sz == 5 ? 5 : 1);
+    return;
+  }
+
+  // Classic style (or fallback) — original FreeSans/FreeSerif fonts
   // Toggle between font families via -D MECK_SERIF_FONT build flag
   switch(sz) {
     case 0:  // Body text — reader content, settings rows, messages, footers

@@ -19,6 +19,9 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
 
+// Meck custom font styles (Noto Sans, Montserrat)
+#include "MeckFonts.h"
+
 // Inline CRC32 for frame change detection (replaces bakercp/CRC32
 // to avoid naming collision with PNGdec's bundled CRC32.h)
 class FrameCRC32 {

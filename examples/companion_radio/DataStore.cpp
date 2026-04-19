@@ -2,7 +2,7 @@
 #include "DataStore.h"
 
 #if defined(EXTRAFS) || defined(QSPIFLASH)
-  #define MAX_BLOBRECS 1000
+  #define MAX_BLOBRECS 100
 #else
   #define MAX_BLOBRECS 20
 #endif
@@ -274,6 +274,9 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font)) != sizeof(_prefs.large_font)) {
       _prefs.large_font = 0;  // default: tiny font
     }
+    if (file.read((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style)) != sizeof(_prefs.ui_font_style)) {
+      _prefs.ui_font_style = 0;  // default: Classic (FreeSans)
+    }
     if (file.read((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)) != sizeof(_prefs.tx_fail_reset_threshold)) {
       _prefs.tx_fail_reset_threshold = 3;  // default: 3
     }
@@ -286,6 +289,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
     if (_prefs.hint_shown > 1) _prefs.hint_shown = 0;
     if (_prefs.large_font > 1) _prefs.large_font = 0;
+    if (_prefs.ui_font_style >= 3) _prefs.ui_font_style = 0;
     if (_prefs.tx_fail_reset_threshold > 10) _prefs.tx_fail_reset_threshold = 3;
     if (_prefs.rx_fail_reboot_threshold > 10) _prefs.rx_fail_reboot_threshold = 3;
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
@@ -342,8 +346,9 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)); // 100
     file.write((uint8_t *)&_prefs.hint_shown, sizeof(_prefs.hint_shown));               // 101
     file.write((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font));               // 102
-    file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 103
-    file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 104
+    file.write((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style));        // 103
+    file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 104
+    file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 105
 
     file.close();
   }
@@ -691,27 +696,16 @@ struct BlobRec {
 };
 
 void DataStore::checkAdvBlobFile() {
-  FILESYSTEM* fs = _getContactsChannelsFS();
-  size_t expectedSize = (size_t)MAX_BLOBRECS * sizeof(BlobRec);
-
-  if (fs->exists("/adv_blobs")) {
-    File existing = openRead(fs, "/adv_blobs");
-    size_t actualSize = existing ? (size_t)existing.size() : 0;
-    if (existing) existing.close();
-    if (actualSize == expectedSize) return;   // already correct size
-    Serial.printf("[DataStore] adv_blobs wrong size (%u vs %u) — recreating\n",
-                  (unsigned)actualSize, (unsigned)expectedSize);
-    fs->remove("/adv_blobs");   // delete undersized (or oversized) file
-  }
-
-  File file = openWrite(fs, "/adv_blobs");
-  if (file) {
-    BlobRec zeroes;
-    memset(&zeroes, 0, sizeof(zeroes));
-    for (int i = 0; i < MAX_BLOBRECS; i++) {
-      file.write((uint8_t *) &zeroes, sizeof(zeroes));
+  if (!_getContactsChannelsFS()->exists("/adv_blobs")) {
+    File file = openWrite(_getContactsChannelsFS(), "/adv_blobs");
+    if (file) {
+      BlobRec zeroes;
+      memset(&zeroes, 0, sizeof(zeroes));
+      for (int i = 0; i < MAX_BLOBRECS; i++) {     // pre-allocate to fixed size
+        file.write((uint8_t *) &zeroes, sizeof(zeroes));
+      }
+      file.close();
     }
-    file.close();
   }
 }
 
@@ -884,14 +878,10 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 
   if (key_len > 8) key_len = 8; // just use first 8 bytes (prefix)
   mesh::Utils::toHex(fname, key, key_len);
-  // Prefer SD card (_fsExtra) — unlimited file count vs SPIFFS ~100-200 file limit.
-  // Fall back to SPIFFS (_fs) for devices without SD.
-  FILESYSTEM* blobFs = (_fsExtra != nullptr) ? _fsExtra : _fs;
-
   sprintf(path, "/bl/%s", fname);
 
-  if (blobFs->exists(path)) {
-    File f = openRead(blobFs, path);
+  if (_fs->exists(path)) {
+    File f = openRead(_fs, path);
     if (f) {
       int len = f.read(dest_buf, 255); // currently MAX 255 byte blob len supported!!
       f.close();
@@ -907,20 +897,15 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 
   if (key_len > 8) key_len = 8; // just use first 8 bytes (prefix)
   mesh::Utils::toHex(fname, key, key_len);
-  // Prefer SD card (_fsExtra) — unlimited file count vs SPIFFS ~100-200 file limit.
-  FILESYSTEM* blobFs = (_fsExtra != nullptr) ? _fsExtra : _fs;
-
-  blobFs->mkdir("/bl");  // ensure directory exists on chosen filesystem
-
   sprintf(path, "/bl/%s", fname);
 
-  File f = openWrite(blobFs, path);
+  File f = openWrite(_fs, path);
   if (f) {
     int n = f.write(src_buf, len);
     f.close();
     if (n == len) return true; // success!
 
-    blobFs->remove(path); // blob was only partially written!
+    _fs->remove(path); // blob was only partially written!
   }
   return false; // error
 }

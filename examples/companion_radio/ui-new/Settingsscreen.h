@@ -5,6 +5,7 @@
 #include <helpers/ChannelDetails.h>
 #include <MeshCore.h>
 #include "../NodePrefs.h"
+#include "MeckFonts.h"
 
 // Inline edit hint shown next to values being adjusted
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -114,6 +115,7 @@ enum SettingsRowType : uint8_t {
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
   ROW_LARGE_FONT,     // Font size toggle: 0=tiny (default), 1=larger
+  ROW_FONT_STYLE,     // Font style: Classic / Noto Sans / Montserrat
 #if defined(LilyGo_T5S3_EPaper_Pro)
   ROW_PORTRAIT_MODE,  // Portrait orientation toggle
 #endif
@@ -245,6 +247,7 @@ private:
   int _editPickerIdx;       // for preset picker / contact mode picker
   float _editFloat;         // for freq/BW editing
   int _editInt;             // for SF/CR/TX/UTC editing
+  uint8_t _fontPickerOriginal;  // font style before edit (for cancel revert)
   int _confirmAction;       // 0=none, 1=delete channel, 2=apply radio
 
   // Onboarding mode
@@ -401,6 +404,7 @@ private:
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DARK_MODE);
       addRow(ROW_LARGE_FONT);
+      addRow(ROW_FONT_STYLE);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
 #endif
@@ -570,7 +574,7 @@ public:
     : _task(task), _rtc(rtc), _prefs(prefs),
       _numRows(0), _cursor(0), _scrollTop(0),
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
-      _editFloat(0), _editInt(0), _confirmAction(0),
+      _editFloat(0), _editInt(0), _fontPickerOriginal(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
       _radioChanged(false), _needsTextVKB(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
@@ -1767,6 +1771,17 @@ public:
           display.print(tmp);
           break;
 
+        case ROW_FONT_STYLE:
+          if (editing && _editMode == EDIT_PICKER) {
+            snprintf(tmp, sizeof(tmp), "< Font: %s >",
+                     meckFontStyleName(_prefs->ui_font_style));
+          } else {
+            snprintf(tmp, sizeof(tmp), "Font: %s",
+                     meckFontStyleName(_prefs->ui_font_style));
+          }
+          display.print(tmp);
+          break;
+
 #if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:
           snprintf(tmp, sizeof(tmp), "Portrait Mode: %s",
@@ -2717,6 +2732,10 @@ public:
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = AUTO_LOCK_OPTION_COUNT - 1;
+        } else if (type == ROW_FONT_STYLE) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = MECK_FONT_STYLE_COUNT - 1;
+          _prefs->ui_font_style = _editPickerIdx;  // Live preview
         } else {
           // Radio preset
           _editPickerIdx--;
@@ -2734,6 +2753,10 @@ public:
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx++;
           if (_editPickerIdx >= AUTO_LOCK_OPTION_COUNT) _editPickerIdx = 0;
+        } else if (type == ROW_FONT_STYLE) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= MECK_FONT_STYLE_COUNT) _editPickerIdx = 0;
+          _prefs->ui_font_style = _editPickerIdx;  // Live preview
         } else {
           // Radio preset
           _editPickerIdx++;
@@ -2757,6 +2780,13 @@ public:
           _editMode = EDIT_NONE;
           Serial.printf("Settings: Auto lock = %s\n",
                         autoLockLabel(_prefs->auto_lock_minutes));
+        } else if (type == ROW_FONT_STYLE) {
+          _prefs->ui_font_style = _editPickerIdx;
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: Font style = %s (%d)\n",
+                        meckFontStyleName(_prefs->ui_font_style),
+                        _prefs->ui_font_style);
         } else {
           // Apply radio preset
           if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
@@ -2790,6 +2820,10 @@ public:
         return true;
       }
       if (c == 'q' || c == 'Q') {
+        // Revert live preview if font style picker was active
+        if (type == ROW_FONT_STYLE) {
+          _prefs->ui_font_style = _fontPickerOriginal;
+        }
         _editMode = EDIT_NONE;
         return true;
       }
@@ -2950,6 +2984,10 @@ public:
           the_mesh.savePrefs();
           Serial.printf("Settings: Font size = %s\n",
                         _prefs->large_font ? "LARGER" : "TINY");
+          break;
+        case ROW_FONT_STYLE:
+          _fontPickerOriginal = _prefs->ui_font_style;
+          startEditPicker(_prefs->ui_font_style);
           break;
 #if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:

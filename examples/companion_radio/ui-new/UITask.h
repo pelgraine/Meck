@@ -81,6 +81,7 @@ class UITask : public AbstractUITask {
   UIScreen* home;
   UIScreen* msg_preview;
   UIScreen* channel_screen;  // Channel message history screen
+  UIScreen* channel_picker_screen;  // Channel picker (bubble/list view)
   UIScreen* contacts_screen; // Contacts list screen
   UIScreen* text_reader;     // *** NEW: Text reader screen ***
   UIScreen* notes_screen;    // Notes editor screen
@@ -179,7 +180,8 @@ public:
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen();
-  void gotoChannelScreen();  // Navigate to channel message screen
+  void gotoChannelScreen(bool resetDmView = true);  // Navigate to channel message screen
+  void gotoChannelPickerScreen();  // Navigate to channel picker (bubble/list)
   void gotoDMTab();          // Navigate directly to DM tab on channel screen
   void gotoDMConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0);
   void gotoContactsScreen(); // Navigate to contacts list
@@ -232,6 +234,7 @@ public:
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
   bool isOnChannelScreen() const { return curr == channel_screen; }
+  bool isOnChannelPickerScreen() const { return curr == channel_picker_screen; }
   bool isOnContactsScreen() const { return curr == contacts_screen; }
   bool isOnTextReader() const { return curr == text_reader; }  // *** NEW ***
   bool isOnHomeScreen() const { return curr == home; }
@@ -311,6 +314,7 @@ public:
   UIScreen* getNotesScreen() const { return notes_screen; }
   UIScreen* getContactsScreen() const { return contacts_screen; }
   UIScreen* getChannelScreen() const { return channel_screen; }
+  UIScreen* getChannelPickerScreen() const { return channel_picker_screen; }
   UIScreen* getSettingsScreen() const { return settings_screen; }
   NodePrefs* getNodePrefs() const { return _node_prefs; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }

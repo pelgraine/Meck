@@ -6,12 +6,17 @@
 class DisplayDriver {
   int _w, _h;
 protected:
+  uint8_t _fontStyle = 0;  // 0=Classic, 1=Noto Sans, 2=Montserrat
   DisplayDriver(int w, int h) { _w = w; _h = h; }
 public:
   enum Color { DARK=0, LIGHT, RED, GREEN, BLUE, YELLOW, ORANGE }; // on b/w screen, colors will be !=0 synonym of light
 
   int width() const { return _w; }
   int height() const { return _h; }
+
+  // Font style — controls typeface used by setTextSize()
+  void setFontStyle(uint8_t s) { _fontStyle = s; }
+  uint8_t getFontStyle() const { return _fontStyle; }
 
   virtual bool isOn() = 0;
   virtual void turnOn() = 0;

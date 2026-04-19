@@ -140,11 +140,15 @@ class ESP32RTCClock : public mesh::RTCClock {
 public:
   ESP32RTCClock() { }
   void begin() {
-    esp_reset_reason_t reason = esp_reset_reason();
-    if (reason == ESP_RST_POWERON) {
-      // start with some date/time in the recent past
+    // Check if the ESP32 RTC peripheral retained a sane time across reset.
+    // On power-on the value is undefined; on watchdog/brownout/SW reset it
+    // may retain valid time OR garbage.  Accept times in a plausible window
+    // (Nov 2023 → May 2033) and re-seed anything outside that range.
+    time_t _now;
+    time(&_now);
+    if (_now < 1700000000 || _now > 2000000000) {
       struct timeval tv;
-      tv.tv_sec = 1715770351;  // 15 May 2024, 8:50pm
+      tv.tv_sec = 1715770351;  // 15 May 2024, 8:50pm UTC (safe seed)
       tv.tv_usec = 0;
       settimeofday(&tv, NULL);
     }

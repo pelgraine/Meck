@@ -54,6 +54,7 @@
 
 #include "icons.h"
 #include "ChannelScreen.h"
+#include "ChannelPickerScreen.h"
 #include "ContactsScreen.h"
 #include "TextReaderScreen.h"
 #include "SettingsScreen.h"
@@ -524,6 +525,9 @@ public:
         y += menuLH + 2;
       } else {
         // Monospaced built-in font: centered space-padded strings
+        // Force Classic style — proportional 7pt custom fonts break column alignment
+        uint8_t _savedFontStyle = display.getFontStyle();
+        display.setFontStyle(0);
         y += 6;
         display.drawTextCentered(display.width() / 2, y, "Press:");
         y += 12;
@@ -555,6 +559,7 @@ public:
         display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
 #endif
         y += 14;
+        display.setFontStyle(_savedFontStyle);  // Restore custom font style
       }
 
       // Nav hint (only if room)
@@ -1286,6 +1291,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
+  channel_picker_screen = new ChannelPickerScreen(this);
+  ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
   text_reader = new TextReaderScreen(this, node_prefs);
@@ -1322,6 +1329,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // Apply saved dark mode preference (both T-Deck Pro and T5S3)
   if (_node_prefs->dark_mode) {
     ::display.setDarkMode(true);
+  }
+
+  // Apply saved font style preference (Classic / Noto Sans / Montserrat)
+  if (_node_prefs->ui_font_style > 0) {
+    ::display.setFontStyle(_node_prefs->ui_font_style);
   }
 
   setCurrScreen(splash);
@@ -1493,6 +1505,10 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
     showAlert(alertBuf, 2000);
+  }
+  // Ensure picker badges update after toaster clears
+  if (isOnChannelPickerScreen()) {
+    forceRefresh();
   }
 #else
   // Other devices: Show full preview screen (legacy behavior, skip room sync)
@@ -1674,6 +1690,12 @@ void UITask::loop() {
           gotoHomeScreen();
         }
         c = 0;
+      } else if (isOnChannelPickerScreen()) {
+        gotoHomeScreen();  // picker → home
+        c = 0;
+      } else if (isOnChannelScreen()) {
+        gotoChannelPickerScreen();  // channel messages → picker
+        c = 0;
       } else {
         gotoHomeScreen();
         c = 0;  // consumed
@@ -1822,6 +1844,10 @@ if (curr) curr->poll();
         }
       }
 #endif
+      // Sync font style with prefs (settings toggle takes effect here)
+      if (_node_prefs && display.getFontStyle() != _node_prefs->ui_font_style) {
+        display.setFontStyle(_node_prefs->ui_font_style);
+      }
       _display->startFrame();
 #if defined(LilyGo_T5S3_EPaper_Pro)
       if (_vkbActive) {
@@ -2527,16 +2553,28 @@ bool UITask::isHomeOnRecentPage() const {
   return curr == home && ((HomeScreen *) home)->isOnRecentPage();
 }
 
-void UITask::gotoChannelScreen() {
+void UITask::gotoChannelScreen(bool resetDmView) {
   ChannelScreen* cs = (ChannelScreen*)channel_screen;
-  // If currently showing DM view, reset to channel 0
-  if (cs->getViewChannelIdx() == 0xFF) {
+  // If currently showing DM view, reset to channel 0 (unless caller opts out)
+  if (resetDmView && cs->getViewChannelIdx() == 0xFF) {
     cs->setViewChannelIdx(0);
   }
   cs->resetScroll();
   // Mark the currently viewed channel as read
   cs->markChannelRead(cs->getViewChannelIdx());
   setCurrScreen(channel_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoChannelPickerScreen() {
+  ChannelScreen* cs = (ChannelScreen*)channel_screen;
+  ChannelPickerScreen* pick = (ChannelPickerScreen*)channel_picker_screen;
+  pick->enter(cs->getViewChannelIdx());
+  setCurrScreen(channel_picker_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
