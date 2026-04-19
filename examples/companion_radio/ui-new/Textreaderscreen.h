@@ -16,7 +16,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     12  // v12: indexer breaks page BEFORE overflowing line (matches renderer pre-check)
+#define INDEX_VERSION     13  // v13: font key in header — auto-invalidate on font/style change
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -402,7 +402,8 @@ private:
   Mode _mode;
   bool _sdReady;
   bool _initialized;       // Layout metrics calculated
-  uint8_t _lastFontPref;   // Font preference at last layout init (detect changes)
+  uint8_t _lastFontPref;   // Font preference at last layout init (large_font | fontStyle<<4)
+  uint8_t _fontKey;        // Current font key stored in .idx files for cache invalidation
   bool _bootIndexed;       // Boot-time pre-indexing done
   DisplayDriver* _display; // Stored reference for splash screens
 
@@ -627,6 +628,15 @@ private:
       return false;
     }
 
+    // Font key: page boundaries depend on font metrics — discard if font changed
+    uint8_t savedFontKey = 0;
+    idxFile.read(&savedFontKey, 1);
+    if (savedFontKey != _fontKey) {
+      idxFile.close();
+      SD.remove(idxPath.c_str());
+      return false;
+    }
+
     idxFile.read((uint8_t*)&savedSize, 4);
     idxFile.read((uint8_t*)&pageCount, 4);
     idxFile.read(&fullyFlag, 1);
@@ -681,6 +691,7 @@ private:
     uint8_t fullyFlag = fullyIndexed ? 1 : 0;
 
     idxFile.write(&version, 1);
+    idxFile.write(&_fontKey, 1);  // Font key for cache invalidation
     idxFile.write((uint8_t*)&fileSize, 4);
     idxFile.write((uint8_t*)&pageCount, 4);
     idxFile.write(&fullyFlag, 1);
@@ -714,8 +725,8 @@ private:
       return false;
     }
 
-    // Seek to lastReadPage field: version(1) + fileSize(4) + pageCount(4) + fullyIndexed(1)
-    idxFile.seek(1 + 4 + 4 + 1);
+    // Seek to lastReadPage field: version(1) + fontKey(1) + fileSize(4) + pageCount(4) + fullyIndexed(1)
+    idxFile.seek(1 + 1 + 4 + 4 + 1);
     idxFile.write((uint8_t*)&page, 4);
     idxFile.close();
     return true;
@@ -1109,8 +1120,10 @@ private:
           display.fillRect(0, y, display.width(), listLineH);
 #else
           // setCursor adds +5 to y internally, but fillRect does not.
-          // Offset fillRect by +5 to align highlight bar with text.
-          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), listLineH);
+          // Built-in font: offset by +5 to align with top-left positioned text.
+          // GFX fonts (large_font or custom style): offset by -2 to cover ascenders above baseline.
+          int hlOff = (!_prefs->large_font && display.getFontStyle() > 0) ? -2 : _prefs->smallHighlightOff();
+          display.fillRect(0, y + hlOff, display.width(), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -1281,7 +1294,7 @@ private:
 
 public:
   TextReaderScreen(UITask* task, NodePrefs* prefs = nullptr)
-    : _task(task), _prefs(prefs), _mode(FILE_LIST), _sdReady(false), _initialized(false), _lastFontPref(0),
+    : _task(task), _prefs(prefs), _mode(FILE_LIST), _sdReady(false), _initialized(false), _lastFontPref(0), _fontKey(0),
       _bootIndexed(false), _display(nullptr),
       _charsPerLine(38), _linesPerPage(22), _lineHeight(5),
       _textAreaHeight(100), _headerHeight(14), _footerHeight(14),
@@ -1306,14 +1319,16 @@ public:
 
   // Call once after display is available to calculate layout metrics
   void initLayout(DisplayDriver& display) {
-    // Re-init if font preference changed since last layout
-    uint8_t curFont = _prefs ? _prefs->large_font : 0;
+    // Re-init if font preference OR font style changed since last layout
+    uint8_t curFont = _prefs ? (_prefs->large_font | (display.getFontStyle() << 4)) : 0;
     if (_initialized && curFont != _lastFontPref) {
       _initialized = false;
+      _fileCache.clear();  // Page positions are font-dependent — force re-index
       Serial.println("TextReader: font changed, recalculating layout");
     }
     if (_initialized) return;
     _lastFontPref = curFont;
+    _fontKey = curFont;  // Stored in .idx files for SD cache invalidation
 
     // Store display reference for splash screens during openBook
     _display = &display;
@@ -1344,13 +1359,15 @@ public:
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 80) _charsPerLine = 80;
 #else
-    // T-Deck Pro: large_font uses FreeSans9pt (proportional) — same fix
-    if (_prefs && _prefs->large_font) {
+    // T-Deck Pro: large_font or custom proportional font — measure average
+    // character width from a sample sentence (M is widest glyph, ~40% wider
+    // than average, so M-based measurement leaves half the line empty).
+    if (_prefs && (_prefs->large_font || display.getFontStyle() > 0)) {
       const char* sample = "the quick brown fox jumps over lazy dog";
       uint16_t sampleW = display.getTextWidth(sample);
       int sampleLen = strlen(sample);
       if (sampleW > 0 && sampleLen > 0) {
-        _charsPerLine = (display.width() * sampleLen * 70) / ((int)sampleW * 100);
+        _charsPerLine = (display.width() * sampleLen * 85) / ((int)sampleW * 100);
       }
     }
     if (_charsPerLine < 15) _charsPerLine = 15;
@@ -1378,10 +1395,13 @@ public:
     }
 #else
     // T-Deck Pro large_font uses FreeSans9pt (yAdvance=22px at scale 1.5625×).
-    // The 6x8 formula above gives ~5-7 which is way too small — lines overlap.
-    // Use smallLineH() which is already tuned for this font.
+    // Custom proportional fonts (Noto Sans, Montserrat) at size 0 also need
+    // a tuned line height — the 6x8 formula above uses a width:height ratio
+    // that doesn't apply to GFX fonts, causing overlap or excessive spacing.
     if (_prefs && _prefs->large_font) {
-      _lineHeight = _prefs->smallLineH();
+      _lineHeight = _prefs->smallLineH();  // 11 — tested for FreeSans9pt
+    } else if (display.getFontStyle() > 0) {
+      _lineHeight = 7;  // Custom 7pt fonts: 7 * 2.5 = 17.5px — fits ~16 lines/page
     }
 #endif
 
@@ -1718,7 +1738,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     const int bodyTop = startY;
 #else
-    const int bodyTop = startY + (_prefs ? _prefs->smallHighlightOff() : 5);
+    const int bodyTop = startY + ((_prefs && !_prefs->large_font && _prefs->ui_font_style > 0) ? -2 : (_prefs ? _prefs->smallHighlightOff() : 5));
 #endif
     if (vy < bodyTop || vy >= 128 - footerH) return 0;
 

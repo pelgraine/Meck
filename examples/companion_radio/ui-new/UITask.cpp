@@ -187,14 +187,14 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     sprintf(pctStr, "%d%%", batteryPercentage);
     uint16_t textWidth = display.getTextWidth(pctStr);
 
-    if (_node_prefs->large_font) {
-      // Large font: text only — no room for icon in header
+    if (_node_prefs->large_font || display.getFontStyle() > 0) {
+      // Large font or custom proportional font: text only — icon doesn't align
       int textX = display.width() - textWidth - 2;
       if (outIconX) *outIconX = textX;
       display.setCursor(textX, textY);
       display.print(pctStr);
     } else {
-      // Tiny font: icon + text
+      // Classic tiny font (monospaced): icon + text
       // layout: [icon][cap 2px][gap 2px][text][margin 2px]
       int totalWidth = iconWidth + 2 + 2 + textWidth + 2;
       int iconX = display.width() - totalWidth;
@@ -482,11 +482,12 @@ public:
       display.setTextSize(_node_prefs->smallTextSize());
       int menuLH = _node_prefs->smallLineH();
 
-      if (_node_prefs->large_font) {
+      if (_node_prefs->large_font || display.getFontStyle() > 0) {
         // Proportional font: two-column layout with fixed X positions
+        // Centered to match Classic layout's visual weight (~16-unit margins)
         y += 2;
-        int col1 = 2;
-        int col2 = display.width() / 2;
+        int col1 = display.width() / 10;           // ~12
+        int col2 = display.width() * 11 / 20;      // ~70
 
         display.setCursor(col1, y); display.print("[M] Messages");
         display.setCursor(col2, y); display.print("[C] Contacts");
@@ -524,10 +525,7 @@ public:
 #endif
         y += menuLH + 2;
       } else {
-        // Monospaced built-in font: centered space-padded strings
-        // Force Classic style — proportional 7pt custom fonts break column alignment
-        uint8_t _savedFontStyle = display.getFontStyle();
-        display.setFontStyle(0);
+        // Monospaced built-in font (Classic): centered space-padded strings
         y += 6;
         display.drawTextCentered(display.width() / 2, y, "Press:");
         y += 12;
@@ -559,14 +557,13 @@ public:
         display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
 #endif
         y += 14;
-        display.setFontStyle(_savedFontStyle);  // Restore custom font style
       }
 
       // Nav hint (only if room)
       if (y < display.height() - 14) {
         display.setColor(DisplayDriver::GREEN);
         display.drawTextCentered(display.width() / 2, y,
-          _node_prefs->large_font ? "A/D: cycle views" : "Press A/D to cycle home views");
+          (_node_prefs->large_font || display.getFontStyle() > 0) ? "A/D: cycle views" : "Press A/D to cycle home views");
       }
       display.setTextSize(1);  // restore
 #endif
