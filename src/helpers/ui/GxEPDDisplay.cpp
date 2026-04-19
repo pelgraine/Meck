@@ -101,6 +101,7 @@ void GxEPDDisplay::setTextSize(int sz) {
   display_crc.update<uint8_t>(_fontStyle);
 
   // Check for custom font style first (Noto Sans, Montserrat)
+#ifdef HAS_MECK_FONTS
   const GFXfont* customFont = meckGetFont(_fontStyle, sz);
   if (customFont) {
     display.setFont(customFont);
@@ -108,6 +109,7 @@ void GxEPDDisplay::setTextSize(int sz) {
     display.setTextSize(sz == 5 ? 2 : 1);
     return;
   }
+#endif
 
   // Classic style (or fallback) — original FreeSans fonts
   switch(sz) {
