@@ -1831,7 +1831,24 @@ void setup() {
 
 #elif defined(ESP32)
   MESH_DEBUG_PRINTLN("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
-  SPIFFS.begin(true);
+  if (!SPIFFS.begin(false)) {
+    // First boot or corrupted partition — format required (can take 1-2 minutes)
+    Serial.println("SPIFFS mount failed - formatting (this may take 1-2 minutes)...");
+    if (disp) {
+      disp->startFrame();
+      disp->drawTextCentered(disp->width() / 2, 28, "Loading...");
+      disp->setTextSize(1);
+      disp->setColor(DisplayDriver::YELLOW);
+      disp->drawTextCentered(disp->width() / 2, 52, "Formatting storage...");
+      disp->drawTextCentered(disp->width() / 2, 65, "First boot - please wait - may take 1-2 mins");
+      disp->endFrame();
+    }
+    if (!SPIFFS.begin(true)) {
+      Serial.println("SPIFFS format FAILED!");
+    } else {
+      Serial.println("SPIFFS format complete");
+    }
+  }
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
