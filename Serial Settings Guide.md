@@ -57,7 +57,6 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get radio` | All radio params in one line |
 | `get utc` | UTC offset (hours) |
 | `get notify` | Keyboard flash notification (on/off) |
-| `get largefont` | Larger font mode (on/off) |
 | `get gps` | GPS status and interval |
 | `get pin` | BLE pairing PIN |
 | `get path.hash.mode` | Path hash size (0=1-byte, 1=2-byte, 2=3-byte) |
@@ -65,10 +64,12 @@ All commands follow a simple pattern: `get` to read, `set` to write.
 | `get af` | Airtime factor |
 | `get multi.acks` | Redundant ACKs (0 or 1) |
 | `get int.thresh` | Interference threshold (0=disabled) |
-| `get tx.fail.reset` | TX fail reset threshold (0=disabled, default 3) |
-| `get rx.fail.reboot` | RX stuck reboot threshold (0=disabled, default 3) |
+| `get tx.fail.threshold` | TX fail reset threshold (0=disabled, default 3) |
+| `get rx.fail.threshold` | RX stuck reboot threshold (0=disabled, default 3) |
 | `get gps.baud` | GPS baud rate (0=compile-time default) |
-| `get channels` | List all channels with index numbers |
+| `get region` | Default region scope (e.g. `au-nsw`, or `none`) |
+| `get channels` | List all channels with index numbers and region scopes |
+| `get channel.scope <idx>` | Show region scope for a specific channel |
 | `get presets` | List all radio presets with parameters |
 | `get pubkey` | Device public key (hex) |
 | `get firmware` | Firmware version string |
@@ -167,15 +168,6 @@ set notify on
 set notify off
 ```
 
-#### Larger Font Mode
-
-Toggle larger text on channel messages, contacts, DM inbox, and repeater admin screens:
-
-```
-set largefont on
-set largefont off
-```
-
 #### BLE PIN
 
 ```
@@ -248,8 +240,8 @@ Values: 0 (disabled, default) or 14+ (14 is the typical setting). Values between
 Automatically resets the radio hardware after this many consecutive failed transmission attempts. This recovers from "zombie radio" states where the SX1262 stops responding to send commands.
 
 ```
-set tx.fail.reset 3
-set tx.fail.reset 0
+set tx.fail.threshold 3
+set tx.fail.threshold 0
 ```
 
 Values: 0 (disabled) or 1–10 (default: 3). After the threshold is reached, the radio is reset and the failed packet is re-queued.
@@ -259,8 +251,8 @@ Values: 0 (disabled) or 1–10 (default: 3). After the threshold is reached, the
 Automatically reboots the device after this many consecutive RX-stuck recovery failures. An RX-stuck event occurs when the radio is not in receive mode for 8 seconds despite automatic recovery attempts.
 
 ```
-set rx.fail.reboot 3
-set rx.fail.reboot 0
+set rx.fail.threshold 3
+set rx.fail.threshold 0
 ```
 
 Values: 0 (disabled) or 1–10 (default: 3). A full device reboot is a last resort — this should only trigger in rare cases of persistent radio hardware malfunction.
@@ -276,6 +268,18 @@ set gps.baud 0
 
 Valid rates: 0 (default), 4800, 9600, 19200, 38400, 57600, 115200.
 
+#### Backlight (T5S3 E-Paper Pro Only)
+
+Control the front-light on the T5S3 display:
+
+```
+set backlight on
+set backlight off
+set backlight 128
+```
+
+Values: `on`, `off`, or a brightness level from 0–255.
+
 ### Channel Management
 
 #### List Channels
@@ -287,10 +291,12 @@ get channels
 Output:
 
 ```
-  [0] #public
-  [1] #meck-test
-  [2] #local-group
+  [0] #public [*]
+  [1] #meck-test [au-nsw]
+  [2] #local-group [*]
 ```
+
+Each channel shows its region scope in brackets. `[*]` means the channel uses the device default region (or unscoped if no default is set). A specific name like `[au-nsw]` means that channel has its own region override.
 
 #### Add a Hashtag Channel
 
@@ -307,6 +313,82 @@ set channel.del 2
 ```
 
 Channels are referenced by their index number (shown in `get channels`). Channel 0 (public) cannot be deleted. Remaining channels are automatically compacted after deletion.
+
+### Region Scope
+
+Regions limit how far your flood messages propagate through the mesh. When you set a region, outgoing messages are tagged with a transport code that repeaters use to decide whether to forward them. Messages sent without a region reach all repeaters via the default wildcard, same as always.
+
+Meck does not pre-set any region on a fresh flash. Region names are determined by your local mesh community — check with your local group for the names in use. Common patterns follow ISO 3166 country/subdivision codes (e.g. `au` for Australia, `gb-eng` for England, `us-ca` for California), but communities may also use custom names for their area.
+
+Region names must be lowercase alphanumeric characters and hyphens only, max 29 characters.
+
+#### View Default Region
+
+```
+get region
+```
+
+Output:
+
+```
+  > au-nsw
+```
+
+Or if no region is set:
+
+```
+  > (none — unscoped)
+```
+
+#### Set Default Region
+
+```
+set region au-nsw
+```
+
+This applies to all channels and DMs unless a channel has its own region override.
+
+#### Clear Default Region
+
+```
+set region none
+```
+
+Returns to unscoped mode — messages reach all repeaters.
+
+#### View Channel Region
+
+```
+get channel.scope 2
+```
+
+Output:
+
+```
+  > #local-group scope: au-syd
+```
+
+Or if the channel uses the device default:
+
+```
+  > #local-group scope: (device default)
+```
+
+#### Set Channel Region
+
+```
+set channel.scope 2 au-syd
+```
+
+This overrides the device default for that specific channel.
+
+#### Clear Channel Region
+
+```
+set channel.scope 2 none
+```
+
+Returns the channel to using the device default region.
 
 ### 4G Modem (4G Variant Only)
 
@@ -420,7 +502,7 @@ set channel.add local-group
 get all
 ```
 
-### Switching to a New Region
+### Switching to a Different Radio Preset
 
 Moving from Australia to the US? One command:
 
@@ -432,6 +514,27 @@ Verify with:
 
 ```
 get radio
+```
+
+### Setting Up Regions
+
+Check with your local mesh community for the region names in use, then set your device default:
+
+```
+set region au-nsw
+```
+
+If you want a specific channel to use a different region (e.g. a nationwide channel):
+
+```
+set channel.scope 1 au
+```
+
+Verify everything:
+
+```
+get region
+get channels
 ```
 
 ### Custom Radio Configuration

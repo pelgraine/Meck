@@ -2453,6 +2453,26 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  > %lu (effective: %lu)\n",
             (unsigned long)_prefs.gps_baudrate, (unsigned long)effective);
 
+      } else if (strcmp(key, "region") == 0) {
+        if (_prefs.default_scope_name[0]) {
+          Serial.printf("  > %s\n", _prefs.default_scope_name);
+        } else {
+          Serial.println("  > (none — unscoped)");
+        }
+      } else if (memcmp(key, "channel.scope ", 14) == 0) {
+        int idx = atoi(&key[14]);
+        if (idx >= 0 && idx < MAX_GROUP_CHANNELS) {
+          ChannelDetails ch;
+          if (getChannel(idx, ch) && ch.name[0] != '\0') {
+            Serial.printf("  > %s scope: %s\n", ch.name,
+                ch.scope_name[0] ? ch.scope_name : "(device default)");
+          } else {
+            Serial.printf("  Error: channel %d is empty\n", idx);
+          }
+        } else {
+          Serial.println("  Error: invalid channel index");
+        }
+
       } else if (strcmp(key, "radio") == 0) {
         Serial.printf("  > freq=%.3f bw=%.1f sf=%d cr=%d tx=%d\n",
             _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
@@ -2467,7 +2487,11 @@ void MyMesh::checkCLIRescueCmd() {
         for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
           ChannelDetails ch;
           if (getChannel(i, ch) && ch.name[0] != '\0') {
-            Serial.printf("  [%d] %s\n", i, ch.name);
+            if (ch.scope_name[0]) {
+              Serial.printf("  [%d] %s [%s]\n", i, ch.name, ch.scope_name);
+            } else {
+              Serial.printf("  [%d] %s [*]\n", i, ch.name);
+            }
             found = true;
           } else {
             break;
@@ -2514,6 +2538,8 @@ void MyMesh::checkCLIRescueCmd() {
           uint32_t eff_baud = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
           Serial.printf("  gps.baud:   %lu\n", (unsigned long)eff_baud);
         }
+        Serial.printf("  region:     %s\n",
+            _prefs.default_scope_name[0] ? _prefs.default_scope_name : "(none — unscoped)");
 #ifdef HAS_4G_MODEM
         Serial.printf("  modem:      %s\n", ModemManager::loadEnabledConfig() ? "on" : "off");
         Serial.printf("  apn:        %s\n", modemManager.getAPN());
@@ -2548,7 +2574,11 @@ void MyMesh::checkCLIRescueCmd() {
         for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
           ChannelDetails ch;
           if (getChannel(i, ch) && ch.name[0] != '\0') {
-            Serial.printf("    [%d] %s\n", i, ch.name);
+            if (ch.scope_name[0]) {
+              Serial.printf("    [%d] %s [%s]\n", i, ch.name, ch.scope_name);
+            } else {
+              Serial.printf("    [%d] %s [*]\n", i, ch.name);
+            }
             chFound = true;
           } else {
             break;
@@ -2942,6 +2972,54 @@ void MyMesh::checkCLIRescueCmd() {
           Serial.println("  Error: use 0 (default), 4800, 9600, 19200, 38400, 57600, or 115200");
         }
 
+      // Region scope commands
+      } else if (memcmp(config, "region ", 7) == 0) {
+        const char* name = &config[7];
+        if (strcmp(name, "none") == 0 || strcmp(name, "clear") == 0 || name[0] == '\0') {
+          memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));
+          memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+          savePrefs();
+          Serial.println("  > region cleared (unscoped)");
+        } else if (strlen(name) < 31) {
+          strncpy(_prefs.default_scope_name, name, sizeof(_prefs.default_scope_name));
+          _prefs.default_scope_name[30] = '\0';
+          TransportKey key;
+          deriveScopeKey(name, key);
+          memcpy(_prefs.default_scope_key, key.key, sizeof(_prefs.default_scope_key));
+          savePrefs();
+          Serial.printf("  > region = %s\n", _prefs.default_scope_name);
+        } else {
+          Serial.println("  Error: region name too long (max 29 chars)");
+        }
+      } else if (memcmp(config, "channel.scope ", 14) == 0) {
+        // set channel.scope <idx> <name>   (or "set channel.scope <idx> none" to clear)
+        int idx = atoi(&config[14]);
+        const char* rest = strchr(&config[14], ' ');
+        if (idx >= 0 && idx < MAX_GROUP_CHANNELS && rest) {
+          rest++;  // skip space
+          ChannelDetails ch;
+          if (getChannel(idx, ch) && ch.name[0] != '\0') {
+            if (strcmp(rest, "none") == 0 || strcmp(rest, "clear") == 0) {
+              memset(ch.scope_name, 0, sizeof(ch.scope_name));
+            } else if (strlen(rest) < 31) {
+              strncpy(ch.scope_name, rest, sizeof(ch.scope_name));
+              ch.scope_name[30] = '\0';
+            } else {
+              Serial.println("  Error: scope name too long (max 29 chars)");
+              cli_command[0] = 0;
+              return;
+            }
+            setChannel(idx, ch);
+            saveChannels();
+            Serial.printf("  > %s scope = %s\n", ch.name,
+                ch.scope_name[0] ? ch.scope_name : "(device default)");
+          } else {
+            Serial.printf("  Error: channel %d is empty\n", idx);
+          }
+        } else {
+          Serial.println("  Usage: set channel.scope <idx> <name|none>");
+        }
+
       // Backlight control (T5S3 E-Paper Pro only)
       } else if (memcmp(config, "backlight ", 10) == 0) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -3046,6 +3124,12 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    set preset <name|num>  Apply radio preset");
       Serial.println("    set channel.add <name> Add hashtag channel");
       Serial.println("    set channel.del <idx>  Delete channel by index");
+      Serial.println("");
+      Serial.println("  Regions:");
+      Serial.println("    get/set region         Device default region (e.g. au-nsw)");
+      Serial.println("    set region none        Clear default region (unscoped)");
+      Serial.println("    get channel.scope <i>  Show scope for channel i");
+      Serial.println("    set channel.scope <i> <name|none>");
 #ifdef HAS_4G_MODEM
       Serial.println("");
       Serial.println("  4G modem:");
