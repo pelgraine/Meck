@@ -246,6 +246,9 @@ void loop() {
       strncpy(td.oper, cellularMQTT.getOperator(), sizeof(td.oper) - 1);
       td.mqtt_connected = cellularMQTT.isConnected();
       td.neighbor_count = 0;  // TODO: expose from MyMesh
+      td.loop_detect = p->loop_detect;
+      td.path_hash_mode = p->path_hash_mode;
+      td.flood_max = p->flood_max;
 
       cellularMQTT.updateTelemetry(td);
       lastTelemUpdate = millis();
@@ -299,6 +302,9 @@ void loop() {
       strncpy(td.node_name, p->node_name, sizeof(td.node_name) - 1);
       td.mqtt_connected = wifiMQTT.isConnected();
       td.neighbor_count = 0;
+      td.loop_detect = p->loop_detect;
+      td.path_hash_mode = p->path_hash_mode;
+      td.flood_max = p->flood_max;
 
       wifiMQTT.updateTelemetry(td);
       lastTelemUpdate = millis();

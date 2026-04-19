@@ -373,19 +373,24 @@ void WiFiMQTT::publishQueuedResponses() {
 void WiFiMQTT::publishTelemetry() {
   _rssi = WiFi.RSSI();
 
-  char json[400];
+  static const char* loopLabels[] = { "off", "minimal", "moderate", "strict" };
+  const char* loopStr = _telemetry.loop_detect <= 3 ? loopLabels[_telemetry.loop_detect] : "off";
+
+  char json[512];
   snprintf(json, sizeof(json),
            "{\"uptime\":%lu,\"batt_mv\":%d,\"batt_pct\":%d,\"temp\":%.1f,"
            "\"rssi\":%d,\"bars\":%d,\"neighbors\":%d,"
            "\"freq\":%.3f,\"bw\":%.1f,\"sf\":%d,\"cr\":%d,\"tx\":%d,"
            "\"name\":\"%s\",\"ip\":\"%s\",\"ssid\":\"%s\","
-           "\"heap\":%d}",
+           "\"heap\":%d,"
+           "\"loop_detect\":\"%s\",\"path_hash_mode\":%d,\"flood_max\":%d}",
            _telemetry.uptime_secs, _telemetry.battery_mv, _telemetry.battery_pct,
            _telemetry.temperature / 10.0f,
            _rssi, getSignalBars(), _telemetry.neighbor_count,
            _telemetry.freq, _telemetry.bw, _telemetry.sf, _telemetry.cr, _telemetry.tx_power,
            _telemetry.node_name, _ipAddr, _config.networks[_activeNetwork].ssid,
-           ESP.getFreeHeap());
+           ESP.getFreeHeap(),
+           loopStr, _telemetry.path_hash_mode, _telemetry.flood_max);
 
   _mqttClient.publish(_topicTelem, json);
 }
