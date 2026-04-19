@@ -604,13 +604,18 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     MESH_DEBUG_PRINTLN("SentTrack: captured fingerprint for channel msg");
   }
 
-  // Scope priority: per-channel scope → device default → unscoped
+  // Scope priority: BLE app send_scope → per-channel scope → device default → unscoped
   TransportKey scope;
-  const char* ch_scope = getChannelScopeName(channel);
-  if (ch_scope && ch_scope[0]) {
-    deriveScopeKey(ch_scope, scope);
+  if (!send_scope.isNull()) {
+    // BLE app has set a scope via CMD 54 — use it (highest priority)
+    memcpy(scope.key, send_scope.key, sizeof(scope.key));
   } else {
-    memcpy(scope.key, _prefs.default_scope_key, sizeof(scope.key));
+    const char* ch_scope = getChannelScopeName(channel);
+    if (ch_scope && ch_scope[0]) {
+      deriveScopeKey(ch_scope, scope);
+    } else {
+      memcpy(scope.key, _prefs.default_scope_key, sizeof(scope.key));
+    }
   }
   sendFloodScoped(scope, pkt, delay_millis);
 }
@@ -2313,8 +2318,10 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE_KEY && len >= 2 && cmd_frame[1] == 0) {
     if (len >= 2 + 16) {
       memcpy(send_scope.key, &cmd_frame[2], sizeof(send_scope.key));  // set curr scope TransportKey
+      Serial.printf("[CMD54] Per-channel scope key set (%d bytes)\n", len - 2);
     } else {
       memset(send_scope.key, 0, sizeof(send_scope.key));  // set scope to null
+      Serial.println("[CMD54] Per-channel scope cleared");
     }
     writeOKFrame();
   } else if (cmd_frame[0] == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
