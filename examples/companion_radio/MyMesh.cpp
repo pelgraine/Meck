@@ -1633,6 +1633,17 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&secs, &cmd_frame[1], 4);
     uint32_t curr = getRTCClock()->getCurrentTime();
     if (secs >= curr) {
+      // Adjust stored advert timestamps if clock jumps significantly
+      if (advert_paths && secs > curr + 60) {
+        uint32_t delta = secs - curr;
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+          if (advert_paths[i].recv_timestamp > 0) {
+            advert_paths[i].recv_timestamp += delta;
+          }
+        }
+        Serial.printf("[ClockSync] Adjusted %d advert timestamps by +%lu seconds\n",
+                      ADVERT_PATH_TABLE_SIZE, (unsigned long)delta);
+      }
       getRTCClock()->setCurrentTime(secs);
       writeOKFrame();
     } else {
@@ -2105,6 +2116,11 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_CHANNEL && len >= 2 + 32 + 16) {
     uint8_t channel_idx = cmd_frame[1];
     ChannelDetails channel;
+    // Preserve existing scope_name if channel already exists
+    ChannelDetails existing;
+    if (getChannel(channel_idx, existing) && existing.name[0] != '\0') {
+      memcpy(channel.scope_name, existing.scope_name, sizeof(channel.scope_name));
+    }
     StrHelper::strncpy(channel.name, (char *)&cmd_frame[2], 32);
     memset(channel.channel.secret, 0, sizeof(channel.channel.secret));
     memcpy(channel.channel.secret, &cmd_frame[2 + 32], 16); // NOTE: only 128-bit supported
@@ -3054,6 +3070,17 @@ void MyMesh::checkCLIRescueCmd() {
     } else if (memcmp(cli_command, "clock sync ", 11) == 0) {
       uint32_t epoch = (uint32_t)strtoul(&cli_command[11], nullptr, 10);
       if (epoch > 1704067200UL && epoch < 2082758400UL) {
+        // Adjust stored advert timestamps if clock jumps significantly
+        uint32_t curr = getRTCClock()->getCurrentTime();
+        if (advert_paths && epoch > curr + 60) {
+          uint32_t delta = epoch - curr;
+          for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+            if (advert_paths[i].recv_timestamp > 0) {
+              advert_paths[i].recv_timestamp += delta;
+            }
+          }
+          Serial.printf("  > adjusted advert timestamps by +%lu seconds\n", (unsigned long)delta);
+        }
         getRTCClock()->setCurrentTime(epoch);
         Serial.printf("  > clock synced to %lu\n", (unsigned long)epoch);
       } else {

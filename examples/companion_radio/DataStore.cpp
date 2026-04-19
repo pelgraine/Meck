@@ -636,6 +636,17 @@ void DataStore::loadChannels(DataStoreHost* host) {
 
           if (!success) break; // EOF
 
+          // Sanitize scope_name — reject if it contains non-region characters
+          // (catches garbage from uninitialised memory in early channels3 files)
+          ch.scope_name[30] = '\0';  // force null-terminate
+          for (int s = 0; ch.scope_name[s]; s++) {
+            char sc = ch.scope_name[s];
+            if (!((sc >= 'a' && sc <= 'z') || (sc >= '0' && sc <= '9') || sc == '-')) {
+              memset(ch.scope_name, 0, sizeof(ch.scope_name));  // invalid — clear
+              break;
+            }
+          }
+
           if (host->onChannelLoaded(channel_idx, ch)) {
             channel_idx++;
           } else {
