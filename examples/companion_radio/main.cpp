@@ -1225,14 +1225,24 @@ static void lastHeardToggleContact() {
       return 0;
     }
 
-    // Notes editing: tap → open keyboard for typing
+    // Notes screen: mode-dependent touch
     if (ui_task.isOnNotesScreen()) {
       NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
-      if (notes && notes->isEditing()) {
+      if (notes) {
+        if (notes->isInFileList()) {
+          int result = notes->selectRowAtVY(vy);
+          if (result == 1) { ui_task.forceRefresh(); return 0; }  // Moved selection
+          if (result == 2) return KEY_ENTER;  // Same row — open
+          return 0;
+        }
+        if (notes->isEditing()) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
+          ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
 #endif
-        return 0;  // T-Deck Pro: keyboard handles typing directly
+          return 0;  // T-Deck Pro: keyboard handles typing directly
+        }
+        // READING, RENAMING, CONFIRM_DELETE: tap = confirm/enter
+        return KEY_ENTER;
       }
     }
 

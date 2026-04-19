@@ -1220,6 +1220,35 @@ public:
   bool isConfirmingDelete() const { return _mode == CONFIRM_DELETE; }
   bool isEmpty() const { return _bufLen == 0; }
 
+  // Touch: select file list row by virtual Y coordinate
+  // Returns: 0 = outside list, 1 = moved selection, 2 = tapped same row (open)
+  int selectRowAtVY(int vy) {
+    if (_mode != FILE_LIST) return 0;
+    const int startY = 14, footerH = 14;
+    const int listLineH = _prefs ? _prefs->smallLineH() : 9;
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    const int bodyTop = startY;
+#else
+    const int bodyTop = startY + (_prefs ? _prefs->smallHighlightOff() : 5);
+#endif
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+
+    int totalItems = 1 + (int)_fileList.size();
+    if (totalItems == 0) return 0;
+    int maxVisible = (128 - startY - footerH) / listLineH;
+    if (maxVisible < 3) maxVisible = 3;
+    if (maxVisible > 15) maxVisible = 15;
+    int startIdx = max(0, min(_selectedFile - maxVisible / 2,
+                              totalItems - maxVisible));
+
+    int tappedRow = startIdx + (vy - bodyTop) / listLineH;
+    if (tappedRow < 0 || tappedRow >= totalItems) return 0;
+
+    if (tappedRow == _selectedFile) return 2;
+    _selectedFile = tappedRow;
+    return 1;
+  }
+
   // ---- Cursor Navigation (called from main.cpp) ----
 
   void moveCursorLeft() {
