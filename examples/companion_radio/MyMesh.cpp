@@ -1772,23 +1772,12 @@ void MyMesh::handleCmdFrame(size_t len) {
 #ifdef DISPLAY_CLASS
       if (_ui) {
         _ui->msgRead(offline_queue_len);
-
-        // Mark channel as read when BLE companion app syncs the message.
-        // Frame layout V3: [resp_code][snr][res1][res2][channel_idx][path_len]...
-        // Frame layout V1: [resp_code][channel_idx][path_len]...
-        bool is_v3_ch = (out_frame[0] == RESP_CODE_CHANNEL_MSG_RECV_V3);
-        bool is_old_ch = (out_frame[0] == RESP_CODE_CHANNEL_MSG_RECV);
-        if (is_v3_ch || is_old_ch) {
-          uint8_t ch_idx = is_v3_ch ? out_frame[4] : out_frame[1];
-          _ui->markChannelReadFromBLE(ch_idx);
-        }
-
-        // Mark DM slot read when companion app syncs a contact (DM/room) message
-        bool is_v3_dm = (out_frame[0] == RESP_CODE_CONTACT_MSG_RECV_V3);
-        bool is_old_dm = (out_frame[0] == RESP_CODE_CONTACT_MSG_RECV);
-        if (is_v3_dm || is_old_dm) {
-          _ui->markChannelReadFromBLE(0xFF);
-        }
+        // Note: we intentionally do NOT mark channels/DMs as read here.
+        // CMD_SYNC_NEXT_MESSAGE fires during the automatic bulk sync when
+        // the BLE app connects — "synced to app" ≠ "read by user in app".
+        // Unread counts only clear when the user navigates to that channel
+        // on the device itself. The MeshCore BLE protocol has no "mark as
+        // read" command from the app side, so this is the safest behaviour.
       }
 #endif
     } else {
