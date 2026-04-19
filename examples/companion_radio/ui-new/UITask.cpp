@@ -484,10 +484,18 @@ public:
 
       if (_node_prefs->large_font || display.getFontStyle() > 0) {
         // Proportional font: two-column layout with fixed X positions
-        // Centered to match Classic layout's visual weight (~16-unit margins)
         y += 2;
-        int col1 = display.width() / 10;           // ~12
-        int col2 = display.width() * 11 / 20;      // ~70
+        int col1, col2;
+        if (_node_prefs->large_font) {
+          // 9pt font: measure widest left entry and place col2 just past it
+          col1 = 2;
+          int leftW = display.getTextWidth("[M] Messages");
+          col2 = col1 + leftW + 3;
+        } else {
+          // Custom tiny (7pt): centered layout
+          col1 = display.width() / 10;
+          col2 = display.width() * 11 / 20;
+        }
 
         display.setCursor(col1, y); display.print("[M] Messages");
         display.setCursor(col2, y); display.print("[C] Contacts");

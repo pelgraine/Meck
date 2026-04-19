@@ -106,8 +106,6 @@ inline WrapResult findLineBreak(const char* buffer, int bufLen, int lineStart, i
 // width variation in proportional fonts like FreeSans12pt.
 // maxChars is a safety upper bound to prevent runaway on spaceless lines.
 // ============================================================================
-#if defined(LilyGo_T5S3_EPaper_Pro)
-#include <helpers/ui/DisplayDriver.h>
 
 inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineStart,
                                       DisplayDriver* display, int maxChars) {
@@ -235,7 +233,6 @@ inline WrapResult findLineBreakPixel(const char* buffer, int bufLen, int lineSta
   result.nextStart = bufLen;
   return result;
 }
-#endif // LilyGo_T5S3_EPaper_Pro
 
 // ============================================================================
 // Page Indexer (word-wrap aware, matches display rendering)
@@ -247,7 +244,8 @@ inline int indexPagesWordWrap(File& file, long startPos,
                               std::vector<long>& pagePositions,
                               int linesPerPage, int charsPerLine,
                               int maxPages,
-                              int textAreaHeight = 0, int lineHeight = 0) {
+                              int textAreaHeight = 0, int lineHeight = 0,
+                              DisplayDriver* pixelDisplay = nullptr) {
   const int BUF_SIZE = READER_BUF_SIZE;  // Match page buffer to avoid chunk boundary wrap mismatches
   char buffer[BUF_SIZE];
 
@@ -269,7 +267,10 @@ inline int indexPagesWordWrap(File& file, long startPos,
     int pos = 0;
     while (pos < bufLen) {
       int lineStart = pos;
-      WrapResult wrap = findLineBreak(buffer, bufLen, pos, charsPerLine);
+      // Pixel-based wrapping for proportional fonts; char-count for monospaced
+      WrapResult wrap = pixelDisplay
+        ? findLineBreakPixel(buffer, bufLen, pos, pixelDisplay, charsPerLine)
+        : findLineBreak(buffer, bufLen, pos, charsPerLine);
       if (wrap.nextStart <= pos && wrap.lineEnd >= bufLen) break;
 
       // Blank line = newline at line start (no printable content before it)
@@ -322,9 +323,8 @@ inline int indexPagesWordWrap(File& file, long startPos,
 }
 
 // ============================================================================
-// Pixel-based Page Indexer for T5S3 (proportional font word wrap)
+// Pixel-based Page Indexer (proportional font word wrap)
 // ============================================================================
-#if defined(LilyGo_T5S3_EPaper_Pro)
 inline int indexPagesWordWrapPixel(File& file, long startPos,
                                     std::vector<long>& pagePositions,
                                     int linesPerPage, int maxChars,
@@ -377,7 +377,6 @@ inline int indexPagesWordWrapPixel(File& file, long startPos,
   display->setTextSize(1);  // Restore
   return pagesAdded;
 }
-#endif // LilyGo_T5S3_EPaper_Pro
 
 // ============================================================================
 // TextReaderScreen
@@ -946,17 +945,19 @@ private:
       }
       drawSplash("Indexing...", "Please wait", shortName);
 
+      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       if (_pagePositions.empty()) {
         // Cache had no pages (e.g. dummy entry) â€” full index from scratch
         _pagePositions.push_back(0);
         indexPagesWordWrap(_file, 0, _pagePositions,
                            _linesPerPage, _charsPerLine, 0,
-                           _textAreaHeight, _lineHeight);
+                           _textAreaHeight, _lineHeight, pxd);
       } else {
         long lastPos = cache->pagePositions.back();
         indexPagesWordWrap(_file, lastPos, _pagePositions,
                            _linesPerPage, _charsPerLine, 0,
-                           _textAreaHeight, _lineHeight);
+                           _textAreaHeight, _lineHeight, pxd);
       }
     } else {
       // No cache â€” full index from scratch
@@ -974,9 +975,11 @@ private:
       drawSplash("Indexing...", "Please wait", shortName);
 
       _pagePositions.push_back(0);
+      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0,
-                         _textAreaHeight, _lineHeight);
+                         _textAreaHeight, _lineHeight, pxd);
     }
 
     // Save complete index
@@ -1189,17 +1192,28 @@ private:
     int y = 0;
     int lineCount = 0;
     int pos = 0;
-    int maxY = display.height() - _footerHeight - _lineHeight;
+    int textArea = display.height() - _footerHeight;  // total usable height (matches indexer's textAreaHeight)
 
     // Render all lines in the page buffer using word wrap.
     // The buffer contains exactly the bytes for this page (from indexed positions),
     // so we render everything in it.
-    while (pos < _pageBufLen && y <= maxY) {
+    // Proportional fonts use pixel-based wrapping to match the indexer exactly.
+    bool usePixelWrap = (_prefs->large_font || display.getFontStyle() > 0);
+    while (pos < _pageBufLen) {
       int oldPos = pos;
-      WrapResult wrap = findLineBreak(_pageBuf, _pageBufLen, pos, _charsPerLine);
+      WrapResult wrap = usePixelWrap
+        ? findLineBreakPixel(_pageBuf, _pageBufLen, pos, &display, _charsPerLine)
+        : findLineBreak(_pageBuf, _pageBufLen, pos, _charsPerLine);
 
-      // Safety: stop if findLineBreak made no progress (stuck at end of buffer)
+      // Safety: stop if wrap made no progress (stuck at end of buffer)
       if (wrap.nextStart <= oldPos && wrap.lineEnd >= _pageBufLen) break;
+
+      // Height-aware stop check — must match the indexer exactly.
+      // Blank lines (lineEnd == lineStart) get reduced height.
+      // Check BEFORE rendering: does this line fit on the current page?
+      bool isBlankLine = (wrap.lineEnd == pos);
+      int thisH = isBlankLine ? max(2, _lineHeight * 2 / 5) : _lineHeight;
+      if (y > 0 && y + thisH > textArea) break;
 
       display.setCursor(0, y);
       // Print line with UTF-8 decoding: multi-byte sequences are decoded
@@ -1359,15 +1373,16 @@ public:
     if (_charsPerLine < 15) _charsPerLine = 15;
     if (_charsPerLine > 80) _charsPerLine = 80;
 #else
-    // T-Deck Pro: large_font or custom proportional font — measure average
-    // character width from a sample sentence (M is widest glyph, ~40% wider
-    // than average, so M-based measurement leaves half the line empty).
+    // T-Deck Pro: proportional font — measure average character width from
+    // a sample sentence (M is widest glyph, ~40% wider than average).
+    // Large font (9pt) uses 70% safety margin; custom tiny (7pt) uses 85%.
     if (_prefs && (_prefs->large_font || display.getFontStyle() > 0)) {
       const char* sample = "the quick brown fox jumps over lazy dog";
       uint16_t sampleW = display.getTextWidth(sample);
       int sampleLen = strlen(sample);
       if (sampleW > 0 && sampleLen > 0) {
-        _charsPerLine = (display.width() * sampleLen * 85) / ((int)sampleW * 100);
+        int pct = _prefs->large_font ? 70 : 85;
+        _charsPerLine = (display.width() * sampleLen * pct) / ((int)sampleW * 100);
       }
     }
     if (_charsPerLine < 15) _charsPerLine = 15;
@@ -1502,10 +1517,12 @@ public:
         cache.pagePositions.clear();
         cache.pagePositions.push_back(0);
 
+        DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+        if (pxd) pxd->setTextSize(_prefs->smallTextSize());
         indexPagesWordWrap(file, 0, cache.pagePositions,
                            _linesPerPage, _charsPerLine,
                            PREINDEX_PAGES - 1,
-                           _textAreaHeight, _lineHeight);
+                           _textAreaHeight, _lineHeight, pxd);
         cache.fullyIndexed = !file.available();
         file.close();
 
@@ -1632,10 +1649,12 @@ public:
         cache.pagePositions.clear();
         cache.pagePositions.push_back(0);
 
+        DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+        if (pxd) pxd->setTextSize(_prefs->smallTextSize());
         int added = indexPagesWordWrap(file, 0, cache.pagePositions,
                                        _linesPerPage, _charsPerLine,
                                        PREINDEX_PAGES - 1,
-                                       _textAreaHeight, _lineHeight);
+                                       _textAreaHeight, _lineHeight, pxd);
         cache.fullyIndexed = !file.available();
         file.close();
 
@@ -1698,9 +1717,11 @@ public:
       // Layout was invalidated (orientation change) — reindex the open book
       Serial.println("TextReader: Reindexing after layout change");
       _pagePositions.push_back(0);
+      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0,
-                         _textAreaHeight, _lineHeight);
+                         _textAreaHeight, _lineHeight, pxd);
       _totalPages = _pagePositions.size();
       if (_currentPage >= _totalPages) _currentPage = 0;
       _mode = READING;
@@ -1869,10 +1890,12 @@ public:
             cache.lastReadPage = 0;
             cache.pagePositions.clear();
             cache.pagePositions.push_back(0);
+            DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+            if (pxd) pxd->setTextSize(_prefs->smallTextSize());
             indexPagesWordWrap(file, 0, cache.pagePositions,
                                _linesPerPage, _charsPerLine,
                                PREINDEX_PAGES - 1,
-                               _textAreaHeight, _lineHeight);
+                               _textAreaHeight, _lineHeight, pxd);
             cache.fullyIndexed = !file.available();
             file.close();
             saveIndex(cache.filename, cache.pagePositions, cache.fileSize,
