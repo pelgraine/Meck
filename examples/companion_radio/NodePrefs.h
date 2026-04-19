@@ -44,6 +44,15 @@ struct NodePrefs {  // persisted to file
   uint8_t tx_fail_reset_threshold;  // 0=disabled, 1-10, default 3
   uint8_t rx_fail_reboot_threshold; // 0=disabled, 1-10, default 3
 
+  // --- Region scope (MeshCore v1.15+ compatibility) ---
+  // Device-wide default region for flood messages.
+  // Empty default_scope_name = unscoped (legacy flood, reaches all repeaters).
+  // When set, all flood sends use ROUTE_TYPE_TRANSPORT_FLOOD with transport
+  // codes derived from this key.  Per-channel scope (in ChannelDetails) takes
+  // priority when set.
+  char default_scope_name[31];     // e.g. "au-nsw", empty = unscoped
+  uint8_t default_scope_key[16];   // TransportKey derived from "#" + name
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
   // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.

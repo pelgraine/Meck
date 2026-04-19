@@ -59,7 +59,7 @@
 #define CMD_SEND_BINARY_REQ           50
 #define CMD_FACTORY_RESET             51
 #define CMD_SEND_PATH_DISCOVERY_REQ   52
-#define CMD_SET_FLOOD_SCOPE           54   // v8+
+#define CMD_SET_FLOOD_SCOPE_KEY       54   // v8+ (per-channel scope key from BLE app)
 #define CMD_SEND_CONTROL_DATA         55   // v8+
 #define CMD_GET_STATS                 56   // v8+, second byte is stats type
 
@@ -70,6 +70,9 @@
 #define CMD_SET_AUTOADD_CONFIG        58
 #define CMD_GET_AUTOADD_CONFIG        59
 #define CMD_SET_PATH_HASH_MODE        61
+#define CMD_SEND_CHANNEL_DATA         62
+#define CMD_SET_DEFAULT_FLOOD_SCOPE   63   // v1.15+ (device-wide default scope name+key)
+#define CMD_GET_DEFAULT_FLOOD_SCOPE   64   // v1.15+ (query current default scope)
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -102,6 +105,9 @@
 #define RESP_CODE_TUNING_PARAMS       23
 #define RESP_CODE_STATS               24   // v8+, second byte is stats type
 #define RESP_CODE_AUTOADD_CONFIG      25
+#define RESP_ALLOWED_REPEAT_FREQ      26
+#define RESP_CODE_CHANNEL_DATA_RECV   27
+#define RESP_CODE_DEFAULT_FLOOD_SCOPE 28   // v1.15+
 
 #define SEND_TIMEOUT_BASE_MILLIS        500
 #define FLOOD_SEND_TIMEOUT_FACTOR       16.0f
@@ -567,18 +573,24 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   return false;  // never filter Ã¢â‚¬â€ let normal processing continue
 }
 
-void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
-  Serial.printf("[sendFloodScoped] to '%s', delay=%lu, hash_mode=%d, bph=%d\n",
-                recipient.name, delay_millis, _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
-  // TODO: dynamic send_scope, depending on recipient and current 'home' Region
-  if (send_scope.isNull()) {
+void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
+  if (scope.isNull()) {
     sendFlood(pkt, delay_millis, getPathHashSize());
   } else {
     uint16_t codes[2];
-    codes[0] = send_scope.calcTransportCode(pkt);
-    codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
+    codes[0] = scope.calcTransportCode(pkt);
+    codes[1] = 0;  // reserved for home region
     sendFlood(pkt, codes, delay_millis, getPathHashSize());
   }
+}
+
+void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
+  Serial.printf("[sendFloodScoped] to '%s', delay=%lu, hash_mode=%d, bph=%d\n",
+                recipient.name, delay_millis, _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
+  // DMs: use device default scope (no per-contact scope)
+  TransportKey default_scope;
+  memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+  sendFloodScoped(default_scope, pkt, delay_millis);
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
   // Capture payload fingerprint for repeat tracking before sending
@@ -592,15 +604,41 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     MESH_DEBUG_PRINTLN("SentTrack: captured fingerprint for channel msg");
   }
 
-  // TODO: have per-channel send_scope
-  if (send_scope.isNull()) {
-    sendFlood(pkt, delay_millis, getPathHashSize());
+  // Scope priority: per-channel scope → device default → unscoped
+  TransportKey scope;
+  const char* ch_scope = getChannelScopeName(channel);
+  if (ch_scope && ch_scope[0]) {
+    deriveScopeKey(ch_scope, scope);
   } else {
-    uint16_t codes[2];
-    codes[0] = send_scope.calcTransportCode(pkt);
-    codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
-    sendFlood(pkt, codes, delay_millis, getPathHashSize());
+    memcpy(scope.key, _prefs.default_scope_key, sizeof(scope.key));
   }
+  sendFloodScoped(scope, pkt, delay_millis);
+}
+
+bool MyMesh::deriveScopeKey(const char* scopeName, TransportKey& keyOut) {
+  if (!scopeName || scopeName[0] == '\0') {
+    memset(keyOut.key, 0, sizeof(keyOut.key));
+    return false;
+  }
+  // Region names are stored without '#' prefix in user-facing code,
+  // but the key derivation prepends '#' (implicit auto hashtag region).
+  char tmp[32];
+  snprintf(tmp, sizeof(tmp), "#%s", scopeName);
+  TransportKeyStore tempStore;
+  tempStore.getAutoKeyFor(0, tmp, keyOut);
+  return true;
+}
+
+const char* MyMesh::getChannelScopeName(const mesh::GroupChannel& channel) {
+  ChannelDetails ch;
+  for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (getChannel(i, ch) && ch.name[0] != '\0') {
+      if (memcmp(ch.channel.secret, channel.secret, sizeof(channel.secret)) == 0) {
+        return ch.scope_name;
+      }
+    }
+  }
+  return nullptr;
 }
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -2272,13 +2310,42 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_FILE_IO_ERROR);
     }
-  } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE && len >= 2 && cmd_frame[1] == 0) {
+  } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE_KEY && len >= 2 && cmd_frame[1] == 0) {
     if (len >= 2 + 16) {
       memcpy(send_scope.key, &cmd_frame[2], sizeof(send_scope.key));  // set curr scope TransportKey
     } else {
       memset(send_scope.key, 0, sizeof(send_scope.key));  // set scope to null
     }
     writeOKFrame();
+  } else if (cmd_frame[0] == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
+    // v1.15+ — set device-wide default flood scope (name[31] + key[16])
+    if (len >= 1+31+16) {
+      int n = strlen((char *) &cmd_frame[1]);
+      if (n > 0 && n < 31) {
+        strcpy(_prefs.default_scope_name, (char *) &cmd_frame[1]);
+        memcpy(_prefs.default_scope_key, &cmd_frame[1+31], 16);
+        savePrefs();
+        writeOKFrame();
+      } else {
+        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      }
+    } else {
+      // Clear default scope (unscoped)
+      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));
+      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+      savePrefs();
+      writeOKFrame();
+    }
+  } else if (cmd_frame[0] == CMD_GET_DEFAULT_FLOOD_SCOPE) {
+    // v1.15+ — query current default flood scope
+    out_frame[0] = RESP_CODE_DEFAULT_FLOOD_SCOPE;
+    if (strlen(_prefs.default_scope_name) > 0) {
+      memcpy(&out_frame[1], _prefs.default_scope_name, 31);
+      memcpy(&out_frame[1+31], _prefs.default_scope_key, 16);
+      _serial->writeFrame(out_frame, 1+31+16);
+    } else {
+      _serial->writeFrame(out_frame, 1);  // no name or key means null/unscoped
+    }
   } else if (cmd_frame[0] == CMD_SEND_CONTROL_DATA && len >= 2 && (cmd_frame[1] & 0x80) != 0) {
     auto resp = createControlData(&cmd_frame[1], len - 1);
     if (resp) {

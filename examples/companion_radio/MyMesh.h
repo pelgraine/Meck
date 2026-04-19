@@ -171,6 +171,13 @@ public:
   bool setCustomPath(int contactIdx, const uint8_t* path, uint8_t pathLen, bool lock);
   void clearCustomPath(int contactIdx);
 
+  // Region scope helpers (public — used by SettingsScreen)
+  // Derive a TransportKey from a region scope name (e.g. "au-nsw" → "#au-nsw" → SHA256 → key).
+  // Returns true if name is non-empty and key was derived; false if name is empty (unscoped).
+  bool deriveScopeKey(const char* scopeName, TransportKey& keyOut);
+  // Look up per-channel scope name by GroupChannel secret match. Returns nullptr if no scope set.
+  const char* getChannelScopeName(const mesh::GroupChannel& channel);
+
 
 protected:
   float getAirtimeBudgetFactor() const override;
@@ -188,6 +195,7 @@ protected:
   uint8_t getPathHashSize() const override { return _prefs.path_hash_mode + 1; }
   void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0) override;
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
+  void sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis=0);
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
   bool isAutoAddEnabled() const override;

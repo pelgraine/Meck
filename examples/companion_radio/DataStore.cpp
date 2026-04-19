@@ -284,6 +284,14 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
       _prefs.rx_fail_reboot_threshold = 3;  // default: 3
     }
 
+    // v1.7+ Meck region scope fields — may not exist in older prefs files
+    if (file.read((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name)) != sizeof(_prefs.default_scope_name)) {
+      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));  // default: unscoped
+    }
+    if (file.read((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key)) != sizeof(_prefs.default_scope_key)) {
+      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));  // default: null key
+    }
+
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
     if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
@@ -349,6 +357,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style));        // 103
     file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 104
     file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 105
+    file.write((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name));             // 106
+    file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));               // 137
 
     file.close();
   }
@@ -600,8 +610,46 @@ void DataStore::loadChannels(DataStoreHost* host) {
     FILESYSTEM* fs = _getContactsChannelsFS();
 
     // Crash recovery (same pattern as contacts)
+    if (!fs->exists("/channels3") && fs->exists("/channels3.tmp")) {
+      Serial.println("DataStore: recovering channels3 from .tmp file");
+      fs->rename("/channels3.tmp", "/channels3");
+    }
+    if (fs->exists("/channels3.tmp")) {
+      fs->remove("/channels3.tmp");
+    }
+
+    // Try channels3 (new format with scope_name) first
+    if (fs->exists("/channels3")) {
+      File file = openRead(fs, "/channels3");
+      if (file) {
+        bool full = false;
+        uint8_t channel_idx = 0;
+        while (!full) {
+          ChannelDetails ch;
+          memset(ch.scope_name, 0, sizeof(ch.scope_name));
+          uint8_t unused[4];
+
+          bool success = (file.read(unused, 4) == 4);
+          success = success && (file.read((uint8_t *)ch.name, 32) == 32);
+          success = success && (file.read((uint8_t *)ch.channel.secret, 32) == 32);
+          success = success && (file.read((uint8_t *)ch.scope_name, 31) == 31);
+
+          if (!success) break; // EOF
+
+          if (host->onChannelLoaded(channel_idx, ch)) {
+            channel_idx++;
+          } else {
+            full = true;
+          }
+        }
+        file.close();
+        return;  // channels3 loaded successfully
+      }
+    }
+
+    // Fall back to channels2 (legacy format without scope_name)
     if (!fs->exists("/channels2") && fs->exists("/channels2.tmp")) {
-      Serial.println("DataStore: recovering channels from .tmp file");
+      Serial.println("DataStore: recovering channels2 from .tmp file");
       fs->rename("/channels2.tmp", "/channels2");
     }
     if (fs->exists("/channels2.tmp")) {
@@ -614,6 +662,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
       uint8_t channel_idx = 0;
       while (!full) {
         ChannelDetails ch;
+        memset(ch.scope_name, 0, sizeof(ch.scope_name));  // default: no scope
         uint8_t unused[4];
 
         bool success = (file.read(unused, 4) == 4);
@@ -629,13 +678,18 @@ void DataStore::loadChannels(DataStoreHost* host) {
         }
       }
       file.close();
+
+      // Migrate: save as channels3 and remove channels2
+      Serial.println("DataStore: migrating channels2 → channels3");
+      saveChannels(host);
+      fs->remove("/channels2");
     }
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
   FILESYSTEM* fs = _getContactsChannelsFS();
-  const char* finalPath = "/channels2";
-  const char* tmpPath   = "/channels2.tmp";
+  const char* finalPath = "/channels3";
+  const char* tmpPath   = "/channels3.tmp";
 
   File file = openWrite(fs, tmpPath);
   if (!file) {
@@ -653,6 +707,7 @@ void DataStore::saveChannels(DataStoreHost* host) {
     bool success = (file.write(unused, 4) == 4);
     success = success && (file.write((uint8_t *)ch.name, 32) == 32);
     success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
+    success = success && (file.write((uint8_t *)ch.scope_name, 31) == 31);
 
     if (!success) {
       writeOk = false;
@@ -665,7 +720,7 @@ void DataStore::saveChannels(DataStoreHost* host) {
   file.close();
 
   // Reopen read-only to get true on-disk size (SPIFFS file.size() is unreliable before close)
-  size_t expectedBytes = channel_idx * 68;  // 4 + 32 + 32 = 68 bytes per channel
+  size_t expectedBytes = channel_idx * 99;  // 4 + 32 + 32 + 31 = 99 bytes per channel
   File verify = openRead(fs, tmpPath);
   size_t bytesWritten = verify ? verify.size() : 0;
   if (verify) verify.close();
@@ -710,7 +765,7 @@ void DataStore::checkAdvBlobFile() {
 }
 
 void DataStore::migrateToSecondaryFS() {
-  // migrate old adv_blobs, contacts3 and channels2 files to secondary FS if they don't already exist
+  // migrate old adv_blobs, contacts3 and channels3/channels2 files to secondary FS if they don't already exist
   if (!_fsExtra->exists("/adv_blobs")) {
     if (_fs->exists("/adv_blobs")) {
     File oldAdvBlobs = openRead(_fs, "/adv_blobs");
@@ -749,10 +804,14 @@ void DataStore::migrateToSecondaryFS() {
       _fs->remove("/contacts3");
     }
   }
-  if (!_fsExtra->exists("/channels2")) {
-    if (_fs->exists("/channels2")) {
-      File oldFile = openRead(_fs, "/channels2");
-      File newFile = openWrite(_fsExtra, "/channels2");
+  if (!_fsExtra->exists("/channels3") && !_fsExtra->exists("/channels2")) {
+    // Migrate channels3 (preferred) or channels2 (legacy) to secondary FS
+    const char* srcName = _fs->exists("/channels3") ? "/channels3"
+                        : _fs->exists("/channels2") ? "/channels2"
+                        : nullptr;
+    if (srcName) {
+      File oldFile = openRead(_fs, srcName);
+      File newFile = openWrite(_fsExtra, srcName);
 
       if (oldFile && newFile) {
         uint8_t buf[64];
@@ -763,7 +822,7 @@ void DataStore::migrateToSecondaryFS() {
       }
       if (oldFile) oldFile.close();
       if (newFile) newFile.close();
-      _fs->remove("/channels2");
+      _fs->remove(srcName);
     }
   }
   // cleanup nodes which have been testing the extra fs, copy _main.id and new_prefs back to primary
@@ -805,6 +864,9 @@ void DataStore::migrateToSecondaryFS() {
   }
   if (_fs->exists("/contacts3")) {
     _fs->remove("/contacts3");
+  }
+  if (_fs->exists("/channels3")) {
+    _fs->remove("/channels3");
   }
   if (_fs->exists("/channels2")) {
     _fs->remove("/channels2");

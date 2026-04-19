@@ -1417,7 +1417,7 @@ public:
       // "Ent:New" only fits with Classic+TINY — wider fonts cause overlap
       NodePrefs* _fp = the_mesh.getNodePrefs();
       if (_fp->ui_font_style == 0 && !_fp->large_font) {
-        const char* rightText = "Ent:New";
+        const char* rightText = " Ent:New";
         display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
         display.print(rightText);
       }
