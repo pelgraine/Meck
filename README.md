@@ -309,7 +309,7 @@ Pressing **A** or **D** on the channel messages screen opens the channel picker.
 | Enter | Switch to selected channel |
 | Q | Back to home screen |
 
-On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **bubble grid** layout.
+On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **vertical bubble list** matching the Meck P4 aesthetic.
 
 ### Contacts Screen
 
@@ -822,7 +822,7 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Gesture | Action |
 |---------|--------|
 | Swipe up / down | Scroll messages |
-| Swipe left / right | Open channel picker — shows all channels and DM inbox in a bubble grid with unread badges. Tap to select. |
+| Swipe left / right | Open channel picker — shows all channels and DM inbox in a vertical bubble list with unread badges. Tap to select. |
 | Tap footer area | View relay path of last received message |
 | Tap path overlay | Dismiss overlay |
 | Long press (touch) | Open virtual keyboard to compose message to current channel |
@@ -1099,7 +1099,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Contact select mode with batch favourite and delete
 - [X] WiFi remote repeater with MQTT admin management
 - [X] 2,000 contact support (PSRAM, all variants)
-- [X] Channel picker screen with bubble grid layout
+- [X] Channel picker screen with vertical bubble list layout
 - [X] Region scope (MeshCore v1.15+ compatibility)
 - [X] Selectable font styles (Classic, Noto Sans, Montserrat)
 - [X] Virtual keyboard emoji grid with scrollable pages
@@ -1124,25 +1124,37 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 The upstream [MeshCore](https://github.com/meshcore-dev/MeshCore) library is released under the **MIT License** (Copyright © 2025 Scott Powell / rippleradios.com). Meck-specific code (UI screens, display helpers, device integration) is also provided under the MIT License.
 
-However, this firmware links against libraries with different license terms. Because two dependencies use the **GPL-3.0** copyleft license, the combined firmware binary is effectively subject to GPL-3.0 obligations when distributed. Please review the individual licenses below if you intend to redistribute or modify this firmware.
+However, this firmware links against libraries with different license terms. Because some dependencies use the **GPL-3.0** copyleft license (GxEPD2, ESP32-audioI2S) and others use **LGPL-2.1** (Codec2, ESPAsyncWebServer, Arduino_LPS22HB), the combined firmware binary is effectively subject to GPL-3.0 obligations when distributed. Please review the individual licenses below if you intend to redistribute or modify this firmware.
 
 ### Third-Party Libraries
 
 | Library | License | Author / Source |
 |---------|---------|-----------------|
 | [MeshCore](https://github.com/meshcore-dev/MeshCore) | MIT | Scott Powell / rippleradios.com |
-| [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg |
-| [FastEPD](https://github.com/bitbank2/FastEPD) | Apache-2.0 | Larry Bank (bitbank2) |
-| [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 (Wolle) |
-| [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
 | [RadioLib](https://github.com/jgromes/RadioLib) | MIT | Jan Gromeš |
-| [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He |
-| [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank (bitbank2) |
-| [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank (bitbank2) |
-| [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
-| [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
-| [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
-| [PubSubClient](https://github.com/knolleary/pubsubclient) | MIT | Nick O'Leary |
+| [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg (T-Deck Pro) |
+| [FastEPD](https://github.com/bitbank2/FastEPD) | Apache-2.0 | Larry Bank / bitbank2 (T5S3) |
+| [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
+| [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He (T5S3 touch/RTC) |
+| [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 / Wolle |
 | [Codec2](https://github.com/sh123/esp32_codec2_arduino) | LGPL-2.1 | sh123 (ESP32 port) |
+| [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank / bitbank2 |
+| [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank / bitbank2 |
+| [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) | LGPL-2.1 | Hristo Gochkov / me-no-dev (OTA) |
+| [PubSubClient](https://github.com/knolleary/pubsubclient) | MIT | Nick O'Leary (MQTT) |
+| [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
+| [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
+| [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
+| [RTClib](https://github.com/adafruit/RTClib) | MIT | Adafruit |
+| [Melopero RV3028](https://github.com/melopero/Melopero_RV-3028_Arduino_Library) | MIT | Melopero |
+| [MicroNMEA](https://github.com/stevemarple/MicroNMEA) | MIT | Steve Marple (GPS) |
+| [CayenneLPP](https://github.com/ElectronicCats/CayenneLPP) | MIT | Electronic Cats |
+| [Adafruit ST7735/ST7789](https://github.com/adafruit/Adafruit-ST7735-Library) | MIT | Adafruit (Heltec V4 TFT) |
+| [INA226](https://github.com/RobTillaart/INA226) | MIT | Rob Tillaart |
+| [Arduino_LPS22HB](https://github.com/arduino-libraries/Arduino_LPS22HB) | LGPL-2.1 | Arduino |
+| Adafruit sensor drivers¹ | MIT / BSD | Adafruit |
+| [Sensirion I2C SHT4x](https://github.com/Sensirion/arduino-i2c-sht4x) | BSD-3-Clause | Sensirion |
+
+¹ Includes INA219, INA260, INA3221, AHTX0, BME280, BMP280, BME680, BMP085, SHTC3, MLX90614, VL53L0X — all MIT or BSD licensed. Used via the sensor manager for optional environmental monitoring.
 
 Full license texts for each dependency are available in their respective repositories linked above.
