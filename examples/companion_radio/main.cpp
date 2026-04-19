@@ -38,8 +38,10 @@
   static int composePos = 0;       // Current wire-cost byte count
   static uint8_t composeChannelIdx = 0;
   static unsigned long lastComposeRefresh = 0;
+  static unsigned long lastComposeKeystroke = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 800  // ms — must exceed e-ink partial refresh time (~644ms) to prevent back-to-back refreshes
+  #define COMPOSE_REFRESH_INTERVAL 700  // ms — must exceed e-ink partial refresh time (~644ms)
+  #define COMPOSE_TYPING_PAUSE    250   // ms — wait this long after last keystroke before refreshing
 
   // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
   // interfering with call view rendering and alert display
@@ -2772,7 +2774,9 @@ void loop() {
     ui_task.loop();
   } else {
     // Handle debounced screen refresh (compose, emoji picker, notes, or web reader text entry)
-    if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+    if (composeNeedsRefresh
+        && (millis() - lastComposeKeystroke) >= COMPOSE_TYPING_PAUSE
+        && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       if (composeMode) {
         if (emojiPickerMode) {
           drawEmojiPicker();
@@ -3441,6 +3445,7 @@ void initKeyboard() {
     composeMode = false;
     composeNeedsRefresh = false;
     lastComposeRefresh = 0;
+    lastComposeKeystroke = 0;
   } else {
     MESH_DEBUG_PRINTLN("setup() - Keyboard initialization failed!");
   }
@@ -3509,7 +3514,7 @@ void handleKeyboardInput() {
         composeNeedsRefresh = false;
       } else {
         // Navigation - debounce (don't draw immediately, let loop handle it)
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
       }
       return;
     }
@@ -3590,7 +3595,7 @@ void handleKeyboardInput() {
         }
         composeBuffer[composePos] = '\0';
         Serial.printf("Compose: Backspace, pos=%d\n", composePos);
-        composeNeedsRefresh = true;  // Use debounced refresh
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Use debounced refresh
       }
       return;
     }
@@ -3630,7 +3635,7 @@ void handleKeyboardInput() {
         }
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      composeNeedsRefresh = true;  // Debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Debounced refresh
       return;
     }
     
@@ -3649,7 +3654,7 @@ void handleKeyboardInput() {
         composeChannelIdx = 0;  // Wrap to first channel
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      composeNeedsRefresh = true;  // Debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Debounced refresh
       return;
     }
     
@@ -3668,7 +3673,7 @@ void handleKeyboardInput() {
       composeBuffer[composePos++] = key;
       composeBuffer[composePos] = '\0';
       Serial.printf("Compose: Added '%c', pos=%d\n", key, composePos);
-      composeNeedsRefresh = true;  // Use debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Use debounced refresh
     }
     return;
   }
@@ -3781,15 +3786,15 @@ void handleKeyboardInput() {
         }
         // Regular backspace - delete before cursor
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
 
       // Cursor navigation via Shift+WASD (produces uppercase)
-      if (key == 'W') { notes->moveCursorUp();    composeNeedsRefresh = true; return; }
-      if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; return; }
-      if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; return; }
-      if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; return; }
+      if (key == 'W') { notes->moveCursorUp();    composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
 
       // Q when buffer is empty or unchanged = exit (nothing to lose)
       if (key == 'q' && (notes->isEmpty() || !notes->isDirty())) {
@@ -3802,14 +3807,14 @@ void handleKeyboardInput() {
       // Enter = newline (pass through with debounce)
       if (key == '\r') {
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
 
       // All other printable chars (lowercase only - uppercase consumed by cursor nav)
       if (key >= 32 && key < 127) {
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
       return;
@@ -3819,7 +3824,7 @@ void handleKeyboardInput() {
     if (notes->isRenaming()) {
       // All input goes to rename handler (debounced like editing)
       ui_task.injectKey(key);
-      composeNeedsRefresh = true;
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();
       if (!notes->isRenaming()) {
         // Exited rename mode (confirmed or cancelled)
         ui_task.forceRefresh();
@@ -3857,7 +3862,7 @@ void handleKeyboardInput() {
       // R on a file = rename
       if (key == 'r') {
         if (notes->startRename()) {
-          composeNeedsRefresh = true;
+          composeNeedsRefresh = true; lastComposeKeystroke = millis();
           lastComposeRefresh = millis() - COMPOSE_REFRESH_INTERVAL;  // Trigger on next loop iteration
         }
         return;
@@ -3867,7 +3872,7 @@ void handleKeyboardInput() {
       ui_task.injectKey(key);
       // Check if we just entered editing mode (new note via Enter)
       if (notes->isEditing()) {
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
@@ -3891,7 +3896,7 @@ void handleKeyboardInput() {
       // All other keys (Enter for edit, W/S for page nav)
       ui_task.injectKey(key);
       if (notes->isEditing()) {
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
@@ -4035,7 +4040,7 @@ void handleKeyboardInput() {
         smsScr->handleInput(key);
         if (smsScr->isComposing()) {
           // Still composing — debounced refresh
-          composeNeedsRefresh = true;
+          composeNeedsRefresh = true; lastComposeKeystroke = millis();
           lastComposeRefresh = millis();
         } else {
           // View changed (sent/cancelled) — immediate UITask refresh

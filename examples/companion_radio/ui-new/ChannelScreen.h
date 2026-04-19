@@ -1413,7 +1413,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Q:Bck A/D:List R:Rply");
+      display.print("Q:Bk A/D:List R:Rply");
       // "Ent:New" only fits with Classic+TINY — wider fonts cause overlap
       NodePrefs* _fp = the_mesh.getNodePrefs();
       if (_fp->ui_font_style == 0 && !_fp->large_font) {
