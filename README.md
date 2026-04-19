@@ -15,6 +15,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Launcher](#launcher)
   - [OTA Firmware Update](#ota-firmware-update-v13)
 - [Path Hash Mode (v0.9.9+)](#path-hash-mode-v099)
+- [Region Scope (v1.7+)](#region-scope-v17)
 - [T-Deck Pro](#t-deck-pro)
   - [Build Variants](#t-deck-pro-build-variants)
   - [Keyboard Controls](#t-deck-pro-keyboard-controls)
@@ -23,11 +24,13 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [WiFi Companion](#wifi-companion)
   - [Clock & Timezone](#clock--timezone)
   - [Channel Message Screen](#channel-message-screen)
+  - [Channel Picker](#channel-picker)
   - [Contacts Screen](#contacts-screen)
   - [Sending a Direct Message](#sending-a-direct-message)
   - [Roomservers](#roomservers)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Settings Screen](#settings-screen)
+  - [Font Styles](#font-styles)
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
   - [Emoji Picker](#emoji-picker)
@@ -89,7 +92,7 @@ The T-Deck Pro and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The He
 
 **An SD card is essential for Meck to function properly.** Many features — including the e-book reader, notes, bookmarks, web reader cache, audiobook playback, firmware updates, contact import/export, and WiFi credential storage — rely on files stored on the SD card. Without an SD card inserted, the device will boot and handle mesh messaging, but most extended features will be unavailable or will fail silently.
 
-**Recommended:** A **32 GB or larger** microSD card formatted as **FAT32**. MeshCore users have found that **SanDisk** microSD cards are the most reliable across both the T-Deck Pro and T5S3.
+**Recommended:** A **32 GB or larger** microSD card formatted as **FAT32**. Meck's extensive feature set — audiobooks, e-books, voice recordings, contact exports, alarm sounds, web reader cache, notes, and firmware images — can accumulate significant storage over time, so a larger card is worthwhile. MeshCore users have found that **SanDisk** microSD cards are the most reliable across both the T-Deck Pro and T5S3.
 
 ---
 
@@ -179,6 +182,22 @@ set path.hash.mode 1
 Nodes with different path hash modes can coexist on the same network. The mode only affects packets your node originates — the hash size is encoded in each packet's header, so receiving nodes adapt automatically.
 
 For a detailed explanation of what multibyte path hash means and why it matters, see the [Path Diagnostics & Improvements write-up](https://buymeacoffee.com/ripplebiz/path-diagnostics-improvements).
+
+---
+
+## Region Scope (v1.7+)
+
+Regions limit how far your flood messages propagate through the mesh. When you set a region, outgoing messages are tagged with a transport code that repeaters use to decide whether to forward them. Messages sent without a region reach all repeaters via the default wildcard, same as always.
+
+Meck does not pre-set any region on a fresh flash. Region names are determined by your local mesh community — check with your local group for the names in use. Common patterns follow ISO 3166 country/subdivision codes (e.g. `au` for Australia, `gb-eng` for England, `us-ca` for California), but communities may also use custom names for their area. Region names must be lowercase alphanumeric characters and hyphens only, max 29 characters.
+
+**Device-wide default region:** Set in **Settings → Default Region**. This applies to all channels and DMs unless a channel has its own override.
+
+**Per-channel region:** In Settings → Channels, select a channel and press Enter to edit its region scope. This overrides the device default for that specific channel only.
+
+**Settings nudge:** When exiting settings, if no region is configured anywhere (no device default and no per-channel scopes), a prompt reminds you to consider setting one. You can dismiss it to stay unscoped.
+
+Region scope can also be configured via serial commands — see the [Serial Settings Guide](Serial_Settings_Guide.md) for `set region`, `get region`, `set channel.scope`, and `get channel.scope` commands.
 
 ---
 
@@ -274,11 +293,23 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 | Key | Action |
 |-----|--------|
 | W / S | Scroll messages up/down |
-| A / D | Switch between channels (press D past the last channel to reach the DM inbox, A to return) |
+| A / D | Open channel picker — shows all channels and DM inbox with unread badges. Select a channel and press Enter to switch. |
 | Enter | Compose new message |
 | R | Reply to a message — enter reply select mode, scroll to a message with W/S, then press Enter to compose a reply with an @mention |
 | V | View relay path of the last received message (scrollable, up to 20 hops) |
+| Q | Back to channel picker |
+
+### Channel Picker
+
+Pressing **A** or **D** on the channel messages screen opens the channel picker. All your channels and the DM inbox are shown in a single view with unread message badges, letting you jump directly to any channel instead of cycling through them one at a time.
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate up / down |
+| Enter | Switch to selected channel |
 | Q | Back to home screen |
+
+On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **vertical bubble list** matching the Meck P4 aesthetic.
 
 ### Contacts Screen
 
@@ -305,7 +336,7 @@ Press **C** from the home screen to open the contacts list. All known mesh conta
 | `~N` | Estimated N hops via flood advert |
 | `?` | No path information available |
 
-Flood-based hop estimates (`~D`, `~N`) are shown for the 12 most recently heard contacts and reset to `?` on reboot until each contact re-advertises. Confirmed path values (`D`, `N`) persist until overwritten by a new path exchange.
+Flood-based hop estimates (`~D`, `~N`) are drawn from a cache of up to 1,000 recently heard adverts and reset to `?` on reboot until each contact re-advertises. Confirmed path values (`D`, `N`) persist until overwritten by a new path exchange.
 
 **Normal mode controls**
 
@@ -362,7 +393,7 @@ Select a **Chat** contact in the contacts list and press **Enter** to start comp
 
 Contacts with unread direct messages show a `*` marker next to their name in the contacts list.
 
-**Reading received DMs:** On the Channel Messages screen, press **D** past the last group channel to reach the **DM inbox**. This shows all received direct messages with sender name and timestamp. Entering the DM inbox marks all DM messages as read and clears the unread indicator. Press **A** to return to group channels.
+**Reading received DMs:** On the Channel Messages screen, press **A** or **D** to open the channel picker, then select the **DM Inbox** entry to view received direct messages. This shows all received direct messages with sender name and timestamp. Entering the DM inbox marks all DM messages as read and clears the unread indicator.
 
 ### Roomservers
 
@@ -420,8 +451,10 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Msg Rcvd LED Pulse | Toggle keyboard backlight flash on new message (Enter to toggle) |
 | GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
+| Default Region | Text entry — type a region name (e.g. `au-nsw`), Enter to confirm. Empty = unscoped. See [Region Scope](#region-scope-v17). |
 | Dark Mode | Toggle inverted display — white text on black background (Enter to toggle) |
 | Larger Font | Toggle larger text size on channel messages, contacts, DM inbox, and repeater admin screens (Enter to toggle) |
+| Font Style | A / D to cycle styles (Classic / Noto Sans / Montserrat), Enter to apply. See [Font Styles](#font-styles). |
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
@@ -440,7 +473,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 
 Press Q to return to the top-level settings list.
 
-**Channels sub-screen** — press Enter on the `Channels >>` row to open. Lists all current channels, with an option to add hashtag channels or delete non-primary channels (X). Press Q to return to the top-level settings list.
+**Channels sub-screen** — press Enter on the `Channels >>` row to open. Lists all current channels with their region scope tags (e.g. `[au-nsw]` or `[*]` for device default). Press Enter on a channel to edit its region scope. Press X to delete non-primary channels. Press Q to return to the top-level settings list.
 
 The top-level settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
 
@@ -449,6 +482,14 @@ When adding a hashtag channel, type the channel name and press Enter. The channe
 If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
 
 > **Tip:** All device settings (plus mesh tuning parameters not available on-screen) can also be configured via USB serial. See the [Serial Settings Guide](Serial_Settings_Guide.md) for complete documentation.
+
+### Font Styles
+
+Meck supports three font styles across the entire UI: **Classic** (the original FreeSans look), **Noto Sans** (clean, excellent Latin Extended coverage), and **Montserrat** (geometric, distinctive).
+
+Change the font in **Settings → Font** — use A/D to cycle with a live preview, then Enter to apply. Press Q to cancel and revert. The selected style applies to all screens including channel messages, contacts, settings, and the e-reader.
+
+Font styles are available in both Tiny and Larger text size modes. Custom fonts at Tiny size use 7pt glyphs; at Larger size, 9pt — matching the existing FreeSans layout. The font preference is saved and persists across reboots.
 
 ### Compose Mode
 
@@ -486,7 +527,7 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 
 ### Emoji Picker
 
-While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of emoji is displayed in a 5-column layout.
+While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 76 emoji is displayed in a 5-column layout, with faces and emotions grouped first. Scrolling wraps around — pressing W on the first row goes to the last row and vice versa.
 
 | Key | Action |
 |-----|--------|
@@ -721,7 +762,7 @@ The virtual keyboard supports:
 - QWERTY letter layout with a symbol/number layer (tap the **123** key to switch)
 - Shift toggle for uppercase
 - Backspace (UTF-8 aware — correctly deletes multi-byte emoji) and Enter keys
-- **Emoji picker** — tap the **$** key to open a scrollable grid of emoji sprites. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard.
+- **Emoji picker** — tap the **$** key to open a scrollable 8-column grid of 76 emoji sprites with page indicators. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard. Faces and emotions are grouped first for quick access.
 - Inline emoji rendering — emoji appear as pixel sprites in the text field as you type
 - Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
 
@@ -735,12 +776,13 @@ The CardKB is auto-detected on the I2C bus at address `0x5F`. No configuration i
 
 ### Display Settings
 
-The T5S3 Settings screen includes one additional display option not available on the T-Deck Pro:
+The T5S3 Settings screen includes display options shared with the T-Deck Pro, plus one T5S3-specific setting:
 
 | Setting | Description |
 |---------|-------------|
 | **Dark Mode** | Inverts the display — white text on black background. Tap to toggle on/off. Available on both T-Deck Pro and T5S3. |
 | **Larger Font** | Increases text size on channel messages, contacts, DM inbox, and repeater admin screens. Tap to toggle on/off. Available on both T-Deck Pro and T5S3. |
+| **Font Style** | Choose between Classic (FreeSans), Noto Sans, or Montserrat. Swipe left/right to cycle, tap to apply. Available on both T-Deck Pro and T5S3. |
 | **Portrait Mode** | Rotates the display 90° from landscape (960×540) to portrait (540×960). Touch coordinates are automatically remapped. Text reader layout recalculates on orientation change. T5S3 only. |
 
 These settings are persisted and survive reboots.
@@ -780,7 +822,7 @@ The UTC offset is configured in the Settings screen (same as T-Deck Pro) and is 
 | Gesture | Action |
 |---------|--------|
 | Swipe up / down | Scroll messages |
-| Swipe left / right | Switch between channels (swipe left past the last channel to reach the DM inbox) |
+| Swipe left / right | Open channel picker — shows all channels and DM inbox in a vertical bubble list with unread badges. Tap to select. |
 | Tap footer area | View relay path of last received message |
 | Tap path overlay | Dismiss overlay |
 | Long press (touch) | Open virtual keyboard to compose message to current channel |
@@ -1023,6 +1065,11 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] WiFi remote repeater with MQTT admin management
 - [X] SD File Manager via OTA Tools
 - [X] 2,000 contact support (PSRAM, all variants)
+- [X] Channel picker screen with unread badges
+- [X] Region scope (MeshCore v1.15+ compatibility)
+- [X] Selectable font styles (Classic, Noto Sans, Montserrat)
+- [X] Expanded emoji picker (76 emoji, reordered, wrap scrolling)
+- [X] 1,000-entry advert path cache (PSRAM)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -1052,6 +1099,10 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Contact select mode with batch favourite and delete
 - [X] WiFi remote repeater with MQTT admin management
 - [X] 2,000 contact support (PSRAM, all variants)
+- [X] Channel picker screen with vertical bubble list layout
+- [X] Region scope (MeshCore v1.15+ compatibility)
+- [X] Selectable font styles (Classic, Noto Sans, Montserrat)
+- [X] Virtual keyboard emoji grid with scrollable pages
 - [ ] Improve EPUB rendering and EPUB format handling
 
 **Heltec V4:**
@@ -1062,7 +1113,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] WiFi remote repeater with MQTT admin management
 
 **In development (WIP):**
-- [ ] T-Deck Pro MAX — ESP32-S3 with XL9555 I/O expander, combined 4G (A7682E) + audio (ES8311), working e-ink front-light, 1500 mAh battery. LoRa mesh, keyboard, display, GPS, touch, SD card all working. Modem and ES8311 audio integration pending hardware validation.
+- [ ] T-Deck Pro MAX — ESP32-S3 with XL9555 I/O expander, combined 4G (A7682E) + audio (ES8311), working e-ink front-light, 1500 mAh battery. Variant files created; deferred until hardware ships.
 - [ ] T-Echo Card — nRF52840 (BLE-native) with SX1262, SSD1315 OLED (72×40), L76K GPS, speaker, PDM mic, IMU, solar charging, NFC. Preliminary variant files created; awaiting hardware.
 
 ## 📞 Get Support
@@ -1073,25 +1124,37 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 The upstream [MeshCore](https://github.com/meshcore-dev/MeshCore) library is released under the **MIT License** (Copyright © 2025 Scott Powell / rippleradios.com). Meck-specific code (UI screens, display helpers, device integration) is also provided under the MIT License.
 
-However, this firmware links against libraries with different license terms. Because two dependencies use the **GPL-3.0** copyleft license, the combined firmware binary is effectively subject to GPL-3.0 obligations when distributed. Please review the individual licenses below if you intend to redistribute or modify this firmware.
+However, this firmware links against libraries with different license terms. Because some dependencies use the **GPL-3.0** copyleft license (GxEPD2, ESP32-audioI2S) and others use **LGPL-2.1** (Codec2, ESPAsyncWebServer, Arduino_LPS22HB), the combined firmware binary is effectively subject to GPL-3.0 obligations when distributed. Please review the individual licenses below if you intend to redistribute or modify this firmware.
 
 ### Third-Party Libraries
 
 | Library | License | Author / Source |
 |---------|---------|-----------------|
 | [MeshCore](https://github.com/meshcore-dev/MeshCore) | MIT | Scott Powell / rippleradios.com |
-| [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg |
-| [FastEPD](https://github.com/bitbank2/FastEPD) | Apache-2.0 | Larry Bank (bitbank2) |
-| [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 (Wolle) |
-| [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
 | [RadioLib](https://github.com/jgromes/RadioLib) | MIT | Jan Gromeš |
-| [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He |
-| [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank (bitbank2) |
-| [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank (bitbank2) |
-| [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
-| [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
-| [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
-| [PubSubClient](https://github.com/knolleary/pubsubclient) | MIT | Nick O'Leary |
+| [GxEPD2](https://github.com/ZinggJM/GxEPD2) | GPL-3.0 | Jean-Marc Zingg (T-Deck Pro) |
+| [FastEPD](https://github.com/bitbank2/FastEPD) | Apache-2.0 | Larry Bank / bitbank2 (T5S3) |
+| [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library) | BSD | Adafruit |
+| [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He (T5S3 touch/RTC) |
+| [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 / Wolle |
 | [Codec2](https://github.com/sh123/esp32_codec2_arduino) | LGPL-2.1 | sh123 (ESP32 port) |
+| [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank / bitbank2 |
+| [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank / bitbank2 |
+| [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) | LGPL-2.1 | Hristo Gochkov / me-no-dev (OTA) |
+| [PubSubClient](https://github.com/knolleary/pubsubclient) | MIT | Nick O'Leary (MQTT) |
+| [Arduino Crypto](https://github.com/rweather/arduinolibs) | MIT | Rhys Weatherley |
+| [base64](https://github.com/Densaugeo/base64_arduino) | MIT | densaugeo |
+| [CRC32](https://github.com/bakercp/CRC32) | MIT | Christopher Baker |
+| [RTClib](https://github.com/adafruit/RTClib) | MIT | Adafruit |
+| [Melopero RV3028](https://github.com/melopero/Melopero_RV-3028_Arduino_Library) | MIT | Melopero |
+| [MicroNMEA](https://github.com/stevemarple/MicroNMEA) | MIT | Steve Marple (GPS) |
+| [CayenneLPP](https://github.com/ElectronicCats/CayenneLPP) | MIT | Electronic Cats |
+| [Adafruit ST7735/ST7789](https://github.com/adafruit/Adafruit-ST7735-Library) | MIT | Adafruit (Heltec V4 TFT) |
+| [INA226](https://github.com/RobTillaart/INA226) | MIT | Rob Tillaart |
+| [Arduino_LPS22HB](https://github.com/arduino-libraries/Arduino_LPS22HB) | LGPL-2.1 | Arduino |
+| Adafruit sensor drivers¹ | MIT / BSD | Adafruit |
+| [Sensirion I2C SHT4x](https://github.com/Sensirion/arduino-i2c-sht4x) | BSD-3-Clause | Sensirion |
+
+¹ Includes INA219, INA260, INA3221, AHTX0, BME280, BMP280, BME680, BMP085, SHTC3, MLX90614, VL53L0X — all MIT or BSD licensed. Used via the sensor manager for optional environmental monitoring.
 
 Full license texts for each dependency are available in their respective repositories linked above.

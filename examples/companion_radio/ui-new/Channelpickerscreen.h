@@ -26,8 +26,9 @@ extern MyMesh the_mesh;
 // picker instead of paging one channel at a time.
 //
 // Rendering:
-//   T5S3 E-Paper Pro : grid of "bubble" tiles (3 cols), with channel name
-//                      centered and unread badge.  1-tap opens the channel.
+//   T5S3 E-Paper Pro : vertical list of outlined "bubble" rows (full-width,
+//                      name left-aligned, unread badge right-aligned).
+//                      Matches the P4 channel picker aesthetic.  1-tap opens.
 //   T-Deck Pro / MAX : vertical list with "> " cursor, unread badge, right-
 //                      aligned.  Same highlight/tap convention as Contacts.
 //
@@ -151,42 +152,43 @@ public:
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // =================================================================
-    // T5S3: Bubble grid (works in both landscape and portrait)
-    // Virtual coords are always 128×128; display driver handles scaling.
+    // T5S3: Vertical bubble list (matches P4 channel picker aesthetic)
+    // Full-width outlined bubbles with channel name left-aligned and
+    // unread badge right-aligned.  1-tap opens the channel.
     // =================================================================
     const int headerH = 14;
     const int footerH = 14;
-    const int cols = 3;
-    int rows = (_itemCount + cols - 1) / cols;
-    if (rows < 1) rows = 1;
-    if (rows > 10) rows = 10;  // Safety cap
+    const int bodyH = display.height() - headerH - footerH;
+    const int bubbleH = 11;   // Bubble height in virtual coords
+    const int gap = 2;        // Gap between bubbles
+    const int padX = 3;       // Horizontal padding from screen edge
+    const int bubbleW = display.width() - 2 * padX;
+    int maxVisible = bodyH / (bubbleH + gap);
+    if (maxVisible < 3) maxVisible = 3;
+    if (maxVisible > _itemCount) maxVisible = _itemCount;
 
-    int gridY = headerH;
-    int gridH = display.height() - headerH - footerH;
-    int cellW = display.width() / cols;
-    int cellH = gridH / rows;
-    if (cellH > 16) cellH = 16;  // Don't make cells absurdly tall when only 1-2 channels
-    if (cellH < 10) cellH = 10;
+    // Cache layout for touch hit test
+    _cellW = bubbleW;
+    _cellH = bubbleH + gap;
+    _gridTop = headerH;
+    _gridCols = 1;  // Single column — list mode
 
-    _cellW = cellW;
-    _cellH = cellH;
-    _gridTop = gridY;
-    _gridCols = cols;
+    // Centre scroll window on cursor
+    _scrollTop = max(0, min(_cursor - maxVisible / 2, _itemCount - maxVisible));
+    if (_scrollTop < 0) _scrollTop = 0;
+    int endIdx = min(_itemCount, _scrollTop + maxVisible);
 
-    const int pad = 2;
-
-    for (int i = 0; i < _itemCount; i++) {
-      int col = i % cols;
-      int row = i / cols;
-      int x = col * cellW + pad;
-      int y = gridY + row * cellH + pad;
-      int w = cellW - 2 * pad;
-      int h = cellH - 2 * pad;
+    for (int i = _scrollTop; i < endIdx; i++) {
+      int row = i - _scrollTop;
+      int x = padX;
+      int y = headerH + row * (bubbleH + gap) + 1;
+      int w = bubbleW;
+      int h = bubbleH;
 
       bool selected = (i == _cursor);
       int unread = getItemUnread(i);
 
-      // Bubble outline / fill
+      // Bubble: filled if selected, outlined otherwise
       if (selected) {
         display.setColor(DisplayDriver::LIGHT);
         display.fillRect(x, y, w, h);
@@ -194,9 +196,11 @@ public:
       } else {
         display.setColor(DisplayDriver::LIGHT);
         display.drawRect(x, y, w, h);
+        // Draw a second outline 1px inset for a bolder border
+        display.drawRect(x + 1, y + 1, w - 2, h - 2);
       }
 
-      // Channel name
+      // Channel name — left-aligned with inner padding
       char name[32];
       getItemName(i, name, sizeof(name));
       char filtered[32];
@@ -204,6 +208,7 @@ public:
 
       int textY = y + (h - 9) / 2;
       if (textY < y + 1) textY = y + 1;
+      int textX = x + 4;
 
       // Badge width reservation
       int badgeW = 0;
@@ -211,30 +216,43 @@ public:
       if (unread > 0) {
         if (unread > 99) snprintf(badge, sizeof(badge), "99+");
         else snprintf(badge, sizeof(badge), "*%d", unread);
-        badgeW = display.getTextWidth(badge) + 2;
+        badgeW = display.getTextWidth(badge) + 4;
       }
-      int textMaxW = w - 4 - badgeW;
-      if (textMaxW < 8) textMaxW = 8;
+      int nameMaxW = w - 8 - badgeW;
+      if (nameMaxW < 8) nameMaxW = 8;
 
-      // Centre name in space left of badge
       int nameW = display.getTextWidth(filtered);
-      if (nameW <= textMaxW) {
-        int nameX = x + (w - badgeW - nameW) / 2;
-        if (nameX < x + 2) nameX = x + 2;
-        display.setCursor(nameX, textY);
+      if (nameW <= nameMaxW) {
+        display.setCursor(textX, textY);
         display.print(filtered);
       } else {
-        display.drawTextEllipsized(x + 2, textY, textMaxW, filtered);
+        display.drawTextEllipsized(textX, textY, nameMaxW, filtered);
       }
 
-      // Unread badge
+      // Unread badge — right-aligned inside bubble
       if (unread > 0) {
-        int bx = x + w - badgeW - 1;
-        display.setCursor(bx + 1, textY);
+        int bx = x + w - badgeW;
+        display.setCursor(bx, textY);
         display.print(badge);
       }
 
       display.setColor(DisplayDriver::LIGHT);
+    }
+
+    // Scroll indicator (if more items than visible)
+    if (_itemCount > maxVisible) {
+      const int sbW = 3;
+      int sbX = display.width() - sbW;
+      int sbTop = headerH;
+      int sbHeight = bodyH;
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(sbX, sbTop, sbW, sbHeight);
+      int thumbH = (maxVisible * sbHeight) / _itemCount;
+      if (thumbH < 4) thumbH = 4;
+      int maxScroll = _itemCount - maxVisible;
+      if (maxScroll < 1) maxScroll = 1;
+      int thumbY = sbTop + (_scrollTop * (sbHeight - thumbH)) / maxScroll;
+      display.fillRect(sbX + 1, thumbY + 1, sbW - 2, thumbH - 2);
     }
 
 #else
@@ -343,37 +361,21 @@ public:
   bool handleInput(char c) override {
     // W / UP
     if (c == 'w' || c == 'W' || c == 0xF2 || c == KEY_UP) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      if (_cursor - _gridCols >= 0) { _cursor -= _gridCols; return true; }
-#else
       if (_cursor > 0) { _cursor--; return true; }
-#endif
       return false;
     }
 
     // S / DOWN
     if (c == 's' || c == 'S' || c == 0xF1 || c == KEY_DOWN) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      if (_cursor + _gridCols < _itemCount) { _cursor += _gridCols; return true; }
-#else
       if (_cursor < _itemCount - 1) { _cursor++; return true; }
-#endif
       return false;
     }
 
-    // A / D — grid column navigation on T5S3
+    // A / D — consumed (no channel cycling from picker)
     if (c == 'a' || c == 'A' || c == KEY_LEFT) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      if (_cursor > 0 && (_cursor % _gridCols) > 0) { _cursor--; return true; }
-#endif
-      return true;  // Consume — never cycles off this screen
+      return true;
     }
     if (c == 'd' || c == 'D' || c == KEY_RIGHT) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      if (_cursor < _itemCount - 1 && (_cursor % _gridCols) < _gridCols - 1) {
-        _cursor++; return true;
-      }
-#endif
       return true;
     }
 
@@ -403,15 +405,15 @@ public:
   // -----------------------------------------------------------------------
   int selectAtVxVy(int vx, int vy) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    // Bubble grid hit test — works in both landscape and portrait (virtual 128×128)
-    if (vy < _gridTop || _gridCols == 0 || _cellW == 0 || _cellH == 0) return 0;
-    if (vx < 0 || vx >= _gridCols * _cellW) return 0;
-    int col = vx / _cellW;
+    // Vertical bubble list hit test
+    if (vy < _gridTop || _cellH == 0) return 0;
+    int footerY = 128 - 14;
+    if (vy >= footerY) return 0;
     int row = (vy - _gridTop) / _cellH;
-    int idx = row * _gridCols + col;
+    int idx = _scrollTop + row;
     if (idx < 0 || idx >= _itemCount) return 0;
     _cursor = idx;
-    return 2;  // Direct open
+    return 2;  // Direct open on tap
 #else
     // T-Deck Pro / MAX list hit test — uses NodePrefs for large_font compatibility
     NodePrefs* prefs = the_mesh.getNodePrefs();
