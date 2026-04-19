@@ -40,7 +40,7 @@ size_t SerialWifiInterface::writeFrame(const uint8_t src[], size_t len) {
 }
 
 bool SerialWifiInterface::isWriteBusy() const {
-  return false;
+  return send_queue_len >= (FRAME_QUEUE_SIZE * 3 / 4);  // backpressure at 75% full
 }
 
 bool SerialWifiInterface::hasReceivedFrameHeader() {
@@ -82,8 +82,8 @@ size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
   }
 
   if (deviceConnected) {
-    if (send_queue_len > 0) {   // first, check send queue
-      
+    // drain all pending send frames — WiFi TCP can handle the throughput
+    while (send_queue_len > 0) {
       _last_write = millis();
       int len = send_queue[0].len;
 
@@ -97,70 +97,68 @@ size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
       for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
         send_queue[i] = send_queue[i + 1];
       }
-    } else {
+    }
 
-      // check if we are waiting for a frame header
-      if(!hasReceivedFrameHeader()){
+    // check if we are waiting for a frame header
+    if(!hasReceivedFrameHeader()){
 
-        // make sure we have received enough bytes for a frame header
-        // 3 bytes frame header = (1 byte frame type) + (2 bytes frame length as unsigned 16-bit little endian)
-        int frame_header_length = 3;
-        if(client.available() >= frame_header_length){
+      // make sure we have received enough bytes for a frame header
+      // 3 bytes frame header = (1 byte frame type) + (2 bytes frame length as unsigned 16-bit little endian)
+      int frame_header_length = 3;
+      if(client.available() >= frame_header_length){
 
-          // read frame header
-          client.readBytes(&received_frame_header.type, 1);
-          client.readBytes((uint8_t*)&received_frame_header.length, 2);
-
-        }
+        // read frame header
+        client.readBytes(&received_frame_header.type, 1);
+        client.readBytes((uint8_t*)&received_frame_header.length, 2);
 
       }
 
-      // check if we have received a frame header
-      if(hasReceivedFrameHeader()){
+    }
 
-        // make sure we have received enough bytes for the required frame length
-        int available = client.available();
-        int frame_type = received_frame_header.type;
-        int frame_length = received_frame_header.length;
-        if(frame_length > available){
-          WIFI_DEBUG_PRINTLN("Waiting for %d more bytes", frame_length - available);
-          return 0;
+    // check if we have received a frame header
+    if(hasReceivedFrameHeader()){
+
+      // make sure we have received enough bytes for the required frame length
+      int available = client.available();
+      int frame_type = received_frame_header.type;
+      int frame_length = received_frame_header.length;
+      if(frame_length > available){
+        WIFI_DEBUG_PRINTLN("Waiting for %d more bytes", frame_length - available);
+        return 0;
+      }
+
+      // skip frames that are larger than MAX_FRAME_SIZE
+      if(frame_length > MAX_FRAME_SIZE){
+        WIFI_DEBUG_PRINTLN("Skipping frame: length=%d is larger than MAX_FRAME_SIZE=%d", frame_length, MAX_FRAME_SIZE);
+        while(frame_length > 0){
+          uint8_t skip[1];
+          int skipped = client.read(skip, 1);
+          frame_length -= skipped;
         }
-
-        // skip frames that are larger than MAX_FRAME_SIZE
-        if(frame_length > MAX_FRAME_SIZE){
-          WIFI_DEBUG_PRINTLN("Skipping frame: length=%d is larger than MAX_FRAME_SIZE=%d", frame_length, MAX_FRAME_SIZE);
-          while(frame_length > 0){
-            uint8_t skip[1];
-            int skipped = client.read(skip, 1);
-            frame_length -= skipped;
-          }
-          resetReceivedFrameHeader();
-          return 0;
-        }
-
-        // skip frames that are not expected type
-        // '<' is 0x3c which indicates a frame sent from app to radio
-        if(frame_type != '<'){
-          WIFI_DEBUG_PRINTLN("Skipping frame: type=0x%x is unexpected", frame_type);
-          while(frame_length > 0){
-            uint8_t skip[1];
-            int skipped = client.read(skip, 1);
-            frame_length -= skipped;
-          }
-          resetReceivedFrameHeader();
-          return 0;
-        }
-
-        // read frame data to provided buffer
-        client.readBytes(dest, frame_length);
-
-        // ready for next frame
         resetReceivedFrameHeader();
-        return frame_length;
-
+        return 0;
       }
-      
+
+      // skip frames that are not expected type
+      // '<' is 0x3c which indicates a frame sent from app to radio
+      if(frame_type != '<'){
+        WIFI_DEBUG_PRINTLN("Skipping frame: type=0x%x is unexpected", frame_type);
+        while(frame_length > 0){
+          uint8_t skip[1];
+          int skipped = client.read(skip, 1);
+          frame_length -= skipped;
+        }
+        resetReceivedFrameHeader();
+        return 0;
+      }
+
+      // read frame data to provided buffer
+      client.readBytes(dest, frame_length);
+
+      // ready for next frame
+      resetReceivedFrameHeader();
+      return frame_length;
+
     }
   }
 

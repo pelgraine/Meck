@@ -1388,7 +1388,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
       display.print(rtCh);
     } else {
-      display.print("Swipe:Ch/Scroll");
+      display.print("Swipe:List/Scroll");
       const char* midCh = "Tap:Path";
       display.setCursor((display.width() - display.getTextWidth(midCh)) / 2, footerY);
       display.print(midCh);
@@ -1413,10 +1413,14 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Q:Bck A/D:Ch R:Rply");
-      const char* rightText = "Ent:New";
-      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
-      display.print(rightText);
+      display.print("Q:Bk A/D:List R:Rply");
+      // "Ent:New" only fits with Classic+TINY — wider fonts cause overlap
+      NodePrefs* _fp = the_mesh.getNodePrefs();
+      if (_fp->ui_font_style == 0 && !_fp->large_font) {
+        const char* rightText = " Ent:New";
+        display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+        display.print(rightText);
+      }
     }
 #endif
 
@@ -1632,81 +1636,11 @@ public:
       }
     }
     
-    // A - previous channel (includes DM tab at 0xFF)
-    if (c == 'a' || c == 'A') {
+    // A/D - open channel picker (handled by main.cpp — return false to pass through)
+    if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {
       _replySelectMode = false;
       _replySelectPos = -1;
-      if (_viewChannelIdx == 0xFF) {
-        // DM tab → go to last valid group channel
-        for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
-          ChannelDetails ch;
-          if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
-            _viewChannelIdx = i;
-            break;
-          }
-        }
-      } else if (_viewChannelIdx > 0) {
-        // Skip backwards over any empty/gap slots
-        uint8_t prev = _viewChannelIdx - 1;
-        bool found = false;
-        while (true) {
-          ChannelDetails ch;
-          if (the_mesh.getChannel(prev, ch) && ch.name[0] != '\0') {
-            _viewChannelIdx = prev;
-            found = true;
-            break;
-          }
-          if (prev == 0) break;
-          prev--;
-        }
-        if (!found) {
-          // No valid channel below → wrap to DM tab
-          _viewChannelIdx = 0xFF;
-          _dmInboxMode = true;
-          _dmInboxScroll = 0;
-          _dmFilterName[0] = '\0';
-        }
-      } else {
-        // Channel 0 → wrap to DM tab
-        _viewChannelIdx = 0xFF;
-        _dmInboxMode = true;
-        _dmInboxScroll = 0;
-        _dmFilterName[0] = '\0';
-      }
-      _scrollPos = 0;
-      markChannelRead(_viewChannelIdx);
-      return true;
-    }
-    
-    // D - next channel (includes DM tab at 0xFF)
-    if (c == 'd' || c == 'D') {
-      _replySelectMode = false;
-      _replySelectPos = -1;
-      if (_viewChannelIdx == 0xFF) {
-        // DM tab → wrap to channel 0
-        _viewChannelIdx = 0;
-      } else {
-        // Skip forward over any empty/gap slots
-        bool found = false;
-        for (uint8_t next = _viewChannelIdx + 1; next < MAX_GROUP_CHANNELS; next++) {
-          ChannelDetails ch;
-          if (the_mesh.getChannel(next, ch) && ch.name[0] != '\0') {
-            _viewChannelIdx = next;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          // Past last channel → go to DM tab
-          _viewChannelIdx = 0xFF;
-          _dmInboxMode = true;
-          _dmInboxScroll = 0;
-          _dmFilterName[0] = '\0';
-        }
-      }
-      _scrollPos = 0;
-      markChannelRead(_viewChannelIdx);
-      return true;
+      return false;  // Let main.cpp open the channel picker
     }
     
     return false;

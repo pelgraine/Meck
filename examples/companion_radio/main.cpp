@@ -19,6 +19,7 @@
   #include "NotesScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -37,8 +38,10 @@
   static int composePos = 0;       // Current wire-cost byte count
   static uint8_t composeChannelIdx = 0;
   static unsigned long lastComposeRefresh = 0;
+  static unsigned long lastComposeKeystroke = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 100  // ms before starting e-ink refresh after keypress (refresh itself takes ~644ms)
+  #define COMPOSE_REFRESH_INTERVAL 700  // ms — must exceed e-ink partial refresh time (~644ms)
+  #define COMPOSE_TYPING_PAUSE    250   // ms — wait this long after last keystroke before refreshing
 
   // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
   // interfering with call view rendering and alert display
@@ -683,6 +686,7 @@
   #include "NotesScreen.h"
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -804,6 +808,22 @@
     }
     return false;
   }
+
+  // Read up to 2 touch points — returns actual finger count (0, 1 or 2)
+  static int readTouchMulti(int16_t* outX0, int16_t* outY0, int16_t* outX1, int16_t* outY1) {
+    if (!gt911Ready) return 0;
+    int16_t xs[2], ys[2];
+    uint8_t count = gt911Touch.getPoint(xs, ys, 2);
+    if (count == 0) return 0;
+    if (display.isPortraitMode()) {
+      *outX0 = xs[0]; *outY0 = ys[0];
+      if (count >= 2) { *outX1 = xs[1]; *outY1 = ys[1]; }
+    } else {
+      *outX0 = ys[0]; *outY0 = EPD_HEIGHT - 1 - xs[0];
+      if (count >= 2) { *outX1 = ys[1]; *outY1 = EPD_HEIGHT - 1 - xs[1]; }
+    }
+    return (int)count;
+  }
 #endif
 
 // --- Shared touch state machine variables ---
@@ -827,6 +847,13 @@
   static bool swipeHandled = false;
   static bool touchCooldown = false;
   static unsigned long lastTouchEventMs = 0;
+
+#if defined(LilyGo_T5S3_EPaper_Pro)
+  // Two-finger tap detection state
+  static bool twoFingerDown = false;
+  static unsigned long twoFingerDownTime = 0;
+  #define TWO_FINGER_TAP_MS 350  // max ms from first finger down to both up
+#endif
 
   // Unified touch reader — returns physical screen coordinates
   static bool readTouch(int16_t* outX, int16_t* outY) {
@@ -1088,7 +1115,7 @@ static void lastHeardToggleContact() {
     uint8_t blob[256];
     int blobLen = the_mesh.getContactBlob(entry->pubkey_prefix, 8, blob);
     if (blobLen > 0) {
-      the_mesh.importContact(blob, blobLen);
+      the_mesh.forceImportContact(blob, blobLen);
       the_mesh.scheduleLazyContactSave();
       char alertBuf[40];
       snprintf(alertBuf, sizeof(alertBuf), "Added: %s", entry->name);
@@ -1148,7 +1175,7 @@ static void lastHeardToggleContact() {
         int row = (vy - gridY) / (tileH + gapY);
         if (row > 1) row = 1;
 
-        if (row == 0 && col == 0) { ui_task.gotoChannelScreen(); return 0; }
+        if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen(); return 0; }
         if (row == 0 && col == 2) { ui_task.gotoSettingsScreen(); return 0; }
         if (row == 1 && col == 0) { ui_task.gotoTextReader(); return 0; }
@@ -1200,14 +1227,24 @@ static void lastHeardToggleContact() {
       return 0;
     }
 
-    // Notes editing: tap → open keyboard for typing
+    // Notes screen: mode-dependent touch
     if (ui_task.isOnNotesScreen()) {
       NotesScreen* notes = (NotesScreen*)ui_task.getNotesScreen();
-      if (notes && notes->isEditing()) {
+      if (notes) {
+        if (notes->isInFileList()) {
+          int result = notes->selectRowAtVY(vy);
+          if (result == 1) { ui_task.forceRefresh(); return 0; }  // Moved selection
+          if (result == 2) return KEY_ENTER;  // Same row — open
+          return 0;
+        }
+        if (notes->isEditing()) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
+          ui_task.showVirtualKeyboard(VKB_NOTES, "Edit Note", "", 137);
 #endif
-        return 0;  // T-Deck Pro: keyboard handles typing directly
+          return 0;  // T-Deck Pro: keyboard handles typing directly
+        }
+        // READING, RENAMING, CONFIRM_DELETE: tap = confirm/enter
+        return KEY_ENTER;
       }
     }
 
@@ -1268,6 +1305,20 @@ static void lastHeardToggleContact() {
         return 'v';  // Show path overlay
       }
       return 0;  // Tap on message area — consumed, no action
+    }
+
+    // Channel picker screen: tap to select (T5S3: direct open, T-Deck Pro: highlight/activate)
+    if (ui_task.isOnChannelPickerScreen()) {
+      ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+      if (pick) {
+        int result = pick->selectAtVxVy(vx, vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;  // Moved cursor
+        }
+        if (result == 2) return KEY_ENTER;  // Activate — wantsExit checked after injectKey
+      }
+      return 0;
     }
 
     // Contacts screen: tap to select row, tap same row to activate
@@ -1413,9 +1464,9 @@ static void lastHeardToggleContact() {
       return (dx < 0) ? 'd' : 'a';  // swipe left=next option, right=prev
     }
 
-    // Channel screen: horizontal swipe → a/d to switch channels
+    // Channel screen: horizontal swipe → a/d to open channel picker
     if (ui_task.isOnChannelScreen() && horizontal) {
-      return (dx < 0) ? 'd' : 'a';  // swipe left=next channel, right=prev
+      return (dx < 0) ? 'd' : 'a';  // swipe left/right opens channel picker
     }
 
     // Contacts screen: horizontal swipe → a/d to change filter
@@ -1525,24 +1576,60 @@ static void lastHeardToggleContact() {
     }
 
     // Contacts screen: long press
-    //   If NOT in select mode → enter select mode
-    //   If already in select mode → exit select mode
+    //   T-Deck Pro: toggle select mode (DM/admin handled by keyboard Enter)
+    //   T5S3: DM for chat contacts, admin for repeaters/rooms (no physical keyboard)
+    //         If in select mode, long press exits it on both platforms.
     if (ui_task.isOnContactsScreen()) {
       ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
       if (cs) {
-        if (!cs->isInSelectMode()) {
-          // Enter select mode on long press
-          cs->enterSelectMode();
+        if (cs->isInSelectMode()) {
+          // Both platforms: long press exits select mode
+          cs->exitSelectMode();
           ui_task.forceRefresh();
-          Serial.println("Contacts: entered select mode (touch long press)");
+          Serial.println("Contacts: exited select mode (touch long press)");
           return 0;
         }
-        // Already in select mode: long press exits select mode on both platforms
-        // (T-Deck Pro uses keyboard for actions; T5S3 can use CardKB if attached)
-        cs->exitSelectMode();
-        ui_task.forceRefresh();
-        Serial.println("Contacts: exited select mode (touch long press)");
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        // T5S3: long press = DM/admin/room action (primary interaction path)
+        {
+          int idx = cs->getSelectedContactIdx();
+          uint8_t ctype = cs->getSelectedContactType();
+          if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+            if (ui_task.hasDMUnread(idx)) {
+              char cname[32];
+              cs->getSelectedContactName(cname, sizeof(cname));
+              ui_task.clearDMUnread(idx);
+              ui_task.gotoDMConversation(cname);
+              return 0;
+            }
+            char dname[32];
+            cs->getSelectedContactName(dname, sizeof(dname));
+            char label[40];
+            snprintf(label, sizeof(label), "DM: %s", dname);
+            ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+            return 0;
+          }
+        }
         return 0;
+#else
+        // T-Deck Pro: long press enters select mode
+        cs->enterSelectMode();
+        ui_task.forceRefresh();
+        Serial.println("Contacts: entered select mode (touch long press)");
+        return 0;
+#endif
       }
       return KEY_ENTER;
     }
@@ -1746,7 +1833,24 @@ void setup() {
 
 #elif defined(ESP32)
   MESH_DEBUG_PRINTLN("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
-  SPIFFS.begin(true);
+  if (!SPIFFS.begin(false)) {
+    // First boot or corrupted partition — format required (can take 1-2 minutes)
+    Serial.println("SPIFFS mount failed - formatting (this may take 1-2 minutes)...");
+    if (disp) {
+      disp->startFrame();
+      disp->drawTextCentered(disp->width() / 2, 28, "Loading...");
+      disp->setTextSize(1);
+      disp->setColor(DisplayDriver::YELLOW);
+      disp->drawTextCentered(disp->width() / 2, 52, "Formatting storage...");
+      disp->drawTextCentered(disp->width() / 2, 65, "First boot - please wait - may take 1-2 mins");
+      disp->endFrame();
+    }
+    if (!SPIFFS.begin(true)) {
+      Serial.println("SPIFFS format FAILED!");
+    } else {
+      Serial.println("SPIFFS format complete");
+    }
+  }
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
@@ -1994,13 +2098,17 @@ void setup() {
     }
   #endif
 
-  // RTC diagnostic + boot-time serial clock sync (T5S3 has no GPS)
-  #if defined(LilyGo_T5S3_EPaper_Pro)
+  // RTC diagnostic + boot-time serial clock sync
+  // Works on all Meck builds — T-Deck Pro has no hardware RTC and GPS may
+  // not fix immediately; T5S3 has hardware RTC but it needs initial setting.
+  #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   {
     uint32_t rtcTime = rtc_clock.getCurrentTime();
+    // Plausible range: Nov 2023 (1700000000) → May 2033 (2000000000)
+    bool validTime = (rtcTime > 1700000000 && rtcTime < 2000000000);
     Serial.printf("setup() - RTC time: %lu (valid=%s)\n", rtcTime, 
-                  rtcTime > 1700000000 ? "YES" : "NO");
-    if (rtcTime < 1700000000) {
+                  validTime ? "YES" : "NO");
+    if (!validTime) {
       // No valid time.  If a USB host has the serial port open (Serial
       // evaluates true on ESP32-S3 native CDC), request an automatic
       // clock sync.  The PlatformIO monitor filter "clock_sync" watches
@@ -2666,7 +2774,9 @@ void loop() {
     ui_task.loop();
   } else {
     // Handle debounced screen refresh (compose, emoji picker, notes, or web reader text entry)
-    if (composeNeedsRefresh && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+    if (composeNeedsRefresh
+        && (millis() - lastComposeKeystroke) >= COMPOSE_TYPING_PAUSE
+        && (millis() - lastComposeRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       if (composeMode) {
         if (emojiPickerMode) {
           drawEmojiPicker();
@@ -2846,6 +2956,51 @@ void loop() {
         lastTouchSeenMs = now;
       }
 
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      // Two-finger tap detection — must run before single-finger state machine
+      // so it can suppress the single-finger path when two fingers are present.
+      {
+        int16_t x0, y0, x1, y1;
+        int fingers = readTouchMulti(&x0, &y0, &x1, &y1);
+        if (fingers >= 2) {
+          if (!twoFingerDown) {
+            twoFingerDown = true;
+            twoFingerDownTime = now;
+          }
+          // Suppress single-finger tracking while two fingers are down
+          lastTouchSeenMs = now;
+          touchDown = false;
+          longPressHandled = true;  // prevent long-press triggering
+          swipeHandled = true;      // prevent swipe triggering
+        } else if (twoFingerDown) {
+          // Both fingers lifted — check if it was a quick tap
+          if ((now - twoFingerDownTime) < TWO_FINGER_TAP_MS) {
+            if (ui_task.isOnContactsScreen()) {
+              ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+              if (cs) {
+                if (cs->isInSelectMode()) {
+                  cs->exitSelectMode();
+                  Serial.println("[Touch] Two-finger tap: exited contacts select mode");
+                } else {
+                  cs->enterSelectMode();
+                  Serial.println("[Touch] Two-finger tap: entered contacts select mode");
+                }
+                ui_task.forceRefresh();
+                touchCooldown = true;
+                lastTouchEventMs = now;
+              }
+            }
+          }
+          twoFingerDown = false;
+          longPressHandled = false;
+          swipeHandled = false;
+          touchDown = false;
+          touchCooldown = true;
+          lastTouchEventMs = now;
+        }
+      }
+#endif
+
       bool fingerPresent = (now - lastTouchSeenMs) < TOUCH_LIFT_DEBOUNCE_MS;
 
       if (touchCooldown) {
@@ -2878,7 +3033,12 @@ void loop() {
           swipeHandled = true;
           char c = mapTouchSwipe(dx, dy);
           if (c) {
-            ui_task.injectKey(c);
+            // Channel screen: horizontal swipe opens picker instead of cycling
+            if (ui_task.isOnChannelScreen() && (c == 'a' || c == 'd')) {
+              ui_task.gotoChannelPickerScreen();
+            } else {
+              ui_task.injectKey(c);
+            }
             cpuPower.setBoost();
           }
           lastTouchEventMs = now;
@@ -2895,6 +3055,13 @@ void loop() {
               PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
               if (pe && pe->wantsExit()) {
                 ui_task.gotoContactsScreen();
+              }
+            }
+            // Channel picker: check if long-press Enter was handled (wantsExit)
+            if (ui_task.isOnChannelPickerScreen()) {
+              ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+              if (pick && pick->wantsExit()) {
+                ui_task.gotoChannelScreen(false);
               }
             }
             cpuPower.setBoost();
@@ -2914,6 +3081,13 @@ void loop() {
               PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
               if (pe && pe->wantsExit()) {
                 ui_task.gotoContactsScreen();
+              }
+            }
+            // Channel picker: check if Enter/Q was handled (wantsExit)
+            if (ui_task.isOnChannelPickerScreen()) {
+              ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+              if (pick && pick->wantsExit()) {
+                ui_task.gotoChannelScreen(false);
               }
             }
           }
@@ -2991,7 +3165,7 @@ void loop() {
             // ESC on home — no-op (already home)
           } else {
             switch (ckb) {
-              case 'm': ui_task.gotoChannelScreen(); break;
+              case 'm': ui_task.gotoChannelPickerScreen(); break;
               case 'c': ui_task.gotoContactsScreen(); break;
               case 'e': ui_task.gotoTextReader(); break;
               case 'n': ui_task.gotoNotesScreen(); break;
@@ -3044,7 +3218,22 @@ void loop() {
           if (!handled) {
             // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
             if (ckb == 0x1B) {
-              ui_task.injectKey('q');
+              // Channel picker: ESC goes home
+              if (ui_task.isOnChannelPickerScreen()) {
+                ui_task.gotoHomeScreen();
+              // Channel screen: ESC goes to picker
+              } else if (ui_task.isOnChannelScreen()) {
+                ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+                if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
+                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                } else if (chScr && chScr->isDMConversation()) {
+                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                } else {
+                  ui_task.gotoChannelPickerScreen();
+                }
+              } else {
+                ui_task.injectKey('q');
+              }
             } else if (ckb == '\r') {
               // Enter key — screen-specific compose or select
               if (ui_task.isOnChannelScreen()) {
@@ -3133,6 +3322,13 @@ void loop() {
                 if (pe && pe->wantsExit()) {
                   ui_task.gotoContactsScreen();
                 }
+              } else if (ui_task.isOnChannelPickerScreen()) {
+                // Channel picker: Enter selects channel
+                ui_task.injectKey('\r');
+                ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+                if (pick && pick->wantsExit()) {
+                  ui_task.gotoChannelScreen(false);
+                }
               } else {
                 // All other screens: pass Enter through for native handling
                 // (settings toggle, discovery add-contact, last heard, text reader, notes file list, etc.)
@@ -3152,6 +3348,22 @@ void loop() {
               } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnPathEditor()) {
                 // Q on path editor → back to contacts
                 ui_task.gotoContactsScreen();
+              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelPickerScreen()) {
+                // Q on picker → home
+                ui_task.gotoHomeScreen();
+              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelScreen()) {
+                // Q on channel screen → picker (unless overlay/DM conversation)
+                ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+                if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
+                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                } else if (chScr && chScr->isDMConversation()) {
+                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                } else {
+                  ui_task.gotoChannelPickerScreen();
+                }
+              } else if (ui_task.isOnChannelScreen() && (ckb == (char)0xF3 || ckb == (char)0xF4)) {
+                // Channel screen: Left/Right arrows open picker
+                ui_task.gotoChannelPickerScreen();
               } else {
                 switch (ckb) {
                   case (char)0xF2: ui_task.injectKey('w'); break;  // Up → scroll up
@@ -3233,6 +3445,7 @@ void initKeyboard() {
     composeMode = false;
     composeNeedsRefresh = false;
     lastComposeRefresh = 0;
+    lastComposeKeystroke = 0;
   } else {
     MESH_DEBUG_PRINTLN("setup() - Keyboard initialization failed!");
   }
@@ -3301,7 +3514,7 @@ void handleKeyboardInput() {
         composeNeedsRefresh = false;
       } else {
         // Navigation - debounce (don't draw immediately, let loop handle it)
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
       }
       return;
     }
@@ -3382,7 +3595,7 @@ void handleKeyboardInput() {
         }
         composeBuffer[composePos] = '\0';
         Serial.printf("Compose: Backspace, pos=%d\n", composePos);
-        composeNeedsRefresh = true;  // Use debounced refresh
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Use debounced refresh
       }
       return;
     }
@@ -3422,7 +3635,7 @@ void handleKeyboardInput() {
         }
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      composeNeedsRefresh = true;  // Debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Debounced refresh
       return;
     }
     
@@ -3441,7 +3654,7 @@ void handleKeyboardInput() {
         composeChannelIdx = 0;  // Wrap to first channel
       }
       Serial.printf("Compose: Channel switched to %d\n", composeChannelIdx);
-      composeNeedsRefresh = true;  // Debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Debounced refresh
       return;
     }
     
@@ -3460,7 +3673,7 @@ void handleKeyboardInput() {
       composeBuffer[composePos++] = key;
       composeBuffer[composePos] = '\0';
       Serial.printf("Compose: Added '%c', pos=%d\n", key, composePos);
-      composeNeedsRefresh = true;  // Use debounced refresh
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();  // Use debounced refresh
     }
     return;
   }
@@ -3573,15 +3786,15 @@ void handleKeyboardInput() {
         }
         // Regular backspace - delete before cursor
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
 
       // Cursor navigation via Shift+WASD (produces uppercase)
-      if (key == 'W') { notes->moveCursorUp();    composeNeedsRefresh = true; return; }
-      if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; return; }
-      if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; return; }
-      if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; return; }
+      if (key == 'W') { notes->moveCursorUp();    composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
+      if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
 
       // Q when buffer is empty or unchanged = exit (nothing to lose)
       if (key == 'q' && (notes->isEmpty() || !notes->isDirty())) {
@@ -3594,14 +3807,14 @@ void handleKeyboardInput() {
       // Enter = newline (pass through with debounce)
       if (key == '\r') {
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
 
       // All other printable chars (lowercase only - uppercase consumed by cursor nav)
       if (key >= 32 && key < 127) {
         ui_task.injectKey(key);
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
       }
       return;
@@ -3611,7 +3824,7 @@ void handleKeyboardInput() {
     if (notes->isRenaming()) {
       // All input goes to rename handler (debounced like editing)
       ui_task.injectKey(key);
-      composeNeedsRefresh = true;
+      composeNeedsRefresh = true; lastComposeKeystroke = millis();
       if (!notes->isRenaming()) {
         // Exited rename mode (confirmed or cancelled)
         ui_task.forceRefresh();
@@ -3649,7 +3862,7 @@ void handleKeyboardInput() {
       // R on a file = rename
       if (key == 'r') {
         if (notes->startRename()) {
-          composeNeedsRefresh = true;
+          composeNeedsRefresh = true; lastComposeKeystroke = millis();
           lastComposeRefresh = millis() - COMPOSE_REFRESH_INTERVAL;  // Trigger on next loop iteration
         }
         return;
@@ -3659,7 +3872,7 @@ void handleKeyboardInput() {
       ui_task.injectKey(key);
       // Check if we just entered editing mode (new note via Enter)
       if (notes->isEditing()) {
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
@@ -3683,7 +3896,7 @@ void handleKeyboardInput() {
       // All other keys (Enter for edit, W/S for page nav)
       ui_task.injectKey(key);
       if (notes->isEditing()) {
-        composeNeedsRefresh = true;
+        composeNeedsRefresh = true; lastComposeKeystroke = millis();
         lastComposeRefresh = millis();  // Draw after debounce interval, not immediately
       }
       return;
@@ -3827,7 +4040,7 @@ void handleKeyboardInput() {
         smsScr->handleInput(key);
         if (smsScr->isComposing()) {
           // Still composing — debounced refresh
-          composeNeedsRefresh = true;
+          composeNeedsRefresh = true; lastComposeKeystroke = millis();
           lastComposeRefresh = millis();
         } else {
           // View changed (sent/cancelled) — immediate UITask refresh
@@ -4050,9 +4263,9 @@ void handleKeyboardInput() {
       break;
     
     case 'm':
-      // Go to channel message screen
-      Serial.println("Opening channel messages");
-      ui_task.gotoChannelScreen();
+      // Go to channel picker (channel directory)
+      Serial.println("Opening channel picker");
+      ui_task.gotoChannelPickerScreen();
       break;
     
     case 'e':
@@ -4209,7 +4422,7 @@ void handleKeyboardInput() {
       // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
-          || ui_task.isOnPathEditor()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4229,7 +4442,7 @@ void handleKeyboardInput() {
       // Navigate up/previous (scroll on channel screen)
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
-          || ui_task.isOnPathEditor()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4246,14 +4459,16 @@ void handleKeyboardInput() {
       break;
       
     case 'a':
-      // Navigate left or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
-          || ui_task.isOnPathEditor()
+      // Navigate left — channel screen opens picker, others pass through
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.gotoChannelPickerScreen();
+      } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
          ) {
-        ui_task.injectKey('a');  // Pass directly for channel/contacts switching
+        ui_task.injectKey('a');  // Pass directly for contacts/map/picker navigation
       } else {
         Serial.println("Nav: Previous");
         ui_task.injectKey(0xF2);  // KEY_PREV
@@ -4261,14 +4476,16 @@ void handleKeyboardInput() {
       break;
       
     case 'd':
-      // Navigate right or switch channel (on channel screen)
-      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
-          || ui_task.isOnPathEditor()
+      // Navigate right — channel screen opens picker, others pass through
+      if (ui_task.isOnChannelScreen()) {
+        ui_task.gotoChannelPickerScreen();
+      } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
          ) {
-        ui_task.injectKey('d');  // Pass directly for channel/contacts switching
+        ui_task.injectKey('d');  // Pass directly for contacts/map/picker navigation
       } else {
         Serial.println("Nav: Next");
         ui_task.injectKey(0xF1);  // KEY_NEXT
@@ -4284,6 +4501,12 @@ void handleKeyboardInput() {
         if (pe && pe->wantsExit()) {
           Serial.println("PathEditor: Save & Exit — returning to contacts");
           ui_task.gotoContactsScreen();
+        }
+      } else if (ui_task.isOnChannelPickerScreen()) {
+        ui_task.injectKey('\r');  // Picker handles Enter: selects channel + sets wantsExit
+        ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
+        if (pick && pick->wantsExit()) {
+          ui_task.gotoChannelScreen(false);
         }
       } else if (ui_task.isOnContactsScreen()) {
         // Defer Enter for long-press detection (select mode vs DM/admin)
@@ -4498,6 +4721,12 @@ void handleKeyboardInput() {
           ui_task.injectKey('q');
           break;
         }
+        // DM inbox Q is handled by ChannelScreen (returns false → falls here).
+        // DM conversation Q is handled internally (returns true → never reaches here).
+        // Normal channel view or DM inbox: go back to picker.
+        Serial.println("Nav: Channel -> Picker");
+        ui_task.gotoChannelPickerScreen();
+        break;
       }
 #ifdef MECK_WEB_READER
       // If web reader is in reading/link/wifi mode, inject q for internal navigation
@@ -4555,6 +4784,12 @@ void handleKeyboardInput() {
       // Last Heard: Q goes back to home
       if (ui_task.isOnLastHeardScreen()) {
         Serial.println("Nav: Last Heard -> Home");
+        ui_task.gotoHomeScreen();
+        break;
+      }
+      // Channel picker: Q goes back to home
+      if (ui_task.isOnChannelPickerScreen()) {
+        Serial.println("Nav: ChannelPicker -> Home");
         ui_task.gotoHomeScreen();
         break;
       }

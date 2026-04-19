@@ -3,8 +3,10 @@
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
 #include <helpers/ChannelDetails.h>
+#include <helpers/TransportKeyStore.h>
 #include <MeshCore.h>
 #include "../NodePrefs.h"
+#include "MeckFonts.h"
 
 // Inline edit hint shown next to values being adjusted
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -114,6 +116,7 @@ enum SettingsRowType : uint8_t {
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
   ROW_LARGE_FONT,     // Font size toggle: 0=tiny (default), 1=larger
+  ROW_FONT_STYLE,     // Font style: Classic / Noto Sans / Montserrat
 #if defined(LilyGo_T5S3_EPaper_Pro)
   ROW_PORTRAIT_MODE,  // Portrait orientation toggle
 #endif
@@ -122,6 +125,7 @@ enum SettingsRowType : uint8_t {
 #endif
   ROW_GPS_BAUD,       // GPS baud rate picker (requires reboot)
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
+  ROW_DEFAULT_SCOPE,  // Device-wide default region (text editor)
   #ifdef MECK_WIFI_COMPANION
   ROW_WIFI_SETUP,     // WiFi SSID/password configuration
   ROW_WIFI_TOGGLE,    // WiFi radio on/off toggle
@@ -210,13 +214,13 @@ enum FmPhase : uint8_t {
 
 // Max rows in the settings list (increased for contact sub-toggles + WiFi)
 #if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 56  // Extra rows for IMEI, Carrier, APN, contacts, WiFi
+#define SETTINGS_MAX_ROWS 57  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope
 #elif defined(HAS_4G_MODEM)
-#define SETTINGS_MAX_ROWS 54  // Extra rows for IMEI, Carrier, APN + contacts
+#define SETTINGS_MAX_ROWS 55  // Extra rows for IMEI, Carrier, APN + contacts + scope
 #elif defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 50  // Extra rows for contacts + WiFi
+#define SETTINGS_MAX_ROWS 51  // Extra rows for contacts + WiFi + scope
 #else
-#define SETTINGS_MAX_ROWS 48  // Contacts section
+#define SETTINGS_MAX_ROWS 49  // Contacts section + scope
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 
@@ -245,6 +249,7 @@ private:
   int _editPickerIdx;       // for preset picker / contact mode picker
   float _editFloat;         // for freq/BW editing
   int _editInt;             // for SF/CR/TX/UTC editing
+  uint8_t _fontPickerOriginal;  // font style before edit (for cancel revert)
   int _confirmAction;       // 0=none, 1=delete channel, 2=apply radio
 
   // Onboarding mode
@@ -399,8 +404,10 @@ private:
       addRow(ROW_MSG_NOTIFY);
       addRow(ROW_GPS_BAUD);
       addRow(ROW_PATH_HASH_SIZE);
+      addRow(ROW_DEFAULT_SCOPE);
       addRow(ROW_DARK_MODE);
       addRow(ROW_LARGE_FONT);
+      addRow(ROW_FONT_STYLE);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
 #endif
@@ -570,7 +577,7 @@ public:
     : _task(task), _rtc(rtc), _prefs(prefs),
       _numRows(0), _cursor(0), _scrollTop(0),
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
-      _editFloat(0), _editInt(0), _confirmAction(0),
+      _editFloat(0), _editInt(0), _fontPickerOriginal(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
       _radioChanged(false), _needsTextVKB(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
@@ -1742,6 +1749,17 @@ public:
           display.print(tmp);
           break;
 
+        case ROW_DEFAULT_SCOPE:
+          if (editing && _editMode == EDIT_TEXT) {
+            snprintf(tmp, sizeof(tmp), "Region: %s_", _editBuf);
+          } else if (_prefs->default_scope_name[0]) {
+            snprintf(tmp, sizeof(tmp), "Default Region: %s", _prefs->default_scope_name);
+          } else {
+            strcpy(tmp, "Default Region: (none)");
+          }
+          display.print(tmp);
+          break;
+
         case ROW_GPS_BAUD: {
           char baudStr[16];
           if (editing && _editMode == EDIT_PICKER) {
@@ -1764,6 +1782,17 @@ public:
         case ROW_LARGE_FONT:
           snprintf(tmp, sizeof(tmp), "Font Size: %s",
                    _prefs->large_font ? "LARGER" : "TINY");
+          display.print(tmp);
+          break;
+
+        case ROW_FONT_STYLE:
+          if (editing && _editMode == EDIT_PICKER) {
+            snprintf(tmp, sizeof(tmp), "< Font: %s >",
+                     meckFontStyleName(_prefs->ui_font_style));
+          } else {
+            snprintf(tmp, sizeof(tmp), "Font: %s",
+                     meckFontStyleName(_prefs->ui_font_style));
+          }
           display.print(tmp);
           break;
 
@@ -1847,7 +1876,7 @@ public:
           break;
 
         case ROW_AUTOADD_CHAT:
-          snprintf(tmp, sizeof(tmp), "  Chat: %s",
+          snprintf(tmp, sizeof(tmp), "  Companion: %s",
                    (_prefs->autoadd_config & AUTO_ADD_CHAT) ? "ON" : "OFF");
           display.print(tmp);
           break;
@@ -1886,17 +1915,22 @@ public:
           uint8_t chIdx = _rows[i].param;
           ChannelDetails ch;
           if (the_mesh.getChannel(chIdx, ch)) {
-            if (chIdx == 0) {
-              // Public channel - not deletable
-              snprintf(tmp, sizeof(tmp), " %s", ch.name);
+            if (editing && _editMode == EDIT_TEXT) {
+              // Editing scope for this channel
+              snprintf(tmp, sizeof(tmp), " %s [%s_]", ch.name, _editBuf);
             } else {
-              snprintf(tmp, sizeof(tmp), " %s", ch.name);
+              // Show channel name + scope tag
+              if (ch.scope_name[0]) {
+                snprintf(tmp, sizeof(tmp), " %s [%s]", ch.name, ch.scope_name);
+              } else {
+                snprintf(tmp, sizeof(tmp), " %s [*]", ch.name);
+              }
               if (selected) {
-                // Show delete hint on right
+                // Show edit/delete hints on right
               #if defined(LilyGo_T5S3_EPaper_Pro)
-                const char* hint = "Hold:Del";
+                const char* hint = chIdx > 0 ? "Ent:Region Hold:Del" : "Ent:Region";
               #else
-                const char* hint = "X:Del";
+                const char* hint = chIdx > 0 ? "Ent:Region X:Del" : "Ent:Region";
               #endif
                 int hintW = display.getTextWidth(hint);
                 display.setCursor(display.width() - hintW - 2, y);
@@ -2025,6 +2059,9 @@ public:
         display.drawTextCentered(display.width() / 2, by + 4, tmp);
       } else if (_confirmAction == 2) {
         display.drawTextCentered(display.width() / 2, by + 4, "Apply radio changes?");
+      } else if (_confirmAction == 3) {
+        display.drawTextCentered(display.width() / 2, by + 4, "Region not set.");
+        display.drawTextCentered(display.width() / 2, by + 15, "Leave unset?");
       }
     #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, by + bh - 14, "Tap:Yes  Boot:No");
@@ -2451,12 +2488,28 @@ public:
           rebuildRows();
         } else if (_confirmAction == 2) {
           applyRadioParams();
+        } else if (_confirmAction == 3) {
+          // Region nudge dismissed — user chose "Yes, leave unscoped"
+          _editMode = EDIT_NONE;
+          _confirmAction = 0;
+          _onboarding = false;
+          return false;  // Let caller navigate away from settings
         }
         _editMode = EDIT_NONE;
         _confirmAction = 0;
         return true;
       }
       if (c == 'q' || c == 'Q') {
+        if (_confirmAction == 3) {
+          // Region nudge cancelled — scroll to Default Region row
+          _editMode = EDIT_NONE;
+          _confirmAction = 0;
+          // Find and scroll to ROW_DEFAULT_SCOPE
+          for (int r = 0; r < _numRows; r++) {
+            if (_rows[r].type == ROW_DEFAULT_SCOPE) { _cursor = r; break; }
+          }
+          return true;
+        }
         _editMode = EDIT_NONE;
         _confirmAction = 0;
         return true;
@@ -2666,6 +2719,34 @@ public:
             rebuildRows();
           }
           _editMode = EDIT_NONE;
+        } else if (type == ROW_DEFAULT_SCOPE) {
+          // Save device-wide default scope
+          strncpy(_prefs->default_scope_name, _editBuf, sizeof(_prefs->default_scope_name));
+          _prefs->default_scope_name[30] = '\0';
+          if (_editBuf[0]) {
+            TransportKey key;
+            the_mesh.deriveScopeKey(_editBuf, key);
+            memcpy(_prefs->default_scope_key, key.key, sizeof(_prefs->default_scope_key));
+          } else {
+            memset(_prefs->default_scope_key, 0, sizeof(_prefs->default_scope_key));
+          }
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Default scope set to '%s'\n",
+                        _editBuf[0] ? _editBuf : "(unscoped)");
+          _editMode = EDIT_NONE;
+        } else if (type == ROW_CHANNEL) {
+          // Save per-channel scope
+          uint8_t chIdx = _rows[_cursor].param;
+          ChannelDetails ch;
+          if (the_mesh.getChannel(chIdx, ch)) {
+            strncpy(ch.scope_name, _editBuf, sizeof(ch.scope_name));
+            ch.scope_name[30] = '\0';
+            the_mesh.setChannel(chIdx, ch);
+            the_mesh.saveChannels();
+            Serial.printf("Settings: Channel %d scope set to '%s'\n",
+                          chIdx, _editBuf[0] ? _editBuf : "(device default)");
+          }
+          _editMode = EDIT_NONE;
         }
         #ifdef HAS_4G_MODEM
         else if (type == ROW_APN) {
@@ -2717,6 +2798,10 @@ public:
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = AUTO_LOCK_OPTION_COUNT - 1;
+        } else if (type == ROW_FONT_STYLE) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = MECK_FONT_STYLE_COUNT - 1;
+          _prefs->ui_font_style = _editPickerIdx;  // Live preview
         } else {
           // Radio preset
           _editPickerIdx--;
@@ -2734,6 +2819,10 @@ public:
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx++;
           if (_editPickerIdx >= AUTO_LOCK_OPTION_COUNT) _editPickerIdx = 0;
+        } else if (type == ROW_FONT_STYLE) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= MECK_FONT_STYLE_COUNT) _editPickerIdx = 0;
+          _prefs->ui_font_style = _editPickerIdx;  // Live preview
         } else {
           // Radio preset
           _editPickerIdx++;
@@ -2757,6 +2846,13 @@ public:
           _editMode = EDIT_NONE;
           Serial.printf("Settings: Auto lock = %s\n",
                         autoLockLabel(_prefs->auto_lock_minutes));
+        } else if (type == ROW_FONT_STYLE) {
+          _prefs->ui_font_style = _editPickerIdx;
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: Font style = %s (%d)\n",
+                        meckFontStyleName(_prefs->ui_font_style),
+                        _prefs->ui_font_style);
         } else {
           // Apply radio preset
           if (_editPickerIdx >= 0 && _editPickerIdx < (int)NUM_RADIO_PRESETS) {
@@ -2790,6 +2886,10 @@ public:
         return true;
       }
       if (c == 'q' || c == 'Q') {
+        // Revert live preview if font style picker was active
+        if (type == ROW_FONT_STYLE) {
+          _prefs->ui_font_style = _fontPickerOriginal;
+        }
         _editMode = EDIT_NONE;
         return true;
       }
@@ -2951,6 +3051,10 @@ public:
           Serial.printf("Settings: Font size = %s\n",
                         _prefs->large_font ? "LARGER" : "TINY");
           break;
+        case ROW_FONT_STYLE:
+          _fontPickerOriginal = _prefs->ui_font_style;
+          startEditPicker(_prefs->ui_font_style);
+          break;
 #if defined(LilyGo_T5S3_EPaper_Pro)
         case ROW_PORTRAIT_MODE:
           _prefs->portrait_mode = _prefs->portrait_mode ? 0 : 1;
@@ -3108,7 +3212,18 @@ public:
           startFileMgr();
           break;
         #endif
-        case ROW_CHANNEL:
+        case ROW_CHANNEL: {
+          // Enter on a channel row → edit its region scope
+          uint8_t chIdx = _rows[_cursor].param;
+          ChannelDetails ch;
+          if (the_mesh.getChannel(chIdx, ch)) {
+            startEditText(ch.scope_name);
+          }
+          break;
+        }
+        case ROW_DEFAULT_SCOPE:
+          startEditText(_prefs->default_scope_name);
+          break;
         case ROW_PUB_KEY:
         case ROW_FIRMWARE:
           // Not directly editable on Enter
@@ -3144,6 +3259,21 @@ public:
         _editMode = EDIT_CONFIRM;
         _confirmAction = 2;
         return true;
+      }
+      // Nudge if no region is set anywhere (device default empty AND no per-channel scopes)
+      if (_prefs->default_scope_name[0] == '\0') {
+        bool anyChannelScoped = false;
+        for (uint8_t ci = 0; ci < MAX_GROUP_CHANNELS && !anyChannelScoped; ci++) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(ci, ch) && ch.name[0] != '\0' && ch.scope_name[0] != '\0') {
+            anyChannelScoped = true;
+          }
+        }
+        if (!anyChannelScoped) {
+          _editMode = EDIT_CONFIRM;
+          _confirmAction = 3;
+          return true;
+        }
       }
       _onboarding = false;
       return false;  // Let the caller handle navigation back

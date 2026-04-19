@@ -24,6 +24,9 @@
 #include <Fonts/FreeSerif12pt7b.h>
 #include <Fonts/FreeSerif18pt7b.h>
 
+// Meck custom font styles (Noto Sans, Montserrat)
+#include "MeckFonts.h"
+
 #include "DisplayDriver.h"
 
 // GxEPD2 color constant compatibility — MapScreen uses these directly

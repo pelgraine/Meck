@@ -59,7 +59,7 @@
 #define CMD_SEND_BINARY_REQ           50
 #define CMD_FACTORY_RESET             51
 #define CMD_SEND_PATH_DISCOVERY_REQ   52
-#define CMD_SET_FLOOD_SCOPE           54   // v8+
+#define CMD_SET_FLOOD_SCOPE_KEY       54   // v8+ (per-channel scope key from BLE app)
 #define CMD_SEND_CONTROL_DATA         55   // v8+
 #define CMD_GET_STATS                 56   // v8+, second byte is stats type
 
@@ -70,6 +70,9 @@
 #define CMD_SET_AUTOADD_CONFIG        58
 #define CMD_GET_AUTOADD_CONFIG        59
 #define CMD_SET_PATH_HASH_MODE        61
+#define CMD_SEND_CHANNEL_DATA         62
+#define CMD_SET_DEFAULT_FLOOD_SCOPE   63   // v1.15+ (device-wide default scope name+key)
+#define CMD_GET_DEFAULT_FLOOD_SCOPE   64   // v1.15+ (query current default scope)
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -102,6 +105,9 @@
 #define RESP_CODE_TUNING_PARAMS       23
 #define RESP_CODE_STATS               24   // v8+, second byte is stats type
 #define RESP_CODE_AUTOADD_CONFIG      25
+#define RESP_ALLOWED_REPEAT_FREQ      26
+#define RESP_CODE_CHANNEL_DATA_RECV   27
+#define RESP_CODE_DEFAULT_FLOOD_SCOPE 28   // v1.15+
 
 #define SEND_TIMEOUT_BASE_MILLIS        500
 #define FLOOD_SEND_TIMEOUT_FACTOR       16.0f
@@ -315,6 +321,7 @@ bool MyMesh::isAutoAddEnabled() const {
 }
 
 bool MyMesh::shouldAutoAddContactType(uint8_t contact_type) const {
+  if (_forceNextImport) return true;  // explicit user add from Last Heard / Discovery
   if ((_prefs.manual_add_contacts & 1) == 0) {
     return true;
   }
@@ -360,6 +367,7 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  _forceNextImport = false;  // clear force-add flag (set by forceImportContact)
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact);
@@ -565,18 +573,24 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   return false;  // never filter Ã¢â‚¬â€ let normal processing continue
 }
 
-void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
-  Serial.printf("[sendFloodScoped] to '%s', delay=%lu, hash_mode=%d, bph=%d\n",
-                recipient.name, delay_millis, _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
-  // TODO: dynamic send_scope, depending on recipient and current 'home' Region
-  if (send_scope.isNull()) {
+void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
+  if (scope.isNull()) {
     sendFlood(pkt, delay_millis, getPathHashSize());
   } else {
     uint16_t codes[2];
-    codes[0] = send_scope.calcTransportCode(pkt);
-    codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
+    codes[0] = scope.calcTransportCode(pkt);
+    codes[1] = 0;  // reserved for home region
     sendFlood(pkt, codes, delay_millis, getPathHashSize());
   }
+}
+
+void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
+  Serial.printf("[sendFloodScoped] to '%s', delay=%lu, hash_mode=%d, bph=%d\n",
+                recipient.name, delay_millis, _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
+  // DMs: use device default scope (no per-contact scope)
+  TransportKey default_scope;
+  memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
+  sendFloodScoped(default_scope, pkt, delay_millis);
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
   // Capture payload fingerprint for repeat tracking before sending
@@ -590,15 +604,46 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     MESH_DEBUG_PRINTLN("SentTrack: captured fingerprint for channel msg");
   }
 
-  // TODO: have per-channel send_scope
-  if (send_scope.isNull()) {
-    sendFlood(pkt, delay_millis, getPathHashSize());
+  // Scope priority: BLE app send_scope → per-channel scope → device default → unscoped
+  TransportKey scope;
+  if (!send_scope.isNull()) {
+    // BLE app has set a scope via CMD 54 — use it (highest priority)
+    memcpy(scope.key, send_scope.key, sizeof(scope.key));
   } else {
-    uint16_t codes[2];
-    codes[0] = send_scope.calcTransportCode(pkt);
-    codes[1] = 0;  // REVISIT: set to 'home' Region, for sender/return region?
-    sendFlood(pkt, codes, delay_millis, getPathHashSize());
+    const char* ch_scope = getChannelScopeName(channel);
+    if (ch_scope && ch_scope[0]) {
+      deriveScopeKey(ch_scope, scope);
+    } else {
+      memcpy(scope.key, _prefs.default_scope_key, sizeof(scope.key));
+    }
   }
+  sendFloodScoped(scope, pkt, delay_millis);
+}
+
+bool MyMesh::deriveScopeKey(const char* scopeName, TransportKey& keyOut) {
+  if (!scopeName || scopeName[0] == '\0') {
+    memset(keyOut.key, 0, sizeof(keyOut.key));
+    return false;
+  }
+  // Region names are stored without '#' prefix in user-facing code,
+  // but the key derivation prepends '#' (implicit auto hashtag region).
+  char tmp[32];
+  snprintf(tmp, sizeof(tmp), "#%s", scopeName);
+  TransportKeyStore tempStore;
+  tempStore.getAutoKeyFor(0, tmp, keyOut);
+  return true;
+}
+
+const char* MyMesh::getChannelScopeName(const mesh::GroupChannel& channel) {
+  ChannelDetails ch;
+  for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (getChannel(i, ch) && ch.name[0] != '\0') {
+      if (memcmp(ch.channel.secret, channel.secret, sizeof(channel.secret)) == 0) {
+        return ch.scope_name;
+      }
+    }
+  }
+  return nullptr;
 }
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
@@ -1265,7 +1310,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
-  memset(advert_paths, 0, sizeof(advert_paths));
+  advert_paths = nullptr;  // PSRAM-allocated in begin()
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
@@ -1292,6 +1337,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 }
 
 void MyMesh::begin(bool has_display) {
+  advert_paths = (AdvertPath*)ps_calloc(ADVERT_PATH_TABLE_SIZE, sizeof(AdvertPath));
   BaseChatMesh::begin();
 
   if (!_store->loadMainIdentity(self_id)) {
@@ -1587,6 +1633,17 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&secs, &cmd_frame[1], 4);
     uint32_t curr = getRTCClock()->getCurrentTime();
     if (secs >= curr) {
+      // Adjust stored advert timestamps if clock jumps significantly
+      if (advert_paths && secs > curr + 60) {
+        uint32_t delta = secs - curr;
+        for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+          if (advert_paths[i].recv_timestamp > 0) {
+            advert_paths[i].recv_timestamp += delta;
+          }
+        }
+        Serial.printf("[ClockSync] Adjusted %d advert timestamps by +%lu seconds\n",
+                      ADVERT_PATH_TABLE_SIZE, (unsigned long)delta);
+      }
       getRTCClock()->setCurrentTime(secs);
       writeOKFrame();
     } else {
@@ -2059,6 +2116,11 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SET_CHANNEL && len >= 2 + 32 + 16) {
     uint8_t channel_idx = cmd_frame[1];
     ChannelDetails channel;
+    // Preserve existing scope_name if channel already exists
+    ChannelDetails existing;
+    if (getChannel(channel_idx, existing) && existing.name[0] != '\0') {
+      memcpy(channel.scope_name, existing.scope_name, sizeof(channel.scope_name));
+    }
     StrHelper::strncpy(channel.name, (char *)&cmd_frame[2], 32);
     memset(channel.channel.secret, 0, sizeof(channel.channel.secret));
     memcpy(channel.channel.secret, &cmd_frame[2 + 32], 16); // NOTE: only 128-bit supported
@@ -2269,13 +2331,44 @@ void MyMesh::handleCmdFrame(size_t len) {
     } else {
       writeErrFrame(ERR_CODE_FILE_IO_ERROR);
     }
-  } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE && len >= 2 && cmd_frame[1] == 0) {
+  } else if (cmd_frame[0] == CMD_SET_FLOOD_SCOPE_KEY && len >= 2 && cmd_frame[1] == 0) {
     if (len >= 2 + 16) {
       memcpy(send_scope.key, &cmd_frame[2], sizeof(send_scope.key));  // set curr scope TransportKey
+      Serial.printf("[CMD54] Per-channel scope key set (%d bytes)\n", len - 2);
     } else {
       memset(send_scope.key, 0, sizeof(send_scope.key));  // set scope to null
+      Serial.println("[CMD54] Per-channel scope cleared");
     }
     writeOKFrame();
+  } else if (cmd_frame[0] == CMD_SET_DEFAULT_FLOOD_SCOPE && len >= 1) {
+    // v1.15+ — set device-wide default flood scope (name[31] + key[16])
+    if (len >= 1+31+16) {
+      int n = strlen((char *) &cmd_frame[1]);
+      if (n > 0 && n < 31) {
+        strcpy(_prefs.default_scope_name, (char *) &cmd_frame[1]);
+        memcpy(_prefs.default_scope_key, &cmd_frame[1+31], 16);
+        savePrefs();
+        writeOKFrame();
+      } else {
+        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+      }
+    } else {
+      // Clear default scope (unscoped)
+      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));
+      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+      savePrefs();
+      writeOKFrame();
+    }
+  } else if (cmd_frame[0] == CMD_GET_DEFAULT_FLOOD_SCOPE) {
+    // v1.15+ — query current default flood scope
+    out_frame[0] = RESP_CODE_DEFAULT_FLOOD_SCOPE;
+    if (strlen(_prefs.default_scope_name) > 0) {
+      memcpy(&out_frame[1], _prefs.default_scope_name, 31);
+      memcpy(&out_frame[1+31], _prefs.default_scope_key, 16);
+      _serial->writeFrame(out_frame, 1+31+16);
+    } else {
+      _serial->writeFrame(out_frame, 1);  // no name or key means null/unscoped
+    }
   } else if (cmd_frame[0] == CMD_SEND_CONTROL_DATA && len >= 2 && (cmd_frame[1] & 0x80) != 0) {
     auto resp = createControlData(&cmd_frame[1], len - 1);
     if (resp) {
@@ -2376,6 +2469,26 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  > %lu (effective: %lu)\n",
             (unsigned long)_prefs.gps_baudrate, (unsigned long)effective);
 
+      } else if (strcmp(key, "region") == 0) {
+        if (_prefs.default_scope_name[0]) {
+          Serial.printf("  > %s\n", _prefs.default_scope_name);
+        } else {
+          Serial.println("  > (none — unscoped)");
+        }
+      } else if (memcmp(key, "channel.scope ", 14) == 0) {
+        int idx = atoi(&key[14]);
+        if (idx >= 0 && idx < MAX_GROUP_CHANNELS) {
+          ChannelDetails ch;
+          if (getChannel(idx, ch) && ch.name[0] != '\0') {
+            Serial.printf("  > %s scope: %s\n", ch.name,
+                ch.scope_name[0] ? ch.scope_name : "(device default)");
+          } else {
+            Serial.printf("  Error: channel %d is empty\n", idx);
+          }
+        } else {
+          Serial.println("  Error: invalid channel index");
+        }
+
       } else if (strcmp(key, "radio") == 0) {
         Serial.printf("  > freq=%.3f bw=%.1f sf=%d cr=%d tx=%d\n",
             _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr, _prefs.tx_power_dbm);
@@ -2390,7 +2503,11 @@ void MyMesh::checkCLIRescueCmd() {
         for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
           ChannelDetails ch;
           if (getChannel(i, ch) && ch.name[0] != '\0') {
-            Serial.printf("  [%d] %s\n", i, ch.name);
+            if (ch.scope_name[0]) {
+              Serial.printf("  [%d] %s [%s]\n", i, ch.name, ch.scope_name);
+            } else {
+              Serial.printf("  [%d] %s [*]\n", i, ch.name);
+            }
             found = true;
           } else {
             break;
@@ -2437,6 +2554,8 @@ void MyMesh::checkCLIRescueCmd() {
           uint32_t eff_baud = _prefs.gps_baudrate ? _prefs.gps_baudrate : GPS_BAUDRATE;
           Serial.printf("  gps.baud:   %lu\n", (unsigned long)eff_baud);
         }
+        Serial.printf("  region:     %s\n",
+            _prefs.default_scope_name[0] ? _prefs.default_scope_name : "(none — unscoped)");
 #ifdef HAS_4G_MODEM
         Serial.printf("  modem:      %s\n", ModemManager::loadEnabledConfig() ? "on" : "off");
         Serial.printf("  apn:        %s\n", modemManager.getAPN());
@@ -2471,7 +2590,11 @@ void MyMesh::checkCLIRescueCmd() {
         for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
           ChannelDetails ch;
           if (getChannel(i, ch) && ch.name[0] != '\0') {
-            Serial.printf("    [%d] %s\n", i, ch.name);
+            if (ch.scope_name[0]) {
+              Serial.printf("    [%d] %s [%s]\n", i, ch.name, ch.scope_name);
+            } else {
+              Serial.printf("    [%d] %s [*]\n", i, ch.name);
+            }
             chFound = true;
           } else {
             break;
@@ -2865,6 +2988,54 @@ void MyMesh::checkCLIRescueCmd() {
           Serial.println("  Error: use 0 (default), 4800, 9600, 19200, 38400, 57600, or 115200");
         }
 
+      // Region scope commands
+      } else if (memcmp(config, "region ", 7) == 0) {
+        const char* name = &config[7];
+        if (strcmp(name, "none") == 0 || strcmp(name, "clear") == 0 || name[0] == '\0') {
+          memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));
+          memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+          savePrefs();
+          Serial.println("  > region cleared (unscoped)");
+        } else if (strlen(name) < 31) {
+          strncpy(_prefs.default_scope_name, name, sizeof(_prefs.default_scope_name));
+          _prefs.default_scope_name[30] = '\0';
+          TransportKey key;
+          deriveScopeKey(name, key);
+          memcpy(_prefs.default_scope_key, key.key, sizeof(_prefs.default_scope_key));
+          savePrefs();
+          Serial.printf("  > region = %s\n", _prefs.default_scope_name);
+        } else {
+          Serial.println("  Error: region name too long (max 29 chars)");
+        }
+      } else if (memcmp(config, "channel.scope ", 14) == 0) {
+        // set channel.scope <idx> <name>   (or "set channel.scope <idx> none" to clear)
+        int idx = atoi(&config[14]);
+        const char* rest = strchr(&config[14], ' ');
+        if (idx >= 0 && idx < MAX_GROUP_CHANNELS && rest) {
+          rest++;  // skip space
+          ChannelDetails ch;
+          if (getChannel(idx, ch) && ch.name[0] != '\0') {
+            if (strcmp(rest, "none") == 0 || strcmp(rest, "clear") == 0) {
+              memset(ch.scope_name, 0, sizeof(ch.scope_name));
+            } else if (strlen(rest) < 31) {
+              strncpy(ch.scope_name, rest, sizeof(ch.scope_name));
+              ch.scope_name[30] = '\0';
+            } else {
+              Serial.println("  Error: scope name too long (max 29 chars)");
+              cli_command[0] = 0;
+              return;
+            }
+            setChannel(idx, ch);
+            saveChannels();
+            Serial.printf("  > %s scope = %s\n", ch.name,
+                ch.scope_name[0] ? ch.scope_name : "(device default)");
+          } else {
+            Serial.printf("  Error: channel %d is empty\n", idx);
+          }
+        } else {
+          Serial.println("  Usage: set channel.scope <idx> <name|none>");
+        }
+
       // Backlight control (T5S3 E-Paper Pro only)
       } else if (memcmp(config, "backlight ", 10) == 0) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2899,6 +3070,17 @@ void MyMesh::checkCLIRescueCmd() {
     } else if (memcmp(cli_command, "clock sync ", 11) == 0) {
       uint32_t epoch = (uint32_t)strtoul(&cli_command[11], nullptr, 10);
       if (epoch > 1704067200UL && epoch < 2082758400UL) {
+        // Adjust stored advert timestamps if clock jumps significantly
+        uint32_t curr = getRTCClock()->getCurrentTime();
+        if (advert_paths && epoch > curr + 60) {
+          uint32_t delta = epoch - curr;
+          for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+            if (advert_paths[i].recv_timestamp > 0) {
+              advert_paths[i].recv_timestamp += delta;
+            }
+          }
+          Serial.printf("  > adjusted advert timestamps by +%lu seconds\n", (unsigned long)delta);
+        }
         getRTCClock()->setCurrentTime(epoch);
         Serial.printf("  > clock synced to %lu\n", (unsigned long)epoch);
       } else {
@@ -2969,6 +3151,12 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    set preset <name|num>  Apply radio preset");
       Serial.println("    set channel.add <name> Add hashtag channel");
       Serial.println("    set channel.del <idx>  Delete channel by index");
+      Serial.println("");
+      Serial.println("  Regions:");
+      Serial.println("    get/set region         Device default region (e.g. au-nsw)");
+      Serial.println("    set region none        Clear default region (unscoped)");
+      Serial.println("    get channel.scope <i>  Show scope for channel i");
+      Serial.println("    set channel.scope <i> <name|none>");
 #ifdef HAS_4G_MODEM
       Serial.println("");
       Serial.println("  4G modem:");
@@ -3258,6 +3446,13 @@ void MyMesh::stopDiscovery() {
   _discoveryActive = false;
 }
 
+bool MyMesh::forceImportContact(const uint8_t* blob, uint8_t len) {
+  _forceNextImport = true;
+  bool ok = importContact(blob, len);
+  if (!ok) _forceNextImport = false;  // clear if importContact failed (no loopback queued)
+  return ok;
+}
+
 bool MyMesh::addDiscoveredToContacts(int idx) {
   if (idx < 0 || idx >= _discoveredCount) return false;
   if (_discovered[idx].already_in_contacts) return true;  // already there
@@ -3266,7 +3461,7 @@ bool MyMesh::addDiscoveredToContacts(int idx) {
   uint8_t buf[256];
   int plen = getBlobByKey(_discovered[idx].contact.id.pub_key, PUB_KEY_SIZE, buf);
   if (plen > 0) {
-    bool ok = importContact(buf, (uint8_t)plen);
+    bool ok = forceImportContact(buf, (uint8_t)plen);
     if (ok) {
       _discovered[idx].already_in_contacts = true;
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);

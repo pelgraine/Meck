@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 11
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "7 April 2026"
+#define FIRMWARE_BUILD_DATE "19 April 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.6.1"
+#define FIRMWARE_VERSION "Meck v1.7"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -82,7 +82,7 @@
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
 
 struct AdvertPath {
-  uint8_t pubkey_prefix[7];
+  uint8_t pubkey_prefix[8];
   uint8_t path_len;
   uint8_t type;             // ADV_TYPE_* (Chat/Repeater/Room/Sensor)
   char    name[32];
@@ -131,6 +131,9 @@ public:
   int getContactBlob(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
     return getBlobByKey(key, key_len, dest_buf);
   }
+  // Force-add a contact from a raw advert blob, bypassing auto-add settings.
+  // Used by Last Heard and Discovery when the user explicitly selects a node to add.
+  bool forceImportContact(const uint8_t* blob, uint8_t len);
   
   // Queue a sent channel message for BLE app sync
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
@@ -168,6 +171,13 @@ public:
   bool setCustomPath(int contactIdx, const uint8_t* path, uint8_t pathLen, bool lock);
   void clearCustomPath(int contactIdx);
 
+  // Region scope helpers (public — used by SettingsScreen)
+  // Derive a TransportKey from a region scope name (e.g. "au-nsw" → "#au-nsw" → SHA256 → key).
+  // Returns true if name is non-empty and key was derived; false if name is empty (unscoped).
+  bool deriveScopeKey(const char* scopeName, TransportKey& keyOut);
+  // Look up per-channel scope name by GroupChannel secret match. Returns nullptr if no scope set.
+  const char* getChannelScopeName(const mesh::GroupChannel& channel);
+
 
 protected:
   float getAirtimeBudgetFactor() const override;
@@ -185,6 +195,7 @@ protected:
   uint8_t getPathHashSize() const override { return _prefs.path_hash_mode + 1; }
   void sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis=0) override;
   void sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis=0) override;
+  void sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis=0);
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
   bool isAutoAddEnabled() const override;
@@ -261,6 +272,7 @@ private:
   NodePrefs _prefs;
   VoiceRawHandler _voiceHandler = nullptr;
   VoiceEnvelopeHandler _voiceEnvHandler = nullptr;
+  mutable bool _forceNextImport = false;
   bool _deferSaves = false;
   uint32_t pending_login;
   uint32_t pending_status;
@@ -305,8 +317,8 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
-  #define ADVERT_PATH_TABLE_SIZE   40
-  AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+  #define ADVERT_PATH_TABLE_SIZE   1000
+  AdvertPath* advert_paths;  // PSRAM-allocated in begin(), size = ADVERT_PATH_TABLE_SIZE
 
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4

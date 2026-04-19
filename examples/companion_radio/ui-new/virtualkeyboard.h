@@ -18,6 +18,7 @@
 
 #include <Arduino.h>
 #include <helpers/ui/DisplayDriver.h>
+#include "EmojiSprites.h"
 
 enum VKBStatus { VKB_EDITING, VKB_SUBMITTED, VKB_CANCELLED };
 
@@ -45,7 +46,8 @@ public:
   static const int MAX_TEXT = 140;
 
   VirtualKeyboard() : _status(VKB_CANCELLED), _purpose(VKB_CHANNEL_MSG),
-                      _contextIdx(0), _textLen(0), _shifted(false), _symbols(false) {
+                      _contextIdx(0), _textLen(0), _shifted(false), _symbols(false),
+                      _emojiMode(false), _emojiScroll(0) {
     _text[0] = '\0';
     _label[0] = '\0';
   }
@@ -56,6 +58,8 @@ public:
     _status = VKB_EDITING;
     _shifted = false;
     _symbols = false;
+    _emojiMode = false;
+    _emojiScroll = 0;
     _maxLen = (maxLen > 0 && maxLen < MAX_TEXT) ? maxLen : MAX_TEXT;
 
     strncpy(_label, label, sizeof(_label) - 1);
@@ -90,13 +94,8 @@ public:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, 10, 128, 18);  // Border
 
-    display.setCursor(2, 12);
-    display.setColor(DisplayDriver::LIGHT);
-
-    // Show text with cursor
-    char dispBuf[MAX_TEXT + 2];
-    snprintf(dispBuf, sizeof(dispBuf), "%s_", _text);
-    display.print(dispBuf);
+    // Render text with inline emoji sprites
+    renderTextField(display);
 
     // Character count
     {
@@ -110,6 +109,11 @@ public:
 
     // Separator
     display.drawRect(0, 30, 128, 1);
+
+    if (_emojiMode) {
+      renderEmojiGrid(display);
+      return;
+    }
 
     // --- Draw keyboard rows ---
     const char* const* layout = getLayout();
@@ -183,6 +187,8 @@ public:
   bool handleTap(int vx, int vy) {
     if (_status != VKB_EDITING) return false;
 
+    if (_emojiMode) return handleEmojiTap(vx, vy);
+
     // Check keyboard rows 0-2
     const char* const* layout = getLayout();
 
@@ -253,6 +259,169 @@ private:
   char _label[40];
   bool _shifted;
   bool _symbols;
+  bool _emojiMode;
+  int _emojiScroll;
+
+  // Emoji grid constants (virtual coords)
+  static const int EMJ_COLS = 8;
+  static const int EMJ_CELL = 15;      // 12px sprite + 3px gap
+  static const int EMJ_GRID_X = 4;
+  static const int EMJ_GRID_Y = 34;
+  static const int EMJ_VIS_ROWS = 5;
+
+  int emojiTotalRows() const { return (EMOJI_COUNT + EMJ_COLS - 1) / EMJ_COLS; }
+  int emojiMaxScroll() const { int m = emojiTotalRows() - EMJ_VIS_ROWS; return m < 0 ? 0 : m; }
+
+  void renderEmojiGrid(DisplayDriver& display) {
+    display.setTextSize(0);
+
+    for (int vr = 0; vr < EMJ_VIS_ROWS; vr++) {
+      int absRow = _emojiScroll + vr;
+      if (absRow >= emojiTotalRows()) break;
+
+      for (int col = 0; col < EMJ_COLS; col++) {
+        int idx = absRow * EMJ_COLS + col;
+        if (idx >= EMOJI_COUNT) break;
+
+        int cx = EMJ_GRID_X + col * EMJ_CELL;
+        int cy = EMJ_GRID_Y + vr * EMJ_CELL;
+
+        display.setColor(DisplayDriver::LIGHT);
+        const uint8_t* sprite = (const uint8_t*)pgm_read_ptr(&EMOJI_SPRITES_LG[idx]);
+        if (sprite) {
+          display.drawXbm(cx + 1, cy + 1, sprite, EMOJI_LG_W, EMOJI_LG_H);
+        }
+      }
+    }
+
+    // Footer: [Back]  [▲]  page/total  [▼]
+    int fy = EMJ_GRID_Y + EMJ_VIS_ROWS * EMJ_CELL + 2;
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, fy - 1, 128, 1);
+
+    // Back button (inverted)
+    display.fillRect(4, fy + 1, 30, 12);
+    display.setColor(DisplayDriver::DARK);
+    int bw = display.getTextWidth("Back");
+    display.setCursor(4 + (30 - bw) / 2, fy + 2);
+    display.print("Back");
+
+    display.setColor(DisplayDriver::LIGHT);
+
+    // Scroll arrows (only if scrollable)
+    if (emojiTotalRows() > EMJ_VIS_ROWS) {
+      // Up arrow
+      if (_emojiScroll > 0) {
+        display.fillRect(50, fy + 1, 12, 12);
+        display.setColor(DisplayDriver::DARK);
+        display.setCursor(53, fy + 2);
+        display.print("^");
+        display.setColor(DisplayDriver::LIGHT);
+      }
+
+      // Page info
+      char pg[8];
+      snprintf(pg, sizeof(pg), "%d/%d", _emojiScroll + 1, emojiMaxScroll() + 1);
+      int pw = display.getTextWidth(pg);
+      display.setCursor(75 - pw / 2, fy + 2);
+      display.print(pg);
+
+      // Down arrow
+      if (_emojiScroll < emojiMaxScroll()) {
+        display.fillRect(90, fy + 1, 12, 12);
+        display.setColor(DisplayDriver::DARK);
+        display.setCursor(93, fy + 2);
+        display.print("v");
+        display.setColor(DisplayDriver::LIGHT);
+      }
+    }
+  }
+
+  bool handleEmojiTap(int vx, int vy) {
+    int fy = EMJ_GRID_Y + EMJ_VIS_ROWS * EMJ_CELL + 2;
+
+    // Footer area
+    if (vy >= fy) {
+      if (vx >= 4 && vx < 34) {
+        // Back button
+        _emojiMode = false;
+        return true;
+      }
+      if (vx >= 50 && vx < 62 && _emojiScroll > 0) {
+        _emojiScroll--;
+        return true;
+      }
+      if (vx >= 90 && vx < 102 && _emojiScroll < emojiMaxScroll()) {
+        _emojiScroll++;
+        return true;
+      }
+      return true;  // Consume tap in footer
+    }
+
+    // Grid area
+    if (vy >= EMJ_GRID_Y && vy < EMJ_GRID_Y + EMJ_VIS_ROWS * EMJ_CELL) {
+      int col = (vx - EMJ_GRID_X) / EMJ_CELL;
+      int vr = (vy - EMJ_GRID_Y) / EMJ_CELL;
+      if (col < 0 || col >= EMJ_COLS || vr < 0 || vr >= EMJ_VIS_ROWS) return true;
+
+      int idx = (_emojiScroll + vr) * EMJ_COLS + col;
+      if (idx >= 0 && idx < EMOJI_COUNT) {
+        insertEmoji(idx);
+        _emojiMode = false;
+      }
+      return true;
+    }
+
+    return true;  // Consume any tap while in emoji mode
+  }
+
+  void insertEmoji(int idx) {
+    // Insert as UTF-8 directly (not escape bytes) so sent messages are valid
+    uint8_t utf8[8];
+    int len = emojiEncodeUtf8(EMOJI_CODEPOINTS[idx].cp, utf8);
+    if (EMOJI_CODEPOINTS[idx].cp2 != 0)
+      len += emojiEncodeUtf8(EMOJI_CODEPOINTS[idx].cp2, utf8 + len);
+    if (_textLen + len > _maxLen) return;
+    memcpy(_text + _textLen, utf8, len);
+    _textLen += len;
+    _text[_textLen] = '\0';
+  }
+
+  // Render text field with inline emoji sprites (10×10)
+  void renderTextField(DisplayDriver& display) {
+    // Convert UTF-8 emoji to escape bytes for sprite lookup
+    char sanitized[MAX_TEXT + 1];
+    emojiSanitize(_text, sanitized, sizeof(sanitized));
+
+    int x = 2;
+    int maxX = 124;
+    display.setColor(DisplayDriver::LIGHT);
+    display.setTextSize(0);
+
+    for (int i = 0; sanitized[i] && x < maxX; i++) {
+      uint8_t b = (uint8_t)sanitized[i];
+      if (b == EMOJI_PAD_BYTE) continue;
+
+      if (isEmojiEscape(b)) {
+        const uint8_t* sprite = getEmojiSpriteSm(b);
+        if (sprite && x + EMOJI_SM_W < maxX) {
+          display.drawXbm(x, 14, sprite, EMOJI_SM_W, EMOJI_SM_H);
+          x += EMOJI_SM_W + 1;
+        }
+      } else {
+        char ch[2] = { (char)b, '\0' };
+        display.setCursor(x, 12);
+        display.print(ch);
+        x += display.getTextWidth(ch);
+      }
+    }
+
+    // Blinking cursor
+    if (x < maxX) {
+      display.setCursor(x, 12);
+      display.print("_");
+    }
+  }
 
   // Layout constants (virtual coords)
   static const int KEY_W = 11;
@@ -261,7 +430,7 @@ private:
   static const int KEY_START_Y = 34;
 
   // Key layouts — rows 0-2 as char arrays
-  // Special: ^ = shift, < = backspace, # = symbols, > = enter, ~ = space
+  // Special: ^ = shift, < = backspace, \x01 = sym toggle, \x02 = emoji, > = enter, ~ = space
   const char* const* getLayout() const {
     static const char* const lower[3] = { "qwertyuiop", "asdfghjkl", "^zxcvbnm<" };
     static const char* const upper[3] = { "QWERTYUIOP", "ASDFGHJKL", "^ZXCVBNM<" };
@@ -269,26 +438,22 @@ private:
     return _symbols ? syms : (_shifted ? upper : lower);
   }
 
-  // Row 4: variable-width keys [#/ABC] [,] [SPACE] [.] [Enter]
+  // Row 4: variable-width keys [#/ABC] [,] [$] [SPACE] [.] [Enter]
   // Defined by physical zones, not the char-array approach
   struct R4Key { int x; int w; char ch; const char* label; };
 
   void drawRow4(DisplayDriver& display, int y) {
-    // # or ABC toggle: x=4, w=20
-    // comma: x=26, w=11
-    // space: x=39, w=50
-    // period: x=91, w=11
-    // enter: x=104, w=20
     const R4Key keys[] = {
       { 4,  20, '\x01', _symbols ? "ABC" : "123" },
       { 26, 11, ',', "," },
-      { 39, 50, '~', "space" },
+      { 39, 11, '\x02', "$" },
+      { 52, 37, '~', "space" },
       { 91, 11, '.', "." },
       { 104, 20, '>', "Send" }
     };
 
-    for (int i = 0; i < 5; i++) {
-      bool special = (keys[i].ch == '\x01' || keys[i].ch == '>');
+    for (int i = 0; i < 6; i++) {
+      bool special = (keys[i].ch == '\x01' || keys[i].ch == '>' || keys[i].ch == '\x02');
       if (special) {
         display.setColor(DisplayDriver::LIGHT);
         display.fillRect(keys[i].x, y + 1, keys[i].w, KEY_H - 1);
@@ -312,11 +477,12 @@ private:
     const R4Key keys[] = {
       { 4,  20, '\x01', nullptr },
       { 26, 11, ',', nullptr },
-      { 39, 50, '~', nullptr },
+      { 39, 11, '\x02', nullptr },
+      { 52, 37, '~', nullptr },
       { 91, 11, '.', nullptr },
       { 104, 20, '>', nullptr }
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 6; i++) {
       if (vx >= keys[i].x && vx < keys[i].x + keys[i].w) {
         processKey(keys[i].ch);
         return true;
@@ -334,10 +500,17 @@ private:
       // Symbol/letter toggle
       _symbols = !_symbols;
       _shifted = false;
+    } else if (ch == '\x02') {
+      // Emoji picker toggle
+      _emojiMode = !_emojiMode;
+      _emojiScroll = 0;
     } else if (ch == '<') {
-      // Backspace
+      // Backspace — UTF-8 aware (walk back past continuation bytes 10xxxxxx)
       if (_textLen > 0) {
         _textLen--;
+        while (_textLen > 0 && ((uint8_t)_text[_textLen] & 0xC0) == 0x80) {
+          _textLen--;
+        }
         _text[_textLen] = '\0';
       }
     } else if (ch == '>') {

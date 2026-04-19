@@ -40,12 +40,22 @@ struct NodePrefs {  // persisted to file
   uint8_t auto_lock_minutes;      // 0=disabled, 2/5/10/15/30=auto-lock after idle
   uint8_t hint_shown;             // 0=show nav hint on boot, 1=already shown (dismiss permanently)
   uint8_t large_font;             // 0=tiny (built-in 6x8), 1=larger (FreeSans9pt) — T-Deck Pro only
+  uint8_t ui_font_style;          // 0=Classic (FreeSans), 1=Noto Sans, 2=Montserrat
   uint8_t tx_fail_reset_threshold;  // 0=disabled, 1-10, default 3
   uint8_t rx_fail_reboot_threshold; // 0=disabled, 1-10, default 3
 
+  // --- Region scope (MeshCore v1.15+ compatibility) ---
+  // Device-wide default region for flood messages.
+  // Empty default_scope_name = unscoped (legacy flood, reaches all repeaters).
+  // When set, all flood sends use ROUTE_TYPE_TRANSPORT_FLOOD with transport
+  // codes derived from this key.  Per-channel scope (in ChannelDetails) takes
+  // priority when set.
+  char default_scope_name[31];     // e.g. "au-nsw", empty = unscoped
+  uint8_t default_scope_key[16];   // TransportKey derived from "#" + name
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
-  // T-Deck Pro: 0 = built-in 6×8, 1 = FreeSans9pt.
+  // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.
   // T5S3: both 0 and 1 are 12pt fonts (regular vs bold) with identical line
   //        height, so large_font has no layout effect there.
   inline uint8_t smallTextSize() const {
@@ -54,6 +64,8 @@ struct NodePrefs {  // persisted to file
 
   // Returns the virtual-coordinate line height matching smallTextSize().
   // T-Deck Pro size 0 → 9 (6×8 + 1px gap), size 1 → 11 (9pt ascent+descent).
+  // With custom fonts (Noto 7pt, Montserrat 7pt), size 0 is slightly taller
+  // than built-in 6×8 but fits within the 9-unit virtual grid.
   // T5S3 size 0/1 → same 12pt height → always 9 in virtual coords.
   inline int smallLineH() const {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -66,13 +78,16 @@ struct NodePrefs {  // persisted to file
   // Returns the Y offset for selection highlight fillRect (T-Deck Pro only).
   // Size 0 (built-in font): cursor positions at top-left, +5 offset in
   //   setCursor places text below → fillRect at y+5 aligns with text.
-  // Size 1 (FreeSans9pt): cursor positions at baseline, ascenders render
+  // Size 0 (custom 7pt fonts): baseline fonts, same behaviour as size 1.
+  // Size 1 (9pt): cursor positions at baseline, ascenders render
   //   upward → fillRect must start above baseline to cover ascenders.
   // T5S3: always 0 (both sizes use baseline fonts with highlight at y).
   inline int smallHighlightOff() const {
 #if defined(LilyGo_T5S3_EPaper_Pro)
     return 0;
 #else
+    // Custom 7pt fonts at textSize 0 use GFXfont (baseline rendering), not built-in
+    if (ui_font_style > 0 && !large_font) return -2;
     return large_font ? -2 : 5;
 #endif
   }
