@@ -25,6 +25,14 @@ bool GxEPDDisplay::begin() {
   // Tell GxEPD2 to use our SPI instance
   // Using slower speed (4MHz) for reliable e-ink communication
   display.epd2.selectSPI(displaySpi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+#elif defined(NRF52_PLATFORM)
+  // nRF52 (Meshpocket et al): LoRa sits on the default SPI bus (PIN_SPI_MISO/
+  // MOSI/SCK), e-ink sits on SPI1 (MISO/MOSI/SCK globals set by the variant's
+  // variant.cpp). GxEPD2's default _pSPIx=&SPI would send display traffic to
+  // the LoRa bus — hand the e-ink its own bus explicitly. This matches
+  // upstream MeshCore's approach (which uses SPI1 universally).
+  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+  SPI1.begin();
 #endif
 
   // Initialize with:

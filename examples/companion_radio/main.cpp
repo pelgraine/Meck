@@ -1663,10 +1663,29 @@ void halt() {
 
 void setup() {
   Serial.begin(115200);
-  delay(100);  // Give serial time to initialize
+#ifdef NRF52_PLATFORM
+  // nRF52 USB Serial (TinyUSB) needs to enumerate before the host sees prints.
+  // Wait up to 3s for a serial connection; without this, early setup() prints
+  // are silently dropped. Skip the wait entirely if nothing ever connects
+  // (running off battery with no USB).
+  uint32_t t0 = millis();
+  while (!Serial && (millis() - t0) < 3000) { delay(10); }
+#else
+  delay(100);  // Give serial time to initialize (ESP32: CDC is already up)
+#endif
+
+  // Unconditional entry marker — tells us setup() is running and Serial works
+  Serial.println("[DIAG] setup() entered");
+#ifdef DISPLAY_CLASS
+  Serial.println("[DIAG] DISPLAY_CLASS is defined at compile time");
+#else
+  Serial.println("[DIAG] DISPLAY_CLASS NOT defined at compile time!");
+#endif
+
   MESH_DEBUG_PRINTLN("=== setup() - STARTING ===");
 
   board.begin();
+  Serial.println("[DIAG] board.begin() returned");
   MESH_DEBUG_PRINTLN("setup() - board.begin() done");
 
 #ifdef DISPLAY_CLASS

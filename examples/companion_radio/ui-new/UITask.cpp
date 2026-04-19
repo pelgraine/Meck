@@ -345,7 +345,10 @@ public:
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 #endif
 
-    // centered clock — only show when time is valid
+    // centered clock — only show when time is valid.
+    // Skipped on Meshpocket: no RTC hardware means time is unreliable between
+    // BLE sync events and wrong after any power cycle.
+#ifndef HELTEC_MESH_POCKET
     {
       uint32_t now = _rtc->getCurrentTime();
       if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
@@ -371,6 +374,7 @@ public:
         display.setTextSize(1);  // restore
       }
     }
+#endif
     // curr page indicator
 #if defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
@@ -483,8 +487,20 @@ public:
       }
       display.setTextSize(1);
 
+#elif defined(HELTEC_MESH_POCKET)
+      // ----- Heltec Meshpocket: single USER button, no keyboard shortcuts -----
+      // MSG/Pin/Connected already drawn above (lines ~400-432). Add a nav hint
+      // at y=72 (virtual coords) — matches other pages on this panel. Note:
+      // with EINK_SCALE_Y=1.28 and EINK_Y_OFFSET=10 the usable virtual Y range
+      // is ~0-85, so display.height()-12 overshoots the physical screen.
+      display.setColor(DisplayDriver::GREEN);
+      display.setTextSize(_node_prefs->smallTextSize());
+      display.drawTextCentered(display.width() / 2, 72,
+        "Click: next  Hold: action");
+      display.setTextSize(1);
+
 #else
-      // ----- T-Deck Pro: Keyboard shortcut text menu -----
+      // ----- T-Deck Pro / Heltec V4 / other keyboard variants -----
       display.setColor(DisplayDriver::LIGHT);
       display.setTextSize(_node_prefs->smallTextSize());
       int menuLH = _node_prefs->smallLineH();
@@ -1324,6 +1340,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
 #ifdef MORSE_COMPOSE_ENABLED
   morse_screen = new MorseScreen(&rtc_clock);
+  Serial.printf("[UI] MorseScreen allocated at %p\n", morse_screen);
+#else
+  Serial.println("[UI] MORSE_COMPOSE_ENABLED not defined — triple-click disabled");
 #endif
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2198,6 +2217,7 @@ char UITask::handleDoubleClick(char c) {
 }
 
 char UITask::handleTripleClick(char c) {
+  Serial.println("[UI] triple click event received");
   MESH_DEBUG_PRINTLN("UITask: triple click triggered");
   checkDisplayOn(c);
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2213,13 +2233,18 @@ char UITask::handleTripleClick(char c) {
   // Triple-click from home screen → enter Morse compose mode.
   // From any other screen, fall through to the existing buzzer toggle (no-op
   // on Meshpocket but kept for other single-button variants).
+  Serial.printf("[UI] triple click: morse_screen=%p curr=%p home=%p\n",
+                morse_screen, curr, home);
   if (morse_screen != nullptr && curr == home) {
+    Serial.println("[UI] triple click: activating MorseScreen");
     morse_screen->activate();
     setCurrScreen(morse_screen);
   } else {
+    Serial.println("[UI] triple click: conditions not met, falling back to buzzer toggle");
     toggleBuzzer();
   }
 #else
+  Serial.println("[UI] triple click: MORSE_COMPOSE_ENABLED not defined");
   toggleBuzzer();
 #endif
 #endif

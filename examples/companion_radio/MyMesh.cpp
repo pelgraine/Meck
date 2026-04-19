@@ -1313,13 +1313,22 @@ void MyMesh::begin(bool has_display) {
   BaseChatMesh::begin();
 
   if (!_store->loadMainIdentity(self_id)) {
+    Serial.println("[ID] loadMainIdentity FAILED — generating new identity");
     self_id = radio_new_identity(); // create new random identity
     int count = 0;
     while (count < 10 && (self_id.pub_key[0] == 0x00 || self_id.pub_key[0] == 0xFF)) { // reserved id hashes
       self_id = radio_new_identity();
       count++;
     }
-    _store->saveMainIdentity(self_id);
+    bool ok = _store->saveMainIdentity(self_id);
+    Serial.printf("[ID] saveMainIdentity returned %d\n", ok ? 1 : 0);
+  } else {
+    Serial.println("[ID] loadMainIdentity OK — using persisted identity");
+  }
+  {
+    char hex[10];
+    mesh::Utils::toHex(hex, self_id.pub_key, 4);
+    Serial.printf("[ID] pub_key[0..3] = %s\n", hex);
   }
 
 // if name is provided as a build flag, use that as default node name instead
@@ -1418,6 +1427,7 @@ void MyMesh::startInterface(BaseSerialInterface &serial) {
 }
 
 void MyMesh::handleCmdFrame(size_t len) {
+  Serial.printf("[CMD] rx opcode=0x%02X len=%d\n", cmd_frame[0], (int)len);
   if (cmd_frame[0] == CMD_DEVICE_QEURY && len >= 2) { // sent when app establishes connection
     app_target_ver = cmd_frame[1];                    // which version of protocol does app understand
 
@@ -1720,12 +1730,19 @@ void MyMesh::handleCmdFrame(size_t len) {
       }
     }
   } else if (cmd_frame[0] == CMD_IMPORT_CONTACT && len > 2 + 32 + 64) {
+    Serial.printf("[IMP] CMD_IMPORT_CONTACT received, len=%d\n", len);
     if (importContact(&cmd_frame[1], len - 1)) {
+      Serial.println("[IMP] importContact OK, scheduling dirty flush");
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
       writeOKFrame();
     } else {
+      Serial.println("[IMP] importContact REJECTED by BaseChatMesh");
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     }
+  } else if (cmd_frame[0] == CMD_IMPORT_CONTACT) {
+    Serial.printf("[IMP] CMD_IMPORT_CONTACT dropped — len=%d too short (need >%d)\n",
+                  len, 2 + 32 + 64);
+    writeErrFrame(ERR_CODE_ILLEGAL_ARG);
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
     int out_len;
     if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
@@ -1862,23 +1879,29 @@ void MyMesh::handleCmdFrame(size_t len) {
     writeDisabledFrame();
 #endif
   } else if (cmd_frame[0] == CMD_IMPORT_PRIVATE_KEY && len >= 65) {
+    Serial.printf("[PK] CMD_IMPORT_PRIVATE_KEY received, len=%d\n", (int)len);
 #if ENABLE_PRIVATE_KEY_IMPORT
     if (!mesh::LocalIdentity::validatePrivateKey(&cmd_frame[1])) {
+        Serial.println("[PK] validatePrivateKey FAILED — key bytes rejected");
         writeErrFrame(ERR_CODE_ILLEGAL_ARG); // invalid key
     } else {
+        Serial.println("[PK] validatePrivateKey OK — attempting save");
         mesh::LocalIdentity identity;
         identity.readFrom(&cmd_frame[1], 64);
         if (_store->saveMainIdentity(identity)) {
+          Serial.println("[PK] saveMainIdentity OK");
           self_id = identity;
           writeOKFrame();
           // re-load contacts, to invalidate ecdh shared_secrets
           resetContacts();
           _store->loadContacts(this);
         } else {
+          Serial.println("[PK] saveMainIdentity FAILED");
           writeErrFrame(ERR_CODE_FILE_IO_ERROR);
         }
     }
 #else
+    Serial.println("[PK] ENABLE_PRIVATE_KEY_IMPORT not defined — responding DISABLED");
     writeDisabledFrame();
 #endif
   } else if (cmd_frame[0] == CMD_SEND_RAW_DATA && len >= 6) {
@@ -2073,17 +2096,21 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_NOT_FOUND);
     }
   } else if (cmd_frame[0] == CMD_SET_CHANNEL && len >= 2 + 32 + 32) {
+    Serial.printf("[CH] CMD_SET_CHANNEL 256-bit secret not supported (len=%d)\n", len);
     writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); // not supported (yet)
   } else if (cmd_frame[0] == CMD_SET_CHANNEL && len >= 2 + 32 + 16) {
     uint8_t channel_idx = cmd_frame[1];
+    Serial.printf("[CH] CMD_SET_CHANNEL idx=%d len=%d\n", channel_idx, len);
     ChannelDetails channel;
     StrHelper::strncpy(channel.name, (char *)&cmd_frame[2], 32);
     memset(channel.channel.secret, 0, sizeof(channel.channel.secret));
     memcpy(channel.channel.secret, &cmd_frame[2 + 32], 16); // NOTE: only 128-bit supported
     if (setChannel(channel_idx, channel)) {
+      Serial.println("[CH] setChannel OK, calling saveChannels");
       saveChannels();
       writeOKFrame();
     } else {
+      Serial.printf("[CH] setChannel REJECTED (bad idx=%d)\n", channel_idx);
       writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
     }
   } else if (cmd_frame[0] == CMD_SIGN_START) {
@@ -2313,6 +2340,8 @@ void MyMesh::handleCmdFrame(size_t len) {
     _serial->writeFrame(out_frame, i);
   } else {
     writeErrFrame(ERR_CODE_UNSUPPORTED_CMD);
+    Serial.printf("[CMD] UNKNOWN opcode=0x%02X len=%d — responded UNSUPPORTED\n",
+                  cmd_frame[0], (int)len);
     MESH_DEBUG_PRINTLN("ERROR: unknown command: %02X", cmd_frame[0]);
   }
 }
@@ -3205,18 +3234,32 @@ void MyMesh::loop() {
     if (_deferSaves) {
       // Voice session receiving — push save forward to avoid SPI contention
       dirty_contacts_expiry = futureMillis(2000);
-    } else if (!_store->isSaveInProgress()) {
-      _store->beginSaveContacts(this);
+    } else {
+#ifdef HELTEC_MESH_POCKET
+      // Meshpocket: use upstream-style synchronous save. Max 500 contacts =
+      // ~74KB, finishes in well under a second on InternalFS. Avoids the
+      // chunked trio's File* lifetime pitfalls entirely.
+      Serial.println("[DS] saveContacts (synchronous) triggered by dirty flag");
+      _store->saveContacts(this);
       dirty_contacts_expiry = 0;
+#else
+      if (!_store->isSaveInProgress()) {
+        _store->beginSaveContacts(this);
+        dirty_contacts_expiry = 0;
+      }
+#endif
     }
   }
 
-  // Drive chunked contact save — write a batch each loop iteration
+#ifndef HELTEC_MESH_POCKET
+  // Drive chunked contact save — write a batch each loop iteration.
+  // Only used for non-Meshpocket builds (ESP32 PSRAM heavyweight).
   if (_store->isSaveInProgress() && !_deferSaves) {
     if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
       _store->finishSaveContacts();  // Done or error — verify and commit
     }
   }
+#endif
 
   // Discovery scan timeout
   if (_discoveryActive && millisHasNowPassed(_discoveryTimeout)) {
