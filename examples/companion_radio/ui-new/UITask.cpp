@@ -1,7 +1,9 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
+#if !defined(LILYGO_TECHO_LITE)
 #include "NotesScreen.h"
+#endif
 #include "RepeaterAdminScreen.h"
 #include "PathEditorScreen.h"
 #include "DiscoveryScreen.h"
@@ -56,7 +58,9 @@
 #include "ChannelScreen.h"
 #include "ChannelPickerScreen.h"
 #include "ContactsScreen.h"
+#if !defined(LILYGO_TECHO_LITE)
 #include "TextReaderScreen.h"
+#endif
 #include "SettingsScreen.h"
 #ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
@@ -1300,8 +1304,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
+#if !defined(LILYGO_TECHO_LITE)
   text_reader = new TextReaderScreen(this, node_prefs);
   notes_screen = new NotesScreen(this, node_prefs);
+#else
+  text_reader = nullptr;   // T-Echo Lite: excluded to save RAM (256KB nRF52)
+  notes_screen = nullptr;
+#endif
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
@@ -1678,6 +1687,7 @@ void UITask::loop() {
       c = checkDisplayOn(KEY_NEXT);
     } else {
       // Navigate back: reader reading→file list, file list→home, others→home
+#if !defined(LILYGO_TECHO_LITE)
       if (isOnTextReader()) {
         TextReaderScreen* reader = (TextReaderScreen*)text_reader;
         if (reader && reader->isReading()) {
@@ -1695,7 +1705,9 @@ void UITask::loop() {
           gotoHomeScreen();
         }
         c = 0;
-      } else if (isOnChannelPickerScreen()) {
+      } else
+#endif
+      if (isOnChannelPickerScreen()) {
         gotoHomeScreen();  // picker → home
         c = 0;
       } else if (isOnChannelScreen()) {
@@ -2336,12 +2348,14 @@ void UITask::onVKBSubmit() {
       break;
     }
     case VKB_NOTES: {
+#if !defined(LILYGO_TECHO_LITE)
       NotesScreen* notes = (NotesScreen*)getNotesScreen();
       if (notes && strlen(text) > 0) {
         for (int i = 0; text[i]; i++) {
           notes->handleInput(text[i]);
         }
       }
+#endif
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
@@ -2403,6 +2417,7 @@ void UITask::onVKBSubmit() {
     }
 #endif
     case VKB_TEXT_PAGE: {
+#if !defined(LILYGO_TECHO_LITE)
       if (strlen(text) > 0) {
         int pageNum = atoi(text);
         TextReaderScreen* reader = (TextReaderScreen*)getTextReaderScreen();
@@ -2410,6 +2425,7 @@ void UITask::onVKBSubmit() {
           reader->gotoPage(pageNum);
         }
       }
+#endif
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
@@ -2622,6 +2638,8 @@ void UITask::gotoContactsScreen() {
 }
 
 void UITask::gotoTextReader() {
+  if (!text_reader) return;  // Not available on this platform
+#if !defined(LILYGO_TECHO_LITE)
   TextReaderScreen* reader = (TextReaderScreen*)text_reader;
   if (_display != NULL) {
     reader->enter(*_display);
@@ -2632,9 +2650,12 @@ void UITask::gotoTextReader() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 
 void UITask::gotoNotesScreen() {
+  if (!notes_screen) return;  // Not available on this platform
+#if !defined(LILYGO_TECHO_LITE)
   NotesScreen* notes = (NotesScreen*)notes_screen;
   if (_display != NULL) {
     notes->enter(*_display);
@@ -2649,6 +2670,7 @@ void UITask::gotoNotesScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 
 void UITask::gotoSettingsScreen() {

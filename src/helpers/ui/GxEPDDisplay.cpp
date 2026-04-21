@@ -25,6 +25,10 @@ bool GxEPDDisplay::begin() {
   // Tell GxEPD2 to use our SPI instance
   // Using slower speed (4MHz) for reliable e-ink communication
   display.epd2.selectSPI(displaySpi, SPISettings(4000000, MSBFIRST, SPI_MODE0));
+#elif defined(LILYGO_TECHO)
+  // T-Echo Lite: display on SPI1 (pins 19/20), LoRa on SPI (pins 13/15/17)
+  SPI1.begin();
+  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
 #endif
 
   // Initialize with:
@@ -35,10 +39,15 @@ bool GxEPDDisplay::begin() {
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);
   setTextSize(1);  // Default to size 1
+#ifdef EINK_FULL_REFRESH_ONLY
+  display.setFullWindow();
+  display.fillScreen(GxEPD_WHITE);
+  display.display(false);  // Full refresh (SSD1681 doesn't support partial)
+#else
   display.setPartialWindow(0, 0, display.width(), display.height());
-
   display.fillScreen(GxEPD_WHITE);
   display.display(true);
+#endif
   
   #if DISP_BACKLIGHT
   digitalWrite(DISP_BACKLIGHT, LOW);
@@ -238,7 +247,11 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
-    display.display(true);  // Partial refresh
+#ifdef EINK_FULL_REFRESH_ONLY
+    display.display(false);  // Full refresh (SSD1681 doesn't support partial)
+#else
+    display.display(true);   // Partial refresh
+#endif
     last_display_crc_value = crc;
   }
 }

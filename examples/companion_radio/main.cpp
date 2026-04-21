@@ -1,8 +1,8 @@
 #include <Arduino.h>   // needed for PlatformIO
-#ifdef BLE_PIN_CODE
+#if defined(ESP32) && defined(BLE_PIN_CODE)
   #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
 #endif
-#ifdef MECK_OTA_UPDATE
+#if defined(ESP32) && defined(MECK_OTA_UPDATE)
   #include <esp_ota_ops.h>
 #endif
 #include <Mesh.h>
@@ -890,10 +890,36 @@
   }
 #endif
 
+// --- T-Echo Lite: CardKB keyboard, GxEPD2 e-ink, no touch ---
+#if defined(LILYGO_TECHO_LITE)
+  #include "ContactsScreen.h"
+  #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
+  #include "SettingsScreen.h"
+  #include "RepeaterAdminScreen.h"
+  #include "DiscoveryScreen.h"
+  #include "LastHeardScreen.h"
+  #include "PathEditorScreen.h"
+
+  #ifdef MECK_CARDKB
+    #include "CardKBKeyboard.h"
+    static CardKBKeyboard cardkb;
+    static unsigned long lastCardKBProbe = 0;
+    #define CARDKB_PROBE_INTERVAL_MS 5000
+  #endif
+#endif
+
 // Board-agnostic: CPU frequency scaling and AGC reset
 CPUPowerManager cpuPower;
 #define AGC_RESET_INTERVAL_MS 500
 static unsigned long lastAGCReset = 0;
+
+// nRF52 RAM diagnostic
+extern "C" char *sbrk(int incr);
+static int dbg_free_ram() {
+    char top;
+    return &top - reinterpret_cast<char*>(sbrk(0));
+}
 
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
@@ -2089,9 +2115,11 @@ void setup() {
   #endif
 
   // Initialize CardKB external keyboard (if connected via QWIIC)
-  #if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+  #if defined(MECK_CARDKB)
     if (cardkb.begin()) {
+      #if defined(LilyGo_T5S3_EPaper_Pro)
       ui_task.setCardKBDetected(true);
+      #endif
       Serial.println("setup() - CardKB detected at 0x5F");
     } else {
       Serial.println("setup() - CardKB not detected (will re-probe)");
@@ -2317,8 +2345,10 @@ void setup() {
   the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
   #endif
 
-  Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
+#ifdef ESP32
+  Serial.printf("setup() complete - free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
@@ -2851,6 +2881,17 @@ void loop() {
   #endif
 #endif
   rtc_clock.tick();
+
+  // --- T-Echo Lite runtime diagnostic (remove after debugging) ---
+  {
+    static unsigned long lastDbg = 0;
+    if (millis() - lastDbg > 2000) {
+      Serial.printf("loop alive - free RAM: %d, screen: %s\n",
+          dbg_free_ram(),
+          ui_task.isOnHomeScreen() ? "home" : "other");
+      lastDbg = millis();
+    }
+  }
   // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused)
@@ -3130,12 +3171,12 @@ void loop() {
   #endif // MECK_TOUCH_ENABLED
 
   // ---------------------------------------------------------------------------
-  // CardKB external keyboard polling (T5S3 only, via QWIIC)
+  // CardKB external keyboard polling (via QWIIC)
   // When VKB is active: typed characters feed into the VKB text buffer.
   // When VKB is not active: navigation keys route through injectKey().
   // ESC key maps to 'q' (back) when no VKB is active.
   // ---------------------------------------------------------------------------
-#if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+#if defined(MECK_CARDKB)
   {
     // Hot-plug detection: re-probe periodically
     if (millis() - lastCardKBProbe >= CARDKB_PROBE_INTERVAL_MS) {
@@ -3143,7 +3184,9 @@ void loop() {
       bool wasDetected = cardkb.isDetected();
       bool nowDetected = cardkb.probe();
       if (nowDetected != wasDetected) {
+        #if defined(LilyGo_T5S3_EPaper_Pro)
         ui_task.setCardKBDetected(nowDetected);
+        #endif
         Serial.printf("[CardKB] %s\n", nowDetected ? "Connected" : "Disconnected");
       }
     }
@@ -3151,15 +3194,22 @@ void loop() {
     // Poll for keypress
     char ckb = cardkb.readKey();
     if (ckb != 0) {
-      // Block input while locked (same as touch)
+      // Block input while locked (T5S3 only — T-Echo Lite has no lock screen yet)
+      #if defined(LilyGo_T5S3_EPaper_Pro)
       if (!ui_task.isLocked()) {
+      #else
+      {
+      #endif
         cpuPower.setBoost();
         ui_task.keepAlive();
 
+        #if defined(LilyGo_T5S3_EPaper_Pro)
         if (ui_task.isVKBActive()) {
           // VKB is open — feed character into VKB text buffer
           ui_task.feedCardKBChar(ckb);
-        } else if (ui_task.isOnHomeScreen()) {
+        } else
+        #endif
+        if (ui_task.isOnHomeScreen()) {
           // Home screen: ESC does nothing special, letter shortcuts open tiles
           if (ckb == 0x1B) {
             // ESC on home — no-op (already home)
@@ -3167,8 +3217,10 @@ void loop() {
             switch (ckb) {
               case 'm': ui_task.gotoChannelPickerScreen(); break;
               case 'c': ui_task.gotoContactsScreen(); break;
+#if !defined(LILYGO_TECHO_LITE)
               case 'e': ui_task.gotoTextReader(); break;
               case 'n': ui_task.gotoNotesScreen(); break;
+#endif
               case 's': ui_task.gotoSettingsScreen(); break;
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
@@ -3187,6 +3239,7 @@ void loop() {
 
           // Notes editing/renaming: route ALL keys directly (no VKB).
           // This gives: Enter=newline, arrows=cursor, printable=insert, ESC=save&exit
+#if !defined(LILYGO_TECHO_LITE)
           if (ui_task.isOnNotesScreen()) {
             NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
             if (notesScr && (notesScr->isEditing() || notesScr->isRenaming())) {
@@ -3214,6 +3267,7 @@ void loop() {
               ui_task.forceRefresh();
             }
           }
+#endif
 
           if (!handled) {
             // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
@@ -3253,7 +3307,11 @@ void loop() {
                         if (the_mesh.getContactByIdx(j, ci) && strcmp(ci.name, dmName) == 0) {
                           char label[40];
                           snprintf(label, sizeof(label), "DM: %s", dmName);
+                          #if defined(LilyGo_T5S3_EPaper_Pro)
                           ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, j);
+                          #else
+                          ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                          #endif
                           ui_task.clearDMUnread(j);
                           break;
                         }
@@ -3266,7 +3324,11 @@ void loop() {
                   if (the_mesh.getChannel(chIdx, ch)) {
                     char label[40];
                     snprintf(label, sizeof(label), "To: %s", ch.name);
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                    #else
+                    ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                    #endif
                   }
                 }
               } else if (ui_task.isOnContactsScreen()) {
@@ -3290,7 +3352,11 @@ void loop() {
                       cs->getSelectedContactName(dname, sizeof(dname));
                       char label[40];
                       snprintf(label, sizeof(label), "DM: %s", dname);
+                      #if defined(LilyGo_T5S3_EPaper_Pro)
                       ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                      #else
+                      ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                      #endif
                     }
                   } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
                     ui_task.gotoRepeaterAdmin(idx);
@@ -3310,9 +3376,17 @@ void loop() {
                 if (admin) {
                   RepeaterAdminScreen::AdminState astate = admin->getState();
                   if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
+                    #else
+                    ui_task.injectKey('\r');
+                    #endif
                   } else {
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
+                    #else
+                    ui_task.injectKey('\r');
+                    #endif
                   }
                 }
               } else if (ui_task.isOnPathEditor()) {
