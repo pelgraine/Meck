@@ -19,13 +19,6 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
 
-// Meck custom font styles (Noto Sans, Montserrat) — only available in
-// companion radio builds which have -I examples/companion_radio/ui-new
-#if __has_include("MeckFonts.h")
-  #include "MeckFonts.h"
-  #define HAS_MECK_FONTS 1
-#endif
-
 // Inline CRC32 for frame change detection (replaces bakercp/CRC32
 // to avoid naming collision with PNGdec's bundled CRC32.h)
 class FrameCRC32 {
@@ -76,10 +69,18 @@ class GxEPDDisplay : public DisplayDriver {
   int last_display_crc_value = 0;
 
 public:
+// Virtual canvas dimensions — default 128×128 (MeshCore standard).
+// Override for displays where physical resolution / scale < 128.
+#ifndef EINK_VIRTUAL_W
+  #define EINK_VIRTUAL_W 128
+#endif
+#ifndef EINK_VIRTUAL_H
+  #define EINK_VIRTUAL_H 128
+#endif
 #if defined(EINK_DISPLAY_MODEL)
-  GxEPDDisplay() : DisplayDriver(128, 128), display(EINK_DISPLAY_MODEL(PIN_DISPLAY_CS, PIN_DISPLAY_DC, PIN_DISPLAY_RST, PIN_DISPLAY_BUSY)) {}
+  GxEPDDisplay() : DisplayDriver(EINK_VIRTUAL_W, EINK_VIRTUAL_H), display(EINK_DISPLAY_MODEL(PIN_DISPLAY_CS, PIN_DISPLAY_DC, PIN_DISPLAY_RST, PIN_DISPLAY_BUSY)) {}
 #else
-  GxEPDDisplay() : DisplayDriver(128, 128), display(GxEPD2_150_BN(DISP_CS, DISP_DC, DISP_RST, DISP_BUSY)) {}
+  GxEPDDisplay() : DisplayDriver(EINK_VIRTUAL_W, EINK_VIRTUAL_H), display(GxEPD2_150_BN(DISP_CS, DISP_DC, DISP_RST, DISP_BUSY)) {}
 #endif
 
   bool begin();

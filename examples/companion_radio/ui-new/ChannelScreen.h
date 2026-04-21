@@ -732,6 +732,12 @@ public:
       const char* rtInbox = "Hold:Open";
       display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
       display.print(rtInbox);
+#elif defined(LILYGO_TECHO_LITE)
+      display.setCursor(0, footerY);
+      display.print("Q:Bk");
+      const char* rtInbox = "Ent:Open";
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
       display.print("Q:Bck A/D:Ch");
@@ -968,6 +974,10 @@ public:
         display.print("Swipe: Switch channel");
         display.setCursor(0, 40);
         display.print("Long press: Compose");
+#elif defined(LILYGO_TECHO_LITE)
+        display.print("Arrows: Switch channel");
+        display.setCursor(0, 40);
+        display.print("Ent: Compose message");
 #else
         display.print("A/D: Switch channel");
         display.setCursor(0, 40);
@@ -1399,6 +1409,19 @@ public:
       const char* rtCh = "Hold:Compose";
       display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
       display.print(rtCh);
+    }
+#elif defined(LILYGO_TECHO_LITE)
+    // T-Echo Lite: minimal footer for narrow display
+    if (_viewChannelIdx == 0xFF) {
+      display.print("Q:Bk");
+      const char* rightText = "Ent:Reply";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
+    } else {
+      display.print("Q:Bk");
+      const char* rightText = "Ent:New";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
     }
 #else
     // Left side: abbreviated controls

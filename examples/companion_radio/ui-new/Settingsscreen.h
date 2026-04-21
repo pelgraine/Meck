@@ -402,12 +402,16 @@ private:
       addRow(ROW_TX_POWER);
       addRow(ROW_UTC_OFFSET);
       addRow(ROW_MSG_NOTIFY);
+#if HAS_GPS
       addRow(ROW_GPS_BAUD);
+#endif
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DEFAULT_SCOPE);
       addRow(ROW_DARK_MODE);
+#if !defined(LILYGO_TECHO_LITE)
       addRow(ROW_LARGE_FONT);
       addRow(ROW_FONT_STYLE);
+#endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
 #endif
@@ -2404,8 +2408,22 @@ public:
     } else {
       display.print("Editing...");
     }
-#else
+#elif defined(LILYGO_TECHO_LITE)
     if (_editMode == EDIT_TEXT) {
+      display.print("Ent:Ok Q:Cancel");
+    } else if (_editMode == EDIT_PICKER) {
+      display.print("A/D:Pick Ent:Ok");
+    } else if (_editMode == EDIT_NUMBER) {
+      display.print("W/S:Adj Ent:Ok");
+    } else if (_editMode == EDIT_CONFIRM) {
+      // overlay handles it
+    } else {
+      display.print("Q:Bk");
+      const char* r = "Ent:Edit";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
+    }
+#else
       display.print("Type, Enter:Ok Q:Cancel");
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {

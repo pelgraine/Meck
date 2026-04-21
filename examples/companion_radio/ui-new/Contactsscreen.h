@@ -466,6 +466,16 @@ public:
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
     }
+#elif defined(LILYGO_TECHO_LITE)
+    display.setCursor(0, footerY);
+    if (_selectMode) {
+      display.print("Q:Done");
+    } else {
+      display.print("Q:Bk");
+      const char* right = "Ent:Sel";
+      display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
+      display.print(right);
+    }
 #else
     display.setCursor(0, footerY);
     if (_selectMode) {

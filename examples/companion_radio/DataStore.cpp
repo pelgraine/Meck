@@ -9,8 +9,7 @@
 
 DataStore::DataStore(FILESYSTEM& fs, mesh::RTCClock& clock) : _fs(&fs), _fsExtra(nullptr), _clock(&clock),
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
-    identity_store(fs, ""),
-    _saveFile(fs)
+    identity_store(fs, "")
 #elif defined(RP2040_PLATFORM)
     identity_store(fs, "/identity")
 #else
@@ -22,8 +21,7 @@ DataStore::DataStore(FILESYSTEM& fs, mesh::RTCClock& clock) : _fs(&fs), _fsExtra
 #if defined(EXTRAFS) || defined(QSPIFLASH)
 DataStore::DataStore(FILESYSTEM& fs, FILESYSTEM& fsExtra, mesh::RTCClock& clock) : _fs(&fs), _fsExtra(&fsExtra), _clock(&clock),
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
-    identity_store(fs, ""),
-    _saveFile(fs)
+    identity_store(fs, "")
 #elif defined(RP2040_PLATFORM)
     identity_store(fs, "/identity")
 #else
@@ -276,9 +274,6 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font)) != sizeof(_prefs.large_font)) {
       _prefs.large_font = 0;  // default: tiny font
     }
-    if (file.read((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style)) != sizeof(_prefs.ui_font_style)) {
-      _prefs.ui_font_style = 0;  // default: Classic (FreeSans)
-    }
     if (file.read((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)) != sizeof(_prefs.tx_fail_reset_threshold)) {
       _prefs.tx_fail_reset_threshold = 3;  // default: 3
     }
@@ -286,20 +281,11 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
       _prefs.rx_fail_reboot_threshold = 3;  // default: 3
     }
 
-    // v1.7+ Meck region scope fields — may not exist in older prefs files
-    if (file.read((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name)) != sizeof(_prefs.default_scope_name)) {
-      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));  // default: unscoped
-    }
-    if (file.read((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key)) != sizeof(_prefs.default_scope_key)) {
-      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));  // default: null key
-    }
-
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
     if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
     if (_prefs.hint_shown > 1) _prefs.hint_shown = 0;
     if (_prefs.large_font > 1) _prefs.large_font = 0;
-    if (_prefs.ui_font_style >= 3) _prefs.ui_font_style = 0;
     if (_prefs.tx_fail_reset_threshold > 10) _prefs.tx_fail_reset_threshold = 3;
     if (_prefs.rx_fail_reboot_threshold > 10) _prefs.rx_fail_reboot_threshold = 3;
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
@@ -356,11 +342,8 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.auto_lock_minutes, sizeof(_prefs.auto_lock_minutes)); // 100
     file.write((uint8_t *)&_prefs.hint_shown, sizeof(_prefs.hint_shown));               // 101
     file.write((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font));               // 102
-    file.write((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style));        // 103
-    file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 104
-    file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 105
-    file.write((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name));             // 106
-    file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));               // 137
+    file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 103
+    file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 104
 
     file.close();
   }
@@ -447,10 +430,42 @@ void DataStore::loadContacts(DataStoreHost* host) {
 
 void DataStore::saveContacts(DataStoreHost* host) {
   FILESYSTEM* fs = _getContactsChannelsFS();
+
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  // nRF52/STM32: direct write (no tmp+rename — InternalFS doesn't need atomic pattern)
+  File file = openWrite(fs, "/contacts3");
+  if (file) {
+    uint32_t idx = 0;
+    ContactInfo c;
+    uint8_t unused = 0;
+    uint32_t recordsWritten = 0;
+
+    while (host->getContactForSave(idx, c)) {
+      bool success = (file.write(c.id.pub_key, 32) == 32);
+      success = success && (file.write((uint8_t *)&c.name, 32) == 32);
+      success = success && (file.write(&c.type, 1) == 1);
+      success = success && (file.write(&c.flags, 1) == 1);
+      success = success && (file.write(&unused, 1) == 1);
+      success = success && (file.write((uint8_t *)&c.sync_since, 4) == 4);
+      success = success && (file.write((uint8_t *)&c.out_path_len, 1) == 1);
+      success = success && (file.write((uint8_t *)&c.last_advert_timestamp, 4) == 4);
+      success = success && (file.write(c.out_path, 64) == 64);
+      success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
+      success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
+      success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
+
+      if (!success) break;
+      recordsWritten++;
+      idx++;
+    }
+    file.close();
+    Serial.printf("DataStore: saved %d contacts\n", recordsWritten);
+  }
+#else
+  // ESP32: atomic tmp+rename pattern (protects against SD card corruption on power loss)
   const char* finalPath = "/contacts3";
   const char* tmpPath   = "/contacts3.tmp";
 
-  // --- Step 1: Write all contacts to a temporary file ---
   File file = openWrite(fs, tmpPath);
   if (!file) {
     Serial.println("DataStore: saveContacts FAILED — cannot open tmp file");
@@ -489,9 +504,8 @@ void DataStore::saveContacts(DataStoreHost* host) {
 
   file.close();
 
-  // --- Step 2: Verify the write completed ---
-  // Reopen read-only to get true on-disk size (SPIFFS file.size() is unreliable before close)
-  size_t expectedBytes = recordsWritten * 152;  // 152 bytes per contact record
+  // Verify the write completed
+  size_t expectedBytes = recordsWritten * 152;
   File verify = openRead(fs, tmpPath);
   size_t bytesWritten = verify ? verify.size() : 0;
   if (verify) verify.close();
@@ -499,23 +513,25 @@ void DataStore::saveContacts(DataStoreHost* host) {
   if (!writeOk || bytesWritten != expectedBytes) {
     Serial.printf("DataStore: saveContacts ABORTED — wrote %d bytes, expected %d (%d records)\n",
                   (int)bytesWritten, (int)expectedBytes, recordsWritten);
-    fs->remove(tmpPath);  // Clean up failed tmp file
-    return;  // Original /contacts3 is untouched
+    fs->remove(tmpPath);
+    return;
   }
 
-  // --- Step 3: Replace original with verified temp file ---
+  // Replace original with verified temp file
   fs->remove(finalPath);
   if (fs->rename(tmpPath, finalPath)) {
     Serial.printf("DataStore: saved %d contacts (%d bytes)\n", recordsWritten, (int)bytesWritten);
   } else {
-    // Rename failed — tmp file still has the good data
     Serial.println("DataStore: rename failed, tmp file preserved");
   }
+#endif
 }
 
 // =========================================================================
 // Chunked contact save — non-blocking across multiple loop iterations
+// Only for ESP32 with SD card — nRF52 uses blocking saveContacts() above
 // =========================================================================
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
 
 bool DataStore::beginSaveContacts(DataStoreHost* host) {
   if (_saveInProgress) return false;  // Already saving
@@ -607,62 +623,14 @@ void DataStore::finishSaveContacts() {
     Serial.println("DataStore: rename failed, tmp file preserved");
   }
 }
+#endif // !NRF52_PLATFORM && !STM32_PLATFORM
 
 void DataStore::loadChannels(DataStoreHost* host) {
     FILESYSTEM* fs = _getContactsChannelsFS();
 
     // Crash recovery (same pattern as contacts)
-    if (!fs->exists("/channels3") && fs->exists("/channels3.tmp")) {
-      Serial.println("DataStore: recovering channels3 from .tmp file");
-      fs->rename("/channels3.tmp", "/channels3");
-    }
-    if (fs->exists("/channels3.tmp")) {
-      fs->remove("/channels3.tmp");
-    }
-
-    // Try channels3 (new format with scope_name) first
-    if (fs->exists("/channels3")) {
-      File file = openRead(fs, "/channels3");
-      if (file) {
-        bool full = false;
-        uint8_t channel_idx = 0;
-        while (!full) {
-          ChannelDetails ch;
-          memset(ch.scope_name, 0, sizeof(ch.scope_name));
-          uint8_t unused[4];
-
-          bool success = (file.read(unused, 4) == 4);
-          success = success && (file.read((uint8_t *)ch.name, 32) == 32);
-          success = success && (file.read((uint8_t *)ch.channel.secret, 32) == 32);
-          success = success && (file.read((uint8_t *)ch.scope_name, 31) == 31);
-
-          if (!success) break; // EOF
-
-          // Sanitize scope_name — reject if it contains non-region characters
-          // (catches garbage from uninitialised memory in early channels3 files)
-          ch.scope_name[30] = '\0';  // force null-terminate
-          for (int s = 0; ch.scope_name[s]; s++) {
-            char sc = ch.scope_name[s];
-            if (!((sc >= 'a' && sc <= 'z') || (sc >= '0' && sc <= '9') || sc == '-')) {
-              memset(ch.scope_name, 0, sizeof(ch.scope_name));  // invalid — clear
-              break;
-            }
-          }
-
-          if (host->onChannelLoaded(channel_idx, ch)) {
-            channel_idx++;
-          } else {
-            full = true;
-          }
-        }
-        file.close();
-        return;  // channels3 loaded successfully
-      }
-    }
-
-    // Fall back to channels2 (legacy format without scope_name)
     if (!fs->exists("/channels2") && fs->exists("/channels2.tmp")) {
-      Serial.println("DataStore: recovering channels2 from .tmp file");
+      Serial.println("DataStore: recovering channels from .tmp file");
       fs->rename("/channels2.tmp", "/channels2");
     }
     if (fs->exists("/channels2.tmp")) {
@@ -675,7 +643,6 @@ void DataStore::loadChannels(DataStoreHost* host) {
       uint8_t channel_idx = 0;
       while (!full) {
         ChannelDetails ch;
-        memset(ch.scope_name, 0, sizeof(ch.scope_name));  // default: no scope
         uint8_t unused[4];
 
         bool success = (file.read(unused, 4) == 4);
@@ -691,18 +658,13 @@ void DataStore::loadChannels(DataStoreHost* host) {
         }
       }
       file.close();
-
-      // Migrate: save as channels3 and remove channels2
-      Serial.println("DataStore: migrating channels2 → channels3");
-      saveChannels(host);
-      fs->remove("/channels2");
     }
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
   FILESYSTEM* fs = _getContactsChannelsFS();
-  const char* finalPath = "/channels3";
-  const char* tmpPath   = "/channels3.tmp";
+  const char* finalPath = "/channels2";
+  const char* tmpPath   = "/channels2.tmp";
 
   File file = openWrite(fs, tmpPath);
   if (!file) {
@@ -720,7 +682,6 @@ void DataStore::saveChannels(DataStoreHost* host) {
     bool success = (file.write(unused, 4) == 4);
     success = success && (file.write((uint8_t *)ch.name, 32) == 32);
     success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
-    success = success && (file.write((uint8_t *)ch.scope_name, 31) == 31);
 
     if (!success) {
       writeOk = false;
@@ -733,7 +694,7 @@ void DataStore::saveChannels(DataStoreHost* host) {
   file.close();
 
   // Reopen read-only to get true on-disk size (SPIFFS file.size() is unreliable before close)
-  size_t expectedBytes = channel_idx * 99;  // 4 + 32 + 32 + 31 = 99 bytes per channel
+  size_t expectedBytes = channel_idx * 68;  // 4 + 32 + 32 = 68 bytes per channel
   File verify = openRead(fs, tmpPath);
   size_t bytesWritten = verify ? verify.size() : 0;
   if (verify) verify.close();
@@ -778,7 +739,7 @@ void DataStore::checkAdvBlobFile() {
 }
 
 void DataStore::migrateToSecondaryFS() {
-  // migrate old adv_blobs, contacts3 and channels3/channels2 files to secondary FS if they don't already exist
+  // migrate old adv_blobs, contacts3 and channels2 files to secondary FS if they don't already exist
   if (!_fsExtra->exists("/adv_blobs")) {
     if (_fs->exists("/adv_blobs")) {
     File oldAdvBlobs = openRead(_fs, "/adv_blobs");
@@ -817,14 +778,10 @@ void DataStore::migrateToSecondaryFS() {
       _fs->remove("/contacts3");
     }
   }
-  if (!_fsExtra->exists("/channels3") && !_fsExtra->exists("/channels2")) {
-    // Migrate channels3 (preferred) or channels2 (legacy) to secondary FS
-    const char* srcName = _fs->exists("/channels3") ? "/channels3"
-                        : _fs->exists("/channels2") ? "/channels2"
-                        : nullptr;
-    if (srcName) {
-      File oldFile = openRead(_fs, srcName);
-      File newFile = openWrite(_fsExtra, srcName);
+  if (!_fsExtra->exists("/channels2")) {
+    if (_fs->exists("/channels2")) {
+      File oldFile = openRead(_fs, "/channels2");
+      File newFile = openWrite(_fsExtra, "/channels2");
 
       if (oldFile && newFile) {
         uint8_t buf[64];
@@ -835,7 +792,7 @@ void DataStore::migrateToSecondaryFS() {
       }
       if (oldFile) oldFile.close();
       if (newFile) newFile.close();
-      _fs->remove(srcName);
+      _fs->remove("/channels2");
     }
   }
   // cleanup nodes which have been testing the extra fs, copy _main.id and new_prefs back to primary
@@ -877,9 +834,6 @@ void DataStore::migrateToSecondaryFS() {
   }
   if (_fs->exists("/contacts3")) {
     _fs->remove("/contacts3");
-  }
-  if (_fs->exists("/channels3")) {
-    _fs->remove("/channels3");
   }
   if (_fs->exists("/channels2")) {
     _fs->remove("/channels2");

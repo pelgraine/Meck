@@ -179,6 +179,16 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.setCursor(textX, 0);
     display.print(battStr);
     display.setTextSize(1);  // restore default text size
+#elif defined(LILYGO_TECHO_LITE)
+    // T-Echo Lite: text-only battery (icon misaligns due to fillRect/setCursor offset mismatch at 2× scale)
+    char battStr[8];
+    snprintf(battStr, sizeof(battStr), "%d%%", batteryPercentage);
+    uint16_t textWidth = display.getTextWidth(battStr);
+    int textX = display.width() - textWidth - 2;
+    if (outIconX) *outIconX = textX;
+    display.setCursor(textX, 0);  // Same baseline as node name (HOME_HDR_Y)
+    display.print(battStr);
+    display.setTextSize(1);
 #else
     // T-Deck Pro: icon + percentage text (icon hidden in large font)
     int iconWidth = 16;
@@ -322,6 +332,8 @@ public:
     // T5S3: FreeSans12pt ascenders need more room than built-in font.
     // Shift header elements down by 4 virtual units (~17px physical).
     #define HOME_HDR_Y 1
+#elif defined(LILYGO_TECHO_LITE)
+    #define HOME_HDR_Y 0
 #else
     #define HOME_HDR_Y -3
 #endif
@@ -369,7 +381,9 @@ public:
       }
     }
     // curr page indicator
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LILYGO_TECHO_LITE)
+    int y = 13;   // Below header
+#elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
 #else
     int y = 14;
@@ -393,6 +407,8 @@ public:
   #else
       int y = 26;  // Standalone: extra line below dots (no IP/Connected row)
   #endif
+#elif defined(LILYGO_TECHO_LITE)
+      int y = 18;  // Below page dots
 #else
       int y = 20;
 #endif
@@ -400,7 +416,11 @@ public:
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
       display.drawTextCentered(display.width() / 2, y, tmp);
+#if defined(LILYGO_TECHO_LITE)
+      y += 12;  // Compact
+#else
       y += 14;  // Reduced from 18
+#endif
 
       #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
         IPAddress ip = WiFi.localIP();
@@ -423,7 +443,11 @@ public:
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
         display.drawTextCentered(display.width() / 2, y, tmp);
+#if defined(LILYGO_TECHO_LITE)
+        y += 14;  // Compact
+#else
         y += 18;
+#endif
 #endif
       }
       #endif
@@ -481,6 +505,24 @@ public:
       display.setTextSize(1);
 
 #else
+      // Non-T5S3: keyboard shortcut menu
+#if defined(LILYGO_TECHO_LITE)
+      // T-Echo Lite: compact centered menu (tiny font fits 117px virtual width)
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);  // 6×8 built-in font
+      y += 2;
+      display.drawTextCentered(display.width() / 2, y, "M:Msgs  C:Contacts");
+      y += 8;
+      display.drawTextCentered(display.width() / 2, y, "S:Set   F:Discover");
+      y += 8;
+      display.drawTextCentered(display.width() / 2, y, "H:Last Heard");
+      y += 9;
+      if (y < display.height() - 14) {
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, y, "Arrows: cycle views");
+      }
+      display.setTextSize(1);  // restore
+#else
       // ----- T-Deck Pro: Keyboard shortcut text menu -----
       display.setColor(DisplayDriver::LIGHT);
       display.setTextSize(_node_prefs->smallTextSize());
@@ -491,12 +533,10 @@ public:
         y += 2;
         int col1, col2;
         if (_node_prefs->large_font) {
-          // 9pt font: measure widest left entry and place col2 just past it
           col1 = 2;
           int leftW = display.getTextWidth("[M] Messages");
           col2 = col1 + leftW + 3;
         } else {
-          // Custom tiny (7pt): centered layout
           col1 = display.width() / 10;
           col2 = display.width() * 11 / 20;
         }
@@ -578,6 +618,7 @@ public:
           (_node_prefs->large_font || display.getFontStyle() > 0) ? "A/D: cycle views" : "Press A/D to cycle home views");
       }
       display.setTextSize(1);  // restore
+#endif // LILYGO_TECHO_LITE
 #endif
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
@@ -1299,14 +1340,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
-  Serial.printf("[DIAG] channel_screen=%p, unread=%d\n", channel_screen, 
-    channel_screen ? ((ChannelScreen*)channel_screen)->getTotalUnread() : -999);
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   channel_picker_screen = new ChannelPickerScreen(this);
-  Serial.printf("[DIAG] channel_picker=%p\n", channel_picker_screen);
   ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
-  Serial.printf("[DIAG] contacts=%p\n", contacts_screen);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
 #if !defined(LILYGO_TECHO_LITE)
   text_reader = new TextReaderScreen(this, node_prefs);
@@ -1316,12 +1353,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   notes_screen = nullptr;
 #endif
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
-  Serial.printf("[DIAG] settings=%p\n", settings_screen);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
-  Serial.printf("[DIAG] discovery=%p, last_heard=%p\n", discovery_screen, last_heard_screen);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -2014,7 +2049,7 @@ if (curr) curr->poll();
       // Without this floor, changing readings (battery, uptime) trigger
       // back-to-back renders that cause continuous flashing.
 #ifdef EINK_FULL_REFRESH_ONLY
-      unsigned long minNext = millis() + 15000;  // Full refresh: 15s floor
+      unsigned long minNext = millis() + 60000;  // Full refresh: 60s idle (clock ticks per minute)
 #else
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif

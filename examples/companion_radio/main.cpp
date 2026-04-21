@@ -906,6 +906,21 @@
     static CardKBKeyboard cardkb;
     static unsigned long lastCardKBProbe = 0;
     #define CARDKB_PROBE_INTERVAL_MS 5000
+
+    // CardKB compose mode state
+    static bool ckbComposeMode = false;
+    static char ckbComposeBuf[138];   // 137 bytes max + null
+    static int  ckbComposePos = 0;
+    static uint8_t ckbComposeChIdx = 0;
+    static bool ckbComposeDM = false;
+    static int  ckbComposeDMIdx = -1;
+    static char ckbComposeDMName[32];
+    static unsigned long ckbLastKeystroke = 0;
+    static bool ckbComposeRefresh = false;
+    #define CKB_COMPOSE_DEBOUNCE 600
+
+    void drawCardKBCompose();
+    void sendCardKBMessage();
   #endif
 #endif
 
@@ -2869,6 +2884,16 @@ void loop() {
   #ifdef HAS_4G_MODEM
     smsMode = ui_task.isOnSMSScreen();
   #endif
+  #elif defined(MECK_CARDKB)
+  if (!ckbComposeMode) {
+    ui_task.loop();
+  } else {
+    // Compose mode: debounced rendering
+    if (ckbComposeRefresh && (millis() - ckbLastKeystroke) >= CKB_COMPOSE_DEBOUNCE) {
+      drawCardKBCompose();
+      ckbComposeRefresh = false;
+    }
+  }
   #else
   ui_task.loop();
   #endif
@@ -3177,7 +3202,42 @@ void loop() {
     char ckb = cardkb.readKey();
     if (ckb != 0) {
       Serial.printf("[CardKB] key=0x%02X '%c'\n", (uint8_t)ckb, (ckb >= 32 && ckb < 127) ? ckb : '?');
-      // Block input while locked (T5S3 only — T-Echo Lite has no lock screen yet)
+
+      // --- CardKB compose mode: intercept ALL keys ---
+      if (ckbComposeMode) {
+        cpuPower.setBoost();
+        ui_task.keepAlive();
+        if (ckb == 0x1B) {
+          // ESC: cancel compose
+          ckbComposeMode = false;
+          ui_task.forceRefresh();
+        } else if (ckb == '\r') {
+          // Enter: send message
+          if (ckbComposePos > 0) {
+            sendCardKBMessage();
+          } else {
+            ckbComposeMode = false;
+            ui_task.forceRefresh();
+          }
+        } else if (ckb == '\b') {
+          // Backspace: delete last character
+          if (ckbComposePos > 0) {
+            ckbComposeBuf[--ckbComposePos] = '\0';
+            ckbComposeRefresh = true;
+            ckbLastKeystroke = millis();
+          }
+        } else if (ckb >= 32 && ckb < 127) {
+          // Printable character
+          if (ckbComposePos < 137) {
+            ckbComposeBuf[ckbComposePos++] = ckb;
+            ckbComposeBuf[ckbComposePos] = '\0';
+            ckbComposeRefresh = true;
+            ckbLastKeystroke = millis();
+          }
+        }
+        // All keys consumed in compose mode — skip normal routing
+      } else {
+      // --- Normal (non-compose) key routing ---
       #if defined(LilyGo_T5S3_EPaper_Pro)
       if (!ui_task.isLocked()) {
       #else
@@ -3255,23 +3315,21 @@ void loop() {
 #endif
 
           if (!handled) {
-            // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
-            if (ckb == 0x1B) {
-              // Channel picker: ESC goes home
+            // ESC or Q → back navigation
+            if (ckb == 0x1B || ckb == 'q') {
               if (ui_task.isOnChannelPickerScreen()) {
                 ui_task.gotoHomeScreen();
-              // Channel screen: ESC goes to picker
               } else if (ui_task.isOnChannelScreen()) {
                 ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
                 if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
                   ui_task.injectKey('q');  // dismiss overlay/reply first
                 } else if (chScr && chScr->isDMConversation()) {
-                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                  ui_task.injectKey('q');  // DM conversation → inbox
                 } else {
                   ui_task.gotoChannelPickerScreen();
                 }
               } else {
-                ui_task.injectKey('q');
+                ui_task.gotoHomeScreen();  // All other screens → home
               }
             } else if (ckb == '\r') {
               // Enter key — screen-specific compose or select
@@ -3294,8 +3352,17 @@ void loop() {
                           snprintf(label, sizeof(label), "DM: %s", dmName);
                           #if defined(LilyGo_T5S3_EPaper_Pro)
                           ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, j);
+                          #elif defined(MECK_CARDKB)
+                          ckbComposeMode = true;
+                          ckbComposeBuf[0] = '\0';
+                          ckbComposePos = 0;
+                          ckbComposeDM = true;
+                          ckbComposeDMIdx = (int)j;
+                          strncpy(ckbComposeDMName, dmName, sizeof(ckbComposeDMName) - 1);
+                          ckbComposeRefresh = true;
+                          ckbLastKeystroke = millis();
                           #else
-                          ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                          ui_task.injectKey('\r');
                           #endif
                           ui_task.clearDMUnread(j);
                           break;
@@ -3311,8 +3378,16 @@ void loop() {
                     snprintf(label, sizeof(label), "To: %s", ch.name);
                     #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                    #elif defined(MECK_CARDKB)
+                    ckbComposeMode = true;
+                    ckbComposeBuf[0] = '\0';
+                    ckbComposePos = 0;
+                    ckbComposeDM = false;
+                    ckbComposeChIdx = chIdx;
+                    ckbComposeRefresh = true;
+                    ckbLastKeystroke = millis();
                     #else
-                    ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                    ui_task.injectKey('\r');
                     #endif
                   }
                 }
@@ -3339,8 +3414,17 @@ void loop() {
                       snprintf(label, sizeof(label), "DM: %s", dname);
                       #if defined(LilyGo_T5S3_EPaper_Pro)
                       ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                      #elif defined(MECK_CARDKB)
+                      ckbComposeMode = true;
+                      ckbComposeBuf[0] = '\0';
+                      ckbComposePos = 0;
+                      ckbComposeDM = true;
+                      ckbComposeDMIdx = idx;
+                      strncpy(ckbComposeDMName, dname, sizeof(ckbComposeDMName) - 1);
+                      ckbComposeRefresh = true;
+                      ckbLastKeystroke = millis();
                       #else
-                      ui_task.injectKey('\r');  // T-Echo Lite: compose via native handler
+                      ui_task.injectKey('\r');
                       #endif
                     }
                   } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
@@ -3436,6 +3520,7 @@ void loop() {
           }
         }
       }
+      }  // end compose mode else
     }
   }
 #endif
@@ -5113,3 +5198,166 @@ void audio_eof_mp3(const char *info) {
 #endif // !HAS_4G_MODEM
 
 #endif // LilyGo_TDeck_Pro
+
+// ============================================================================
+// CARDKB COMPOSE FUNCTIONS (T-Echo Lite)
+// ============================================================================
+#if defined(MECK_CARDKB)
+
+void drawCardKBCompose() {
+  #ifdef DISPLAY_CLASS
+  display.startFrame();
+  display.setTextSize(1);
+  display.setColor(DisplayDriver::GREEN);
+  display.setCursor(0, 0);
+
+  // Header: "To: channel" or "DM: contact"
+  char headerBuf[40];
+  if (ckbComposeDM) {
+    snprintf(headerBuf, sizeof(headerBuf), "DM: %s", ckbComposeDMName);
+  } else {
+    ChannelDetails channel;
+    if (the_mesh.getChannel(ckbComposeChIdx, channel)) {
+      snprintf(headerBuf, sizeof(headerBuf), "To: %s", channel.name);
+    } else {
+      snprintf(headerBuf, sizeof(headerBuf), "To: Channel %d", ckbComposeChIdx);
+    }
+  }
+  display.print(headerBuf);
+
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, 11, display.width(), 1);
+
+  // Body: word-wrapped compose buffer
+  int y = 14;
+  int px = 0;
+  int lineW = display.width();
+  char charStr[2] = {0, 0};
+  char dblStr[3] = {0, 0, 0};
+  bool atWordBoundary = true;
+
+  display.setCursor(0, y);
+  display.setColor(DisplayDriver::LIGHT);
+
+  for (int i = 0; i < ckbComposePos; i++) {
+    uint8_t b = (uint8_t)ckbComposeBuf[i];
+
+    // Word wrap: check if next word fits on this line
+    if (atWordBoundary && b != ' ' && px > 0) {
+      int wordW = 0;
+      for (int j = i; j < ckbComposePos; j++) {
+        uint8_t wb = (uint8_t)ckbComposeBuf[j];
+        if (wb == ' ') break;
+        dblStr[0] = dblStr[1] = (char)wb;
+        charStr[0] = (char)wb;
+        wordW += display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      }
+      if (px + wordW > lineW) {
+        px = 0;
+        y += 12;
+      }
+    }
+
+    if (b == ' ') {
+      charStr[0] = ' ';
+      dblStr[0] = dblStr[1] = ' ';
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
+        px = 0;
+        y += 12;
+      } else {
+        display.setCursor(px, y);
+        display.print(charStr);
+        px += adv;
+      }
+      atWordBoundary = true;
+    } else {
+      charStr[0] = (char)b;
+      dblStr[0] = dblStr[1] = (char)b;
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
+        px = 0;
+        y += 12;
+      }
+      display.setCursor(px, y);
+      display.print(charStr);
+      px += adv;
+      atWordBoundary = false;
+    }
+  }
+
+  // Cursor
+  display.setCursor(px, y);
+  display.print("_");
+
+  // Footer status bar
+  int statusY = display.height() - 12;
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, statusY - 2, display.width(), 1);
+  display.setCursor(0, statusY);
+  display.setColor(DisplayDriver::YELLOW);
+
+  char status[32];
+  if (ckbComposePos == 0) {
+    display.print("Esc:Cancel");
+  } else {
+    snprintf(status, sizeof(status), "Esc:X %d/137", ckbComposePos);
+    display.print(status);
+  }
+  const char* rt = "Ent:Send";
+  display.setCursor(display.width() - display.getTextWidth(rt) - 2, statusY);
+  display.print(rt);
+
+  display.endFrame();
+  #endif
+}
+
+void sendCardKBMessage() {
+  if (ckbComposePos == 0) return;
+
+  cpuPower.setBoost();
+
+  if (ckbComposeDM) {
+    // Direct message
+    if (ckbComposeDMIdx >= 0) {
+      if (the_mesh.uiSendDirectMessage((uint32_t)ckbComposeDMIdx, ckbComposeBuf)) {
+        ui_task.addSentDM(ckbComposeDMName, the_mesh.getNodePrefs()->node_name, ckbComposeBuf);
+        ui_task.showAlert("DM sent!", 1500);
+      } else {
+        ui_task.showAlert("DM failed!", 1500);
+      }
+    } else {
+      ui_task.showAlert("No contact!", 1500);
+    }
+  } else {
+    // Channel message
+    ChannelDetails channel;
+    if (the_mesh.getChannel(ckbComposeChIdx, channel)) {
+      uint32_t timestamp = rtc_clock.getCurrentTime();
+      int len = strlen(ckbComposeBuf);
+
+      if (the_mesh.sendGroupMessage(timestamp, channel.channel,
+                                     the_mesh.getNodePrefs()->node_name,
+                                     ckbComposeBuf, len)) {
+        ui_task.addSentChannelMessage(ckbComposeChIdx,
+                                       the_mesh.getNodePrefs()->node_name,
+                                       ckbComposeBuf);
+        the_mesh.queueSentChannelMessage(ckbComposeChIdx, timestamp,
+                                          the_mesh.getNodePrefs()->node_name,
+                                          ckbComposeBuf);
+        ui_task.showAlert("Sent!", 1500);
+      } else {
+        ui_task.showAlert("Send failed!", 1500);
+      }
+    } else {
+      ui_task.showAlert("No channel!", 1500);
+    }
+  }
+
+  ckbComposeMode = false;
+  ckbComposeBuf[0] = '\0';
+  ckbComposePos = 0;
+  ui_task.forceRefresh();
+}
+
+#endif // MECK_CARDKB

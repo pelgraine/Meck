@@ -24,13 +24,15 @@ class DataStore {
   void checkAdvBlobFile();
 #endif
 
-  // Chunked save state
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
+  // Chunked save state (ESP32 with SD card only)
   File _saveFile;
   DataStoreHost* _saveHost = nullptr;
   uint32_t _saveIdx = 0;
   uint32_t _saveRecordsWritten = 0;
   bool _saveInProgress = false;
   bool _saveWriteOk = true;
+#endif
 
 public:
   DataStore(FILESYSTEM& fs, mesh::RTCClock& clock);
@@ -45,14 +47,13 @@ public:
   void savePrefs(const NodePrefs& prefs, double node_lat, double node_lon);
   void loadContacts(DataStoreHost* host);
   void saveContacts(DataStoreHost* host);
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
   // Chunked save — splits contact write across multiple loop iterations
-  // to prevent blocking the main loop for 500ms+ on large contact lists.
-  // Call beginSaveContacts(), then saveContactsChunk() each loop until it
-  // returns false (done), then finishSaveContacts() to verify and commit.
   bool beginSaveContacts(DataStoreHost* host);
-  bool saveContactsChunk(int batchSize = 20);  // returns true if more to write
+  bool saveContactsChunk(int batchSize = 20);
   void finishSaveContacts();
   bool isSaveInProgress() const { return _saveInProgress; }
+#endif
   void loadChannels(DataStoreHost* host);
   void saveChannels(DataStoreHost* host);
   void migrateToSecondaryFS();

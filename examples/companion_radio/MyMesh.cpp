@@ -3361,6 +3361,15 @@ void MyMesh::loop() {
 
   // is there are pending dirty contacts write needed?
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+    // nRF52/STM32: blocking save (fast on internal flash, no chunking needed)
+    if (!_deferSaves) {
+      _store->saveContacts(this);
+      dirty_contacts_expiry = 0;
+    } else {
+      dirty_contacts_expiry = futureMillis(2000);
+    }
+#else
     if (_deferSaves) {
       // Voice session receiving — push save forward to avoid SPI contention
       dirty_contacts_expiry = futureMillis(2000);
@@ -3368,14 +3377,17 @@ void MyMesh::loop() {
       _store->beginSaveContacts(this);
       dirty_contacts_expiry = 0;
     }
+#endif
   }
 
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
   // Drive chunked contact save — write a batch each loop iteration
   if (_store->isSaveInProgress() && !_deferSaves) {
     if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
       _store->finishSaveContacts();  // Done or error — verify and commit
     }
   }
+#endif
 
   // Discovery scan timeout
   if (_discoveryActive && millisHasNowPassed(_discoveryTimeout)) {

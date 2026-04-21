@@ -341,6 +341,11 @@ public:
     const char* rt = "Boot:Back";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
+#elif defined(LILYGO_TECHO_LITE)
+    display.print("Q:Bk");
+    const char* rt = "Ent:Open";
+    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    display.print(rt);
 #else
     display.print("W/S:Nav Q:Back");
     const char* rt = "Ent:Open";
