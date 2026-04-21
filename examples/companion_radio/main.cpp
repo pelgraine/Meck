@@ -914,13 +914,6 @@ CPUPowerManager cpuPower;
 #define AGC_RESET_INTERVAL_MS 500
 static unsigned long lastAGCReset = 0;
 
-// nRF52 RAM diagnostic
-extern "C" char *sbrk(int incr);
-static int dbg_free_ram() {
-    char top;
-    return &top - reinterpret_cast<char*>(sbrk(0));
-}
-
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -2881,17 +2874,6 @@ void loop() {
   #endif
 #endif
   rtc_clock.tick();
-
-  // --- T-Echo Lite runtime diagnostic (remove after debugging) ---
-  {
-    static unsigned long lastDbg = 0;
-    if (millis() - lastDbg > 2000) {
-      Serial.printf("loop alive - free RAM: %d, screen: %s\n",
-          dbg_free_ram(),
-          ui_task.isOnHomeScreen() ? "home" : "other");
-      lastDbg = millis();
-    }
-  }
   // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused)
@@ -3194,6 +3176,7 @@ void loop() {
     // Poll for keypress
     char ckb = cardkb.readKey();
     if (ckb != 0) {
+      Serial.printf("[CardKB] key=0x%02X '%c'\n", (uint8_t)ckb, (ckb >= 32 && ckb < 127) ? ckb : '?');
       // Block input while locked (T5S3 only — T-Echo Lite has no lock screen yet)
       #if defined(LilyGo_T5S3_EPaper_Pro)
       if (!ui_task.isLocked()) {
@@ -3224,6 +3207,8 @@ void loop() {
               case 's': ui_task.gotoSettingsScreen(); break;
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
+              case (char)0xF3: ui_task.injectKey(KEY_LEFT);  break;  // Left arrow → prev page
+              case (char)0xF4: ui_task.injectKey(KEY_RIGHT); break;  // Right arrow → next page
 #ifdef MECK_WEB_READER
               case 'b': ui_task.gotoWebReader(); break;
 #endif

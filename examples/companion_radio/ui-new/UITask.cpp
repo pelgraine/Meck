@@ -1299,10 +1299,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
   msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
+  Serial.printf("[DIAG] channel_screen=%p, unread=%d\n", channel_screen, 
+    channel_screen ? ((ChannelScreen*)channel_screen)->getTotalUnread() : -999);
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   channel_picker_screen = new ChannelPickerScreen(this);
+  Serial.printf("[DIAG] channel_picker=%p\n", channel_picker_screen);
   ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
+  Serial.printf("[DIAG] contacts=%p\n", contacts_screen);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
 #if !defined(LILYGO_TECHO_LITE)
   text_reader = new TextReaderScreen(this, node_prefs);
@@ -1312,10 +1316,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   notes_screen = nullptr;
 #endif
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
+  Serial.printf("[DIAG] settings=%p\n", settings_screen);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
+  Serial.printf("[DIAG] discovery=%p, last_heard=%p\n", discovery_screen, last_heard_screen);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -2003,11 +2009,15 @@ if (curr) curr->poll();
 #endif
       _display->endFrame();
 
-      // E-ink render throttle: enforce minimum 800ms between renders.
-      // Each partial update blocks for ~644ms. Without this floor, incoming
-      // mesh notifications can trigger back-to-back renders that starve the
-      // keyboard polling loop, causing TCA8418 FIFO overflow and lost keys.
-      unsigned long minNext = millis() + 800;
+      // E-ink render throttle: enforce minimum interval between renders.
+      // Partial update blocks for ~644ms; full refresh blocks for ~3000ms.
+      // Without this floor, changing readings (battery, uptime) trigger
+      // back-to-back renders that cause continuous flashing.
+#ifdef EINK_FULL_REFRESH_ONLY
+      unsigned long minNext = millis() + 15000;  // Full refresh: 15s floor
+#else
+      unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
+#endif
       if (_next_refresh < minNext) _next_refresh = minNext;
     }
 #if AUTO_OFF_MILLIS > 0
