@@ -47,7 +47,12 @@ public:
     print(str);
   }
   
-  // convert UTF-8 characters to displayable block characters for compatibility
+  // Strip non-ASCII characters (emoji, etc.) from a UTF-8 string.
+  // Placeholder glyphs aren't safe across our fonts: GFXfonts (FreeSans)
+  // silently drop anything outside first..last, while the Adafruit built-in
+  // 5x7 font remaps c>=0xB0 by +1 so \xDB prints as ▄. Stripping the
+  // codepoint is the only behaviour that renders consistently across
+  // FastEPD (T5S3) and GxEPD (T-Deck Pro, T-Echo Lite, etc.) builds.
   virtual void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
     size_t j = 0;
     for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
@@ -55,9 +60,9 @@ public:
       if (c >= 32 && c <= 126) {
         dest[j++] = c;  // ASCII printable
       } else if (c >= 0x80) {
-        dest[j++] = '\xDB';  // CP437 full block █
-        while (src[i+1] && (src[i+1] & 0xC0) == 0x80) 
-          i++;  // skip UTF-8 continuation bytes
+        // Skip the whole UTF-8 codepoint (lead byte + continuation bytes)
+        while (src[i+1] && (src[i+1] & 0xC0) == 0x80)
+          i++;
       }
     }
     dest[j] = 0;

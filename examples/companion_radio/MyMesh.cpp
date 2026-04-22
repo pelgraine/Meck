@@ -154,6 +154,10 @@
 #define AUTO_ADD_ROOM_SERVER      (1 << 3)  // 0x08 - auto-add Room Server (ADV_TYPE_ROOM)
 #define AUTO_ADD_SENSOR           (1 << 4)  // 0x10 - auto-add Sensor (ADV_TYPE_SENSOR)
 
+// All type bits combined (excludes overwrite flag)
+#define AUTO_ADD_ALL_TYPES (AUTO_ADD_CHAT | AUTO_ADD_REPEATER | \
+                            AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)
+
 void MyMesh::writeOKFrame() {
   uint8_t buf[1];
   buf[0] = RESP_CODE_OK;
@@ -2550,6 +2554,20 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  apn:        %s\n", modemManager.getAPN());
         Serial.printf("  imei:       %s\n", modemManager.getIMEI());
 #endif
+        // Contact auto-add
+        {
+          const char* mode = (_prefs.manual_add_contacts & 1) == 0 ? "auto" :
+              (_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0 ? "manual" : "custom";
+          Serial.printf("  contacts:   %s", mode);
+          if ((_prefs.manual_add_contacts & 1) != 0 && (_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) != 0) {
+            Serial.printf(" [%s%s%s%s]",
+              (_prefs.autoadd_config & AUTO_ADD_CHAT) ? "C" : "",
+              (_prefs.autoadd_config & AUTO_ADD_REPEATER) ? "R" : "",
+              (_prefs.autoadd_config & AUTO_ADD_ROOM_SERVER) ? "S" : "",
+              (_prefs.autoadd_config & AUTO_ADD_SENSOR) ? "N" : "");
+          }
+          Serial.printf(" maxhops:%d\n", _prefs.autoadd_max_hops);
+        }
         // Detect current preset
         bool presetFound = false;
         for (int i = 0; i < (int)NUM_RADIO_PRESETS; i++) {
@@ -2590,6 +2608,30 @@ void MyMesh::checkCLIRescueCmd() {
           }
         }
         if (!chFound) Serial.println("    (none)");
+
+      // --- Contact auto-add settings ---
+      } else if (strcmp(key, "contact.mode") == 0) {
+        if ((_prefs.manual_add_contacts & 1) == 0) {
+          Serial.println("  > auto");
+        } else if ((_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0) {
+          Serial.println("  > manual");
+        } else {
+          Serial.println("  > custom");
+        }
+      } else if (strcmp(key, "contact.autoadd") == 0) {
+        Serial.printf("  > chat:%s rptr:%s room:%s sensor:%s overwrite:%s\n",
+          (_prefs.autoadd_config & AUTO_ADD_CHAT) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_REPEATER) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_ROOM_SERVER) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_SENSOR) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) ? "on" : "off");
+      } else if (strcmp(key, "contact.maxhops") == 0) {
+        if (_prefs.autoadd_max_hops == 0) {
+          Serial.println("  > 0 (no limit)");
+        } else {
+          Serial.printf("  > %d\n", _prefs.autoadd_max_hops);
+        }
+
       } else {
         Serial.printf("  Error: unknown key '%s' (try 'help')\n", key);
       }
@@ -3049,6 +3091,60 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.println("  Error: backlight not available on this device");
 #endif
 
+      // --- Contact auto-add settings ---
+      } else if (memcmp(config, "contact.mode ", 13) == 0) {
+        const char* val = &config[13];
+        if (strcmp(val, "auto") == 0) {
+          _prefs.manual_add_contacts &= ~1;
+          savePrefs();
+          Serial.println("  > auto-add all");
+        } else if (strcmp(val, "custom") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          if ((_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0) {
+            _prefs.autoadd_config |= AUTO_ADD_ALL_TYPES;
+          }
+          savePrefs();
+          Serial.println("  > custom (use contact.autoadd to configure)");
+        } else if (strcmp(val, "manual") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          _prefs.autoadd_config &= ~AUTO_ADD_ALL_TYPES;
+          savePrefs();
+          Serial.println("  > manual only (no auto-add)");
+        } else if (strcmp(val, "repeater-only") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          _prefs.autoadd_config = (_prefs.autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) | AUTO_ADD_REPEATER;
+          savePrefs();
+          Serial.println("  > auto-add repeaters only");
+        } else {
+          Serial.println("  Error: auto|custom|manual|repeater-only");
+        }
+      } else if (memcmp(config, "contact.autoadd ", 16) == 0) {
+        const char* rest = &config[16];
+        uint8_t bit = 0;
+        const char* val = NULL;
+        if (memcmp(rest, "chat ", 5) == 0)           { bit = AUTO_ADD_CHAT; val = &rest[5]; }
+        else if (memcmp(rest, "repeater ", 9) == 0)   { bit = AUTO_ADD_REPEATER; val = &rest[9]; }
+        else if (memcmp(rest, "room ", 5) == 0)       { bit = AUTO_ADD_ROOM_SERVER; val = &rest[5]; }
+        else if (memcmp(rest, "sensor ", 7) == 0)     { bit = AUTO_ADD_SENSOR; val = &rest[7]; }
+        else if (memcmp(rest, "overwrite ", 10) == 0) { bit = AUTO_ADD_OVERWRITE_OLDEST; val = &rest[10]; }
+
+        if (bit && val) {
+          if (strcmp(val, "on") == 0)       { _prefs.autoadd_config |= bit; savePrefs(); Serial.println("  > OK"); }
+          else if (strcmp(val, "off") == 0) { _prefs.autoadd_config &= ~bit; savePrefs(); Serial.println("  > OK"); }
+          else { Serial.println("  Error: on|off"); }
+        } else {
+          Serial.println("  Error: chat|repeater|room|sensor|overwrite on|off");
+        }
+      } else if (memcmp(config, "contact.maxhops ", 16) == 0) {
+        int h = atoi(&config[16]);
+        if (h >= 0 && h <= 64) {
+          _prefs.autoadd_max_hops = (uint8_t)h;
+          savePrefs();
+          Serial.printf("  > maxhops = %d%s\n", h, h == 0 ? " (no limit)" : "");
+        } else {
+          Serial.println("  Error: 0-64 (0=no limit)");
+        }
+
       } else {
         Serial.printf("  Error: unknown setting '%s' (try 'help')\n", config);
       }
@@ -3146,6 +3242,12 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    set region none        Clear default region (unscoped)");
       Serial.println("    get channel.scope <i>  Show scope for channel i");
       Serial.println("    set channel.scope <i> <name|none>");
+      Serial.println("");
+      Serial.println("  Contact auto-add:");
+      Serial.println("    contact.mode             auto|custom|manual|repeater-only");
+      Serial.println("    contact.autoadd          Show type toggles");
+      Serial.println("    contact.autoadd <type> on|off  chat|repeater|room|sensor|overwrite");
+      Serial.println("    contact.maxhops <0-64>   Max hops for auto-add (0=no limit)");
 #ifdef HAS_4G_MODEM
       Serial.println("");
       Serial.println("  4G modem:");
