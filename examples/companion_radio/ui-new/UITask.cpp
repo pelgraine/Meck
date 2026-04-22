@@ -1946,7 +1946,7 @@ if (curr) curr->poll();
       // Without this floor, changing readings (battery, uptime) trigger
       // back-to-back renders that cause continuous flashing.
 #ifdef EINK_FULL_REFRESH_ONLY
-      unsigned long minNext = millis() + 60000;  // Full refresh: 60s idle (clock ticks per minute)
+      unsigned long minNext = millis() + 300000;  // Full refresh: 5 min idle
 #else
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif
@@ -2482,9 +2482,24 @@ void UITask::injectKey(char c) {
       if (_next_refresh < earliest) {
         _next_refresh = earliest;
       }
+    }
+#ifdef EINK_FULL_REFRESH_ONLY
+    // Full-refresh displays (SSD1681): debounce printable character input.
+    // Compose typing (0x20-0x7E) pushes the render 2.5s into the future so
+    // the user can type a whole word before a ~2.2s full refresh fires.
+    // Navigation/special keys (arrows, enter, escape, etc.) refresh
+    // immediately so scrolling and screen changes remain responsive.
+    else if ((unsigned char)c >= 0x20 && (unsigned char)c <= 0x7E) {
+      unsigned long earliest = millis() + 2500;
+      if (_next_refresh < earliest) _next_refresh = earliest;
     } else {
+      _next_refresh = 100;  // navigation key — refresh now
+    }
+#else
+    else {
       _next_refresh = 100;  // trigger refresh
     }
+#endif
   }
 }
 

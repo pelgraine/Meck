@@ -48,21 +48,26 @@ public:
   }
   
   // Strip non-ASCII characters (emoji, etc.) from a UTF-8 string.
-  // Placeholder glyphs aren't safe across our fonts: GFXfonts (FreeSans)
-  // silently drop anything outside first..last, while the Adafruit built-in
-  // 5x7 font remaps c>=0xB0 by +1 so \xDB prints as ▄. Stripping the
-  // codepoint is the only behaviour that renders consistently across
-  // FastEPD (T5S3) and GxEPD (T-Deck Pro, T-Echo Lite, etc.) builds.
+  // Uses the same lead-byte-pattern approach as emojiDecodeUtf8() in
+  // EmojiSprites.h to determine sequence length, so both the channel
+  // message path (emojiSanitize) and the contact/advert name path
+  // consume identical byte spans for any given UTF-8 or malformed input.
   virtual void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
     size_t j = 0;
-    for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
+    size_t len = strlen(src);
+    for (size_t i = 0; i < len && j < dest_size - 1; ) {
       unsigned char c = (unsigned char)src[i];
-      if (c >= 32 && c <= 126) {
-        dest[j++] = c;  // ASCII printable
-      } else if (c >= 0x80) {
-        // Skip the whole UTF-8 codepoint (lead byte + continuation bytes)
-        while (src[i+1] && (src[i+1] & 0xC0) == 0x80)
-          i++;
+      if (c < 0x80) {
+        if (c >= 32) dest[j++] = c;  // ASCII printable
+        i++;
+      } else {
+        // Determine sequence length from lead byte (matches emojiDecodeUtf8)
+        int skip;
+        if      ((c & 0xE0) == 0xC0) skip = 2;
+        else if ((c & 0xF0) == 0xE0) skip = 3;
+        else if ((c & 0xF8) == 0xF0) skip = 4;
+        else                          skip = 1;  // stray continuation or invalid
+        i += skip;
       }
     }
     dest[j] = 0;
