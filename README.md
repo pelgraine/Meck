@@ -2,7 +2,7 @@
 
 A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro & LilyGo T5 E-Paper S3 Pro. Created wholly with Claude AI using Meshcore v1.11 code. 100% vibecoded.
 
-[Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1343693475589263471/1460136499390447670)
+[Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
