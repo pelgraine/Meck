@@ -120,7 +120,7 @@ On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM 
 
 **Using the MeshCore Flasher (web-based, T-Deck Pro only):**
 
-1. Go to https://flasher.meshcore.co.uk
+1. Go to https://flasher.meshcore.io
 2. Select **Custom Firmware**
 3. Select the **merged** `.bin` file you downloaded
 4. Click **Flash**, select your device in the popup, and click **Connect**
@@ -1118,7 +1118,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 ## 📞 Get Support
 
-- Join [MeshCore Discord](https://discord.gg/BMwCtwHj5V) to chat with the developers and get help from the community.
+- Join [MeshCore Discord](https://discord.gg/KWFeY45sN) to chat with the developers and get help from the community.
 
 ## 📜 License
 
