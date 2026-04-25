@@ -7,6 +7,10 @@
 // + MP34DT05 PDM Microphone + ICM20948 IMU + BQ25896 Charger + Solar
 //
 // Pin notation from LilyGo pinmap: (port, pin) → nRF GPIO = port*32 + pin
+//
+// Cross-referenced against:
+//   - LilyGo official: T-Echo-Card/libraries/private_library/t_echo_card_config.h
+//   - Meshtastic PR #10267 (caveman99 T-Echo-Card support)
 // =============================================================================
 
 #define LILYGO_TECHO_CARD
@@ -30,14 +34,24 @@
 #define P_LORA_BUSY         14    // (0, 14) — BUSY
 #define P_LORA_DIO_1        40    // (1, 8)  — DIO1 / interrupt
 
-// RF switch control (HPB16B3 module)
-#define LORA_DIO2           5     // (0, 5)  — DIO2 (TXCO / RF switch)
-#define LORA_RF_VC1         27    // (0, 27) — RF_VC1
-#define LORA_RF_VC2         33    // (1, 1)  — RF_VC2
+// RF switch control (HPB16B3 / S62F module)
+// DIO2 is used internally by the SX1262 for RF switch control.
+// RF_VC1 / RF_VC2 are external PA/LNA select lines.
+// Meshtastic PR #10267 maps these as TXEN/RXEN — verify on hardware
+// whether DIO2-as-RF-switch alone is sufficient, or if VC1/VC2 are also
+// needed for full TX/RX performance.
+#define LORA_DIO2           5     // (0, 5)  — DIO2 (RF switch / TXCO)
+#define LORA_RF_VC1         27    // (0, 27) — RF_VC1 (potential TXEN)
+#define LORA_RF_VC2         33    // (1, 1)  — RF_VC2 (potential RXEN)
 
-// LoRa radio power enable (from schematic: LORA_EN drives RT9080 for LORA_VDD)
-// NOTE: Confirm actual GPIO — pinmap shows dedicated enable pin
-// For now use -1 if always powered
+// SX1262 TCXO voltage via DIO3
+// Meshtastic PR #10267 sets this to 1.8V. Without it, the TCXO may not
+// start and the radio will have frequency drift or fail to init.
+// Confirm on hardware — if the module has a TCXO fed by DIO3, this is needed.
+#define SX126X_DIO3_TCXO_VOLTAGE  1.8f
+
+// LoRa radio power: RT9080 controls the 3V3 rail for all peripherals
+// including LoRa. No dedicated LoRa power enable pin.
 #define PIN_LORA_EN         -1
 
 // Default radio settings (Australia)
@@ -47,6 +61,21 @@
 
 // -----------------------------------------------------------------------------
 // 0.42" OLED Display — SSD1315 (SSD1306-compatible), 72×40, I2C
+//
+// The SSD1315 has a 128×64 GDDRAM, but the physical panel is only 72×40.
+// The visible window is mapped at columns 28–99, pages 3–7 (rows 24–63).
+// This means:
+//   - Horizontal: auto-centred by driver ((128 - 72) / 2 = 28)
+//   - Vertical: need SETDISPLAYOFFSET = 24 (3 pages × 8 rows) so that
+//     data written to pages 0–4 appears on the physical display.
+//
+// If the MeshCore OLEDDisplay driver's display() method sends PAGEADDR
+// starting at page 0, the SETDISPLAYOFFSET command should handle the
+// mapping. If content appears shifted or blank, the alternative is to
+// modify the PAGEADDR commands to write to pages 3–7 directly.
+//
+// Ref: Meshtastic PR #10267 uses setYOffset(3) to shift every PAGEADDR
+// write, plus GEOMETRY_72_40 which sets SETMULTIPLEX to 39.
 // -----------------------------------------------------------------------------
 #define HAS_OLED            1
 #define OLED_I2C_ADDR       0x3C
@@ -55,7 +84,12 @@
 #define OLED_SDA            I2C_SDA
 #define OLED_SCL            I2C_SCL
 
-// OLED power control via RT9080 enable pin
+// SSD1315 display offset: 3 pages = 24 rows
+// Applied via SETDISPLAYOFFSET (0xD3) after display.begin() in target.cpp
+#define OLED_DISPLAY_OFFSET 24
+
+// OLED / peripheral power control via RT9080 enable pin
+// This controls the 3V3 rail for OLED, GPS, LoRa, and sensors.
 #define PIN_OLED_EN         30    // (0, 30) — RT9080_EN
 
 // No hardware reset pin for OLED on T-Echo Card
@@ -80,11 +114,18 @@
 #define BATTERY_ADC_AIN     0     // nRF SAADC AIN channel number
 #define BATTERY_CAPACITY_MAH 800
 
+// Battery voltage divider enable gate
+// P0.31 controls a FET/switch that enables the resistive divider feeding
+// AIN0. Must be driven HIGH before ADC read and LOW after to avoid
+// parasitic drain through the divider.
+// Source: LilyGo t_echo_card_config.h → BATTERY_MEASUREMENT_CONTROL
+// Confirmed: Meshtastic PR #10267 → ADC_CTRL (0 + 31), ADC_CTRL_ENABLED HIGH
+#define BATTERY_MEASUREMENT_CONTROL   31    // (0, 31)
+#define BATTERY_MEASUREMENT_ACTIVE    HIGH
+
 // Battery voltage divider calibration
-// The T-Echo Lite has issues reading battery correctly — we'll need to
-// calibrate this with actual hardware. Starting with a reasonable default.
 // nRF52840 SAADC: 0.6V internal ref, 1/6 gain → 0–3.6V range
-// If there's a voltage divider (e.g. 2:1), multiply by 2.
+// With 2:1 resistive divider, multiply by 2 to get actual cell voltage.
 // Adjust ADC_MULTIPLIER after measuring real voltage vs ADC reading.
 #ifndef ADC_MULTIPLIER
 #define ADC_MULTIPLIER      2.0f
@@ -132,13 +173,28 @@
 #define PIN_BUZZER          38    // (1, 6) — piezo buzzer data / PWM
 
 // -----------------------------------------------------------------------------
-// WS2812 RGB LED (3 LEDs in series)
+// WS2812 RGB LEDs — 3 independent LEDs on separate data lines (NOT a chain)
+//
+// Confirmed by Meshtastic PR #10267: each WS2812 is on its own GPIO,
+// driven as a 1-pixel NeoPixel strand. The bare-die WS2812s are very
+// bright at full intensity — scale to ~25% (0x40 max per channel).
+//
+// Role assignments (matching Meshtastic PR #10267):
+//   DATA_1 (P1.7)  → power/charge status (red)
+//   DATA_2 (P1.12) → notification / mesh activity (green)
+//   DATA_3 (P0.28) → BLE pairing status (blue)
 // -----------------------------------------------------------------------------
 #define HAS_RGB_LED         1
-#define PIN_RGB_LED_1       39    // (1, 7)  — WS2812 data 1
-#define PIN_RGB_LED_2       44    // (1, 12) — WS2812 data 2
-#define PIN_RGB_LED_3       28    // (0, 28) — WS2812 data 3
-// Typically only one data pin drives the chain; confirm wiring on hardware
+#define PIN_RGB_LED_1       39    // (1, 7)  — WS2812 data 1 (power/charge)
+#define PIN_RGB_LED_2       44    // (1, 12) — WS2812 data 2 (notification)
+#define PIN_RGB_LED_3       28    // (0, 28) — WS2812 data 3 (BLE pairing)
+
+// Default NeoPixel colours at 25% brightness (0x40 max per channel)
+#define NEOPIXEL_COLOR_POWER      0x400000  // red
+#define NEOPIXEL_COLOR_NOTIFY     0x004000  // green
+#define NEOPIXEL_COLOR_PAIRING    0x000040  // blue
+
+// Legacy aliases (kept for any code referencing these)
 #define PIN_NEOPIXEL        PIN_RGB_LED_1
 #define NUM_NEOPIXELS       3
 
@@ -159,14 +215,22 @@
 #define HAS_NFC             1
 
 // -----------------------------------------------------------------------------
-// External Flash — ZD25WQ32CEIGR (4MB SPI Flash)
-// Uses QSPI interface on nRF52840
-// Pin mapping from nRF52840 QSPI peripheral (typically fixed)
+// External Flash — ZD25WQ32CEIGR (4MB QSPI Flash)
+//
+// Pin mapping confirmed from LilyGo t_echo_card_config.h and Meshtastic
+// PR #10267. These are on a separate SPI bus from LoRa.
+// The Adafruit nRF52 core supports QSPI via Adafruit_SPIFlash + LittleFS.
 // -----------------------------------------------------------------------------
 #define HAS_EXT_FLASH       1
+#define PIN_QSPI_SCK        4     // (0, 4)
+#define PIN_QSPI_CS         12    // (0, 12)
+#define PIN_QSPI_IO0        6     // (0, 6)  — MOSI / D0
+#define PIN_QSPI_IO1        8     // (0, 8)  — MISO / D1
+#define PIN_QSPI_IO2        41    // (1, 9)  — WP / D2
+#define PIN_QSPI_IO3        26    // (0, 26) — HOLD / D3
 
 // -----------------------------------------------------------------------------
-// No SD Card on T-Echo Card (unlike T-Echo which has e-paper + no SD either)
+// No SD Card on T-Echo Card
 // Settings stored in LittleFS on internal/external flash
 // -----------------------------------------------------------------------------
 // #define HAS_SDCARD

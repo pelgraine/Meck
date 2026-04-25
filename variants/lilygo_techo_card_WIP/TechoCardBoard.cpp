@@ -1,5 +1,10 @@
 // =============================================================================
 // TechoCardBoard — Implementation for LilyGo T-Echo Card
+//
+// Patches applied from Meshtastic PR #10267 (caveman99):
+//   1. RT9080 power rail reset cycle in begin() — prevents LoRa TX brown-out
+//   2. Battery measurement control pin (P0.31) — enables voltage divider
+//   3. WS2812 NeoPixel implementation via Adafruit_NeoPixel
 // =============================================================================
 
 #include "TechoCardBoard.h"
@@ -11,6 +16,49 @@
 void TechoCardBoard::begin() {
   NRF52BoardDCDC::begin();
 
+  // -------------------------------------------------------------------------
+  // RT9080 3V3 rail: clean reset cycle
+  //
+  // From Meshtastic PR #10267 (earlyInitVariant): if the nRF52840 was in a
+  // half-enabled state from a previous soft reset, the RT9080 LDO can be in
+  // an indeterminate state. Toggling EN HIGH→LOW→HIGH with 100ms dwell
+  // forces a clean power-on. Without this, the 3V3 rail can brown-out when
+  // LoRa TX fires at full power (+22 dBm).
+  // -------------------------------------------------------------------------
+  #if PIN_OLED_EN >= 0
+    pinMode(PIN_OLED_EN, OUTPUT);
+    digitalWrite(PIN_OLED_EN, HIGH);
+    delay(100);
+    digitalWrite(PIN_OLED_EN, LOW);
+    delay(100);
+    digitalWrite(PIN_OLED_EN, HIGH);
+    delay(100);
+  #endif
+
+  // -------------------------------------------------------------------------
+  // Park peripheral enable pins LOW before the rest of setup runs.
+  // Prevents peripherals from sinking current while the 3V3 rail is ramping.
+  // (Adapted from Meshtastic PR #10267 earlyInitVariant)
+  // -------------------------------------------------------------------------
+  #if defined(HAS_GPS) && PIN_GPS_EN >= 0
+    pinMode(PIN_GPS_EN, OUTPUT);
+    digitalWrite(PIN_GPS_EN, LOW);
+  #endif
+  #if defined(HAS_GPS) && PIN_GPS_RF_EN >= 0
+    pinMode(PIN_GPS_RF_EN, OUTPUT);
+    digitalWrite(PIN_GPS_RF_EN, LOW);
+  #endif
+  #if defined(HAS_BUZZER) && PIN_BUZZER >= 0
+    pinMode(PIN_BUZZER, OUTPUT);
+    digitalWrite(PIN_BUZZER, LOW);
+  #endif
+
+  // Configure battery measurement control pin
+  #if defined(BATTERY_MEASUREMENT_CONTROL)
+    pinMode(BATTERY_MEASUREMENT_CONTROL, OUTPUT);
+    digitalWrite(BATTERY_MEASUREMENT_CONTROL, !BATTERY_MEASUREMENT_ACTIVE);
+  #endif
+
   // Configure battery ADC pin as analog input
   pinMode(PIN_VBAT_READ, INPUT);
 
@@ -18,29 +66,31 @@ void TechoCardBoard::begin() {
   pinMode(PIN_BUTTON_A, INPUT_PULLUP);
   pinMode(PIN_BUTTON_BOOT, INPUT_PULLUP);
 
-  // Buzzer off
-  #if defined(HAS_BUZZER) && PIN_BUZZER >= 0
-    pinMode(PIN_BUZZER, OUTPUT);
-    digitalWrite(PIN_BUZZER, LOW);
-  #endif
-
-  // RGB LED off at boot
+  // Initialise WS2812 NeoPixels (3 independent LEDs, all off at boot)
   #if defined(HAS_RGB_LED)
-    ledOff();
+    _pixel_power.begin();
+    _pixel_power.clear();
+    _pixel_power.show();
+
+    _pixel_notify.begin();
+    _pixel_notify.clear();
+    _pixel_notify.show();
+
+    _pixel_pairing.begin();
+    _pixel_pairing.clear();
+    _pixel_pairing.show();
   #endif
 }
 
 // -----------------------------------------------------------------------------
 // Battery voltage reading via nRF52840 SAADC
 //
-// The T-Echo Card has a voltage divider on AIN0 (P0.02).
-// nRF52840 SAADC: 12-bit, internal 0.6V reference, configurable gain.
-// With 1/6 gain: input range 0–3.6V. Multiply by divider ratio (ADC_MULTIPLIER).
+// The T-Echo Card has a gated voltage divider on AIN0 (P0.02).
+// BATTERY_MEASUREMENT_CONTROL (P0.31) must be driven HIGH to enable the
+// divider before reading, and LOW after to avoid parasitic drain.
 //
-// NOTE: The T-Echo Lite has a known issue reading 100% / 6.00V constantly.
-// This is likely caused by incorrect SAADC configuration (wrong gain, wrong
-// reference, or the pin being pulled high by the charging circuit).
-// We use explicit SAADC register programming to avoid that issue.
+// nRF52840 SAADC: 12-bit, internal 0.6V reference, 1/6 gain.
+// With 1/6 gain: input range 0–3.6V. Multiply by divider ratio (ADC_MULTIPLIER).
 // -----------------------------------------------------------------------------
 float TechoCardBoard::getBatteryVoltage() {
   uint32_t now = millis();
@@ -49,6 +99,12 @@ float TechoCardBoard::getBatteryVoltage() {
   if (_cached_battery_mv > 0 && (now - _last_battery_read) < 10000) {
     return _cached_battery_mv;
   }
+
+  // Enable battery voltage divider
+  #if defined(BATTERY_MEASUREMENT_CONTROL)
+    digitalWrite(BATTERY_MEASUREMENT_CONTROL, BATTERY_MEASUREMENT_ACTIVE);
+    delay(5);  // Allow divider to settle
+  #endif
 
   // Configure SAADC for single-shot reading
   NRF_SAADC->RESOLUTION = SAADC_RESOLUTION_VAL_12bit;
@@ -90,6 +146,11 @@ float TechoCardBoard::getBatteryVoltage() {
 
   // Disable SAADC to save power
   NRF_SAADC->ENABLE = SAADC_ENABLE_ENABLE_Disabled;
+
+  // Disable battery voltage divider to save power
+  #if defined(BATTERY_MEASUREMENT_CONTROL)
+    digitalWrite(BATTERY_MEASUREMENT_CONTROL, !BATTERY_MEASUREMENT_ACTIVE);
+  #endif
 
   // Convert: voltage = (result / 4096) * 3.6V * ADC_MULTIPLIER * 1000 (mV)
   if (result < 0) result = 0;
@@ -137,20 +198,51 @@ void TechoCardBoard::enableSpeaker(bool enable) {
 }
 
 // -----------------------------------------------------------------------------
-// RGB LED — WS2812 via NeoPixel protocol
-// Simple bit-bang implementation for nRF52840 at 64MHz
+// RGB LEDs — WS2812 via Adafruit_NeoPixel
+//
+// Three independent WS2812s on separate data pins (not a chain).
+// Each is a 1-pixel NeoPixel strand.
+//
+// setLED() drives all three to the same colour (legacy interface).
+// For per-LED control, use setStatusLED() with a role index.
 // -----------------------------------------------------------------------------
 void TechoCardBoard::setLED(uint8_t r, uint8_t g, uint8_t b) {
   #if defined(HAS_RGB_LED)
-    // TODO: Implement WS2812 bit-bang or use Adafruit_NeoPixel library
-    // For initial bringup, just use the Adafruit_NeoPixel library
-    // which is available in the Adafruit nRF52 Arduino core
+    uint32_t color = Adafruit_NeoPixel::Color(r, g, b);
+    _pixel_power.setPixelColor(0, color);
+    _pixel_power.show();
+    _pixel_notify.setPixelColor(0, color);
+    _pixel_notify.show();
+    _pixel_pairing.setPixelColor(0, color);
+    _pixel_pairing.show();
+  #else
     (void)r; (void)g; (void)b;
   #endif
 }
 
 void TechoCardBoard::ledOff() {
   setLED(0, 0, 0);
+}
+
+void TechoCardBoard::setStatusLED(uint8_t led_index, uint32_t color) {
+  #if defined(HAS_RGB_LED)
+    switch (led_index) {
+      case 0:  // Power / charge
+        _pixel_power.setPixelColor(0, color);
+        _pixel_power.show();
+        break;
+      case 1:  // Notification / mesh activity
+        _pixel_notify.setPixelColor(0, color);
+        _pixel_notify.show();
+        break;
+      case 2:  // BLE pairing
+        _pixel_pairing.setPixelColor(0, color);
+        _pixel_pairing.show();
+        break;
+    }
+  #else
+    (void)led_index; (void)color;
+  #endif
 }
 
 // -----------------------------------------------------------------------------

@@ -7,14 +7,18 @@
 // Only needed if creating a custom board variant inside the Adafruit nRF52
 // Arduino framework package. If using build flag overrides in platformio.ini,
 // this file is optional.
+//
+// Pin mapping cross-referenced against:
+//   - LilyGo official: T-Echo-Card/libraries/private_library/t_echo_card_config.h
+//   - Meshtastic PR #10267 (caveman99 T-Echo-Card support)
 // =============================================================================
 
 // On nRF52840, Arduino digital pin numbers map 1:1 to nRF GPIO numbers
 // (0–47 for port 0 and port 1).
 
-// LED
+// LED — WS2812 addressable (no plain GPIO LED on this board)
 #define LED_BUILTIN         PIN_LED1
-#define PIN_LED1            39    // WS2812 RGB LED data (1, 7)
+#define PIN_LED1            39    // WS2812 RGB LED data 1 (1, 7)
 #define LED_STATE_ON        1
 
 // Buttons
@@ -39,11 +43,15 @@
 // Analog
 #define PIN_A0              2     // (0, 2) — Battery ADC / AIN0
 
-// QSPI Flash (ZD25WQ32CEIGR 4MB)
-// nRF52840 QSPI uses fixed pins — framework handles these
-// #define PIN_QSPI_SCK     19  // Conflict with GPS TX — check if QSPI is on different pins
-// NOTE: QSPI pin mapping needs verification on actual hardware.
-// The T-Echo Card may use SPI (not QSPI) for external flash.
+// QSPI Flash — ZD25WQ32CEIGR 4MB
+// Confirmed from LilyGo t_echo_card_config.h and Meshtastic PR #10267.
+// These are on a dedicated SPI bus, separate from LoRa SPI.
+#define PIN_QSPI_SCK        4     // (0, 4)
+#define PIN_QSPI_CS         12    // (0, 12)
+#define PIN_QSPI_IO0        6     // (0, 6)  — MOSI / D0
+#define PIN_QSPI_IO1        8     // (0, 8)  — MISO / D1
+#define PIN_QSPI_IO2        41    // (1, 9)  — WP / D2
+#define PIN_QSPI_IO3        26    // (0, 26) — HOLD / D3
 
 // NFC (dedicated nRF52840 NFC pins — not GPIO-assignable)
 // NFC1 = P0.09, NFC2 = P0.10
