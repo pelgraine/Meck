@@ -2424,6 +2424,7 @@ public:
       display.print(r);
     }
 #else
+    if (_editMode == EDIT_TEXT) {
       display.print("Type, Enter:Ok Q:Cancel");
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {

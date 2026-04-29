@@ -154,8 +154,16 @@ class HomeScreen : public UIScreen {
 
 
 void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
-    // Use voltage-based estimation to match BLE app readings
+    // Use BQ27220 fuel gauge State of Charge when available — it tracks
+    // the real LiPo discharge curve, impedance, and temperature. The old
+    // linear voltage mapping (3.0–4.2V) over-reports while charging
+    // (voltage inflated by charger current) and is non-linear across the
+    // flat middle of the discharge curve.
     uint8_t batteryPercentage = 0;
+#if HAS_BQ27220
+    batteryPercentage = _task->getBatteryPercent();
+#else
+    // Fallback for boards without a fuel gauge
     if (batteryMilliVolts > 0) {
       const int minMilliVolts = 3000;
       const int maxMilliVolts = 4200;
@@ -164,6 +172,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
       if (pct > 100) pct = 100;
       batteryPercentage = (uint8_t)pct;
     }
+#endif
 
     display.setColor(DisplayDriver::GREEN);
     display.setTextSize(_node_prefs->smallTextSize());
@@ -1143,13 +1152,17 @@ public:
     // ---- Battery + unread on one line ----
     display.setTextSize(1);
     {
-      uint16_t mv = _task->getBattMilliVolts();
       int pct = 0;
+#if HAS_BQ27220
+      pct = _task->getBatteryPercent();
+#else
+      uint16_t mv = _task->getBattMilliVolts();
       if (mv > 0) {
         pct = ((mv - 3000) * 100) / (4200 - 3000);
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
       }
+#endif
 
       int unread = _task->getUnreadMsgCount();
       char infoBuf[32];
@@ -1972,11 +1985,27 @@ if (curr) curr->poll();
     }
   }
 
-  // Lock screen clock refresh — update time display every 15 minutes.
-  // Runs outside the _display->isOn() gate so it works even after auto-off.
-  // Wakes the display briefly to render, then lets auto-off turn it back off.
+  // Lock screen clock refresh — keeps the displayed time current.
+  // T-Deck Pro: every 1 minute. T5S3: every 2 minutes.
+  // Wakes the display driver briefly to render, then auto-off handles it.
+  // T5S3 standalone: no refreshes once powersaving begins — the device
+  // shows "hibernating..." and enters light sleep instead.
+#if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  // T5S3 standalone: only refresh while still active (before powersaving kicks in)
+  if (_locked && _display != NULL && _display->isOn()) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#elif defined(LilyGo_T5S3_EPaper_Pro)
+  // T5S3 BLE/WiFi: refresh every 2 minutes
   if (_locked && _display != NULL) {
-    const unsigned long LOCK_REFRESH_INTERVAL = 15UL * 60UL * 1000UL;  // 15 minutes
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#elif defined(LilyGo_TDeck_Pro)
+  // T-Deck Pro: refresh every 1 minute
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 1UL * 60UL * 1000UL;  // 1 minute
+#else
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#endif
     if (millis() - _lastLockRefresh >= LOCK_REFRESH_INTERVAL) {
       _lastLockRefresh = millis();
       if (!_display->isOn()) {
@@ -1998,6 +2027,20 @@ if (curr) curr->poll();
   if (_locked && _display != NULL && !_display->isOn()) {
     unsigned long now = millis();
     if (now - _psLastActive >= _psNextSleepSecs * 1000UL) {
+      // First sleep entry: render a static "hibernating..." frame on the
+      // e-ink. Since e-ink retains its image indefinitely without power,
+      // this tells the user the device is in low-power mode until they
+      // wake it with the boot button.
+      if (_psNextSleepSecs == 60) {
+        _display->turnOn();
+        _display->startFrame();
+        _display->setTextSize(1);
+        _display->setColor(DisplayDriver::GREEN);
+        _display->drawTextCentered(_display->width() / 2, 34, "hibernating...");
+        _display->endFrame();
+        delay(700);  // Allow e-ink refresh to complete
+        _display->turnOff();
+      }
       Serial.println("[POWERSAVE] Entering light sleep (locked+idle)");
       board.sleep(1800);  // Light sleep up to 30 min
       // ── CPU resumes here on wake ──
@@ -2149,7 +2192,7 @@ void UITask::lockScreen() {
 #endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
-  _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
+  _lastLockRefresh = millis();   // Start lock screen clock refresh cycle
 #if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
   _psLastActive = millis();      // Start powersaving countdown (60s to first sleep)
   _psNextSleepSecs = 60;

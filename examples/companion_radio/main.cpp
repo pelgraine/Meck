@@ -906,22 +906,24 @@
     static CardKBKeyboard cardkb;
     static unsigned long lastCardKBProbe = 0;
     #define CARDKB_PROBE_INTERVAL_MS 5000
-
-    // CardKB compose mode state
-    static bool ckbComposeMode = false;
-    static char ckbComposeBuf[138];   // 137 bytes max + null
-    static int  ckbComposePos = 0;
-    static uint8_t ckbComposeChIdx = 0;
-    static bool ckbComposeDM = false;
-    static int  ckbComposeDMIdx = -1;
-    static char ckbComposeDMName[32];
-    static unsigned long ckbLastKeystroke = 0;
-    static bool ckbComposeRefresh = false;
-    #define CKB_COMPOSE_DEBOUNCE 600
-
-    void drawCardKBCompose();
-    void sendCardKBMessage();
   #endif
+#endif
+
+// CardKB compose mode state — standalone so ANY variant with MECK_CARDKB gets these
+#ifdef MECK_CARDKB
+  static bool ckbComposeMode = false;
+  static char ckbComposeBuf[138];   // 137 bytes max + null
+  static int  ckbComposePos = 0;
+  static uint8_t ckbComposeChIdx = 0;
+  static bool ckbComposeDM = false;
+  static int  ckbComposeDMIdx = -1;
+  static char ckbComposeDMName[32];
+  static unsigned long ckbLastKeystroke = 0;
+  static bool ckbComposeRefresh = false;
+  #define CKB_COMPOSE_DEBOUNCE 600
+
+  void drawCardKBCompose();
+  void sendCardKBMessage();
 #endif
 
 // Board-agnostic: CPU frequency scaling and AGC reset

@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#define MAX_FRAME_SIZE  172
+#define MAX_FRAME_SIZE  255
 
 class BaseSerialInterface {
 protected:

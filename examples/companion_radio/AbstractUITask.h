@@ -36,6 +36,7 @@ public:
   void setHasConnection(bool connected) { _connected = connected; }
   bool hasConnection() const { return _connected; }
   uint16_t getBattMilliVolts() const { return _board->getBattMilliVolts(); }
+  uint8_t getBatteryPercent() const { return _board->getBatteryPercent(); }
   bool isSerialEnabled() const { return _serial->isEnabled(); }
   void enableSerial() { _serial->enable(); }
   void disableSerial() { _serial->disable(); }
