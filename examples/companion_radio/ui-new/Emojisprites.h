@@ -3,7 +3,7 @@
 // Emoji sprites for e-ink display - dual size
 // Large (12x12) for compose/picker, Small (10x10) for channel view
 // MSB-first, 2 bytes per row
-// 76 total emoji: joy/thumbsup/frown first, then 43 original, then 19 new, then 11 newest
+// 77 total emoji: joy/thumbsup/frown first, then 43 original, then 19 new, then 11 newest, then 1 latest
 
 #include <stdint.h>
 #ifdef ESP32
@@ -15,11 +15,11 @@
 #define EMOJI_SM_W 10
 #define EMOJI_SM_H 10
 
-#define EMOJI_COUNT 76
+#define EMOJI_COUNT 77
 
 // Escape codes in 0x80+ range - safe from keyboard ASCII (32-126)
 #define EMOJI_ESCAPE_START 0x80
-#define EMOJI_ESCAPE_END   0xCB   // 0x80 + 75
+#define EMOJI_ESCAPE_END   0xCC   // 0x80 + 76
 #define EMOJI_PAD_BYTE     0x7F   // DEL, not typeable (key < 127 guard)
 
 // ======== LARGE 12x12 SPRITES ========
@@ -328,6 +328,10 @@ static const uint8_t emoji_lg_eight_spoked_asterisk[] PROGMEM = {
 static const uint8_t emoji_lg_signal_strength[] PROGMEM = {
   0x00,0x20, 0x00,0x20, 0x00,0xA0, 0x00,0xA0, 0x02,0xA0, 0x02,0xA0, 0x0A,0xA0, 0x0A,0xA0, 0x2A,0xA0, 0x2A,0xA0, 0xAA,0xA0, 0xAA,0xA0,
 };
+// [76] beer 🍺
+static const uint8_t emoji_lg_beer[] PROGMEM = {
+  0x24,0x80, 0x77,0x60, 0xFF,0x80, 0x7F,0xC0, 0x40,0x70, 0x5F,0x50, 0x5F,0x50, 0x5F,0x50, 0x40,0x70, 0x7F,0xC0, 0xFF,0xE0, 0x00,0x00,
+};
 
 
 static const uint8_t* const EMOJI_SPRITES_LG[] PROGMEM = {
@@ -354,6 +358,7 @@ static const uint8_t* const EMOJI_SPRITES_LG[] PROGMEM = {
   emoji_lg_diamond_suit, emoji_lg_spade_suit, emoji_lg_pizza, emoji_lg_four_leaf_clover,
   emoji_lg_cloud, emoji_lg_rocket, emoji_lg_passport_control,
   emoji_lg_eight_spoked_asterisk, emoji_lg_signal_strength,
+  emoji_lg_beer,
 };
 
 // ======== SMALL 10x10 SPRITES ========
@@ -616,6 +621,10 @@ static const uint8_t emoji_sm_eight_spoked_asterisk[] PROGMEM = {
 static const uint8_t emoji_sm_signal_strength[] PROGMEM = {
   0x00,0x80, 0x00,0x80, 0x02,0x80, 0x02,0x80, 0x0A,0x80, 0x0A,0x80, 0x2A,0x80, 0x2A,0x80, 0xAA,0x80, 0xAA,0x80,
 };
+// [76] beer 🍺
+static const uint8_t emoji_sm_beer[] PROGMEM = {
+  0x54,0x00, 0x6E,0xC0, 0xFF,0x80, 0x80,0xC0, 0xBE,0x80, 0xBE,0x80, 0x80,0xC0, 0xFF,0x80, 0x00,0x00, 0xFF,0x80,
+};
 
 static const uint8_t* const EMOJI_SPRITES_SM[] PROGMEM = {
   // Faces/emotion first
@@ -641,6 +650,7 @@ static const uint8_t* const EMOJI_SPRITES_SM[] PROGMEM = {
   emoji_sm_diamond_suit, emoji_sm_spade_suit, emoji_sm_pizza, emoji_sm_four_leaf_clover,
   emoji_sm_cloud, emoji_sm_rocket, emoji_sm_passport_control,
   emoji_sm_eight_spoked_asterisk, emoji_sm_signal_strength,
+  emoji_sm_beer,
 };
 
 // ---- Codepoint lookup for UTF-8 conversion ----
@@ -726,6 +736,7 @@ static const EmojiCodepoint EMOJI_CODEPOINTS[EMOJI_COUNT] = {
   { 0x1F6C2, 0x0000, 0xC9 }, // passport_control
   { 0x2733,  0x0000, 0xCA }, // eight_spoked_asterisk
   { 0x1F4F6, 0x0000, 0xCB }, // signal_strength
+  { 0x1F37A, 0x0000, 0xCC }, // beer
 };
 
 // ---- Helper functions ----
@@ -769,6 +780,7 @@ static void emojiSanitize(const char* src, char* dst, int dstLen) {
       int consumed;
       uint32_t cp = emojiDecodeUtf8(s + si, srcLen - si, &consumed);
       if (cp == 0xFE0F) { si += consumed; continue; }
+      if (cp == 0xFFFD) { si += consumed; continue; }  // Invalid UTF-8 — skip stray bytes safely
       bool found = false;
       for (int e = 0; e < EMOJI_COUNT; e++) {
         if (EMOJI_CODEPOINTS[e].cp == cp) {
@@ -803,7 +815,20 @@ static void emojiSanitize(const char* src, char* dst, int dstLen) {
           }
         }
       }
-      if (!found) si += consumed;  // Skip unknown multi-byte chars
+      if (!found) {
+        // Preserve non-emoji UTF-8 (accented letters, Cyrillic, Greek, etc.) by
+        // copying original bytes through to dst. UTF-8-aware render paths handle
+        // them downstream. Emoji-escape disambiguation remains unambiguous because
+        // emoji escapes (0x80-0xCC) only appear standalone — never as a continuation
+        // byte following a UTF-8 lead byte (0xC2-0xF7), so the decoder can tell them
+        // apart by tracking lead-byte state.
+        if (di + consumed < dstLen) {
+          for (int k = 0; k < consumed; k++) dst[di++] = (char)s[si + k];
+          si += consumed;
+        } else {
+          break;  // Not enough room for full UTF-8 sequence — stop cleanly
+        }
+      }
     } else {
       dst[di++] = (char)b;
       si++;
