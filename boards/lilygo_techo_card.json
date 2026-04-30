@@ -8,7 +8,28 @@
     "extra_flags": [
       "-DARDUINO_NRF52840_TECHO_CARD",
       "-DNRF52840_XXAA",
-      "-DNRF52_SERIES"
+      "-DNRF52_SERIES",
+
+      "-DUSE_LFXO",
+
+      "-DLED_BUILTIN=39",
+      "-DLED_BLUE=39",
+      "-DLED_RED=39",
+      "-DLED_STATE_ON=1",
+
+      "-DPIN_WIRE_SDA=36",
+      "-DPIN_WIRE_SCL=34",
+      "-DWIRE_INTERFACES_COUNT=1",
+
+      "-DPIN_SPI_MISO=17",
+      "-DPIN_SPI_SCK=13",
+      "-DPIN_SPI_MOSI=15",
+      "-DSPI_INTERFACES_COUNT=1",
+
+      "-DPIN_SERIAL1_RX=21",
+      "-DPIN_SERIAL1_TX=19",
+
+      "-DPIN_A0=2"
     ],
     "f_cpu": "64000000L",
     "hwids": [["0x239A", "0x8029"]],

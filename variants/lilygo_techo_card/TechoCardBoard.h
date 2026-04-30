@@ -55,10 +55,13 @@ public:
   void begin() override;
 
   // Battery
-  float getBatteryVoltage() override;
-  uint8_t getBatteryPercent() override;
-  float getAdcMultiplier() override { return _adc_multiplier; }
-  void setAdcMultiplier(float mult) { _adc_multiplier = mult; }
+  uint16_t getBattMilliVolts() override;
+  uint8_t getBatteryPercent();
+  float getAdcMultiplier() const override { return _adc_multiplier; }
+  bool setAdcMultiplier(float mult) override { _adc_multiplier = mult; return true; }
+
+  // Board identity
+  const char* getManufacturerName() const override { return "LilyGo T-Echo Card"; }
 
   // GPS power control
   void enableGPS(bool enable);
@@ -78,7 +81,7 @@ public:
   void buzz(uint16_t freq_hz, uint16_t duration_ms);
 
 #ifdef NRF52_POWER_MANAGEMENT
-  const PowerMgtConfig* getPowerConfig() const override {
+  const PowerMgtConfig* getPowerConfig() const {
     return &TECHO_CARD_POWER_CONFIG;
   }
 #endif

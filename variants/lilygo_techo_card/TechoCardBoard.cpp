@@ -92,7 +92,7 @@ void TechoCardBoard::begin() {
 // nRF52840 SAADC: 12-bit, internal 0.6V reference, 1/6 gain.
 // With 1/6 gain: input range 0–3.6V. Multiply by divider ratio (ADC_MULTIPLIER).
 // -----------------------------------------------------------------------------
-float TechoCardBoard::getBatteryVoltage() {
+uint16_t TechoCardBoard::getBattMilliVolts() {
   uint32_t now = millis();
 
   // Cache battery reading — only read every 10 seconds
@@ -159,18 +159,18 @@ float TechoCardBoard::getBatteryVoltage() {
   _cached_battery_mv = voltage_mv;
   _last_battery_read = now;
 
-  return voltage_mv;
+  return (uint16_t)voltage_mv;
 }
 
 uint8_t TechoCardBoard::getBatteryPercent() {
-  float mv = getBatteryVoltage();
-  if (mv <= 0) return 0;
+  uint16_t mv = getBattMilliVolts();
+  if (mv == 0) return 0;
 
   // Simple linear approximation for single-cell LiPo
   // 3200 mV = 0%, 4200 mV = 100%
-  if (mv >= 4200.0f) return 100;
-  if (mv <= 3200.0f) return 0;
-  return (uint8_t)(((mv - 3200.0f) / 1000.0f) * 100.0f);
+  if (mv >= 4200) return 100;
+  if (mv <= 3200) return 0;
+  return (uint8_t)(((uint32_t)(mv - 3200) * 100) / 1000);
 }
 
 // -----------------------------------------------------------------------------

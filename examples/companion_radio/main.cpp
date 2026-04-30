@@ -2056,7 +2056,8 @@ void setup() {
 
   // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1.
   // We must end Serial1 first, then reclaim the pins for Serial2 (which feeds gpsStream).
-  #if HAS_GPS
+  // This is ESP32-specific — on nRF52, GPS Serial1 is initialised in radio_init().
+  #if HAS_GPS && defined(ESP32)
     Serial1.end();   // Release GPS pins from Serial1's UART + ISR
     Serial2.end();   // Close any existing Serial2
     {
@@ -2428,6 +2429,7 @@ void loop() {
   // #endif
 
   // Map screen: periodically update own GPS position and contact markers
+  #ifdef DISPLAY_CLASS
   #if HAS_GPS
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
@@ -2452,6 +2454,7 @@ void loop() {
       }
     }
   }
+  #endif
   #endif
 
   // CPU frequency auto-timeout back to idle
