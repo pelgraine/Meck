@@ -1798,6 +1798,12 @@ if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
+      // Defer display refresh while BLE is actively transferring contacts.
+      // E-ink partial update blocks for ~820ms, stalling the BLE send queue
+      // and adding ~1.6s of dead time to a full contact sync.
+      if (_serial != NULL && _serial->hasPendingData()) {
+        _next_refresh = millis() + 500;  // Re-check in 500ms
+      } else {
       // Sync dark mode with prefs (settings toggle takes effect here)
       if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
         display.setDarkMode(_node_prefs->dark_mode != 0);
@@ -1964,6 +1970,7 @@ if (curr) curr->poll();
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif
       if (_next_refresh < minNext) _next_refresh = minNext;
+      }  // end else (not bulk syncing)
     }
 #if AUTO_OFF_MILLIS > 0
     if (millis() > _auto_off) {

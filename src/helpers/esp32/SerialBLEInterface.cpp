@@ -96,6 +96,16 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     conn_params.timeout = 400;  // 4 seconds supervision timeout
     esp_ble_gap_update_conn_params(&conn_params);
     BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
+
+    // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
+    // Note: ESP-IDF misspells "preferred" as "prefered" in their API
+    esp_ble_gap_set_prefered_phy(_remote_bda,
+                                  0,   // all_phys: no preference flags, use tx/rx masks
+                                  ESP_BLE_GAP_PHY_2M_PREF_MASK,
+                                  ESP_BLE_GAP_PHY_2M_PREF_MASK,
+                                  ESP_BLE_GAP_PHY_OPTIONS_NO_PREF);
+    esp_ble_gap_set_pkt_data_len(_remote_bda, 251);   // Request DLE (max link-layer PDU)
+    BLE_DEBUG_PRINTLN(" - Requested 2M PHY and DLE (251 bytes)");
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
 
@@ -205,7 +215,7 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   return 0;
 }
 
-#define  BLE_WRITE_MIN_INTERVAL   15
+#define  BLE_WRITE_MIN_INTERVAL   7
 
 bool SerialBLEInterface::isWriteBusy() const {
   return millis() < _last_write + BLE_WRITE_MIN_INTERVAL;   // still too soon to start another write?
@@ -224,8 +234,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
 
     send_queue_len--;
-    for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
-      send_queue[i] = send_queue[i + 1];
+    if (send_queue_len > 0) {
+      memmove(&send_queue[0], &send_queue[1], send_queue_len * sizeof(Frame));
     }
   }
 
@@ -236,8 +246,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
 
     recv_queue_len--;
-    for (int i = 0; i < recv_queue_len; i++) {   // delete top item from queue
-      recv_queue[i] = recv_queue[i + 1];
+    if (recv_queue_len > 0) {
+      memmove(&recv_queue[0], &recv_queue[1], recv_queue_len * sizeof(Frame));
     }
     return len;
   }
