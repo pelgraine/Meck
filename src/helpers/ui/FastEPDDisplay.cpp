@@ -22,7 +22,90 @@
 // CLEAR_FAST, CLEAR_SLOW — full refresh modes
 
 // Periodic slow (deep) refresh to clear ghosting
-#define FULL_SLOW_PERIOD 1  // every frame — eliminates ghosting (increase to 2+ for less flashing)
+#define FULL_SLOW_PERIOD 1  // every frame -- eliminates ghosting (increase to 2+ for less flashing)
+
+// ---------------------------------------------------------------------------
+// UTF-8 helpers for diacritic / extended Latin rendering
+// ---------------------------------------------------------------------------
+
+static uint32_t utf8Decode(const uint8_t* s, int len, int* consumed) {
+  if (len <= 0) { *consumed = 0; return 0; }
+  uint8_t b = s[0];
+  if (b < 0x80) { *consumed = 1; return b; }
+  if ((b & 0xE0) == 0xC0 && len >= 2 && (s[1] & 0xC0) == 0x80) {
+    *consumed = 2;
+    return ((uint32_t)(b & 0x1F) << 6) | (s[1] & 0x3F);
+  }
+  if ((b & 0xF0) == 0xE0 && len >= 3 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+    *consumed = 3;
+    return ((uint32_t)(b & 0x0F) << 12) | ((uint32_t)(s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+  }
+  if ((b & 0xF8) == 0xF0 && len >= 4 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
+    *consumed = 4;
+    return ((uint32_t)(b & 0x07) << 18) | ((uint32_t)(s[1] & 0x3F) << 12) | ((uint32_t)(s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+  }
+  *consumed = 1;
+  return 0xFFFD;
+}
+
+static char foldToAscii(uint32_t cp) {
+  if (cp < 0x80) return (char)cp;
+  if (cp >= 0xC0 && cp <= 0xFF) {
+    static const char f[64] = {
+      'A','A','A','A','A','A','A','C','E','E','E','E','I','I','I','I',
+      'D','N','O','O','O','O','O',  0 ,'O','U','U','U','U','Y',  0 ,'s',
+      'a','a','a','a','a','a','a','c','e','e','e','e','i','i','i','i',
+      'd','n','o','o','o','o','o',  0 ,'o','u','u','u','u','y',  0 ,'y'
+    };
+    return f[cp - 0xC0];
+  }
+  if (cp >= 0x100 && cp <= 0x17F) {
+    switch (cp) {
+      case 0x100: case 0x102: case 0x104: return 'A';
+      case 0x101: case 0x103: case 0x105: return 'a';
+      case 0x106: case 0x108: case 0x10A: case 0x10C: return 'C';
+      case 0x107: case 0x109: case 0x10B: case 0x10D: return 'c';
+      case 0x10E: case 0x110: return 'D';
+      case 0x10F: case 0x111: return 'd';
+      case 0x112: case 0x114: case 0x116: case 0x118: case 0x11A: return 'E';
+      case 0x113: case 0x115: case 0x117: case 0x119: case 0x11B: return 'e';
+      case 0x11C: case 0x11E: case 0x120: case 0x122: return 'G';
+      case 0x11D: case 0x11F: case 0x121: case 0x123: return 'g';
+      case 0x124: case 0x126: return 'H'; case 0x125: case 0x127: return 'h';
+      case 0x128: case 0x12A: case 0x12C: case 0x12E: case 0x130: return 'I';
+      case 0x129: case 0x12B: case 0x12D: case 0x12F: case 0x131: return 'i';
+      case 0x134: return 'J'; case 0x135: return 'j';
+      case 0x136: return 'K'; case 0x137: case 0x138: return 'k';
+      case 0x139: case 0x13B: case 0x13D: case 0x13F: case 0x141: return 'L';
+      case 0x13A: case 0x13C: case 0x13E: case 0x140: case 0x142: return 'l';
+      case 0x143: case 0x145: case 0x147: return 'N';
+      case 0x144: case 0x146: case 0x148: case 0x149: return 'n';
+      case 0x14C: case 0x14E: case 0x150: return 'O';
+      case 0x14D: case 0x14F: case 0x151: return 'o';
+      case 0x152: return 'O'; case 0x153: return 'o';
+      case 0x154: case 0x156: case 0x158: return 'R';
+      case 0x155: case 0x157: case 0x159: return 'r';
+      case 0x15A: case 0x15C: case 0x15E: case 0x160: return 'S';
+      case 0x15B: case 0x15D: case 0x15F: case 0x161: return 's';
+      case 0x162: case 0x164: case 0x166: return 'T';
+      case 0x163: case 0x165: case 0x167: return 't';
+      case 0x168: case 0x16A: case 0x16C: case 0x16E: case 0x170: case 0x172: return 'U';
+      case 0x169: case 0x16B: case 0x16D: case 0x16F: case 0x171: case 0x173: return 'u';
+      case 0x174: return 'W'; case 0x175: return 'w';
+      case 0x176: case 0x178: return 'Y'; case 0x177: return 'y';
+      case 0x179: case 0x17B: case 0x17D: return 'Z';
+      case 0x17A: case 0x17C: case 0x17E: return 'z';
+    }
+  }
+  return 0;
+}
+
+static bool hasNonAscii(const char* str) {
+  for (int i = 0; str[i]; i++) {
+    if ((uint8_t)str[i] >= 0x80) return true;
+  }
+  return false;
+}
 
 FastEPDDisplay::~FastEPDDisplay() {
   delete _canvas;
@@ -128,43 +211,55 @@ void FastEPDDisplay::setTextSize(int sz) {
   const GFXfont* customFont = meckGetFont(_fontStyle, sz);
   if (customFont) {
     _canvas->setFont(customFont);
-    // textSize 5 (clock face) uses ×5 scaling even with custom fonts
-    _canvas->setTextSize(sz == 5 ? 5 : 1);
+    _currentFont = customFont;
+    // textSize 5 (clock face) uses x5 scaling even with custom fonts
+    _currentTextScale = (sz == 5) ? 5 : 1;
+    _canvas->setTextSize(_currentTextScale);
     return;
   }
 
-  // Classic style (or fallback) — original FreeSans/FreeSerif fonts
+  // Classic style (or fallback) -- original FreeSans/FreeSerif fonts
   // Toggle between font families via -D MECK_SERIF_FONT build flag
+  _currentTextScale = 1;
   switch(sz) {
-    case 0:  // Body text — reader content, settings rows, messages, footers
+    case 0:  // Body text -- reader content, settings rows, messages, footers
 #ifdef MECK_SERIF_FONT
       _canvas->setFont(&FreeSerif12pt7b);
+      _currentFont = &FreeSerif12pt7b;
 #else
       _canvas->setFont(&FreeSans12pt7b);
+      _currentFont = &FreeSans12pt7b;
 #endif
       _canvas->setTextSize(1);
       break;
-    case 1:  // Headings — screen titles, channel names (bold, same height as body)
+    case 1:  // Headings -- screen titles, channel names (bold, same height as body)
       _canvas->setFont(&FreeSansBold12pt7b);
+      _currentFont = &FreeSansBold12pt7b;
       _canvas->setTextSize(1);
       break;
-    case 2:  // Large bold — MSG count, tile letters
+    case 2:  // Large bold -- MSG count, tile letters
       _canvas->setFont(&FreeSansBold18pt7b);
+      _currentFont = &FreeSansBold18pt7b;
       _canvas->setTextSize(1);
       break;
-    case 3:  // Extra large — splash screen title
+    case 3:  // Extra large -- splash screen title
       _canvas->setFont(&FreeSansBold24pt7b);
+      _currentFont = &FreeSansBold24pt7b;
       _canvas->setTextSize(1);
       break;
-    case 5:  // Clock face — lock screen (FreeSansBold24pt scaled 5×)
+    case 5:  // Clock face -- lock screen (FreeSansBold24pt scaled 5x)
       _canvas->setFont(&FreeSansBold24pt7b);
+      _currentFont = &FreeSansBold24pt7b;
+      _currentTextScale = 5;
       _canvas->setTextSize(5);
       break;
     default:
 #ifdef MECK_SERIF_FONT
       _canvas->setFont(&FreeSerif12pt7b);
+      _currentFont = &FreeSerif12pt7b;
 #else
       _canvas->setFont(&FreeSans12pt7b);
+      _currentFont = &FreeSans12pt7b;
 #endif
       _canvas->setTextSize(1);
       break;
@@ -203,7 +298,79 @@ void FastEPDDisplay::setCursor(int x, int y) {
 void FastEPDDisplay::print(const char* str) {
   if (!_canvas || !str) return;
   _frameCRC.update<char>(str, strlen(str));
-  _canvas->print(str);
+
+  if (!hasNonAscii(str)) {
+    // Pure ASCII fast path
+    _canvas->print(str);
+    return;
+  }
+
+  const uint8_t* s = (const uint8_t*)str;
+  int len = strlen(str);
+  int pos = 0;
+  bool has8bFont = _currentFont && _currentFont->last > 0xFF;
+
+  while (pos < len) {
+    uint8_t b = s[pos];
+    if (b < 0x80) {
+      _canvas->write(b);
+      pos++;
+    } else {
+      int consumed;
+      uint32_t cp = utf8Decode(s + pos, len - pos, &consumed);
+      if (has8bFont && cp >= _currentFont->first && cp <= _currentFont->last) {
+        drawGlyphAtCursor((uint16_t)cp);
+      } else if (!has8bFont) {
+        char folded = foldToAscii(cp);
+        if (folded) _canvas->write((uint8_t)folded);
+      }
+      pos += consumed;
+    }
+  }
+}
+
+void FastEPDDisplay::drawGlyphAtCursor(uint16_t cp) {
+  if (!_canvas || !_currentFont || cp < _currentFont->first || cp > _currentFont->last) return;
+
+  uint16_t idx = cp - _currentFont->first;
+  GFXglyph* glyph = &_currentFont->glyph[idx];
+
+  uint8_t gw = glyph->width;
+  uint8_t gh = glyph->height;
+  int8_t xo = glyph->xOffset;
+  int8_t yo = glyph->yOffset;
+  uint16_t bo = glyph->bitmapOffset;
+  uint8_t xa = glyph->xAdvance;
+
+  int16_t cx = _canvas->getCursorX();
+  int16_t cy = _canvas->getCursorY();
+
+  // Canvas color: 0 = black, 1 = white
+  uint16_t canvasColor = (_curr_color == GxEPD_BLACK) ? 0 : 1;
+
+  if (gw > 0 && gh > 0) {
+    const uint8_t* bitmap = _currentFont->bitmap;
+    uint8_t bit = 0, bits = 0;
+
+    for (uint8_t yy = 0; yy < gh; yy++) {
+      for (uint8_t xx = 0; xx < gw; xx++) {
+        if (!(bit++ & 7)) bits = bitmap[bo++];
+        if (bits & 0x80) {
+          if (_currentTextScale == 1) {
+            _canvas->drawPixel(cx + xo + xx, cy + yo + yy, canvasColor);
+          } else {
+            _canvas->fillRect(
+              cx + (xo + xx) * _currentTextScale,
+              cy + (yo + yy) * _currentTextScale,
+              _currentTextScale, _currentTextScale, canvasColor);
+          }
+        }
+        bits <<= 1;
+      }
+    }
+  }
+
+  _canvas->setCursor(cx + xa * _currentTextScale, cy);
 }
 
 void FastEPDDisplay::fillRect(int x, int y, int w, int h) {
@@ -277,9 +444,54 @@ void FastEPDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
 
 uint16_t FastEPDDisplay::getTextWidth(const char* str) {
   if (!_canvas || !str) return 0;
+
+  if (!hasNonAscii(str)) {
+    int16_t x1, y1;
+    uint16_t w, h;
+    _canvas->getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
+    return (uint16_t)ceil((w + 1) / scale_x);
+  }
+
+  bool has8bFont = _currentFont && _currentFont->last > 0xFF;
+
+  if (has8bFont) {
+    const uint8_t* s = (const uint8_t*)str;
+    int len = strlen(str);
+    int pos = 0;
+    int totalAdv = 0;
+    while (pos < len) {
+      int consumed;
+      uint32_t cp = utf8Decode(s + pos, len - pos, &consumed);
+      if (cp >= _currentFont->first && cp <= _currentFont->last) {
+        totalAdv += _currentFont->glyph[cp - _currentFont->first].xAdvance * _currentTextScale;
+      }
+      pos += consumed;
+    }
+    return (uint16_t)ceil((totalAdv + 1) / scale_x);
+  }
+
+  // Classic/7b: fold to ASCII, then measure
+  char folded[256];
+  const uint8_t* s = (const uint8_t*)str;
+  int len = strlen(str);
+  int pos = 0, fi = 0;
+  while (pos < len && fi < 254) {
+    uint8_t b = s[pos];
+    if (b < 0x80) {
+      folded[fi++] = (char)b;
+      pos++;
+    } else {
+      int consumed;
+      uint32_t cp = utf8Decode(s + pos, len - pos, &consumed);
+      char fc = foldToAscii(cp);
+      if (fc) folded[fi++] = fc;
+      pos += consumed;
+    }
+  }
+  folded[fi] = 0;
   int16_t x1, y1;
   uint16_t w, h;
-  _canvas->getTextBounds(str, 0, 0, &x1, &y1, &w, &h);
+  _canvas->getTextBounds(folded, 0, 0, &x1, &y1, &w, &h);
   return (uint16_t)ceil((w + 1) / scale_x);
 }
 
@@ -326,6 +538,35 @@ void FastEPDDisplay::endFrame() {
     _epd->partialUpdate(true);  // No flash — differential
   }
   _epd->backupPlane();
+}
+
+void FastEPDDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
+  if (_currentFont && _currentFont->last > 0xFF) {
+    strncpy(dest, src, dest_size - 1);
+    dest[dest_size - 1] = '\0';
+    return;
+  }
+  // Classic/7b: fold accented chars to ASCII
+  size_t j = 0;
+  const uint8_t* s = (const uint8_t*)src;
+  int len = strlen(src);
+  int pos = 0;
+  while (pos < len && j < dest_size - 1) {
+    uint8_t b = s[pos];
+    if (b >= 32 && b <= 126) {
+      dest[j++] = (char)b;
+      pos++;
+    } else if (b >= 0x80) {
+      int consumed;
+      uint32_t cp = utf8Decode(s + pos, len - pos, &consumed);
+      char folded = foldToAscii(cp);
+      if (folded) dest[j++] = folded;
+      pos += consumed;
+    } else {
+      pos++;
+    }
+  }
+  dest[j] = 0;
 }
 
 void FastEPDDisplay::setDarkMode(bool dark) {

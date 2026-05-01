@@ -1230,9 +1230,16 @@ public:
           uint8_t b = (uint8_t)msg->text[pos];
           
           if (b == EMOJI_PAD_BYTE) { pos++; continue; }
-          
+
+          // --- UTF-8 lead byte detection ---
+          // Must check BEFORE isEmojiEscape() because lead bytes 0xC2-0xCC
+          // overlap the emoji escape range (0x80-0xCC). A byte >= 0xC2
+          // followed by a continuation byte (0x80-0xBF) is always UTF-8.
+          bool isUtf8 = (b >= 0xC2 && pos + 1 < textLen &&
+                         ((uint8_t)msg->text[pos + 1] & 0xC0) == 0x80);
+
           // Word wrap: when starting a new text word, check if it fits
-          if (b != ' ' && !isEmojiEscape(b) && px > 0) {
+          if (b != ' ' && (isUtf8 || !isEmojiEscape(b)) && px > 0) {
             bool boundary = (pos == 0);
             if (!boundary) {
               for (int bp = pos - 1; bp >= 0; bp--) {
@@ -1244,15 +1251,31 @@ public:
             }
             if (boundary) {
               int wordW = 0;
-              for (int j = pos; j < textLen; j++) {
+              for (int j = pos; j < textLen; ) {
                 uint8_t wb = (uint8_t)msg->text[j];
-                if (wb == EMOJI_PAD_BYTE) continue;
-                if (wb == ' ' || isEmojiEscape(wb)) break;
-                charStr[0] = (char)wb;
-                dblStr[0] = dblStr[1] = (char)wb;
-                int charAdv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
-                if (charAdv < 1) charAdv = 1;
-                wordW += charAdv;
+                if (wb == EMOJI_PAD_BYTE) { j++; continue; }
+                if (wb == ' ') break;
+                // Check for UTF-8 lead byte in word scan
+                bool wbUtf8 = (wb >= 0xC2 && j + 1 < textLen &&
+                               ((uint8_t)msg->text[j + 1] & 0xC0) == 0x80);
+                if (!wbUtf8 && isEmojiEscape(wb)) break;
+                if (wbUtf8) {
+                  int clen = (wb < 0xE0) ? 2 : (wb < 0xF0) ? 3 : 4;
+                  int actual = (j + clen <= textLen) ? clen : textLen - j;
+                  char mbuf[5] = {0};
+                  memcpy(mbuf, &msg->text[j], actual);
+                  int charAdv = display.getTextWidth(mbuf);
+                  if (charAdv < 1) charAdv = 1;
+                  wordW += charAdv;
+                  j += actual;
+                } else {
+                  charStr[0] = (char)wb;
+                  dblStr[0] = dblStr[1] = (char)wb;
+                  int charAdv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+                  if (charAdv < 1) charAdv = 1;
+                  wordW += charAdv;
+                  j++;
+                }
               }
               if (px + wordW > lineW) {
                 px = 0;
@@ -1263,7 +1286,25 @@ public:
             }
           }
           
-          if (isEmojiEscape(b)) {
+          // --- Render: UTF-8 multi-byte character ---
+          if (isUtf8) {
+            int clen = (b < 0xE0) ? 2 : (b < 0xF0) ? 3 : 4;
+            int actual = (pos + clen <= textLen) ? clen : textLen - pos;
+            char mbuf[5] = {0};
+            memcpy(mbuf, &msg->text[pos], actual);
+            int adv = display.getTextWidth(mbuf);
+            if (adv < 1) adv = 1;
+            if (px + adv > lineW) {
+              px = 0;
+              linesForThisMsg++;
+              y += lineHeight;
+              if (linesForThisMsg >= maxLinesPerMsg || y + lineHeight > maxY) break;
+            }
+            display.setCursor(px, y);
+            display.print(mbuf);
+            px += adv;
+            pos += actual;
+          } else if (isEmojiEscape(b)) {
             if (px + EMOJI_SM_W > lineW) {
               px = 0;
               linesForThisMsg++;
