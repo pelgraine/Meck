@@ -3619,6 +3619,9 @@ void handleKeyboardInput() {
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);
   
+  // Defer contact saves while user is actively pressing keys
+  the_mesh.notifyUserInput();
+  
   // Alarm ringing: ANY key dismisses (highest priority after lock screen)
   #ifdef MECK_AUDIO_VARIANT
   {
