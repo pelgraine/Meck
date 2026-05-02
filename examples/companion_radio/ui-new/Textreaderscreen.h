@@ -1811,8 +1811,15 @@ public:
   bool handleFileListInput(char c) {
     int total = totalListItems();
 
+    // Shift+W: page up
+    if (c == 'W') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = max(0, _selectedFile - pageSize);
+      return true;
+    }
     // W - scroll up
-    if (c == 'w' || c == 'W' || c == 0xF2) {
+    if (c == 'w' || c == 0xF2) {
       if (_selectedFile > 0) {
         _selectedFile--;
         return true;
@@ -1820,8 +1827,15 @@ public:
       return false;
     }
 
+    // Shift+S: page down
+    if (c == 'S') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = min(total - 1, _selectedFile + pageSize);
+      return true;
+    }
     // S - scroll down
-    if (c == 's' || c == 'S' || c == 0xF1) {
+    if (c == 's' || c == 0xF1) {
       if (_selectedFile < total - 1) {
         _selectedFile++;
         return true;

@@ -4567,6 +4567,23 @@ void handleKeyboardInput() {
       ui_task.gotoNotesScreen();
       break;
     
+    case 'S':
+      // Shift+S: page scroll down on list screens
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+          || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
+        ui_task.injectKey('S');
+      }
+      break;
+
     case 's':
       // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
@@ -4584,6 +4601,23 @@ void handleKeyboardInput() {
       } else {
         Serial.println("Opening settings");
         ui_task.gotoSettingsScreen();
+      }
+      break;
+
+    case 'W':
+      // Shift+W: page scroll up on list screens
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+          || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
+        ui_task.injectKey('W');
       }
       break;
 

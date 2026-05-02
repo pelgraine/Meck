@@ -2996,8 +2996,17 @@ public:
 
     // --- Normal browsing mode ---
 
-    // W/S: navigate
-    if (c == 'w' || c == 'W') {
+    // W/S: navigate, Shift+W/S: page scroll
+    if (c == 'W') {
+      // Shift+W: page up
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _cursor = max(0, _cursor - pageSize);
+      skipNonSelectable(-1);
+      Serial.printf("Settings: page up cursor=%d/%d\n", _cursor, _numRows);
+      return true;
+    }
+    if (c == 'w') {
       if (_cursor > 0) {
         _cursor--;
         skipNonSelectable(-1);
@@ -3005,7 +3014,16 @@ public:
       Serial.printf("Settings: cursor=%d/%d row=%d\n", _cursor, _numRows, _rows[_cursor].type);
       return true;
     }
-    if (c == 's' || c == 'S') {
+    if (c == 'S') {
+      // Shift+S: page down
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _cursor = min(_numRows - 1, _cursor + pageSize);
+      skipNonSelectable(1);
+      Serial.printf("Settings: page down cursor=%d/%d\n", _cursor, _numRows);
+      return true;
+    }
+    if (c == 's') {
       if (_cursor < _numRows - 1) {
         _cursor++;
         skipNonSelectable(1);

@@ -716,7 +716,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 80, "toggle: " PRESS_LABEL);
 #else
-      display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 78, "or press Enter key");
 #endif
 #endif
 #ifdef MECK_WIFI_COMPANION
@@ -768,7 +769,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 64, "advert: " PRESS_LABEL);
 #else
-      display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
@@ -1010,7 +1012,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.drawTextCentered(display.width() / 2, 64, "hibernate:" PRESS_LABEL);
 #else
-        display.drawTextCentered(display.width() / 2, 64 - 11, "hibernate:" PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, 57, "hibernate: " PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
       }
     }
