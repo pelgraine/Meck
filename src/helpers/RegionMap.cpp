@@ -2,8 +2,48 @@
 #include <helpers/TxtDataHelpers.h>
 #include <SHA256.h>
 
+// helper class for region map exporter, we emulate Stream with a safe buffer writer.
+
+class BufStream : public Stream {
+public:
+  BufStream(char *buf, size_t max_len)
+    : _buf(buf), _max_len(max_len), _pos(0) {
+    if (_max_len > 0) _buf[0] = 0;
+  }
+
+  size_t write(uint8_t c) override {
+    if (_pos + 1 >= _max_len) return 0;
+    _buf[_pos++] = c;
+    _buf[_pos] = 0;
+    return 1;
+  }
+
+  size_t write(const uint8_t *buffer, size_t size) override {
+    size_t written = 0;
+    while (written < size) {
+      if (!write(buffer[written])) break;
+      written++;
+    }
+    return written;
+  }
+
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+
+  size_t length() const { return _pos; }
+
+private:
+  char *_buf;
+  size_t _max_len;
+  size_t _pos;
+};
+
+
 RegionMap::RegionMap(TransportKeyStore& store) : _store(&store) {
-  next_id = 1; num_regions = 0; home_id = 0;
+  next_id = 1; num_regions = 0;
+  default_id = home_id = 0;
   wildcard.id = wildcard.parent = 0;
   wildcard.flags = 0;  // default behaviour, allow flood and direct
   strcpy(wildcard.name, "*");
@@ -40,9 +80,11 @@ bool RegionMap::load(FILESYSTEM* _fs, const char* path) {
     if (file) {
       uint8_t pad[128];
 
-      num_regions = 0; next_id = 1; home_id = 0;
+      num_regions = 0; next_id = 1;
+      default_id = home_id = 0;
 
-      bool success = file.read(pad, 5) == 5;  // reserved header
+      bool success = file.read(pad, 3) == 3;  // reserved header
+      success = success && file.read((uint8_t *) &default_id, sizeof(default_id)) == sizeof(default_id);
       success = success && file.read((uint8_t *) &home_id, sizeof(home_id)) == sizeof(home_id);
       success = success && file.read((uint8_t *) &wildcard.flags, sizeof(wildcard.flags)) == sizeof(wildcard.flags);
       success = success && file.read((uint8_t *) &next_id, sizeof(next_id)) == sizeof(next_id);
@@ -78,7 +120,8 @@ bool RegionMap::save(FILESYSTEM* _fs, const char* path) {
     uint8_t pad[128];
     memset(pad, 0, sizeof(pad));
 
-    bool success = file.write(pad, 5) == 5;  // reserved header
+    bool success = file.write(pad, 3) == 3;  // reserved header
+    success = success && file.write((uint8_t *) &default_id, sizeof(default_id)) == sizeof(default_id);
     success = success && file.write((uint8_t *) &home_id, sizeof(home_id)) == sizeof(home_id);
     success = success && file.write((uint8_t *) &wildcard.flags, sizeof(wildcard.flags)) == sizeof(wildcard.flags);
     success = success && file.write((uint8_t *) &next_id, sizeof(next_id)) == sizeof(next_id);
@@ -125,24 +168,29 @@ RegionEntry* RegionMap::putRegion(const char* name, uint16_t parent_id, uint16_t
   return region;
 }
 
+int RegionMap::getTransportKeysFor(const RegionEntry& src, TransportKey dest[], int max_num) {
+  int num;
+  if (src.name[0] == '$') {   // private region
+    num = _store->loadKeysFor(src.id, dest, max_num);
+  } else if (src.name[0] == '#') {   // auto hashtag region
+    _store->getAutoKeyFor(src.id, src.name, dest[0]);
+    num = 1;
+  } else {   // new: implicit auto hashtag region
+    char tmp[sizeof(src.name)+1];
+    tmp[0] = '#';
+    strcpy(&tmp[1], src.name);
+    _store->getAutoKeyFor(src.id, tmp, dest[0]);
+    num = 1;
+  }
+  return num;
+}
+
 RegionEntry* RegionMap::findMatch(mesh::Packet* packet, uint8_t mask) {
   for (int i = 0; i < num_regions; i++) {
     auto region = &regions[i];
     if ((region->flags & mask) == 0) {   // does region allow this? (per 'mask' param)
       TransportKey keys[4];
-      int num;
-      if (region->name[0] == '$') {   // private region
-        num = _store->loadKeysFor(region->id, keys, 4);
-      } else if (region->name[0] == '#') {   // auto hashtag region
-        _store->getAutoKeyFor(region->id, region->name, keys[0]);
-        num = 1;
-      } else {   // new: implicit auto hashtag region
-        char tmp[sizeof(region->name)];
-        tmp[0] = '#';
-        strcpy(&tmp[1], region->name);
-        _store->getAutoKeyFor(region->id, tmp, keys[0]);
-        num = 1;
-      }
+      int num = getTransportKeysFor(*region, keys, 4);
       for (int j = 0; j < num; j++) {
         uint16_t code = keys[j].calcTransportCode(packet);
         if (packet->transport_codes[0] == code) {   // a match!!
@@ -198,6 +246,14 @@ void RegionMap::setHomeRegion(const RegionEntry* home) {
   home_id = home ? home->id : 0;
 }
 
+RegionEntry* RegionMap::getDefaultRegion() {
+  return default_id == 0 ? NULL : findById(default_id);
+}
+
+void RegionMap::setDefaultRegion(const RegionEntry* def) {
+  default_id = def ? def->id : 0;
+}
+
 bool RegionMap::removeRegion(const RegionEntry& region) {
   if (region.id == 0) return false;  // failed (cannot remove the wildcard Region)
 
@@ -249,25 +305,40 @@ void RegionMap::exportTo(Stream& out) const {
   printChildRegions(0, &wildcard, out);   // recursive
 }
 
-int RegionMap::exportNamesTo(char *dest, int max_len, uint8_t mask) {
+size_t RegionMap::exportTo(char *dest, size_t max_len) const {
+  if (!dest || max_len == 0) return 0;
+
+  BufStream bs(dest, max_len);
+  exportTo(bs);              // reuse existing logic
+  return bs.length();
+}
+
+int RegionMap::exportNamesTo(char *dest, int max_len, uint8_t mask, bool invert) {
   char *dp = dest;
-  if ((wildcard.flags & mask) == 0) {
+  
+  // Check wildcard region
+  bool wildcard_matches = invert ? (wildcard.flags & mask) : !(wildcard.flags & mask);
+  if (wildcard_matches) {
     *dp++ = '*';
     *dp++ = ',';
   }
 
   for (int i = 0; i < num_regions; i++) {
     auto region = &regions[i];
-    if ((region->flags & mask) == 0) {   // region allowed? (per 'mask' param)
-      const char* name = skip_hash(region->name);
-      int len = strlen(name);
+    
+    // Check if region matches the filter criteria
+    bool region_matches = invert ? (region->flags & mask) : !(region->flags & mask);
+    
+    if (region_matches) {
+      int len = strlen(skip_hash(region->name));
       if ((dp - dest) + len + 2 < max_len) {   // only append if name will fit
-        memcpy(dp, name, len);
+        memcpy(dp, skip_hash(region->name), len);
         dp += len;
         *dp++ = ',';
       }
     }
   }
+
   if (dp > dest) { dp--; }   // don't include trailing comma
 
   *dp = 0;  // set null terminator

@@ -217,16 +217,30 @@ public:
   bool handleInput(char c) override {
     int count = the_mesh.getDiscoveredCount();
 
+    // Shift+W: page up
+    if (c == 'W') {
+      int pageSize = (128 - 14 - 14) / the_mesh.getNodePrefs()->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _scrollPos = max(0, _scrollPos - pageSize);
+      return true;
+    }
     // W - scroll up
-    if (c == 'w' || c == 'W' || c == 0xF2) {
+    if (c == 'w' || c == 0xF2) {
       if (_scrollPos > 0) {
         _scrollPos--;
         return true;
       }
     }
 
+    // Shift+S: page down
+    if (c == 'S') {
+      int pageSize = (128 - 14 - 14) / the_mesh.getNodePrefs()->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _scrollPos = min(count - 1, _scrollPos + pageSize);
+      return true;
+    }
     // S - scroll down
-    if (c == 's' || c == 'S' || c == 0xF1) {
+    if (c == 's' || c == 0xF1) {
       if (_scrollPos < count - 1) {
         _scrollPos++;
         return true;

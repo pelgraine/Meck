@@ -86,8 +86,10 @@ struct NodePrefs {  // persisted to file
 #if defined(LilyGo_T5S3_EPaper_Pro)
     return 0;
 #else
-    // Custom 7pt fonts at textSize 0 use GFXfont (baseline rendering), not built-in
-    if (ui_font_style > 0 && !large_font) return -2;
+    // Custom 7pt fonts at textSize 0 use GFXfont (baseline rendering), not built-in.
+    // Offset 0: highlight starts at row top, covers 7pt ascenders without
+    // bleeding into the row above (-2 was calibrated for taller 9pt ascenders).
+    if (ui_font_style > 0 && !large_font) return 0;
     return large_font ? -2 : 5;
 #endif
   }

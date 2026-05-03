@@ -78,7 +78,12 @@ class FastEPDDisplay : public DisplayDriver {
   uint32_t _lastUpdateMs = 0; // Rate limiting — minimum interval between refreshes
   bool _forcePartial = false; // When true, use partial updates (VKB typing)
   bool _darkMode = false;     // Invert all pixels (black bg, white text)
-  bool _portraitMode = false; // Rotated 90° (540×960 logical)
+  bool _portraitMode = false; // Rotated 90 (540x960 logical)
+  const GFXfont* _currentFont = nullptr;  // Track for UTF-8 rendering
+  uint8_t _currentTextScale = 1;          // Track glyph scale factor
+
+  // Render one glyph from the current 8b font at the canvas cursor position
+  void drawGlyphAtCursor(uint16_t cp);
 
   // Virtual 128×128 → physical canvas mapping (runtime, changes with portrait)
   float scale_x  = 7.5f;       // 960 / 128 (landscape default)
@@ -106,6 +111,7 @@ public:
   void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override;
   uint16_t getTextWidth(const char* str) override;
   void endFrame() override;
+  void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override;
 
   // --- Raw pixel access for MapScreen (bypasses scaling) ---
   void drawPixelRaw(int16_t x, int16_t y, uint16_t color) {

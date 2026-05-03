@@ -91,6 +91,7 @@ static const char* EMOJI_LABELS[EMOJI_COUNT] = {
   "HFC",    // 73 passport_control
   "Star",   // 74 eight_spoked_asterisk
   "Sig",    // 75 signal_strength
+  "Beer",   // 76 beer
 };
 
 struct EmojiPicker {

@@ -36,6 +36,7 @@ public:
   void setHasConnection(bool connected) { _connected = connected; }
   bool hasConnection() const { return _connected; }
   uint16_t getBattMilliVolts() const { return _board->getBattMilliVolts(); }
+  uint8_t getBatteryPercent() const { return _board->getBatteryPercent(); }
   bool isSerialEnabled() const { return _serial->isEnabled(); }
   void enableSerial() { _serial->enable(); }
   void disableSerial() { _serial->disable(); }
@@ -50,6 +51,7 @@ public:
 
   // Mark a channel as read when BLE companion app syncs a message
   virtual void markChannelReadFromBLE(uint8_t channel_idx) {}
+  virtual void markAllChannelsRead() {}  // Companion builds: zero all unread on app connect
 
   // Repeater admin callbacks (from MyMesh)
   virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}

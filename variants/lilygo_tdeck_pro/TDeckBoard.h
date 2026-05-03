@@ -30,10 +30,28 @@ public:
   void begin();
 
   void powerOff() override {
-    // Stop Bluetooth before power off
-    btStop();
-    // Don't call parent or enterDeepSleep - let normal shutdown continue
-    // Display will show "hibernating..." text
+    // True hibernate: deep sleep with no software wake sources.
+    // Only a hardware reset (reset button) or USB power-on wakes the device.
+    // BLE, WiFi, 4G, GPS, and LoRa are already shut down by UITask
+    // before this method is called.
+
+    btStop();  // Belt and suspenders -- BLE controller stop
+
+    // Cut power to peripherals (keyboard, BQ27220, sensors)
+    pinMode(PIN_PERF_POWERON, OUTPUT);
+    digitalWrite(PIN_PERF_POWERON, LOW);
+
+    // Cut power to LoRa module (radio already in standby from radio_driver.powerOff)
+    #ifdef P_LORA_EN
+      digitalWrite(P_LORA_EN, LOW);
+    #endif
+
+    // Hold LoRa NSS high to prevent SX1262 drawing current from floating CS
+    rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
+
+    // Enter deep sleep with no wake sources -- only hardware reset wakes
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+    esp_deep_sleep_start();
   }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {

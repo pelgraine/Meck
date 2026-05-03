@@ -13,8 +13,12 @@
 #endif
 
 // Maximum messages to store in history
+#ifndef CHANNEL_MSG_HISTORY_SIZE
 #define CHANNEL_MSG_HISTORY_SIZE 300
+#endif
+#ifndef CHANNEL_MSG_TEXT_LEN
 #define CHANNEL_MSG_TEXT_LEN 160
+#endif
 #define MSG_PATH_MAX 20  // Max repeater hops stored per message
 
 #ifndef MAX_GROUP_CHANNELS
@@ -330,6 +334,11 @@ public:
     if (slot >= 0 && slot <= MAX_GROUP_CHANNELS) {
       _unread[slot] = 0;
     }
+  }
+
+  // Mark all channels + DMs as read (companion app connected)
+  void markAllRead() {
+    memset(_unread, 0, sizeof(_unread));
   }
 
   // Get unread count for a specific channel
@@ -728,6 +737,12 @@ public:
       const char* rtInbox = "Hold:Open";
       display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
       display.print(rtInbox);
+#elif defined(LILYGO_TECHO_LITE)
+      display.setCursor(0, footerY);
+      display.print("Q:Bk");
+      const char* rtInbox = "Ent:Open";
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
       display.print("Q:Bck A/D:Ch");
@@ -964,6 +979,10 @@ public:
         display.print("Swipe: Switch channel");
         display.setCursor(0, 40);
         display.print("Long press: Compose");
+#elif defined(LILYGO_TECHO_LITE)
+        display.print("Arrows: Switch channel");
+        display.setCursor(0, 40);
+        display.print("Ent: Compose message");
 #else
         display.print("A/D: Switch channel");
         display.setCursor(0, 40);
@@ -1216,9 +1235,16 @@ public:
           uint8_t b = (uint8_t)msg->text[pos];
           
           if (b == EMOJI_PAD_BYTE) { pos++; continue; }
-          
+
+          // --- UTF-8 lead byte detection ---
+          // Must check BEFORE isEmojiEscape() because lead bytes 0xC2-0xCC
+          // overlap the emoji escape range (0x80-0xCC). A byte >= 0xC2
+          // followed by a continuation byte (0x80-0xBF) is always UTF-8.
+          bool isUtf8 = (b >= 0xC2 && pos + 1 < textLen &&
+                         ((uint8_t)msg->text[pos + 1] & 0xC0) == 0x80);
+
           // Word wrap: when starting a new text word, check if it fits
-          if (b != ' ' && !isEmojiEscape(b) && px > 0) {
+          if (b != ' ' && (isUtf8 || !isEmojiEscape(b)) && px > 0) {
             bool boundary = (pos == 0);
             if (!boundary) {
               for (int bp = pos - 1; bp >= 0; bp--) {
@@ -1230,15 +1256,31 @@ public:
             }
             if (boundary) {
               int wordW = 0;
-              for (int j = pos; j < textLen; j++) {
+              for (int j = pos; j < textLen; ) {
                 uint8_t wb = (uint8_t)msg->text[j];
-                if (wb == EMOJI_PAD_BYTE) continue;
-                if (wb == ' ' || isEmojiEscape(wb)) break;
-                charStr[0] = (char)wb;
-                dblStr[0] = dblStr[1] = (char)wb;
-                int charAdv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
-                if (charAdv < 1) charAdv = 1;
-                wordW += charAdv;
+                if (wb == EMOJI_PAD_BYTE) { j++; continue; }
+                if (wb == ' ') break;
+                // Check for UTF-8 lead byte in word scan
+                bool wbUtf8 = (wb >= 0xC2 && j + 1 < textLen &&
+                               ((uint8_t)msg->text[j + 1] & 0xC0) == 0x80);
+                if (!wbUtf8 && isEmojiEscape(wb)) break;
+                if (wbUtf8) {
+                  int clen = (wb < 0xE0) ? 2 : (wb < 0xF0) ? 3 : 4;
+                  int actual = (j + clen <= textLen) ? clen : textLen - j;
+                  char mbuf[5] = {0};
+                  memcpy(mbuf, &msg->text[j], actual);
+                  int charAdv = display.getTextWidth(mbuf);
+                  if (charAdv < 1) charAdv = 1;
+                  wordW += charAdv;
+                  j += actual;
+                } else {
+                  charStr[0] = (char)wb;
+                  dblStr[0] = dblStr[1] = (char)wb;
+                  int charAdv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+                  if (charAdv < 1) charAdv = 1;
+                  wordW += charAdv;
+                  j++;
+                }
               }
               if (px + wordW > lineW) {
                 px = 0;
@@ -1249,7 +1291,25 @@ public:
             }
           }
           
-          if (isEmojiEscape(b)) {
+          // --- Render: UTF-8 multi-byte character ---
+          if (isUtf8) {
+            int clen = (b < 0xE0) ? 2 : (b < 0xF0) ? 3 : 4;
+            int actual = (pos + clen <= textLen) ? clen : textLen - pos;
+            char mbuf[5] = {0};
+            memcpy(mbuf, &msg->text[pos], actual);
+            int adv = display.getTextWidth(mbuf);
+            if (adv < 1) adv = 1;
+            if (px + adv > lineW) {
+              px = 0;
+              linesForThisMsg++;
+              y += lineHeight;
+              if (linesForThisMsg >= maxLinesPerMsg || y + lineHeight > maxY) break;
+            }
+            display.setCursor(px, y);
+            display.print(mbuf);
+            px += adv;
+            pos += actual;
+          } else if (isEmojiEscape(b)) {
             if (px + EMOJI_SM_W > lineW) {
               px = 0;
               linesForThisMsg++;
@@ -1388,13 +1448,26 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
       display.print(rtCh);
     } else {
-      display.print("Swipe:List/Scroll");
+      display.print("Swipe:Ch/Scroll");
       const char* midCh = "Tap:Path";
       display.setCursor((display.width() - display.getTextWidth(midCh)) / 2, footerY);
       display.print(midCh);
       const char* rtCh = "Hold:Compose";
       display.setCursor(display.width() - display.getTextWidth(rtCh) - 2, footerY);
       display.print(rtCh);
+    }
+#elif defined(LILYGO_TECHO_LITE)
+    // T-Echo Lite: minimal footer for narrow display
+    if (_viewChannelIdx == 0xFF) {
+      display.print("Q:Bk");
+      const char* rightText = "Ent:Reply";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
+    } else {
+      display.print("Q:Bk");
+      const char* rightText = "Ent:New";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
     }
 #else
     // Left side: abbreviated controls
@@ -1413,14 +1486,10 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Q:Bk A/D:List R:Rply");
-      // "Ent:New" only fits with Classic+TINY — wider fonts cause overlap
-      NodePrefs* _fp = the_mesh.getNodePrefs();
-      if (_fp->ui_font_style == 0 && !_fp->large_font) {
-        const char* rightText = " Ent:New";
-        display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
-        display.print(rightText);
-      }
+      display.print("Q:Bck A/D:Ch R:Rply");
+      const char* rightText = "Ent:New";
+      display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
+      display.print(rightText);
     }
 #endif
 
@@ -1636,11 +1705,81 @@ public:
       }
     }
     
-    // A/D - open channel picker (handled by main.cpp — return false to pass through)
-    if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {
+    // A - previous channel (includes DM tab at 0xFF)
+    if (c == 'a' || c == 'A') {
       _replySelectMode = false;
       _replySelectPos = -1;
-      return false;  // Let main.cpp open the channel picker
+      if (_viewChannelIdx == 0xFF) {
+        // DM tab → go to last valid group channel
+        for (uint8_t i = MAX_GROUP_CHANNELS - 1; i > 0; i--) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(i, ch) && ch.name[0] != '\0') {
+            _viewChannelIdx = i;
+            break;
+          }
+        }
+      } else if (_viewChannelIdx > 0) {
+        // Skip backwards over any empty/gap slots
+        uint8_t prev = _viewChannelIdx - 1;
+        bool found = false;
+        while (true) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(prev, ch) && ch.name[0] != '\0') {
+            _viewChannelIdx = prev;
+            found = true;
+            break;
+          }
+          if (prev == 0) break;
+          prev--;
+        }
+        if (!found) {
+          // No valid channel below → wrap to DM tab
+          _viewChannelIdx = 0xFF;
+          _dmInboxMode = true;
+          _dmInboxScroll = 0;
+          _dmFilterName[0] = '\0';
+        }
+      } else {
+        // Channel 0 → wrap to DM tab
+        _viewChannelIdx = 0xFF;
+        _dmInboxMode = true;
+        _dmInboxScroll = 0;
+        _dmFilterName[0] = '\0';
+      }
+      _scrollPos = 0;
+      markChannelRead(_viewChannelIdx);
+      return true;
+    }
+    
+    // D - next channel (includes DM tab at 0xFF)
+    if (c == 'd' || c == 'D') {
+      _replySelectMode = false;
+      _replySelectPos = -1;
+      if (_viewChannelIdx == 0xFF) {
+        // DM tab → wrap to channel 0
+        _viewChannelIdx = 0;
+      } else {
+        // Skip forward over any empty/gap slots
+        bool found = false;
+        for (uint8_t next = _viewChannelIdx + 1; next < MAX_GROUP_CHANNELS; next++) {
+          ChannelDetails ch;
+          if (the_mesh.getChannel(next, ch) && ch.name[0] != '\0') {
+            _viewChannelIdx = next;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          // Past last channel → go to DM tab
+          _viewChannelIdx = 0xFF;
+          _dmInboxMode = true;
+          _dmInboxScroll = 0;
+          _dmFilterName[0] = '\0';
+        }
+      }
+      _scrollPos = 0;
+      markChannelRead(_viewChannelIdx);
+      return true;
     }
     
     return false;

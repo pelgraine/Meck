@@ -1124,19 +1124,24 @@ restart:
         xSemaphoreGive(_telemetryMutex);
       }
 
-      char json[400];
+      static const char* loopLabels[] = { "off", "minimal", "moderate", "strict" };
+      const char* loopStr = td.loop_detect <= 3 ? loopLabels[td.loop_detect] : "off";
+
+      char json[512];
       snprintf(json, sizeof(json),
                "{\"uptime\":%lu,\"batt_mv\":%d,\"batt_pct\":%d,\"temp\":%.1f,"
                "\"csq\":%d,\"bars\":%d,\"neighbors\":%d,"
                "\"freq\":%.3f,\"bw\":%.1f,\"sf\":%d,\"cr\":%d,\"tx\":%d,"
                "\"name\":\"%s\",\"ip\":\"%s\",\"oper\":\"%s\",\"apn\":\"%s\","
-               "\"heap\":%d}",
+               "\"heap\":%d,"
+               "\"loop_detect\":\"%s\",\"path_hash_mode\":%d,\"flood_max\":%d}",
                td.uptime_secs, td.battery_mv, td.battery_pct,
                td.temperature / 10.0f,
                _csq, getSignalBars(), td.neighbor_count,
                td.freq, td.bw, td.sf, td.cr, td.tx_power,
                td.node_name, _ipAddr, _operator, _apn,
-               ESP.getFreeHeap());
+               ESP.getFreeHeap(),
+               loopStr, td.path_hash_mode, td.flood_max);
 
       mqttPublish(_topicTelem, json);
       lastTelem = millis();

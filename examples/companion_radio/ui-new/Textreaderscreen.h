@@ -1123,10 +1123,9 @@ private:
           display.fillRect(0, y, display.width(), listLineH);
 #else
           // setCursor adds +5 to y internally, but fillRect does not.
-          // Built-in font: offset by +5 to align with top-left positioned text.
-          // GFX fonts (large_font or custom style): offset by -2 to cover ascenders above baseline.
-          int hlOff = (!_prefs->large_font && display.getFontStyle() > 0) ? -2 : _prefs->smallHighlightOff();
-          display.fillRect(0, y + hlOff, display.width(), listLineH);
+          // NodePrefs::smallHighlightOff() returns the correct offset for all
+          // font combinations (built-in, large_font, custom 7pt styles).
+          display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), listLineH);
 #endif
           display.setColor(DisplayDriver::DARK);
         } else {
@@ -1759,7 +1758,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     const int bodyTop = startY;
 #else
-    const int bodyTop = startY + ((_prefs && !_prefs->large_font && _prefs->ui_font_style > 0) ? -2 : (_prefs ? _prefs->smallHighlightOff() : 5));
+    const int bodyTop = startY + (_prefs ? _prefs->smallHighlightOff() : 5);
 #endif
     if (vy < bodyTop || vy >= 128 - footerH) return 0;
 
@@ -1812,8 +1811,15 @@ public:
   bool handleFileListInput(char c) {
     int total = totalListItems();
 
+    // Shift+W: page up
+    if (c == 'W') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = max(0, _selectedFile - pageSize);
+      return true;
+    }
     // W - scroll up
-    if (c == 'w' || c == 'W' || c == 0xF2) {
+    if (c == 'w' || c == 0xF2) {
       if (_selectedFile > 0) {
         _selectedFile--;
         return true;
@@ -1821,8 +1827,15 @@ public:
       return false;
     }
 
+    // Shift+S: page down
+    if (c == 'S') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = min(total - 1, _selectedFile + pageSize);
+      return true;
+    }
     // S - scroll down
-    if (c == 's' || c == 'S' || c == 0xF1) {
+    if (c == 's' || c == 0xF1) {
       if (_selectedFile < total - 1) {
         _selectedFile++;
         return true;

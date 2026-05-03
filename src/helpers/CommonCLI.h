@@ -13,6 +13,11 @@
 #define ADVERT_LOC_SHARE      1
 #define ADVERT_LOC_PREFS      2
 
+#define LOOP_DETECT_OFF       0
+#define LOOP_DETECT_MINIMAL   1
+#define LOOP_DETECT_MODERATE  2
+#define LOOP_DETECT_STRICT    3
+
 struct NodePrefs { // persisted to file
   float airtime_factor;
   char node_name[32];
@@ -54,6 +59,7 @@ struct NodePrefs { // persisted to file
   char owner_info[120];
   // Multi-byte path hash support (added for Meck remote repeater)
   uint8_t path_hash_mode;    // 0=1-byte (legacy), 1=2-byte, 2=3-byte path hashes
+  uint8_t loop_detect;       // 0=off, 1=minimal, 2=moderate, 3=strict (MeshCore v1.14+)
 };
 
 class CommonCLICallbacks {

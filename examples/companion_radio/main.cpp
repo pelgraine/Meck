@@ -1,8 +1,8 @@
 #include <Arduino.h>   // needed for PlatformIO
-#ifdef BLE_PIN_CODE
+#if defined(ESP32) && defined(BLE_PIN_CODE)
   #include <esp_bt.h>    // for esp_bt_controller_mem_release (web reader WiFi)
 #endif
-#ifdef MECK_OTA_UPDATE
+#if defined(ESP32) && defined(MECK_OTA_UPDATE)
   #include <esp_ota_ops.h>
 #endif
 #include <Mesh.h>
@@ -888,6 +888,42 @@
     vy = (int)(py / sy);
   #endif
   }
+#endif
+
+// --- T-Echo Lite: CardKB keyboard, GxEPD2 e-ink, no touch ---
+#if defined(LILYGO_TECHO_LITE)
+  #include "ContactsScreen.h"
+  #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
+  #include "SettingsScreen.h"
+  #include "RepeaterAdminScreen.h"
+  #include "DiscoveryScreen.h"
+  #include "LastHeardScreen.h"
+  #include "PathEditorScreen.h"
+
+  #ifdef MECK_CARDKB
+    #include "CardKBKeyboard.h"
+    static CardKBKeyboard cardkb;
+    static unsigned long lastCardKBProbe = 0;
+    #define CARDKB_PROBE_INTERVAL_MS 5000
+  #endif
+#endif
+
+// CardKB compose mode state — standalone so ANY variant with MECK_CARDKB gets these
+#ifdef MECK_CARDKB
+  static bool ckbComposeMode = false;
+  static char ckbComposeBuf[138];   // 137 bytes max + null
+  static int  ckbComposePos = 0;
+  static uint8_t ckbComposeChIdx = 0;
+  static bool ckbComposeDM = false;
+  static int  ckbComposeDMIdx = -1;
+  static char ckbComposeDMName[32];
+  static unsigned long ckbLastKeystroke = 0;
+  static bool ckbComposeRefresh = false;
+  #define CKB_COMPOSE_DEBOUNCE 600
+
+  void drawCardKBCompose();
+  void sendCardKBMessage();
 #endif
 
 // Board-agnostic: CPU frequency scaling and AGC reset
@@ -2020,7 +2056,8 @@ void setup() {
 
   // IMPORTANT: sensors.begin() calls initBasicGPS() which steals the GPS pins for Serial1.
   // We must end Serial1 first, then reclaim the pins for Serial2 (which feeds gpsStream).
-  #if HAS_GPS
+  // This is ESP32-specific — on nRF52, GPS Serial1 is initialised in radio_init().
+  #if HAS_GPS && defined(ESP32)
     Serial1.end();   // Release GPS pins from Serial1's UART + ISR
     Serial2.end();   // Close any existing Serial2
     {
@@ -2089,9 +2126,11 @@ void setup() {
   #endif
 
   // Initialize CardKB external keyboard (if connected via QWIIC)
-  #if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+  #if defined(MECK_CARDKB)
     if (cardkb.begin()) {
+      #if defined(LilyGo_T5S3_EPaper_Pro)
       ui_task.setCardKBDetected(true);
+      #endif
       Serial.println("setup() - CardKB detected at 0x5F");
     } else {
       Serial.println("setup() - CardKB not detected (will re-probe)");
@@ -2317,8 +2356,10 @@ void setup() {
   the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
   #endif
 
-  Serial.printf("setup() complete â€” free heap: %d, largest block: %d\n",
+#ifdef ESP32
+  Serial.printf("setup() complete - free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+#endif
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
@@ -2388,6 +2429,7 @@ void loop() {
   // #endif
 
   // Map screen: periodically update own GPS position and contact markers
+  #ifdef DISPLAY_CLASS
   #if HAS_GPS
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
@@ -2412,6 +2454,7 @@ void loop() {
       }
     }
   }
+  #endif
   #endif
 
   // CPU frequency auto-timeout back to idle
@@ -2846,6 +2889,16 @@ void loop() {
   #ifdef HAS_4G_MODEM
     smsMode = ui_task.isOnSMSScreen();
   #endif
+  #elif defined(MECK_CARDKB)
+  if (!ckbComposeMode) {
+    ui_task.loop();
+  } else {
+    // Compose mode: debounced rendering
+    if (ckbComposeRefresh && (millis() - ckbLastKeystroke) >= CKB_COMPOSE_DEBOUNCE) {
+      drawCardKBCompose();
+      ckbComposeRefresh = false;
+    }
+  }
   #else
   ui_task.loop();
   #endif
@@ -3130,12 +3183,12 @@ void loop() {
   #endif // MECK_TOUCH_ENABLED
 
   // ---------------------------------------------------------------------------
-  // CardKB external keyboard polling (T5S3 only, via QWIIC)
+  // CardKB external keyboard polling (via QWIIC)
   // When VKB is active: typed characters feed into the VKB text buffer.
   // When VKB is not active: navigation keys route through injectKey().
   // ESC key maps to 'q' (back) when no VKB is active.
   // ---------------------------------------------------------------------------
-#if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+#if defined(MECK_CARDKB)
   {
     // Hot-plug detection: re-probe periodically
     if (millis() - lastCardKBProbe >= CARDKB_PROBE_INTERVAL_MS) {
@@ -3143,7 +3196,9 @@ void loop() {
       bool wasDetected = cardkb.isDetected();
       bool nowDetected = cardkb.probe();
       if (nowDetected != wasDetected) {
+        #if defined(LilyGo_T5S3_EPaper_Pro)
         ui_task.setCardKBDetected(nowDetected);
+        #endif
         Serial.printf("[CardKB] %s\n", nowDetected ? "Connected" : "Disconnected");
       }
     }
@@ -3151,15 +3206,58 @@ void loop() {
     // Poll for keypress
     char ckb = cardkb.readKey();
     if (ckb != 0) {
-      // Block input while locked (same as touch)
+      Serial.printf("[CardKB] key=0x%02X '%c'\n", (uint8_t)ckb, (ckb >= 32 && ckb < 127) ? ckb : '?');
+
+      // --- CardKB compose mode: intercept ALL keys ---
+      if (ckbComposeMode) {
+        cpuPower.setBoost();
+        ui_task.keepAlive();
+        if (ckb == 0x1B) {
+          // ESC: cancel compose
+          ckbComposeMode = false;
+          ui_task.forceRefresh();
+        } else if (ckb == '\r') {
+          // Enter: send message
+          if (ckbComposePos > 0) {
+            sendCardKBMessage();
+          } else {
+            ckbComposeMode = false;
+            ui_task.forceRefresh();
+          }
+        } else if (ckb == '\b') {
+          // Backspace: delete last character
+          if (ckbComposePos > 0) {
+            ckbComposeBuf[--ckbComposePos] = '\0';
+            ckbComposeRefresh = true;
+            ckbLastKeystroke = millis();
+          }
+        } else if (ckb >= 32 && ckb < 127) {
+          // Printable character
+          if (ckbComposePos < 137) {
+            ckbComposeBuf[ckbComposePos++] = ckb;
+            ckbComposeBuf[ckbComposePos] = '\0';
+            ckbComposeRefresh = true;
+            ckbLastKeystroke = millis();
+          }
+        }
+        // All keys consumed in compose mode — skip normal routing
+      } else {
+      // --- Normal (non-compose) key routing ---
+      #if defined(LilyGo_T5S3_EPaper_Pro)
       if (!ui_task.isLocked()) {
+      #else
+      {
+      #endif
         cpuPower.setBoost();
         ui_task.keepAlive();
 
+        #if defined(LilyGo_T5S3_EPaper_Pro)
         if (ui_task.isVKBActive()) {
           // VKB is open — feed character into VKB text buffer
           ui_task.feedCardKBChar(ckb);
-        } else if (ui_task.isOnHomeScreen()) {
+        } else
+        #endif
+        if (ui_task.isOnHomeScreen()) {
           // Home screen: ESC does nothing special, letter shortcuts open tiles
           if (ckb == 0x1B) {
             // ESC on home — no-op (already home)
@@ -3167,11 +3265,15 @@ void loop() {
             switch (ckb) {
               case 'm': ui_task.gotoChannelPickerScreen(); break;
               case 'c': ui_task.gotoContactsScreen(); break;
+#if !defined(LILYGO_TECHO_LITE)
               case 'e': ui_task.gotoTextReader(); break;
               case 'n': ui_task.gotoNotesScreen(); break;
+#endif
               case 's': ui_task.gotoSettingsScreen(); break;
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
+              case (char)0xF3: ui_task.injectKey(KEY_LEFT);  break;  // Left arrow → prev page
+              case (char)0xF4: ui_task.injectKey(KEY_RIGHT); break;  // Right arrow → next page
 #ifdef MECK_WEB_READER
               case 'b': ui_task.gotoWebReader(); break;
 #endif
@@ -3187,6 +3289,7 @@ void loop() {
 
           // Notes editing/renaming: route ALL keys directly (no VKB).
           // This gives: Enter=newline, arrows=cursor, printable=insert, ESC=save&exit
+#if !defined(LILYGO_TECHO_LITE)
           if (ui_task.isOnNotesScreen()) {
             NotesScreen* notesScr = (NotesScreen*)ui_task.getNotesScreen();
             if (notesScr && (notesScr->isEditing() || notesScr->isRenaming())) {
@@ -3214,25 +3317,24 @@ void loop() {
               ui_task.forceRefresh();
             }
           }
+#endif
 
           if (!handled) {
-            // ESC → back (same as 'q' on T-Deck Pro) for all non-notes screens
-            if (ckb == 0x1B) {
-              // Channel picker: ESC goes home
+            // ESC or Q → back navigation
+            if (ckb == 0x1B || ckb == 'q') {
               if (ui_task.isOnChannelPickerScreen()) {
                 ui_task.gotoHomeScreen();
-              // Channel screen: ESC goes to picker
               } else if (ui_task.isOnChannelScreen()) {
                 ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
                 if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
                   ui_task.injectKey('q');  // dismiss overlay/reply first
                 } else if (chScr && chScr->isDMConversation()) {
-                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                  ui_task.injectKey('q');  // DM conversation → inbox
                 } else {
                   ui_task.gotoChannelPickerScreen();
                 }
               } else {
-                ui_task.injectKey('q');
+                ui_task.gotoHomeScreen();  // All other screens → home
               }
             } else if (ckb == '\r') {
               // Enter key — screen-specific compose or select
@@ -3253,7 +3355,20 @@ void loop() {
                         if (the_mesh.getContactByIdx(j, ci) && strcmp(ci.name, dmName) == 0) {
                           char label[40];
                           snprintf(label, sizeof(label), "DM: %s", dmName);
+                          #if defined(LilyGo_T5S3_EPaper_Pro)
                           ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, j);
+                          #elif defined(MECK_CARDKB)
+                          ckbComposeMode = true;
+                          ckbComposeBuf[0] = '\0';
+                          ckbComposePos = 0;
+                          ckbComposeDM = true;
+                          ckbComposeDMIdx = (int)j;
+                          strncpy(ckbComposeDMName, dmName, sizeof(ckbComposeDMName) - 1);
+                          ckbComposeRefresh = true;
+                          ckbLastKeystroke = millis();
+                          #else
+                          ui_task.injectKey('\r');
+                          #endif
                           ui_task.clearDMUnread(j);
                           break;
                         }
@@ -3266,7 +3381,19 @@ void loop() {
                   if (the_mesh.getChannel(chIdx, ch)) {
                     char label[40];
                     snprintf(label, sizeof(label), "To: %s", ch.name);
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_CHANNEL_MSG, label, "", 137, chIdx);
+                    #elif defined(MECK_CARDKB)
+                    ckbComposeMode = true;
+                    ckbComposeBuf[0] = '\0';
+                    ckbComposePos = 0;
+                    ckbComposeDM = false;
+                    ckbComposeChIdx = chIdx;
+                    ckbComposeRefresh = true;
+                    ckbLastKeystroke = millis();
+                    #else
+                    ui_task.injectKey('\r');
+                    #endif
                   }
                 }
               } else if (ui_task.isOnContactsScreen()) {
@@ -3290,7 +3417,20 @@ void loop() {
                       cs->getSelectedContactName(dname, sizeof(dname));
                       char label[40];
                       snprintf(label, sizeof(label), "DM: %s", dname);
+                      #if defined(LilyGo_T5S3_EPaper_Pro)
                       ui_task.showVirtualKeyboard(VKB_DM, label, "", 137, idx);
+                      #elif defined(MECK_CARDKB)
+                      ckbComposeMode = true;
+                      ckbComposeBuf[0] = '\0';
+                      ckbComposePos = 0;
+                      ckbComposeDM = true;
+                      ckbComposeDMIdx = idx;
+                      strncpy(ckbComposeDMName, dname, sizeof(ckbComposeDMName) - 1);
+                      ckbComposeRefresh = true;
+                      ckbLastKeystroke = millis();
+                      #else
+                      ui_task.injectKey('\r');
+                      #endif
                     }
                   } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
                     ui_task.gotoRepeaterAdmin(idx);
@@ -3310,9 +3450,17 @@ void loop() {
                 if (admin) {
                   RepeaterAdminScreen::AdminState astate = admin->getState();
                   if (astate == RepeaterAdminScreen::STATE_PASSWORD_ENTRY) {
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
+                    #else
+                    ui_task.injectKey('\r');
+                    #endif
                   } else {
+                    #if defined(LilyGo_T5S3_EPaper_Pro)
                     ui_task.showVirtualKeyboard(VKB_ADMIN_CLI, "Admin Command", "", 137);
+                    #else
+                    ui_task.injectKey('\r');
+                    #endif
                   }
                 }
               } else if (ui_task.isOnPathEditor()) {
@@ -3377,6 +3525,7 @@ void loop() {
           }
         }
       }
+      }  // end compose mode else
     }
   }
 #endif
@@ -3469,6 +3618,9 @@ void handleKeyboardInput() {
   
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);
+  
+  // Defer contact saves while user is actively pressing keys
+  the_mesh.notifyUserInput();
   
   // Alarm ringing: ANY key dismisses (highest priority after lock screen)
   #ifdef MECK_AUDIO_VARIANT
@@ -4418,6 +4570,23 @@ void handleKeyboardInput() {
       ui_task.gotoNotesScreen();
       break;
     
+    case 'S':
+      // Shift+S: page scroll down on list screens
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+          || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
+        ui_task.injectKey('S');
+      }
+      break;
+
     case 's':
       // Open settings (from home), or navigate down on channel/contacts/admin/web/map/discovery/lastheard
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
@@ -4435,6 +4604,23 @@ void handleKeyboardInput() {
       } else {
         Serial.println("Opening settings");
         ui_task.gotoSettingsScreen();
+      }
+      break;
+
+    case 'W':
+      // Shift+W: page scroll up on list screens
+      if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
+          || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
+          || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+#ifdef MECK_WEB_READER
+          || ui_task.isOnWebReader()
+#endif
+          || ui_task.isOnMapScreen()
+#ifdef MECK_AUDIO_VARIANT
+          || ui_task.isOnAlarmScreen()
+#endif
+         ) {
+        ui_task.injectKey('W');
       }
       break;
 
@@ -5054,3 +5240,166 @@ void audio_eof_mp3(const char *info) {
 #endif // !HAS_4G_MODEM
 
 #endif // LilyGo_TDeck_Pro
+
+// ============================================================================
+// CARDKB COMPOSE FUNCTIONS (T-Echo Lite)
+// ============================================================================
+#if defined(MECK_CARDKB)
+
+void drawCardKBCompose() {
+  #ifdef DISPLAY_CLASS
+  display.startFrame();
+  display.setTextSize(1);
+  display.setColor(DisplayDriver::GREEN);
+  display.setCursor(0, 0);
+
+  // Header: "To: channel" or "DM: contact"
+  char headerBuf[40];
+  if (ckbComposeDM) {
+    snprintf(headerBuf, sizeof(headerBuf), "DM: %s", ckbComposeDMName);
+  } else {
+    ChannelDetails channel;
+    if (the_mesh.getChannel(ckbComposeChIdx, channel)) {
+      snprintf(headerBuf, sizeof(headerBuf), "To: %s", channel.name);
+    } else {
+      snprintf(headerBuf, sizeof(headerBuf), "To: Channel %d", ckbComposeChIdx);
+    }
+  }
+  display.print(headerBuf);
+
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, 11, display.width(), 1);
+
+  // Body: word-wrapped compose buffer
+  int y = 14;
+  int px = 0;
+  int lineW = display.width();
+  char charStr[2] = {0, 0};
+  char dblStr[3] = {0, 0, 0};
+  bool atWordBoundary = true;
+
+  display.setCursor(0, y);
+  display.setColor(DisplayDriver::LIGHT);
+
+  for (int i = 0; i < ckbComposePos; i++) {
+    uint8_t b = (uint8_t)ckbComposeBuf[i];
+
+    // Word wrap: check if next word fits on this line
+    if (atWordBoundary && b != ' ' && px > 0) {
+      int wordW = 0;
+      for (int j = i; j < ckbComposePos; j++) {
+        uint8_t wb = (uint8_t)ckbComposeBuf[j];
+        if (wb == ' ') break;
+        dblStr[0] = dblStr[1] = (char)wb;
+        charStr[0] = (char)wb;
+        wordW += display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      }
+      if (px + wordW > lineW) {
+        px = 0;
+        y += 12;
+      }
+    }
+
+    if (b == ' ') {
+      charStr[0] = ' ';
+      dblStr[0] = dblStr[1] = ' ';
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
+        px = 0;
+        y += 12;
+      } else {
+        display.setCursor(px, y);
+        display.print(charStr);
+        px += adv;
+      }
+      atWordBoundary = true;
+    } else {
+      charStr[0] = (char)b;
+      dblStr[0] = dblStr[1] = (char)b;
+      int adv = display.getTextWidth(dblStr) - display.getTextWidth(charStr);
+      if (px + adv > lineW) {
+        px = 0;
+        y += 12;
+      }
+      display.setCursor(px, y);
+      display.print(charStr);
+      px += adv;
+      atWordBoundary = false;
+    }
+  }
+
+  // Cursor
+  display.setCursor(px, y);
+  display.print("_");
+
+  // Footer status bar
+  int statusY = display.height() - 12;
+  display.setColor(DisplayDriver::LIGHT);
+  display.drawRect(0, statusY - 2, display.width(), 1);
+  display.setCursor(0, statusY);
+  display.setColor(DisplayDriver::YELLOW);
+
+  char status[32];
+  if (ckbComposePos == 0) {
+    display.print("Esc:Cancel");
+  } else {
+    snprintf(status, sizeof(status), "Esc:X %d/137", ckbComposePos);
+    display.print(status);
+  }
+  const char* rt = "Ent:Send";
+  display.setCursor(display.width() - display.getTextWidth(rt) - 2, statusY);
+  display.print(rt);
+
+  display.endFrame();
+  #endif
+}
+
+void sendCardKBMessage() {
+  if (ckbComposePos == 0) return;
+
+  cpuPower.setBoost();
+
+  if (ckbComposeDM) {
+    // Direct message
+    if (ckbComposeDMIdx >= 0) {
+      if (the_mesh.uiSendDirectMessage((uint32_t)ckbComposeDMIdx, ckbComposeBuf)) {
+        ui_task.addSentDM(ckbComposeDMName, the_mesh.getNodePrefs()->node_name, ckbComposeBuf);
+        ui_task.showAlert("DM sent!", 1500);
+      } else {
+        ui_task.showAlert("DM failed!", 1500);
+      }
+    } else {
+      ui_task.showAlert("No contact!", 1500);
+    }
+  } else {
+    // Channel message
+    ChannelDetails channel;
+    if (the_mesh.getChannel(ckbComposeChIdx, channel)) {
+      uint32_t timestamp = rtc_clock.getCurrentTime();
+      int len = strlen(ckbComposeBuf);
+
+      if (the_mesh.sendGroupMessage(timestamp, channel.channel,
+                                     the_mesh.getNodePrefs()->node_name,
+                                     ckbComposeBuf, len)) {
+        ui_task.addSentChannelMessage(ckbComposeChIdx,
+                                       the_mesh.getNodePrefs()->node_name,
+                                       ckbComposeBuf);
+        the_mesh.queueSentChannelMessage(ckbComposeChIdx, timestamp,
+                                          the_mesh.getNodePrefs()->node_name,
+                                          ckbComposeBuf);
+        ui_task.showAlert("Sent!", 1500);
+      } else {
+        ui_task.showAlert("Send failed!", 1500);
+      }
+    } else {
+      ui_task.showAlert("No channel!", 1500);
+    }
+  }
+
+  ckbComposeMode = false;
+  ckbComposeBuf[0] = '\0';
+  ckbComposePos = 0;
+  ui_task.forceRefresh();
+}
+
+#endif // MECK_CARDKB

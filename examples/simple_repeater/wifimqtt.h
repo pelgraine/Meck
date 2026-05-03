@@ -103,6 +103,10 @@ struct TelemetryData {
   uint8_t  tx_power;
   char     node_name[32];
   bool     mqtt_connected;
+  // Routing settings (v1.8+)
+  uint8_t  loop_detect;      // 0=off, 1=minimal, 2=moderate, 3=strict
+  uint8_t  path_hash_mode;   // 0=1-byte, 1=2-byte, 2=3-byte
+  uint8_t  flood_max;        // max flood hop count (0-64)
 };
 
 // ---------------------------------------------------------------------------

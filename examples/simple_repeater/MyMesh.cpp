@@ -501,6 +501,51 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* pkt) {
   } else {
     recv_pkt_region = NULL;
   }
+
+  // --- Loop detection (MeshCore v1.14+) ---
+  // Walk the packet's path and count how many times our own hash appears.
+  // If it exceeds the threshold for the configured detection level, drop
+  // the packet to break routing loops caused by misbehaving nodes.
+  if (_prefs.loop_detect != LOOP_DETECT_OFF) {
+    uint8_t hops = pkt->path_len & 0x3F;
+    uint8_t bph  = (pkt->path_len >> 6) + 1;  // bytes per hop (1, 2, or 3)
+
+    if (hops > 0 && hops * bph <= MAX_PATH_SIZE) {
+      // Count self-hash appearances in the path
+      int selfCount = 0;
+      for (uint8_t i = 0; i < hops; i++) {
+        if (self_id.isHashMatch(&pkt->path[i * bph], bph)) {
+          selfCount++;
+        }
+      }
+
+      // Threshold depends on detection level and path hash size
+      //              1-byte  2-byte  3-byte
+      // minimal:       4       2       1
+      // moderate:      2       1       1
+      // strict:        1       1       1
+      int threshold;
+      switch (_prefs.loop_detect) {
+        case LOOP_DETECT_MINIMAL:
+          threshold = (bph == 1) ? 4 : (bph == 2) ? 2 : 1;
+          break;
+        case LOOP_DETECT_MODERATE:
+          threshold = (bph == 1) ? 2 : 1;
+          break;
+        case LOOP_DETECT_STRICT:
+        default:
+          threshold = 1;
+          break;
+      }
+
+      if (selfCount >= threshold) {
+        MESH_DEBUG_PRINTLN("Loop detected: self-hash appears %d times (threshold %d, bph=%d, mode=%d) — dropping",
+                           selfCount, threshold, (int)bph, (int)_prefs.loop_detect);
+        return true;  // Drop the packet
+      }
+    }
+  }
+
   // do normal processing
   return false;
 }
@@ -802,6 +847,7 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
 
   _prefs.adc_multiplier = 0.0f; // 0.0f means use default board multiplier
   _prefs.path_hash_mode = 0;   // 1-byte path hashes (legacy default)
+  _prefs.loop_detect = LOOP_DETECT_OFF;  // no loop detection by default
 }
 
 void MyMesh::begin(FILESYSTEM *fs) {
@@ -1120,6 +1166,26 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     } else if (n == 2 && strcmp(parts[1], "home") == 0) {
       auto home = region_map.getHomeRegion();
       sprintf(reply, " home is %s", home ? home->name : "*");
+    } else if (n >= 3 && strcmp(parts[1], "default") == 0) {
+      // "region default <name>" — set default scope
+      auto def = region_map.findByNamePrefix(parts[2]);
+      if (def) {
+        region_map.setDefaultRegion(def);
+        sprintf(reply, " default is now %s", def->name);
+      } else {
+        // empty or unrecognised name → clear default scope
+        region_map.setDefaultRegion(NULL);
+        strcpy(reply, " default cleared");
+      }
+    } else if (n == 2 && strcmp(parts[1], "default") == 0) {
+      auto def = region_map.getDefaultRegion();
+      sprintf(reply, " default is %s", def ? def->name : "(none)");
+    } else if (n >= 3 && strcmp(parts[1], "list") == 0 && sender_timestamp == 0) {
+      // "region list allowed" / "region list denied" — serial only
+      bool denied = (strcmp(parts[2], "denied") == 0);
+      char buf[256];
+      region_map.exportNamesTo(buf, sizeof(buf), REGION_DENY_FLOOD, denied);
+      Serial.printf("Regions (%s): %s\n", parts[2], buf);
     } else if (n >= 3 && strcmp(parts[1], "put") == 0) {
       auto parent = n >= 4 ? region_map.findByNamePrefix(parts[3]) : &region_map.getWildcard();
       if (parent == NULL) {
@@ -1157,6 +1223,26 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
     }
   } else if (strcmp(command, "get path.hash.mode") == 0) {
     sprintf(reply, "> %d (%d-byte path hashes)", _prefs.path_hash_mode, _prefs.path_hash_mode + 1);
+  } else if (memcmp(command, "set loop.detect ", 16) == 0) {
+    const char* val = &command[16];
+    if (strcmp(val, "off") == 0) {
+      _prefs.loop_detect = LOOP_DETECT_OFF;
+    } else if (strcmp(val, "minimal") == 0) {
+      _prefs.loop_detect = LOOP_DETECT_MINIMAL;
+    } else if (strcmp(val, "moderate") == 0) {
+      _prefs.loop_detect = LOOP_DETECT_MODERATE;
+    } else if (strcmp(val, "strict") == 0) {
+      _prefs.loop_detect = LOOP_DETECT_STRICT;
+    } else {
+      strcpy(reply, "ERR: use off, minimal, moderate, or strict");
+      return;
+    }
+    savePrefs();
+    sprintf(reply, "OK - loop.detect = %s", val);
+  } else if (strcmp(command, "get loop.detect") == 0) {
+    const char* labels[] = { "off", "minimal", "moderate", "strict" };
+    uint8_t mode = _prefs.loop_detect <= 3 ? _prefs.loop_detect : 0;
+    sprintf(reply, "> %s", labels[mode]);
   } else{
     _cli.handleCommand(sender_timestamp, command, reply);  // common CLI commands
   }

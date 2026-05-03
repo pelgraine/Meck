@@ -1,7 +1,9 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
+#if !defined(LILYGO_TECHO_LITE)
 #include "NotesScreen.h"
+#endif
 #include "RepeaterAdminScreen.h"
 #include "PathEditorScreen.h"
 #include "DiscoveryScreen.h"
@@ -56,7 +58,9 @@
 #include "ChannelScreen.h"
 #include "ChannelPickerScreen.h"
 #include "ContactsScreen.h"
+#if !defined(LILYGO_TECHO_LITE)
 #include "TextReaderScreen.h"
+#endif
 #include "SettingsScreen.h"
 #ifdef MECK_AUDIO_VARIANT
 #include "AudiobookPlayerScreen.h"
@@ -150,8 +154,16 @@ class HomeScreen : public UIScreen {
 
 
 void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, int* outIconX = nullptr) {
-    // Use voltage-based estimation to match BLE app readings
+    // Use BQ27220 fuel gauge State of Charge when available — it tracks
+    // the real LiPo discharge curve, impedance, and temperature. The old
+    // linear voltage mapping (3.0–4.2V) over-reports while charging
+    // (voltage inflated by charger current) and is non-linear across the
+    // flat middle of the discharge curve.
     uint8_t batteryPercentage = 0;
+#if HAS_BQ27220
+    batteryPercentage = _task->getBatteryPercent();
+#else
+    // Fallback for boards without a fuel gauge
     if (batteryMilliVolts > 0) {
       const int minMilliVolts = 3000;
       const int maxMilliVolts = 4200;
@@ -160,6 +172,7 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
       if (pct > 100) pct = 100;
       batteryPercentage = (uint8_t)pct;
     }
+#endif
 
     display.setColor(DisplayDriver::GREEN);
     display.setTextSize(_node_prefs->smallTextSize());
@@ -175,6 +188,16 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
     display.setCursor(textX, 0);
     display.print(battStr);
     display.setTextSize(1);  // restore default text size
+#elif defined(LILYGO_TECHO_LITE)
+    // T-Echo Lite: text-only battery (icon misaligns due to fillRect/setCursor offset mismatch at 2× scale)
+    char battStr[8];
+    snprintf(battStr, sizeof(battStr), "%d%%", batteryPercentage);
+    uint16_t textWidth = display.getTextWidth(battStr);
+    int textX = display.width() - textWidth - 2;
+    if (outIconX) *outIconX = textX;
+    display.setCursor(textX, 0);  // Same baseline as node name (HOME_HDR_Y)
+    display.print(battStr);
+    display.setTextSize(1);
 #else
     // T-Deck Pro: icon + percentage text (icon hidden in large font)
     int iconWidth = 16;
@@ -318,6 +341,8 @@ public:
     // T5S3: FreeSans12pt ascenders need more room than built-in font.
     // Shift header elements down by 4 virtual units (~17px physical).
     #define HOME_HDR_Y 1
+#elif defined(LILYGO_TECHO_LITE)
+    #define HOME_HDR_Y 0
 #else
     #define HOME_HDR_Y -3
 #endif
@@ -365,7 +390,9 @@ public:
       }
     }
     // curr page indicator
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LILYGO_TECHO_LITE)
+    int y = 13;   // Below header
+#elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
 #else
     int y = 14;
@@ -389,6 +416,8 @@ public:
   #else
       int y = 26;  // Standalone: extra line below dots (no IP/Connected row)
   #endif
+#elif defined(LILYGO_TECHO_LITE)
+      int y = 18;  // Below page dots
 #else
       int y = 20;
 #endif
@@ -396,7 +425,11 @@ public:
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
       display.drawTextCentered(display.width() / 2, y, tmp);
+#if defined(LILYGO_TECHO_LITE)
+      y += 12;  // Compact
+#else
       y += 14;  // Reduced from 18
+#endif
 
       #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
         IPAddress ip = WiFi.localIP();
@@ -419,7 +452,11 @@ public:
         display.setTextSize(2);
         sprintf(tmp, "Pin:%d", the_mesh.getBLEPin());
         display.drawTextCentered(display.width() / 2, y, tmp);
+#if defined(LILYGO_TECHO_LITE)
+        y += 14;  // Compact
+#else
         y += 18;
+#endif
 #endif
       }
       #endif
@@ -477,6 +514,24 @@ public:
       display.setTextSize(1);
 
 #else
+      // Non-T5S3: keyboard shortcut menu
+#if defined(LILYGO_TECHO_LITE)
+      // T-Echo Lite: compact centered menu (tiny font fits 117px virtual width)
+      display.setColor(DisplayDriver::LIGHT);
+      display.setTextSize(0);  // 6×8 built-in font
+      y += 2;
+      display.drawTextCentered(display.width() / 2, y, "M:Msgs  C:Contacts");
+      y += 8;
+      display.drawTextCentered(display.width() / 2, y, "S:Set   F:Discover");
+      y += 8;
+      display.drawTextCentered(display.width() / 2, y, "H:Last Heard");
+      y += 9;
+      if (y < display.height() - 14) {
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, y, "Arrows: cycle views");
+      }
+      display.setTextSize(1);  // restore
+#else
       // ----- T-Deck Pro: Keyboard shortcut text menu -----
       display.setColor(DisplayDriver::LIGHT);
       display.setTextSize(_node_prefs->smallTextSize());
@@ -487,12 +542,10 @@ public:
         y += 2;
         int col1, col2;
         if (_node_prefs->large_font) {
-          // 9pt font: measure widest left entry and place col2 just past it
           col1 = 2;
           int leftW = display.getTextWidth("[M] Messages");
           col2 = col1 + leftW + 3;
         } else {
-          // Custom tiny (7pt): centered layout
           col1 = display.width() / 10;
           col2 = display.width() * 11 / 20;
         }
@@ -574,6 +627,7 @@ public:
           (_node_prefs->large_font || display.getFontStyle() > 0) ? "A/D: cycle views" : "Press A/D to cycle home views");
       }
       display.setTextSize(1);  // restore
+#endif // LILYGO_TECHO_LITE
 #endif
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
@@ -662,7 +716,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 80, "toggle: " PRESS_LABEL);
 #else
-      display.drawTextCentered(display.width() / 2, 72, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 78, "or press Enter key");
 #endif
 #endif
 #ifdef MECK_WIFI_COMPANION
@@ -714,7 +769,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 64, "advert: " PRESS_LABEL);
 #else
-      display.drawTextCentered(display.width() / 2, 64 - 11, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
+      display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
 #if ENV_INCLUDE_GPS == 1
     } else if (_page == HomePage::GPS) {
@@ -956,7 +1012,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.drawTextCentered(display.width() / 2, 64, "hibernate:" PRESS_LABEL);
 #else
-        display.drawTextCentered(display.width() / 2, 64 - 11, "hibernate:" PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, 57, "hibernate: " PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
       }
     }
@@ -1055,98 +1112,7 @@ public:
   }
 };
 
-class MsgPreviewScreen : public UIScreen {
-  UITask* _task;
-  mesh::RTCClock* _rtc;
-
-  struct MsgEntry {
-    uint32_t timestamp;
-    char origin[62];
-    char msg[78];
-  };
-  #define MAX_UNREAD_MSGS   32
-  int num_unread;
-  MsgEntry unread[MAX_UNREAD_MSGS];
-
-public:
-  MsgPreviewScreen(UITask* task, mesh::RTCClock* rtc) : _task(task), _rtc(rtc) { num_unread = 0; }
-
-  void addPreview(uint8_t path_len, const char* from_name, const char* msg) {
-    if (num_unread >= MAX_UNREAD_MSGS) return;  // full
-
-    auto p = &unread[num_unread++];
-    p->timestamp = _rtc->getCurrentTime();
-    if (path_len == 0xFF) {
-      sprintf(p->origin, "(D) %s:", from_name);
-    } else {
-      sprintf(p->origin, "(%d) %s:", (uint32_t) path_len, from_name);
-    }
-    StrHelper::strncpy(p->msg, msg, sizeof(p->msg));
-  }
-
-  int render(DisplayDriver& display) override {
-    char tmp[16];
-    display.setCursor(0, 0);
-    display.setTextSize(1);
-    display.setColor(DisplayDriver::GREEN);
-    sprintf(tmp, "Unread: %d", num_unread);
-    display.print(tmp);
-
-    auto p = &unread[0];
-
-    int secs = _rtc->getCurrentTime() - p->timestamp;
-    if (secs < 60) {
-      sprintf(tmp, "%ds", secs);
-    } else if (secs < 60*60) {
-      sprintf(tmp, "%dm", secs / 60);
-    } else {
-      sprintf(tmp, "%dh", secs / (60*60));
-    }
-    display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
-    display.print(tmp);
-
-    display.drawRect(0, 11, display.width(), 1);  // horiz line
-
-    display.setCursor(0, 14);
-    display.setColor(DisplayDriver::YELLOW);
-    char filtered_origin[sizeof(p->origin)];
-    display.translateUTF8ToBlocks(filtered_origin, p->origin, sizeof(filtered_origin));
-    display.print(filtered_origin);
-
-    display.setCursor(0, 25);
-    display.setColor(DisplayDriver::LIGHT);
-    char filtered_msg[sizeof(p->msg)];
-    display.translateUTF8ToBlocks(filtered_msg, p->msg, sizeof(filtered_msg));
-    display.printWordWrap(filtered_msg, display.width());
-
-#if AUTO_OFF_MILLIS==0 // probably e-ink
-    return 10000; // 10 s
-#else
-    return 1000;  // next render after 1000 ms
-#endif
-  }
-
-  bool handleInput(char c) override {
-    if (c == KEY_NEXT || c == KEY_RIGHT) {
-      num_unread--;
-      if (num_unread == 0) {
-        _task->gotoHomeScreen();
-      } else {
-        // delete first/curr item from unread queue
-        for (int i = 0; i < num_unread; i++) {
-          unread[i] = unread[i + 1];
-        }
-      }
-      return true;
-    }
-    if (c == KEY_ENTER) {
-      num_unread = 0;  // clear unread queue
-      _task->gotoHomeScreen();
-      return true;
-    }
-    return false;
-  }
-};
+// MsgPreviewScreen removed — all platforms now use toast alerts for new messages
 
 // ==========================================================================
 // Lock Screen — T5S3 and T-Deck Pro
@@ -1189,13 +1155,17 @@ public:
     // ---- Battery + unread on one line ----
     display.setTextSize(1);
     {
-      uint16_t mv = _task->getBattMilliVolts();
       int pct = 0;
+#if HAS_BQ27220
+      pct = _task->getBatteryPercent();
+#else
+      uint16_t mv = _task->getBattMilliVolts();
       if (mv > 0) {
         pct = ((mv - 3000) * 100) / (4200 - 3000);
         if (pct < 0) pct = 0;
         if (pct > 100) pct = 100;
       }
+#endif
 
       int unread = _task->getUnreadMsgCount();
       char infoBuf[32];
@@ -1293,15 +1263,19 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   splash = new SplashScreen(this);
   home = new HomeScreen(this, &rtc_clock, sensors, node_prefs);
-  msg_preview = new MsgPreviewScreen(this, &rtc_clock);
   channel_screen = new ChannelScreen(this, &rtc_clock);
   ((ChannelScreen*)channel_screen)->setDMUnreadPtr(_dmUnread);
   channel_picker_screen = new ChannelPickerScreen(this);
   ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
+#if !defined(LILYGO_TECHO_LITE)
   text_reader = new TextReaderScreen(this, node_prefs);
   notes_screen = new NotesScreen(this, node_prefs);
+#else
+  text_reader = nullptr;   // T-Echo Lite: excluded to save RAM (256KB nRF52)
+  notes_screen = nullptr;
+#endif
   settings_screen = new SettingsScreen(this, &rtc_clock, node_prefs);
   repeater_admin = nullptr;  // Lazy-initialized on first use to preserve heap for audio
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
@@ -1410,9 +1384,6 @@ switch(t){
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
-  if (msgcount == 0 && curr == msg_preview) {
-    gotoHomeScreen();
-  }
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
@@ -1437,9 +1408,6 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   _dedup[_dedupIdx].millis = now;
   _dedupIdx = (_dedupIdx + 1) % MSG_DEDUP_SIZE;
 
-  // Add to preview screen (for notifications on non-keyboard devices)
-  ((MsgPreviewScreen *) msg_preview)->addPreview(path_len, from_name, text);
-  
   // Determine channel index by looking up the channel name
   // For channel messages, from_name is the channel name
   // For contact messages, from_name is the contact name (channel_idx = 0xFF)
@@ -1483,15 +1451,17 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
   }
   
-  // If user is currently viewing this channel, mark it as read immediately
-  // (they can see the message arrive in real-time)
-  if (isOnChannelScreen() && 
-      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) {
+  // If user is currently viewing this channel on the device, or companion
+  // app is connected (they'll see it there), mark as read immediately
+  if ((isOnChannelScreen() && 
+      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) ||
+      hasConnection()) {
     ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
   }
 
   // Per-contact DM unread tracking: find contact index by name
-  if (channel_idx == 0xFF && _dmUnread) {
+  // Skip increment when companion app is connected (user sees DMs there)
+  if (channel_idx == 0xFF && _dmUnread && !hasConnection()) {
     uint32_t numContacts = the_mesh.getNumContacts();
     ContactInfo contact;
     for (uint32_t ci = 0; ci < numContacts; ci++) {
@@ -1502,7 +1472,6 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
   
-#if defined(LilyGo_TDeck_Pro) || defined(LilyGo_T5S3_EPaper_Pro)
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
   // Suppress toasts for room server messages (bulk sync would spam toasts)
@@ -1515,10 +1484,6 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   if (isOnChannelPickerScreen()) {
     forceRefresh();
   }
-#else
-  // Other devices: Show full preview screen (legacy behavior, skip room sync)
-  if (!isRoomMsg) setCurrScreen(msg_preview);
-#endif
 
   if (_display != NULL) {
     if (!_display->isOn() && !hasConnection()) {
@@ -1678,6 +1643,7 @@ void UITask::loop() {
       c = checkDisplayOn(KEY_NEXT);
     } else {
       // Navigate back: reader reading→file list, file list→home, others→home
+#if !defined(LILYGO_TECHO_LITE)
       if (isOnTextReader()) {
         TextReaderScreen* reader = (TextReaderScreen*)text_reader;
         if (reader && reader->isReading()) {
@@ -1695,7 +1661,9 @@ void UITask::loop() {
           gotoHomeScreen();
         }
         c = 0;
-      } else if (isOnChannelPickerScreen()) {
+      } else
+#endif
+      if (isOnChannelPickerScreen()) {
         gotoHomeScreen();  // picker → home
         c = 0;
       } else if (isOnChannelScreen()) {
@@ -1835,6 +1803,12 @@ if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
+      // Defer display refresh while BLE is actively transferring contacts.
+      // E-ink partial update blocks for ~820ms, stalling the BLE send queue
+      // and adding ~1.6s of dead time to a full contact sync.
+      if (_serial != NULL && _serial->hasPendingData()) {
+        _next_refresh = millis() + 500;  // Re-check in 500ms
+      } else {
       // Sync dark mode with prefs (settings toggle takes effect here)
       if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
         display.setDarkMode(_node_prefs->dark_mode != 0);
@@ -1991,12 +1965,17 @@ if (curr) curr->poll();
 #endif
       _display->endFrame();
 
-      // E-ink render throttle: enforce minimum 800ms between renders.
-      // Each partial update blocks for ~644ms. Without this floor, incoming
-      // mesh notifications can trigger back-to-back renders that starve the
-      // keyboard polling loop, causing TCA8418 FIFO overflow and lost keys.
-      unsigned long minNext = millis() + 800;
+      // E-ink render throttle: enforce minimum interval between renders.
+      // Partial update blocks for ~644ms; full refresh blocks for ~3000ms.
+      // Without this floor, changing readings (battery, uptime) trigger
+      // back-to-back renders that cause continuous flashing.
+#ifdef EINK_FULL_REFRESH_ONLY
+      unsigned long minNext = millis() + 300000;  // Full refresh: 5 min idle
+#else
+      unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
+#endif
       if (_next_refresh < minNext) _next_refresh = minNext;
+      }  // end else (not bulk syncing)
     }
 #if AUTO_OFF_MILLIS > 0
     if (millis() > _auto_off) {
@@ -2018,11 +1997,27 @@ if (curr) curr->poll();
     }
   }
 
-  // Lock screen clock refresh — update time display every 15 minutes.
-  // Runs outside the _display->isOn() gate so it works even after auto-off.
-  // Wakes the display briefly to render, then lets auto-off turn it back off.
+  // Lock screen clock refresh — keeps the displayed time current.
+  // T-Deck Pro: every 1 minute. T5S3: every 2 minutes.
+  // Wakes the display driver briefly to render, then auto-off handles it.
+  // T5S3 standalone: no refreshes once powersaving begins — the device
+  // shows "hibernating..." and enters light sleep instead.
+#if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
+  // T5S3 standalone: only refresh while still active (before powersaving kicks in)
+  if (_locked && _display != NULL && _display->isOn()) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#elif defined(LilyGo_T5S3_EPaper_Pro)
+  // T5S3 BLE/WiFi: refresh every 2 minutes
   if (_locked && _display != NULL) {
-    const unsigned long LOCK_REFRESH_INTERVAL = 15UL * 60UL * 1000UL;  // 15 minutes
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#elif defined(LilyGo_TDeck_Pro)
+  // T-Deck Pro: refresh every 1 minute
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 1UL * 60UL * 1000UL;  // 1 minute
+#else
+  if (_locked && _display != NULL) {
+    const unsigned long LOCK_REFRESH_INTERVAL = 2UL * 60UL * 1000UL;  // 2 minutes
+#endif
     if (millis() - _lastLockRefresh >= LOCK_REFRESH_INTERVAL) {
       _lastLockRefresh = millis();
       if (!_display->isOn()) {
@@ -2044,6 +2039,20 @@ if (curr) curr->poll();
   if (_locked && _display != NULL && !_display->isOn()) {
     unsigned long now = millis();
     if (now - _psLastActive >= _psNextSleepSecs * 1000UL) {
+      // First sleep entry: render a static "hibernating..." frame on the
+      // e-ink. Since e-ink retains its image indefinitely without power,
+      // this tells the user the device is in low-power mode until they
+      // wake it with the boot button.
+      if (_psNextSleepSecs == 60) {
+        _display->turnOn();
+        _display->startFrame();
+        _display->setTextSize(1);
+        _display->setColor(DisplayDriver::GREEN);
+        _display->drawTextCentered(_display->width() / 2, 34, "hibernating...");
+        _display->endFrame();
+        delay(700);  // Allow e-ink refresh to complete
+        _display->turnOff();
+      }
       Serial.println("[POWERSAVE] Entering light sleep (locked+idle)");
       board.sleep(1800);  // Light sleep up to 30 min
       // ── CPU resumes here on wake ──
@@ -2195,7 +2204,7 @@ void UITask::lockScreen() {
 #endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
-  _lastLockRefresh = millis();   // Start 15-min clock refresh cycle
+  _lastLockRefresh = millis();   // Start lock screen clock refresh cycle
 #if defined(LilyGo_T5S3_EPaper_Pro) && !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
   _psLastActive = millis();      // Start powersaving countdown (60s to first sleep)
   _psNextSleepSecs = 60;
@@ -2336,12 +2345,14 @@ void UITask::onVKBSubmit() {
       break;
     }
     case VKB_NOTES: {
+#if !defined(LILYGO_TECHO_LITE)
       NotesScreen* notes = (NotesScreen*)getNotesScreen();
       if (notes && strlen(text) > 0) {
         for (int i = 0; text[i]; i++) {
           notes->handleInput(text[i]);
         }
       }
+#endif
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
@@ -2403,6 +2414,7 @@ void UITask::onVKBSubmit() {
     }
 #endif
     case VKB_TEXT_PAGE: {
+#if !defined(LILYGO_TECHO_LITE)
       if (strlen(text) > 0) {
         int pageNum = atoi(text);
         TextReaderScreen* reader = (TextReaderScreen*)getTextReaderScreen();
@@ -2410,6 +2422,7 @@ void UITask::onVKBSubmit() {
           reader->gotoPage(pageNum);
         }
       }
+#endif
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
@@ -2524,9 +2537,24 @@ void UITask::injectKey(char c) {
       if (_next_refresh < earliest) {
         _next_refresh = earliest;
       }
+    }
+#ifdef EINK_FULL_REFRESH_ONLY
+    // Full-refresh displays (SSD1681): debounce printable character input.
+    // Compose typing (0x20-0x7E) pushes the render 2.5s into the future so
+    // the user can type a whole word before a ~2.2s full refresh fires.
+    // Navigation/special keys (arrows, enter, escape, etc.) refresh
+    // immediately so scrolling and screen changes remain responsive.
+    else if ((unsigned char)c >= 0x20 && (unsigned char)c <= 0x7E) {
+      unsigned long earliest = millis() + 2500;
+      if (_next_refresh < earliest) _next_refresh = earliest;
     } else {
+      _next_refresh = 100;  // navigation key — refresh now
+    }
+#else
+    else {
       _next_refresh = 100;  // trigger refresh
     }
+#endif
   }
 }
 
@@ -2622,6 +2650,8 @@ void UITask::gotoContactsScreen() {
 }
 
 void UITask::gotoTextReader() {
+  if (!text_reader) return;  // Not available on this platform
+#if !defined(LILYGO_TECHO_LITE)
   TextReaderScreen* reader = (TextReaderScreen*)text_reader;
   if (_display != NULL) {
     reader->enter(*_display);
@@ -2632,9 +2662,12 @@ void UITask::gotoTextReader() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 
 void UITask::gotoNotesScreen() {
+  if (!notes_screen) return;  // Not available on this platform
+#if !defined(LILYGO_TECHO_LITE)
   NotesScreen* notes = (NotesScreen*)notes_screen;
   if (_display != NULL) {
     notes->enter(*_display);
@@ -2649,6 +2682,7 @@ void UITask::gotoNotesScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 
 void UITask::gotoSettingsScreen() {
@@ -2762,6 +2796,14 @@ void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
     memset(_dmUnread, 0, MAX_CONTACTS * sizeof(uint8_t));
   }
   // Trigger a refresh so the home screen unread count updates in real-time
+  _next_refresh = millis() + 200;
+}
+
+void UITask::markAllChannelsRead() {
+  ((ChannelScreen *) channel_screen)->markAllRead();
+  if (_dmUnread) {
+    memset(_dmUnread, 0, MAX_CONTACTS * sizeof(uint8_t));
+  }
   _next_refresh = millis() + 200;
 }
 

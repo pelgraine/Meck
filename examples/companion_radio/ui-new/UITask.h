@@ -301,6 +301,8 @@ public:
 
   // Mark channel as read when BLE companion app syncs messages
   void markChannelReadFromBLE(uint8_t channel_idx) override;
+  // Mark all channels + DMs as read (companion app connected)
+  void markAllChannelsRead() override;
 
   // Repeater admin callbacks
   void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;

@@ -47,17 +47,27 @@ public:
     print(str);
   }
   
-  // convert UTF-8 characters to displayable block characters for compatibility
+  // Strip non-ASCII characters (emoji, etc.) from a UTF-8 string.
+  // Uses the same lead-byte-pattern approach as emojiDecodeUtf8() in
+  // EmojiSprites.h to determine sequence length, so both the channel
+  // message path (emojiSanitize) and the contact/advert name path
+  // consume identical byte spans for any given UTF-8 or malformed input.
   virtual void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) {
     size_t j = 0;
-    for (size_t i = 0; src[i] != 0 && j < dest_size - 1; i++) {
+    size_t len = strlen(src);
+    for (size_t i = 0; i < len && j < dest_size - 1; ) {
       unsigned char c = (unsigned char)src[i];
-      if (c >= 32 && c <= 126) {
-        dest[j++] = c;  // ASCII printable
-      } else if (c >= 0x80) {
-        dest[j++] = '\xDB';  // CP437 full block █
-        while (src[i+1] && (src[i+1] & 0xC0) == 0x80) 
-          i++;  // skip UTF-8 continuation bytes
+      if (c < 0x80) {
+        if (c >= 32) dest[j++] = c;  // ASCII printable
+        i++;
+      } else {
+        // Determine sequence length from lead byte (matches emojiDecodeUtf8)
+        int skip;
+        if      ((c & 0xE0) == 0xC0) skip = 2;
+        else if ((c & 0xF0) == 0xE0) skip = 3;
+        else if ((c & 0xF8) == 0xF0) skip = 4;
+        else                          skip = 1;  // stray continuation or invalid
+        i += skip;
       }
     }
     dest[j] = 0;

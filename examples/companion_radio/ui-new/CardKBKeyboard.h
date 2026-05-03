@@ -5,19 +5,22 @@
 // Polls 0x5F on the shared I2C bus via QWIIC connector.
 // Maps CardKB special key codes to Meck key constants.
 //
+// Platform support:
+//   - ESP32/ESP32-S3 (T5S3, T-Deck Pro): Wire.begin(SDA, SCL)
+//   - nRF52840 (T-Echo Lite): Wire.begin() uses variant.h pins
+//
 // Usage:
 //   CardKBKeyboard cardkb;
 //   if (cardkb.begin()) { /* detected */ }
 //   char key = cardkb.readKey();  // returns 0 if no key
 // =============================================================================
 
-#if defined(LilyGo_T5S3_EPaper_Pro) && defined(MECK_CARDKB)
+#if defined(MECK_CARDKB)
 #ifndef CARDKB_KEYBOARD_H
 #define CARDKB_KEYBOARD_H
 
 #include <Arduino.h>
 #include <Wire.h>
-#include "variant.h"  // For I2C_SDA, I2C_SCL (bus recovery)
 
 // I2C address (defined in variant.h, fallback here)
 #ifndef CARDKB_I2C_ADDR
@@ -75,7 +78,13 @@ public:
       _errorCount++;
       if (_errorCount >= 3) {
         // I2C bus may be stuck — re-init to recover
+#if defined(ESP32)
+        // ESP32: Wire.begin() accepts explicit SDA/SCL pins
         Wire.begin(I2C_SDA, I2C_SCL);
+#else
+        // nRF52: Wire.begin() uses PIN_WIRE_SDA/SCL from variant.h
+        Wire.begin();
+#endif
         Wire.setClock(100000);
         _pollInterval = 500;  // Back off for 500ms
         _errorCount = 0;
@@ -119,4 +128,4 @@ private:
 };
 
 #endif // CARDKB_KEYBOARD_H
-#endif // LilyGo_T5S3_EPaper_Pro && MECK_CARDKB
+#endif // MECK_CARDKB

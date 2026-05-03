@@ -1,72 +1,71 @@
 // =============================================================================
 // MeshCore target implementation for LilyGo T-Echo Card
 //
-// nRF52840 + SX1262 (HPB16B3 module) + SSD1315 OLED + L76K GPS
+// nRF52840 + SX1262 (HPB16B3 / S62F module) + SSD1315 OLED + L76K GPS
 // =============================================================================
 
+#include <Arduino.h>
 #include "target.h"
 #include "variant.h"
-
-// --- SPI for LoRa radio (software SPI on nRF52) ---
-// The HPB16B3 SX1262 module uses dedicated SPI pins, not shared with anything else.
-// RadioLib Module handles the SPI internally when given pin numbers.
-static Module radio_module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);
-
-// --- Radio driver ---
-RADIO_CLASS radio_driver(&radio_module);
-WRAPPER_CLASS radio_wrapper(radio_driver);
 
 // --- Board ---
 TechoCardBoard board;
 
-// --- Display (SSD1306-compatible, SSD1315 at 0x3C, 72x40) ---
-#ifdef DISPLAY_CLASS
-DISPLAY_CLASS display(OLED_WIDTH, OLED_HEIGHT);
+// --- Clock ---
+// No hardware RTC on T-Echo Card — VolatileRTCClock tracks time via millis().
+// Time gets set from GPS lock or BLE companion app sync.
+// AutoDiscoverRTCClock probes I2C for hardware RTCs; if none found, uses fallback.
+VolatileRTCClock fallback_clock;
+AutoDiscoverRTCClock rtc_clock(fallback_clock);
+
+// --- Radio ---
+// nRF52 Adafruit BSP SPIClass requires (peripheral, MISO, SCK, MOSI)
+#if defined(P_LORA_SCLK)
+  static SPIClass spi(NRF_SPIM3, P_LORA_MISO, P_LORA_SCLK, P_LORA_MOSI);
+  RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
+#else
+  RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);
 #endif
 
-// --- MeshCore stores ---
-mesh::IdentityStore identity_store;
-mesh::NodePrefs node_prefs;
-mesh::DataStore data_store;
+WRAPPER_CLASS radio_driver(radio, board);
+
+// --- Display ---
+#ifdef DISPLAY_CLASS
+DISPLAY_CLASS display;
+#endif
 
 // --- Sensor manager ---
-#if defined(ENV_INCLUDE_GPS) && ENV_INCLUDE_GPS
+#if ENV_INCLUDE_GPS
   #include <helpers/sensors/MicroNMEALocationProvider.h>
   static MicroNMEALocationProvider gps_provider(Serial1);
-  EnvironmentSensorManager sensor_manager(gps_provider);
+  EnvironmentSensorManager sensors(gps_provider);
 #else
-  EnvironmentSensorManager sensor_manager;
+  EnvironmentSensorManager sensors;
 #endif
 
 // --- Target initialization ---
-void target_setup() {
-  // Enable OLED power
-  #if PIN_OLED_EN >= 0
-    pinMode(PIN_OLED_EN, OUTPUT);
-    digitalWrite(PIN_OLED_EN, HIGH);
-    delay(10);
-  #endif
+bool radio_init() {
+  // Board-level init — cycles RT9080 3V3 rail, parks peripheral pins LOW
+  board.begin();
 
-  // Enable GPS power
+  // Enable GPS power (was parked LOW in board.begin())
   #if defined(HAS_GPS) && PIN_GPS_EN >= 0
-    pinMode(PIN_GPS_EN, OUTPUT);
     digitalWrite(PIN_GPS_EN, HIGH);
     delay(10);
   #endif
 
   // GPS RF/LNA enable
   #if defined(HAS_GPS) && PIN_GPS_RF_EN >= 0
-    pinMode(PIN_GPS_RF_EN, OUTPUT);
     digitalWrite(PIN_GPS_RF_EN, HIGH);
   #endif
 
-  // Initialize GPS UART
+  // Initialise GPS UART
   #if defined(HAS_GPS)
     Serial1.setPins(PIN_GPS_RX, PIN_GPS_TX);
     Serial1.begin(GPS_BAUDRATE);
   #endif
 
-  // Speaker off by default (save power)
+  // Speaker off by default
   #if defined(HAS_SPEAKER)
     pinMode(PIN_SPK_EN, OUTPUT);
     digitalWrite(PIN_SPK_EN, LOW);
@@ -76,20 +75,53 @@ void target_setup() {
     #endif
   #endif
 
-  // Initialize I2C
-  Wire.setPins(I2C_SDA, I2C_SCL);
+  // Initialise I2C
   Wire.begin();
   Wire.setClock(400000);
 
-  // Initialize display
+  // Initialise clocks — probe I2C for hardware RTCs, fall back to VolatileRTCClock
+  rtc_clock.begin(Wire);
+
+  // Initialise display
   #ifdef DISPLAY_CLASS
-    display.begin(OLED_I2C_ADDR);
+    display.begin();
   #endif
 
-  // Board-level init
-  board.begin();
+  // SX1262 DIO2 as RF switch control
+  radio.setDio2AsRfSwitch(true);
 
-  // Initialize LoRa radio
-  // SX1262 DIO2 as RF switch control (common for HPB16B3 modules)
-  radio_driver.setDio2AsRfSwitch(true);
+  // SX1262 TCXO via DIO3 (1.8V, from Meshtastic PR #10267)
+  // TODO: Verify on hardware — if module uses crystal, remove this call
+  radio.setTCXO(1.8f);
+
+  // Initialise radio
+  #if defined(P_LORA_SCLK)
+    return radio.std_init(&spi);
+  #else
+    return radio.std_init();
+  #endif
+}
+
+uint32_t radio_get_rng_seed() {
+  return radio.random(0x7FFFFFFF);
+}
+
+void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
+  radio.setFrequency(freq);
+  radio.setSpreadingFactor(sf);
+  radio.setBandwidth(bw);
+  radio.setCodingRate(cr);
+}
+
+void radio_set_tx_power(int8_t dbm) {
+  radio.setOutputPower(dbm);
+}
+
+mesh::LocalIdentity radio_new_identity() {
+  RadioNoiseListener rng(radio);
+  return mesh::LocalIdentity(&rng);
+}
+
+void radio_reset_agc() {
+  radio.setRxBoostedGainMode(true);
 }

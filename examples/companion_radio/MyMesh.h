@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 11
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "19 April 2026"
+#define FIRMWARE_BUILD_DATE "3 May 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.7"
+#define FIRMWARE_VERSION "Meck v1.8"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -160,6 +160,10 @@ public:
   void setDeferSaves(bool defer) { _deferSaves = defer; }
   bool isDeferSaves() const { return _deferSaves; }
 
+  // Notify that the user pressed a key — defers contact saves until idle.
+  // Call from main.cpp keyboard handler on every keypress.
+  void notifyUserInput() { _lastUserInput = millis(); }
+
   // Repeater admin - UI-initiated operations
   bool uiLoginToRepeater(uint32_t contact_idx, const char* password, uint32_t& est_timeout_ms);
   bool uiSendCliCommand(uint32_t contact_idx, const char* command);
@@ -274,6 +278,7 @@ private:
   VoiceEnvelopeHandler _voiceEnvHandler = nullptr;
   mutable bool _forceNextImport = false;
   bool _deferSaves = false;
+  unsigned long _lastUserInput = 0;  // millis() of last keypress -- defer saves until idle
   uint32_t pending_login;
   uint32_t pending_status;
   uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ

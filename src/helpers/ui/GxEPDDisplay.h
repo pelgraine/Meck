@@ -20,7 +20,11 @@
 #include <Fonts/FreeSans18pt7b.h>
 
 // Meck custom font styles (Noto Sans, Montserrat)
+// Define HAS_MECK_FONTS in platformio.ini build_flags for platforms with
+// enough flash to carry the extra font data (~50KB for 8b Latin Extended).
+#ifdef HAS_MECK_FONTS
 #include "MeckFonts.h"
+#endif
 
 // Inline CRC32 for frame change detection (replaces bakercp/CRC32
 // to avoid naming collision with PNGdec's bundled CRC32.h)
@@ -70,12 +74,25 @@ class GxEPDDisplay : public DisplayDriver {
   uint16_t _curr_color;
   FrameCRC32 display_crc;
   int last_display_crc_value = 0;
+  const GFXfont* _currentFont = nullptr;  // Track for UTF-8 rendering
+  uint8_t _currentTextScale = 1;          // Track glyph scale factor
+
+  // Render one glyph from the current 8b font at the display's cursor position
+  void drawGlyphAtCursor(uint16_t cp);
 
 public:
+// Virtual canvas dimensions — default 128×128 (MeshCore standard).
+// Override for displays where physical resolution / scale < 128.
+#ifndef EINK_VIRTUAL_W
+  #define EINK_VIRTUAL_W 128
+#endif
+#ifndef EINK_VIRTUAL_H
+  #define EINK_VIRTUAL_H 128
+#endif
 #if defined(EINK_DISPLAY_MODEL)
-  GxEPDDisplay() : DisplayDriver(128, 128), display(EINK_DISPLAY_MODEL(PIN_DISPLAY_CS, PIN_DISPLAY_DC, PIN_DISPLAY_RST, PIN_DISPLAY_BUSY)) {}
+  GxEPDDisplay() : DisplayDriver(EINK_VIRTUAL_W, EINK_VIRTUAL_H), display(EINK_DISPLAY_MODEL(PIN_DISPLAY_CS, PIN_DISPLAY_DC, PIN_DISPLAY_RST, PIN_DISPLAY_BUSY)) {}
 #else
-  GxEPDDisplay() : DisplayDriver(128, 128), display(GxEPD2_150_BN(DISP_CS, DISP_DC, DISP_RST, DISP_BUSY)) {}
+  GxEPDDisplay() : DisplayDriver(EINK_VIRTUAL_W, EINK_VIRTUAL_H), display(GxEPD2_150_BN(DISP_CS, DISP_DC, DISP_RST, DISP_BUSY)) {}
 #endif
 
   bool begin();
@@ -99,6 +116,7 @@ public:
   void drawXbm(int x, int y, const uint8_t* bits, int w, int h) override;
   uint16_t getTextWidth(const char* str) override;
   void endFrame() override;
+  void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override;
 
   // --- Raw pixel access for MapScreen (bypasses scaling) ---
   void drawPixelRaw(int16_t x, int16_t y, uint16_t color) {

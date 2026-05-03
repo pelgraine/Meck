@@ -402,12 +402,16 @@ private:
       addRow(ROW_TX_POWER);
       addRow(ROW_UTC_OFFSET);
       addRow(ROW_MSG_NOTIFY);
+#if HAS_GPS
       addRow(ROW_GPS_BAUD);
+#endif
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DEFAULT_SCOPE);
       addRow(ROW_DARK_MODE);
+#if !defined(LILYGO_TECHO_LITE)
       addRow(ROW_LARGE_FONT);
       addRow(ROW_FONT_STYLE);
+#endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
       addRow(ROW_PORTRAIT_MODE);
 #endif
@@ -2404,6 +2408,21 @@ public:
     } else {
       display.print("Editing...");
     }
+#elif defined(LILYGO_TECHO_LITE)
+    if (_editMode == EDIT_TEXT) {
+      display.print("Ent:Ok Q:Cancel");
+    } else if (_editMode == EDIT_PICKER) {
+      display.print("A/D:Pick Ent:Ok");
+    } else if (_editMode == EDIT_NUMBER) {
+      display.print("W/S:Adj Ent:Ok");
+    } else if (_editMode == EDIT_CONFIRM) {
+      // overlay handles it
+    } else {
+      display.print("Q:Bk");
+      const char* r = "Ent:Edit";
+      display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
+      display.print(r);
+    }
 #else
     if (_editMode == EDIT_TEXT) {
       display.print("Type, Enter:Ok Q:Cancel");
@@ -2977,8 +2996,17 @@ public:
 
     // --- Normal browsing mode ---
 
-    // W/S: navigate
-    if (c == 'w' || c == 'W') {
+    // W/S: navigate, Shift+W/S: page scroll
+    if (c == 'W') {
+      // Shift+W: page up
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _cursor = max(0, _cursor - pageSize);
+      skipNonSelectable(-1);
+      Serial.printf("Settings: page up cursor=%d/%d\n", _cursor, _numRows);
+      return true;
+    }
+    if (c == 'w') {
       if (_cursor > 0) {
         _cursor--;
         skipNonSelectable(-1);
@@ -2986,7 +3014,16 @@ public:
       Serial.printf("Settings: cursor=%d/%d row=%d\n", _cursor, _numRows, _rows[_cursor].type);
       return true;
     }
-    if (c == 's' || c == 'S') {
+    if (c == 'S') {
+      // Shift+S: page down
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _cursor = min(_numRows - 1, _cursor + pageSize);
+      skipNonSelectable(1);
+      Serial.printf("Settings: page down cursor=%d/%d\n", _cursor, _numRows);
+      return true;
+    }
+    if (c == 's') {
       if (_cursor < _numRows - 1) {
         _cursor++;
         skipNonSelectable(1);

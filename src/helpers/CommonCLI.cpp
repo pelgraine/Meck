@@ -83,6 +83,10 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     file.read((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
     file.read((uint8_t *)&_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode)); // 290
     // 291
+    if (file.read((uint8_t *)&_prefs->loop_detect, sizeof(_prefs->loop_detect)) != sizeof(_prefs->loop_detect)) {
+      _prefs->loop_detect = LOOP_DETECT_OFF; // default for older prefs files
+    }
+    // 292
 
     // sanitise bad pref values
     _prefs->rx_delay_base = constrain(_prefs->rx_delay_base, 0, 20.0f);
@@ -109,6 +113,7 @@ void CommonCLI::loadPrefsInt(FILESYSTEM* fs, const char* filename) {
     _prefs->gps_enabled = constrain(_prefs->gps_enabled, 0, 1);
     _prefs->advert_loc_policy = constrain(_prefs->advert_loc_policy, 0, 2);
     _prefs->path_hash_mode = constrain(_prefs->path_hash_mode, 0, 2);
+    _prefs->loop_detect = constrain(_prefs->loop_detect, 0, 3);
 
     file.close();
   }
@@ -168,7 +173,8 @@ void CommonCLI::savePrefs(FILESYSTEM* fs) {
     file.write((uint8_t *)&_prefs->adc_multiplier, sizeof(_prefs->adc_multiplier));                 // 166
     file.write((uint8_t *)_prefs->owner_info, sizeof(_prefs->owner_info));  // 170
     file.write((uint8_t *)&_prefs->path_hash_mode, sizeof(_prefs->path_hash_mode)); // 290
-    // 291
+    file.write((uint8_t *)&_prefs->loop_detect, sizeof(_prefs->loop_detect));       // 291
+    // 292
 
     file.close();
   }

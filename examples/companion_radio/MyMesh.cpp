@@ -114,6 +114,7 @@
 #define DIRECT_SEND_PERHOP_FACTOR       6.0f
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
+#define USER_IDLE_SAVE_THRESHOLD       15000  // Defer saves until 15s after last keypress
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -153,6 +154,10 @@
 #define AUTO_ADD_REPEATER         (1 << 2)  // 0x04 - auto-add Repeater (ADV_TYPE_REPEATER)
 #define AUTO_ADD_ROOM_SERVER      (1 << 3)  // 0x08 - auto-add Room Server (ADV_TYPE_ROOM)
 #define AUTO_ADD_SENSOR           (1 << 4)  // 0x10 - auto-add Sensor (ADV_TYPE_SENSOR)
+
+// All type bits combined (excludes overwrite flag)
+#define AUTO_ADD_ALL_TYPES (AUTO_ADD_CHAT | AUTO_ADD_REPEATER | \
+                            AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)
 
 void MyMesh::writeOKFrame() {
   uint8_t buf[1];
@@ -1472,6 +1477,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     MESH_DEBUG_PRINTLN("App %s connected", app_name);
 
     _iter_started = false; // stop any left-over ContactsIterator
+
+#if defined(BLE_PIN_CODE) || defined(MECK_WIFI_COMPANION)
+    // Companion builds: mark all channels/DMs as read on app connect
+    if (_ui) _ui->markAllChannelsRead();
+#endif
     int i = 0;
     out_frame[i++] = RESP_CODE_SELF_INFO;
     out_frame[i++] = ADV_TYPE_CHAT; // what this node Advert identifies as (maybe node's pronouns too?? :-)
@@ -2550,6 +2560,20 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.printf("  apn:        %s\n", modemManager.getAPN());
         Serial.printf("  imei:       %s\n", modemManager.getIMEI());
 #endif
+        // Contact auto-add
+        {
+          const char* mode = (_prefs.manual_add_contacts & 1) == 0 ? "auto" :
+              (_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0 ? "manual" : "custom";
+          Serial.printf("  contacts:   %s", mode);
+          if ((_prefs.manual_add_contacts & 1) != 0 && (_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) != 0) {
+            Serial.printf(" [%s%s%s%s]",
+              (_prefs.autoadd_config & AUTO_ADD_CHAT) ? "C" : "",
+              (_prefs.autoadd_config & AUTO_ADD_REPEATER) ? "R" : "",
+              (_prefs.autoadd_config & AUTO_ADD_ROOM_SERVER) ? "S" : "",
+              (_prefs.autoadd_config & AUTO_ADD_SENSOR) ? "N" : "");
+          }
+          Serial.printf(" maxhops:%d\n", _prefs.autoadd_max_hops);
+        }
         // Detect current preset
         bool presetFound = false;
         for (int i = 0; i < (int)NUM_RADIO_PRESETS; i++) {
@@ -2590,6 +2614,30 @@ void MyMesh::checkCLIRescueCmd() {
           }
         }
         if (!chFound) Serial.println("    (none)");
+
+      // --- Contact auto-add settings ---
+      } else if (strcmp(key, "contact.mode") == 0) {
+        if ((_prefs.manual_add_contacts & 1) == 0) {
+          Serial.println("  > auto");
+        } else if ((_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0) {
+          Serial.println("  > manual");
+        } else {
+          Serial.println("  > custom");
+        }
+      } else if (strcmp(key, "contact.autoadd") == 0) {
+        Serial.printf("  > chat:%s rptr:%s room:%s sensor:%s overwrite:%s\n",
+          (_prefs.autoadd_config & AUTO_ADD_CHAT) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_REPEATER) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_ROOM_SERVER) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_SENSOR) ? "on" : "off",
+          (_prefs.autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) ? "on" : "off");
+      } else if (strcmp(key, "contact.maxhops") == 0) {
+        if (_prefs.autoadd_max_hops == 0) {
+          Serial.println("  > 0 (no limit)");
+        } else {
+          Serial.printf("  > %d\n", _prefs.autoadd_max_hops);
+        }
+
       } else {
         Serial.printf("  Error: unknown key '%s' (try 'help')\n", key);
       }
@@ -3049,6 +3097,60 @@ void MyMesh::checkCLIRescueCmd() {
         Serial.println("  Error: backlight not available on this device");
 #endif
 
+      // --- Contact auto-add settings ---
+      } else if (memcmp(config, "contact.mode ", 13) == 0) {
+        const char* val = &config[13];
+        if (strcmp(val, "auto") == 0) {
+          _prefs.manual_add_contacts &= ~1;
+          savePrefs();
+          Serial.println("  > auto-add all");
+        } else if (strcmp(val, "custom") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          if ((_prefs.autoadd_config & AUTO_ADD_ALL_TYPES) == 0) {
+            _prefs.autoadd_config |= AUTO_ADD_ALL_TYPES;
+          }
+          savePrefs();
+          Serial.println("  > custom (use contact.autoadd to configure)");
+        } else if (strcmp(val, "manual") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          _prefs.autoadd_config &= ~AUTO_ADD_ALL_TYPES;
+          savePrefs();
+          Serial.println("  > manual only (no auto-add)");
+        } else if (strcmp(val, "repeater-only") == 0) {
+          _prefs.manual_add_contacts |= 1;
+          _prefs.autoadd_config = (_prefs.autoadd_config & AUTO_ADD_OVERWRITE_OLDEST) | AUTO_ADD_REPEATER;
+          savePrefs();
+          Serial.println("  > auto-add repeaters only");
+        } else {
+          Serial.println("  Error: auto|custom|manual|repeater-only");
+        }
+      } else if (memcmp(config, "contact.autoadd ", 16) == 0) {
+        const char* rest = &config[16];
+        uint8_t bit = 0;
+        const char* val = NULL;
+        if (memcmp(rest, "chat ", 5) == 0)           { bit = AUTO_ADD_CHAT; val = &rest[5]; }
+        else if (memcmp(rest, "repeater ", 9) == 0)   { bit = AUTO_ADD_REPEATER; val = &rest[9]; }
+        else if (memcmp(rest, "room ", 5) == 0)       { bit = AUTO_ADD_ROOM_SERVER; val = &rest[5]; }
+        else if (memcmp(rest, "sensor ", 7) == 0)     { bit = AUTO_ADD_SENSOR; val = &rest[7]; }
+        else if (memcmp(rest, "overwrite ", 10) == 0) { bit = AUTO_ADD_OVERWRITE_OLDEST; val = &rest[10]; }
+
+        if (bit && val) {
+          if (strcmp(val, "on") == 0)       { _prefs.autoadd_config |= bit; savePrefs(); Serial.println("  > OK"); }
+          else if (strcmp(val, "off") == 0) { _prefs.autoadd_config &= ~bit; savePrefs(); Serial.println("  > OK"); }
+          else { Serial.println("  Error: on|off"); }
+        } else {
+          Serial.println("  Error: chat|repeater|room|sensor|overwrite on|off");
+        }
+      } else if (memcmp(config, "contact.maxhops ", 16) == 0) {
+        int h = atoi(&config[16]);
+        if (h >= 0 && h <= 64) {
+          _prefs.autoadd_max_hops = (uint8_t)h;
+          savePrefs();
+          Serial.printf("  > maxhops = %d%s\n", h, h == 0 ? " (no limit)" : "");
+        } else {
+          Serial.println("  Error: 0-64 (0=no limit)");
+        }
+
       } else {
         Serial.printf("  Error: unknown setting '%s' (try 'help')\n", config);
       }
@@ -3146,6 +3248,12 @@ void MyMesh::checkCLIRescueCmd() {
       Serial.println("    set region none        Clear default region (unscoped)");
       Serial.println("    get channel.scope <i>  Show scope for channel i");
       Serial.println("    set channel.scope <i> <name|none>");
+      Serial.println("");
+      Serial.println("  Contact auto-add:");
+      Serial.println("    contact.mode             auto|custom|manual|repeater-only");
+      Serial.println("    contact.autoadd          Show type toggles");
+      Serial.println("    contact.autoadd <type> on|off  chat|repeater|room|sensor|overwrite");
+      Serial.println("    contact.maxhops <0-64>   Max hops for auto-add (0=no limit)");
 #ifdef HAS_4G_MODEM
       Serial.println("");
       Serial.println("  4G modem:");
@@ -3360,22 +3468,36 @@ void MyMesh::loop() {
   }
 
   // is there are pending dirty contacts write needed?
+  bool userActive = _lastUserInput && (millis() - _lastUserInput) < USER_IDLE_SAVE_THRESHOLD;
   if (dirty_contacts_expiry && millisHasNowPassed(dirty_contacts_expiry)) {
-    if (_deferSaves) {
-      // Voice session receiving — push save forward to avoid SPI contention
+#if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+    // nRF52/STM32: blocking save (fast on internal flash, no chunking needed)
+    if (!_deferSaves && !userActive) {
+      _store->saveContacts(this);
+      dirty_contacts_expiry = 0;
+    } else {
+      dirty_contacts_expiry = futureMillis(2000);
+    }
+#else
+    if (_deferSaves || userActive) {
+      // Voice session or active keyboard use -- push save forward
       dirty_contacts_expiry = futureMillis(2000);
     } else if (!_store->isSaveInProgress()) {
       _store->beginSaveContacts(this);
       dirty_contacts_expiry = 0;
     }
+#endif
   }
 
-  // Drive chunked contact save — write a batch each loop iteration
-  if (_store->isSaveInProgress() && !_deferSaves) {
+#if !defined(NRF52_PLATFORM) && !defined(STM32_PLATFORM)
+  // Drive chunked contact save -- write a batch each loop iteration
+  // Paused while user is actively pressing keys or voice session is receiving
+  if (_store->isSaveInProgress() && !_deferSaves && !userActive) {
     if (!_store->saveContactsChunk(20)) {  // 20 contacts per chunk (~3KB, ~30ms)
-      _store->finishSaveContacts();  // Done or error — verify and commit
+      _store->finishSaveContacts();  // Done or error -- verify and commit
     }
   }
+#endif
 
   // Discovery scan timeout
   if (_discoveryActive && millisHasNowPassed(_discoveryTimeout)) {

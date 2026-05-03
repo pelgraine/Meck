@@ -909,12 +909,26 @@ private:
   bool handleFileListInput(char c) {
     int totalItems = 1 + (int)_fileList.size();
 
-    if (c == 'w' || c == 'W' || c == 0xF2) {
+    // Shift+W: page up
+    if (c == 'W') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = max(0, _selectedFile - pageSize);
+      return true;
+    }
+    if (c == 'w' || c == 0xF2) {
       if (_selectedFile > 0) { _selectedFile--; return true; }
       return false;
     }
 
-    if (c == 's' || c == 'S' || c == 0xF1) {
+    // Shift+S: page down
+    if (c == 'S') {
+      int pageSize = (128 - 14 - 14) / _prefs->smallLineH();
+      if (pageSize < 3) pageSize = 3;
+      _selectedFile = min(totalItems - 1, _selectedFile + pageSize);
+      return true;
+    }
+    if (c == 's' || c == 0xF1) {
       if (_selectedFile < totalItems - 1) { _selectedFile++; return true; }
       return false;
     }
