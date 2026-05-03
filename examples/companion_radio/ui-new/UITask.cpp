@@ -1115,7 +1115,9 @@ public:
         return true;  // eat all other keys while confirming
       }
       // Up/down toggles between hibernate and power off
-      if (c == KEY_NEXT || c == 's' || c == KEY_PREV || c == 'w') {
+      // Only 'w'/'s' (keyboard) — KEY_NEXT/KEY_PREV fall through to page cycling
+      // so touch swipes and taps can still navigate away from this page.
+      if (c == 'w' || c == 's') {
         _poweroff_selected = !_poweroff_selected;
         return true;
       }
@@ -1131,11 +1133,11 @@ public:
       // Left/right fall through to page cycling below
     }
 
-    if (c == KEY_LEFT || c == KEY_PREV) {
+    if (c == KEY_LEFT || c == KEY_PREV || c == 'a') {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
       return true;
     }
-    if (c == KEY_NEXT || c == KEY_RIGHT) {
+    if (c == KEY_NEXT || c == KEY_RIGHT || c == 'd') {
       _page = (_page + 1) % HomePage::Count;
       if (_page == HomePage::RECENT) {
         _task->showAlert("Recent adverts", 800);

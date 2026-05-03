@@ -1495,7 +1495,11 @@ static void lastHeardToggleContact() {
       if (horizontal) {
         return (dx < 0) ? (char)KEY_NEXT : (char)KEY_PREV;
       }
-      return (char)KEY_NEXT;  // vertical swipe = next (default)
+      // Shutdown page: vertical swipe toggles hibernate/power off
+      if (ui_task.isHomeOnShutdownPage()) {
+        return 'w';  // toggle (direction doesn't matter)
+      }
+      return (char)KEY_NEXT;  // vertical swipe = next page (default)
     }
 
     // Settings: horizontal swipe → a/d for picker/number editing
