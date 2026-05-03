@@ -1477,6 +1477,11 @@ void MyMesh::handleCmdFrame(size_t len) {
     MESH_DEBUG_PRINTLN("App %s connected", app_name);
 
     _iter_started = false; // stop any left-over ContactsIterator
+
+#if defined(BLE_PIN_CODE) || defined(MECK_WIFI_COMPANION)
+    // Companion builds: mark all channels/DMs as read on app connect
+    if (_ui) _ui->markAllChannelsRead();
+#endif
     int i = 0;
     out_frame[i++] = RESP_CODE_SELF_INFO;
     out_frame[i++] = ADV_TYPE_CHAT; // what this node Advert identifies as (maybe node's pronouns too?? :-)

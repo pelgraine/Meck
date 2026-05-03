@@ -1451,15 +1451,17 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
   }
   
-  // If user is currently viewing this channel, mark it as read immediately
-  // (they can see the message arrive in real-time)
-  if (isOnChannelScreen() && 
-      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) {
+  // If user is currently viewing this channel on the device, or companion
+  // app is connected (they'll see it there), mark as read immediately
+  if ((isOnChannelScreen() && 
+      ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) ||
+      hasConnection()) {
     ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
   }
 
   // Per-contact DM unread tracking: find contact index by name
-  if (channel_idx == 0xFF && _dmUnread) {
+  // Skip increment when companion app is connected (user sees DMs there)
+  if (channel_idx == 0xFF && _dmUnread && !hasConnection()) {
     uint32_t numContacts = the_mesh.getNumContacts();
     ContactInfo contact;
     for (uint32_t ci = 0; ci < numContacts; ci++) {
@@ -2794,6 +2796,14 @@ void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
     memset(_dmUnread, 0, MAX_CONTACTS * sizeof(uint8_t));
   }
   // Trigger a refresh so the home screen unread count updates in real-time
+  _next_refresh = millis() + 200;
+}
+
+void UITask::markAllChannelsRead() {
+  ((ChannelScreen *) channel_screen)->markAllRead();
+  if (_dmUnread) {
+    memset(_dmUnread, 0, MAX_CONTACTS * sizeof(uint8_t));
+  }
   _next_refresh = millis() + 200;
 }
 

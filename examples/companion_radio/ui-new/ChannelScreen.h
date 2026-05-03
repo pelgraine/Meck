@@ -336,6 +336,11 @@ public:
     }
   }
 
+  // Mark all channels + DMs as read (companion app connected)
+  void markAllRead() {
+    memset(_unread, 0, sizeof(_unread));
+  }
+
   // Get unread count for a specific channel
   int getUnreadForChannel(uint8_t channel_idx) const {
     int slot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : channel_idx;

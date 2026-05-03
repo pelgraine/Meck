@@ -51,6 +51,7 @@ public:
 
   // Mark a channel as read when BLE companion app syncs a message
   virtual void markChannelReadFromBLE(uint8_t channel_idx) {}
+  virtual void markAllChannelsRead() {}  // Companion builds: zero all unread on app connect
 
   // Repeater admin callbacks (from MyMesh)
   virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}
