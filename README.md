@@ -2,7 +2,7 @@
 
 A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro & LilyGo T5 E-Paper S3 Pro. Created wholly with Claude AI using Meshcore v1.11 code. 100% vibecoded.
 
-[Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1343693475589263471/1460136499390447670)
+[Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
@@ -120,7 +120,7 @@ On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM 
 
 **Using the MeshCore Flasher (web-based, T-Deck Pro only):**
 
-1. Go to https://flasher.meshcore.co.uk
+1. Go to https://flasher.meshcore.io
 2. Select **Custom Firmware**
 3. Select the **merged** `.bin` file you downloaded
 4. Click **Flash**, select your device in the popup, and click **Connect**
@@ -1118,7 +1118,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 ## 📞 Get Support
 
-- Join [MeshCore Discord](https://discord.gg/BMwCtwHj5V) to chat with the developers and get help from the community.
+- Join [MeshCore Discord](https://discord.gg/KWFeY45sN) to chat with the developers and get help from the community.
 
 ## 📜 License
 
