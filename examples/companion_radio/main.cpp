@@ -3269,7 +3269,13 @@ void loop() {
               case 'e': ui_task.gotoTextReader(); break;
               case 'n': ui_task.gotoNotesScreen(); break;
 #endif
-              case 's': ui_task.gotoSettingsScreen(); break;
+              case 's':
+                if (ui_task.isHomeOnShutdownPage()) {
+                  ui_task.injectKey(ckb);
+                } else {
+                  ui_task.gotoSettingsScreen();
+                }
+                break;
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
               case (char)0xF3: ui_task.injectKey(KEY_LEFT);  break;  // Left arrow → prev page
@@ -4599,6 +4605,7 @@ void handleKeyboardInput() {
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
+          || ui_task.isHomeOnShutdownPage()
          ) {
         ui_task.injectKey('s');  // Pass directly for scrolling
       } else {

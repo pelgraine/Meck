@@ -46,13 +46,7 @@
   #endif
 #endif
 
-#if UI_HAS_JOYSTICK
-  #define PRESS_LABEL "press Enter"
-#elif defined(LilyGo_T5S3_EPaper_Pro)
-  #define PRESS_LABEL "long press"
-#else
-  #define PRESS_LABEL "long press"
-#endif
+#define PRESS_LABEL "long press"
 
 #include "icons.h"
 #include "ChannelScreen.h"
@@ -147,6 +141,9 @@ class HomeScreen : public UIScreen {
   uint8_t _page;
   bool _shutdown_init;
   unsigned long _shutdown_at;   // earliest time to proceed with shutdown (after e-ink refresh)
+  bool _poweroff_selected;     // true = "power off" highlighted, false = "hibernate"
+  bool _poweroff_confirm;      // true = showing confirmation prompt for power off
+  bool _poweroff_msg_shown;    // true = "powering off..." already displayed once
   bool _editing_utc;
   int8_t _saved_utc_offset;  // for cancel/undo
 
@@ -310,10 +307,12 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
 public:
   HomeScreen(UITask* task, mesh::RTCClock* rtc, SensorManager* sensors, NodePrefs* node_prefs)
      : _task(task), _rtc(rtc), _sensors(sensors), _node_prefs(node_prefs), _page(0), 
-       _shutdown_init(false), _shutdown_at(0), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
+       _shutdown_init(false), _shutdown_at(0), _poweroff_selected(false), _poweroff_confirm(false),
+       _poweroff_msg_shown(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
   bool isOnRecentPage() const { return _page == HomePage::RECENT; }
+  bool isOnShutdownPage() const { return _page == HomePage::SHUTDOWN; }
   void cancelEditing() { 
     if (_editing_utc) {
       _node_prefs->utc_offset_hours = _saved_utc_offset;
@@ -323,6 +322,7 @@ public:
 
   void poll() override {
     if (_shutdown_init && millis() >= _shutdown_at && !_task->isButtonPressed()) {
+      if (_poweroff_selected) _task->setFullPowerOff(true);
       _task->shutdown();
     }
   }
@@ -332,6 +332,27 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
+
+    // Power off: full-screen message, no header
+    // First render: "powering off..." + wake instruction
+    // Second render onward: wake instruction only (persists on e-ink)
+    if (_shutdown_init && _poweroff_selected) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      board.setBacklight(false);
+#endif
+      display.setColor(DisplayDriver::GREEN);
+      display.setTextSize(1);
+      if (!_poweroff_msg_shown) {
+        _poweroff_msg_shown = true;
+        display.drawTextCentered(display.width() / 2, 30, "powering off...");
+        display.drawTextCentered(display.width() / 2, 46, "plug in USB-C to turn on");
+        return 1500;
+      } else {
+        display.drawTextCentered(display.width() / 2, 38, "plug in USB-C to turn on");
+        return 5000;
+      }
+    }
+
     // node name (tinyfont to avoid overlapping clock)
     display.setTextSize(_node_prefs->smallTextSize());
     display.setColor(DisplayDriver::GREEN);
@@ -1000,21 +1021,43 @@ public:
       display.setTextSize(1);
       if (_shutdown_init) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        board.setBacklight(false);  // Turn off backlight on hibernate
+        board.setBacklight(false);
 #endif
         display.drawTextCentered(display.width() / 2, 34, "hibernating...");
-      } else {
+      } else if (_poweroff_confirm) {
+        // Confirmation prompt for power off
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.drawXbm((display.width() - 32) / 2, 28, power_icon, 32, 32);
 #else
-        display.drawXbm((display.width() - 32) / 2, 18, power_icon, 32, 32);
+        display.drawXbm((display.width() - 32) / 2, 10, power_icon, 32, 32);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
-        display.drawTextCentered(display.width() / 2, 64, "hibernate:" PRESS_LABEL);
+        display.drawTextCentered(display.width() / 2, 64, "power off device?");
+        display.drawTextCentered(display.width() / 2, 76, "usb-c to wake");
 #else
-        display.drawTextCentered(display.width() / 2, 57, "hibernate: " PRESS_LABEL);
-        display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
+        display.drawTextCentered(display.width() / 2, 50, "power off device?");
+        display.drawTextCentered(display.width() / 2, 60, "usb-c to wake");
+        display.drawTextCentered(display.width() / 2, 76, "Enter:yes  q:no");
 #endif
+      } else {
+        // Menu: hibernate / power off
+#if defined(LilyGo_T5S3_EPaper_Pro)
+        display.drawXbm((display.width() - 32) / 2, 20, power_icon, 32, 32);
+        const int y1 = 58, y2 = 70;
+#else
+        display.drawXbm((display.width() - 32) / 2, 10, power_icon, 32, 32);
+        const int y1 = 50, y2 = 62;
+#endif
+        char line1[48], line2[48];
+#if defined(LilyGo_TDeck_Pro)
+        snprintf(line1, sizeof(line1), "%shibernate: long press/Enter", _poweroff_selected ? " " : ">");
+        snprintf(line2, sizeof(line2), "%spower off: long press/Enter", _poweroff_selected ? ">" : " ");
+#else
+        snprintf(line1, sizeof(line1), "%shibernate: " PRESS_LABEL, _poweroff_selected ? " " : ">");
+        snprintf(line2, sizeof(line2), "%spower off: " PRESS_LABEL, _poweroff_selected ? ">" : " ");
+#endif
+        display.drawTextCentered(display.width() / 2, y1, line1);
+        display.drawTextCentered(display.width() / 2, y2, line2);
       }
     }
     return _editing_utc ? 700 : 5000;
@@ -1053,6 +1096,39 @@ public:
         return true;
       }
       return true;  // Consume all other keys while editing
+    }
+
+    // SHUTDOWN page -- intercept up/down and Enter before page cycling
+    if (_page == HomePage::SHUTDOWN) {
+      if (_poweroff_confirm) {
+        // Confirmation mode for power off
+        if (c == KEY_ENTER) {
+          _shutdown_init = true;
+          _shutdown_at = millis() + 2500;  // extra time for two-phase e-ink update
+          return true;
+        }
+        // Cancel: q, left, prev
+        if (c == 'q' || c == KEY_LEFT || c == KEY_PREV) {
+          _poweroff_confirm = false;
+          return true;
+        }
+        return true;  // eat all other keys while confirming
+      }
+      // Up/down toggles between hibernate and power off
+      if (c == KEY_NEXT || c == 's' || c == KEY_PREV || c == 'w') {
+        _poweroff_selected = !_poweroff_selected;
+        return true;
+      }
+      if (c == KEY_ENTER) {
+        if (_poweroff_selected) {
+          _poweroff_confirm = true;
+        } else {
+          _shutdown_init = true;
+          _shutdown_at = millis() + 900;
+        }
+        return true;
+      }
+      // Left/right fall through to page cycling below
     }
 
     if (c == KEY_LEFT || c == KEY_PREV) {
@@ -1103,11 +1179,6 @@ public:
       return true;
     }
 #endif
-    if (c == KEY_ENTER && _page == HomePage::SHUTDOWN) {
-      _shutdown_init = true;
-      _shutdown_at = millis() + 900;  // allow e-ink refresh (644ms) before shutdown
-      return true;
-    }
     return false;
   }
 };
@@ -1591,6 +1662,36 @@ void UITask::shutdown(bool restart){
     // Power off LoRa radio, display, and board
     radio_driver.powerOff();
     _display->turnOff();
+
+    // BQ25896 ship mode: disconnect battery from VSYS entirely.
+    // Must happen BEFORE _board->powerOff() cuts PIN_PERF_POWERON
+    // (I2C pull-ups need VDD3V3 to complete the transaction).
+    // TI recommends: set BATFET_DLY=1 first, then BATFET_DIS=1 as
+    // the last I2C write to avoid bricking the I2C state machine.
+    // After tSM_DLY (~10-15s) the BATFET opens during deep sleep.
+    // Wake: USB-C plug-in only (no reset button -- no power to ESP32).
+    #ifdef I2C_ADDR_BQ25896
+    if (_full_poweroff) {
+      Wire.beginTransmission(I2C_ADDR_BQ25896);
+      Wire.write(0x09);
+      Wire.endTransmission(false);
+      Wire.requestFrom((uint8_t)I2C_ADDR_BQ25896, (uint8_t)1);
+      uint8_t reg09 = Wire.read();
+
+      // Step 1: set BATFET_DLY=1 (bit 3) for safe I2C completion
+      Wire.beginTransmission(I2C_ADDR_BQ25896);
+      Wire.write(0x09);
+      Wire.write(reg09 | 0x08);  // BATFET_DLY = bit 3
+      Wire.endTransmission();
+
+      // Step 2: set BATFET_DIS=1 (bit 5) -- MUST be the last I2C write
+      Wire.beginTransmission(I2C_ADDR_BQ25896);
+      Wire.write(0x09);
+      Wire.write(reg09 | 0x28);  // BATFET_DIS (0x20) | BATFET_DLY (0x08)
+      Wire.endTransmission();
+    }
+    #endif
+
     _board->powerOff();
   }
 }
@@ -1605,30 +1706,7 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
-#if UI_HAS_JOYSTICK
-  int ev = user_btn.check();
-  if (ev == BUTTON_EVENT_CLICK) {
-    c = checkDisplayOn(KEY_ENTER);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_ENTER);  // REVISIT: could be mapped to different key code
-  }
-  ev = joystick_left.check();
-  if (ev == BUTTON_EVENT_CLICK) {
-    c = checkDisplayOn(KEY_LEFT);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_LEFT);
-  }
-  ev = joystick_right.check();
-  if (ev == BUTTON_EVENT_CLICK) {
-    c = checkDisplayOn(KEY_RIGHT);
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    c = handleLongPress(KEY_RIGHT);
-  }
-  ev = back_btn.check();
-  if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
-    c = handleTripleClick(KEY_SELECT);
-  }
-#elif defined(PIN_USER_BTN)
+#if defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2584,6 +2662,10 @@ bool UITask::isEditingHomeScreen() const {
 
 bool UITask::isHomeOnRecentPage() const {
   return curr == home && ((HomeScreen *) home)->isOnRecentPage();
+}
+
+bool UITask::isHomeOnShutdownPage() const {
+  return curr == home && ((HomeScreen *) home)->isOnShutdownPage();
 }
 
 void UITask::gotoChannelScreen(bool resetDmView) {
