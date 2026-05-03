@@ -39,6 +39,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Alarm Clock (Audio only)](#alarm-clock-audio-only)
   - [Voice Notes Over LoRa (Audio only)](#voice-notes-over-lora-audio-only)
   - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
+  - [Shutdown (T-Deck Pro)](#shutdown-t-deck-pro)
 - [Remote Repeater (T-Deck Pro 4G)](#remote-repeater-t-deck-pro-4g)
 - [WiFi Repeater](#wifi-repeater)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
@@ -139,6 +140,8 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
 ```
 
 > **Tip:** If you're unsure whether the device already has a bootloader, it's always safe to use the merged file and flash at `0x0` — it will overwrite everything cleanly.
+
+> **First boot:** On a fresh flash, the device will format its internal storage partition. The display shows "Formatting storage... First boot - please wait" — this takes 1-2 minutes and only happens once. If the device was previously running different firmware (e.g. stock LilyGo or Meshtastic), the partition is automatically erased and reformatted to ensure a clean start.
 
 ### Launcher
 
@@ -343,6 +346,7 @@ Flood-based hop estimates (`~D`, `~N`) are drawn from a cache of up to 1,000 rec
 | Key | Action |
 |-----|--------|
 | W / S | Scroll up / down through contacts |
+| Shift+W / Shift+S | Page up / page down |
 | A / D | Cycle filter: All → Chat → Rptr → Room → Sens → Fav |
 | Enter | Enter select mode (highlights current contact, enables batch operations) |
 | P | Open path editor for the highlighted contact |
@@ -433,6 +437,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Key | Action |
 |-----|--------|
 | W / S | Navigate up / down through settings |
+| Shift+W / Shift+S | Page up / page down |
 | Enter | Edit selected setting, or enter a sub-screen |
 | Q | Back one level (sub-screen → top level → home screen) |
 
@@ -491,6 +496,8 @@ Change the font in **Settings → Font** — use A/D to cycle with a live previe
 
 Font styles are available in both Tiny and Larger text size modes. Custom fonts at Tiny size use 7pt glyphs; at Larger size, 9pt — matching the existing FreeSans layout. The font preference is saved and persists across reboots.
 
+**Accented character support (v1.8+):** All three font styles now display accented and diacritical characters (Czech, Polish, French, German, etc.) instead of dropping them. **Noto Sans at Larger text size** renders diacritical marks natively (carons, accents, cedillas). All other font and size combinations fold accented characters to their ASCII base letter (ě→e, ž→z, ñ→n) — the letter is always visible, just without the diacritic mark.
+
 ### Compose Mode
 
 | Key | Action |
@@ -527,7 +534,7 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 
 ### Emoji Picker
 
-While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 76 emoji is displayed in a 5-column layout, with faces and emotions grouped first. Scrolling wraps around — pressing W on the first row goes to the last row and vice versa.
+While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 77 emoji is displayed in a 5-column layout, with faces and emotions grouped first. Scrolling wraps around — pressing W on the first row goes to the last row and vice versa.
 
 | Key | Action |
 |-----|--------|
@@ -640,6 +647,10 @@ Double-click the Boot button to lock the screen. The lock screen shows the curre
 Double-click the Boot button again to unlock and return to whatever screen you were on.
 
 An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
+
+### Shutdown (T-Deck Pro)
+
+The home screen includes a **Shutdown** page. Selecting it powers the device off completely — the ESP32-S3 enters deep sleep with no wake sources, peripheral power is cut, and the LoRa module is powered down. Only a hardware reset (reset button) or USB power-on will wake the device. This is distinct from the auto-lock hibernate, which maintains wake-on-LoRa capability.
 
 ---
 
@@ -762,7 +773,7 @@ The virtual keyboard supports:
 - QWERTY letter layout with a symbol/number layer (tap the **123** key to switch)
 - Shift toggle for uppercase
 - Backspace (UTF-8 aware — correctly deletes multi-byte emoji) and Enter keys
-- **Emoji picker** — tap the **$** key to open a scrollable 8-column grid of 76 emoji sprites with page indicators. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard. Faces and emotions are grouped first for quick access.
+- **Emoji picker** — tap the **$** key to open a scrollable 8-column grid of 77 emoji sprites with page indicators. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard. Faces and emotions are grouped first for quick access.
 - Inline emoji rendering — emoji appear as pixel sprites in the text field as you type
 - Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
 
@@ -1021,7 +1032,7 @@ The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE vari
 
 ## 🛠 Hardware Compatibility
 
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.co.uk). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, Heltec V3 (remote repeater only), and Heltec V4 (remote repeater only).
+MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.io). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, Heltec V3 (remote repeater only), and Heltec V4 (remote repeater only).
 
 ## Contributing
 
@@ -1068,8 +1079,12 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Channel picker screen with unread badges
 - [X] Region scope (MeshCore v1.15+ compatibility)
 - [X] Selectable font styles (Classic, Noto Sans, Montserrat)
-- [X] Expanded emoji picker (76 emoji, reordered, wrap scrolling)
+- [X] Expanded emoji picker (77 emoji, reordered, wrap scrolling)
 - [X] 1,000-entry advert path cache (PSRAM)
+- [X] Accented character / diacritics support (Czech, Polish, French, German, Latin Extended)
+- [X] Page scroll (Shift+W/S) on all list screens
+- [X] True power off (deep sleep, no wake sources)
+- [X] BLE 2M PHY, DLE, and faster write interval
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -1103,6 +1118,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Region scope (MeshCore v1.15+ compatibility)
 - [X] Selectable font styles (Classic, Noto Sans, Montserrat)
 - [X] Virtual keyboard emoji grid with scrollable pages
+- [X] Accented character / diacritics support (Czech, Polish, French, German, Latin Extended)
 - [ ] Improve EPUB rendering and EPUB format handling
 
 **Heltec V4:**

@@ -5,6 +5,9 @@
 #if defined(ESP32) && defined(MECK_OTA_UPDATE)
   #include <esp_ota_ops.h>
 #endif
+#ifdef ESP32
+  #include <esp_partition.h>
+#endif
 #include <Mesh.h>
 #include "MyMesh.h"
 #include "variant.h"   // Board-specific defines (HAS_GPS, etc.)
@@ -1870,7 +1873,7 @@ void setup() {
 #elif defined(ESP32)
   MESH_DEBUG_PRINTLN("setup() - ESP32 filesystem init - calling SPIFFS.begin()");
   if (!SPIFFS.begin(false)) {
-    // First boot or corrupted partition — format required (can take 1-2 minutes)
+    // First boot or corrupted partition -- format required (can take 1-2 minutes)
     Serial.println("SPIFFS mount failed - formatting (this may take 1-2 minutes)...");
     if (disp) {
       disp->startFrame();
@@ -1882,7 +1885,27 @@ void setup() {
       disp->endFrame();
     }
     if (!SPIFFS.begin(true)) {
-      Serial.println("SPIFFS format FAILED!");
+      // Auto-format failed -- partition likely contains non-SPIFFS data from
+      // a previous firmware. Erase the entire partition and retry.
+      Serial.println("SPIFFS auto-format failed -- erasing partition and retrying...");
+      const esp_partition_t* spiffsPart = esp_partition_find_first(
+          ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, NULL);
+      if (spiffsPart) {
+        Serial.printf("SPIFFS partition: offset=0x%x size=0x%x -- erasing...\n",
+                       spiffsPart->address, spiffsPart->size);
+        esp_partition_erase_range(spiffsPart, 0, spiffsPart->size);
+      }
+      bool spiffsMounted = false;
+      for (int attempt = 0; attempt < 3 && !spiffsMounted; attempt++) {
+        if (attempt > 0) { Serial.printf("SPIFFS retry %d/3...\n", attempt + 1); delay(500); }
+        SPIFFS.format();
+        spiffsMounted = SPIFFS.begin(false);
+      }
+      if (spiffsMounted) {
+        Serial.println("SPIFFS mounted after explicit format");
+      } else {
+        Serial.println("ERROR: SPIFFS mount failed after all retries");
+      }
     } else {
       Serial.println("SPIFFS format complete");
     }
