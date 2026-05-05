@@ -66,6 +66,7 @@ class UITask : public AbstractUITask {
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
   uint8_t _low_batt_count = 0;  // Consecutive low-voltage readings for debounce
+  bool _full_poweroff = false;  // True = BQ25896 BATFET disconnect (USB-C wake only)
   int next_backlight_btn_check = 0;
 #ifdef PIN_STATUS_LED
   int led_state = 0;
@@ -215,6 +216,8 @@ public:
   void showBootHint(bool immediate = false);  // Show navigation hint overlay on first boot
   void dismissBootHint();  // Dismiss hint and save preference
   bool isHintActive() const { return _hintActive; }
+  // BQ25896 BATFET disconnect -- true power off, USB-C required to wake
+  void setFullPowerOff(bool v) { _full_poweroff = v; }
   // Wake display and extend auto-off timer. Call this when handling keys
   // outside of injectKey() to prevent display auto-off during direct input.
   void keepAlive() {
@@ -291,6 +294,7 @@ public:
   bool isEditingHomeScreen() const;
   // Check if home screen is showing the Recent Adverts page
   bool isHomeOnRecentPage() const;
+  bool isHomeOnShutdownPage() const;
 
   // Inject a key press from external source (e.g., keyboard)
   void injectKey(char c);
