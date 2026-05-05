@@ -5,47 +5,29 @@
     },
     "core": "nRF5",
     "cpu": "cortex-m4",
-    "extra_flags": [
-      "-DARDUINO_NRF52840_TECHO_CARD",
-      "-DNRF52840_XXAA",
-      "-DNRF52_SERIES",
-
-      "-DUSE_LFXO",
-
-      "-DLED_BUILTIN=39",
-      "-DLED_BLUE=39",
-      "-DLED_RED=39",
-      "-DLED_STATE_ON=1",
-
-      "-DPIN_WIRE_SDA=36",
-      "-DPIN_WIRE_SCL=34",
-      "-DWIRE_INTERFACES_COUNT=1",
-
-      "-DPIN_SPI_MISO=17",
-      "-DPIN_SPI_SCK=13",
-      "-DPIN_SPI_MOSI=15",
-      "-DSPI_INTERFACES_COUNT=1",
-
-      "-DPIN_SERIAL1_RX=21",
-      "-DPIN_SERIAL1_TX=19",
-
-      "-DPIN_A0=2"
-    ],
+    "extra_flags": "-DNRF52840_XXAA",
     "f_cpu": "64000000L",
-    "hwids": [["0x239A", "0x8029"]],
+    "hwids": [
+      ["0x239A", "0x8029"]
+    ],
+    "usb_product": "T-Echo Card",
     "mcu": "nrf52840",
     "variant": "lilygo_techo_card",
+    "variants_dir": "variants_bsp",
     "bsp": {
       "name": "adafruit"
     },
     "softdevice": {
+      "sd_flags": "-DS140",
       "sd_name": "s140",
       "sd_version": "6.1.1",
       "sd_fwid": "0x00B6"
     },
-    "usb_product": "T-Echo Card"
+    "bootloader": {
+      "settings_addr": "0xFF000"
+    }
   },
-  "connectivity": ["bluetooth", "lora"],
+  "connectivity": ["bluetooth"],
   "debug": {
     "jlink_device": "nRF52840_xxAA",
     "openocd_target": "nrf52840"
@@ -53,15 +35,14 @@
   "frameworks": ["arduino"],
   "name": "LilyGo T-Echo Card (nRF52840, SX1262, 4MB Flash)",
   "upload": {
-    "flash_size": "796KB",
     "maximum_ram_size": 248832,
     "maximum_size": 815104,
-    "native_usb": true,
+    "speed": 115200,
     "protocol": "nrfutil",
     "protocols": ["nrfutil", "jlink", "cmsis-dap"],
-    "require_upload_port": true,
-    "speed": 115200,
+    "native_usb": true,
     "use_1200bps_touch": true,
+    "require_upload_port": true,
     "wait_for_upload_port": true
   },
   "url": "https://github.com/Xinyuan-LilyGO/T-Echo-Card",
