@@ -46,6 +46,12 @@ void radio_set_tx_power(int8_t dbm) {
   radio.setOutputPower(dbm);
 }
 
+void radio_reset_agc() {
+#ifdef SX126X_RX_BOOSTED_GAIN
+  radio.setRxBoostedGainMode(true);
+#endif
+}
+
 mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng);

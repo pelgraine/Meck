@@ -2814,9 +2814,11 @@ public:
         } else if (type == ROW_GPS_BAUD) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = GPS_BAUD_OPTION_COUNT - 1;
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = AUTO_LOCK_OPTION_COUNT - 1;
+#endif
         } else if (type == ROW_FONT_STYLE) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = MECK_FONT_STYLE_COUNT - 1;
@@ -2835,9 +2837,11 @@ public:
         } else if (type == ROW_GPS_BAUD) {
           _editPickerIdx++;
           if (_editPickerIdx >= GPS_BAUD_OPTION_COUNT) _editPickerIdx = 0;
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx++;
           if (_editPickerIdx >= AUTO_LOCK_OPTION_COUNT) _editPickerIdx = 0;
+#endif
         } else if (type == ROW_FONT_STYLE) {
           _editPickerIdx++;
           if (_editPickerIdx >= MECK_FONT_STYLE_COUNT) _editPickerIdx = 0;
@@ -2859,12 +2863,14 @@ public:
           _editMode = EDIT_NONE;
           Serial.printf("Settings: GPS baud set to %lu (reboot to apply)\n",
                         (unsigned long)_prefs->gps_baudrate);
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
         } else if (type == ROW_AUTO_LOCK) {
           _prefs->auto_lock_minutes = AUTO_LOCK_OPTIONS[_editPickerIdx];
           the_mesh.savePrefs();
           _editMode = EDIT_NONE;
           Serial.printf("Settings: Auto lock = %s\n",
                         autoLockLabel(_prefs->auto_lock_minutes));
+#endif
         } else if (type == ROW_FONT_STYLE) {
           _prefs->ui_font_style = _editPickerIdx;
           the_mesh.savePrefs();

@@ -322,7 +322,9 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
-  #define ADVERT_PATH_TABLE_SIZE   1000
+  #ifndef ADVERT_PATH_TABLE_SIZE
+    #define ADVERT_PATH_TABLE_SIZE   1000
+  #endif
   AdvertPath* advert_paths;  // PSRAM-allocated in begin(), size = ADVERT_PATH_TABLE_SIZE
 
     // Sent message repeat tracking

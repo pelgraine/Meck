@@ -894,7 +894,7 @@
 #endif
 
 // --- T-Echo Lite: CardKB keyboard, GxEPD2 e-ink, no touch ---
-#if defined(LILYGO_TECHO_LITE)
+#if defined(LILYGO_TECHO_LITE) || defined(LILYGO_TECHO_CARD)
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
   #include "ChannelPickerScreen.h"
@@ -903,6 +903,12 @@
   #include "DiscoveryScreen.h"
   #include "LastHeardScreen.h"
   #include "PathEditorScreen.h"
+
+  #ifdef LILYGO_TECHO_CARD
+    #include "TechoCardHomeScreen.h"
+    static TechoCardHomeScreen* _techoHome = nullptr;
+    static int _techoC2Debug = 0;
+  #endif
 
   #ifdef MECK_CARDKB
     #include "CardKBKeyboard.h"
@@ -1027,8 +1033,8 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #if HAS_GPS
-    #include "MapScreen.h"  // After BLE — PNGdec headers conflict with BLE if included earlier
+  #if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+    #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #endif
   UITask ui_task(&board, &serial_interface);
 #endif
@@ -2101,6 +2107,16 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - about to call ui_task.begin()");
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   MESH_DEBUG_PRINTLN("setup() - ui_task.begin() done");
+
+  // T-Echo Card: replace the generic HomeScreen with the 72x40 OLED home screen
+  #ifdef LILYGO_TECHO_CARD
+  {
+    _techoHome = new TechoCardHomeScreen(&ui_task, &rtc_clock,
+                                                  the_mesh.getNodePrefs());
+    ui_task.setHomeScreen(_techoHome);
+    MESH_DEBUG_PRINTLN("setup() - TechoCardHomeScreen installed");
+  }
+  #endif
 #endif
 
   // ---------------------------------------------------------------------------
@@ -2387,6 +2403,12 @@ void setup() {
   Serial.printf("setup() complete - free heap: %d, largest block: %d\n",
                  ESP.getFreeHeap(), ESP.getMaxAllocHeap());
 #endif
+  {
+    void* p25 = malloc(25000); void* p10 = malloc(10000); void* p4 = malloc(4000);
+    Serial.printf("setup() heap probe: 25K=%s 10K=%s 4K=%s\n",
+                  p25?"yes":"no", p10?"yes":"no", p4?"yes":"no");
+    if (p4) free(p4); if (p10) free(p10); if (p25) free(p25);
+  }
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
 }
 
@@ -2414,10 +2436,49 @@ void otaResumeRadio() {
 #endif
 
 void loop() {
+  // T-Echo Card: lazy Codec2 init from shallow stack context.
+  // codec2_create needs ~3KB stack for FFT/trig init. The loop task
+  // has only 4KB total. Calling from render() (deep call chain) overflows.
+  // Calling from here (top of loop) works because stack depth is minimal.
+  #ifdef LILYGO_TECHO_CARD
+  if (_techoHome && _techoHome->needsCodec2()) {
+    void* probe = malloc(25000);
+    Serial.printf("Voice: heap probe 25K=%s, creating codec2...\n", probe?"yes":"no");
+    if (probe) free(probe);
+    Serial.flush();
+
+    struct CODEC2* c2 = codec2_create(VC_C2_MODE);
+    Serial.printf("Voice: codec2_create returned %p\n", c2);
+    Serial.flush();
+
+    if (c2) {
+      _techoHome->setCodec2Instance(c2);
+      void* postProbe = malloc(1000);
+      Serial.printf("Voice: set OK, post-probe=%s\n", postProbe?"yes":"no");
+      if (postProbe) free(postProbe);
+      Serial.flush();
+      _techoC2Debug = 99999;  // Keep printing to test if yields prevent crash
+    }
+  }
+  #endif
+
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused) {
   #endif
+
+  #ifdef LILYGO_TECHO_CARD
+  if (_techoC2Debug > 0) {
+    Serial.print("[pre-mesh]"); Serial.flush();
+  }
+  #endif
+
   the_mesh.loop();
+
+  #ifdef LILYGO_TECHO_CARD
+  if (_techoC2Debug > 0) {
+    Serial.print("[post-mesh]"); Serial.flush();
+  }
+  #endif
   #ifdef MECK_OTA_UPDATE
   } else {
     // OTA/File Manager active — poll the web server from the main loop for fast response.
@@ -2457,7 +2518,7 @@ void loop() {
 
   // Map screen: periodically update own GPS position and contact markers
   #ifdef DISPLAY_CLASS
-  #if HAS_GPS
+  #if HAS_GPS && !defined(LILYGO_TECHO_CARD)
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
     if (millis() - lastMapUpdate > 30000) {  // Every 30 seconds
@@ -2927,7 +2988,13 @@ void loop() {
     }
   }
   #else
+  #ifdef LILYGO_TECHO_CARD
+  if (_techoC2Debug > 0) { Serial.print("[pre-ui]"); Serial.flush(); }
+  #endif
   ui_task.loop();
+  #ifdef LILYGO_TECHO_CARD
+  if (_techoC2Debug > 0) { Serial.print("[post-ui]"); Serial.flush(); _techoC2Debug--; }
+  #endif
   #endif
 #endif
   rtc_clock.tick();
@@ -3601,7 +3668,7 @@ void loop() {
   }
   #endif
 
-  // Low-power loop throttle — yield CPU when lock screen is active.
+  // Low-power loop throttle -- yield CPU when lock screen is active.
   // The RTOS idle task executes WFI (wait-for-interrupt) during delay(),
   // dramatically reducing CPU power draw.  50 ms gives 20 loop cycles/sec
   // which is ample for LoRa packet reception (radio has hardware FIFO).

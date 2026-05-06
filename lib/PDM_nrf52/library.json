@@ -1,0 +1,8 @@
+{
+  "name": "PDM_nrf52",
+  "version": "1.0.0",
+  "description": "PDM microphone library for nRF52840 (from Adafruit BSP)",
+  "license": "LGPL-2.1",
+  "frameworks": "arduino",
+  "platforms": "*"
+}

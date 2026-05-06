@@ -1,0 +1,11 @@
+{
+  "name": "codec2_nrf52",
+  "version": "0.7.0",
+  "description": "Codec2 low-bitrate speech codec - stripped for nRF52840 (1200bps mode)",
+  "license": "LGPL-2.1",
+  "frameworks": "arduino",
+  "platforms": "*",
+  "build": {
+    "flags": "-DCODEC2_MODE_EN_DEFAULT"
+  }
+}

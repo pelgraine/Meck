@@ -71,7 +71,7 @@ void TechoCardBoard::begin() {
   #if defined(HAS_RGB_LED)
     pinMode(PIN_RGB_LED_1, OUTPUT);
     digitalWrite(PIN_RGB_LED_1, LOW);
-    delayMicroseconds(300);  // WS2812 reset pulse is ~280µs
+    delayMicroseconds(300);  // WS2812 reset pulse is ~280us
     _pixels.begin();
     _pixels.clear();
     _pixels.show();

@@ -1,7 +1,7 @@
 #include "UITask.h"
 #include <helpers/TxtDataHelpers.h>
 #include "../MyMesh.h"
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
 #include "NotesScreen.h"
 #endif
 #include "RepeaterAdminScreen.h"
@@ -11,7 +11,7 @@
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
-#if HAS_GPS
+#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
   #include "MapScreen.h"
 #endif
 #include "target.h"
@@ -52,7 +52,7 @@
 #include "ChannelScreen.h"
 #include "ChannelPickerScreen.h"
 #include "ContactsScreen.h"
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
 #include "TextReaderScreen.h"
 #endif
 #include "SettingsScreen.h"
@@ -1342,7 +1342,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   ((ChannelPickerScreen*)channel_picker_screen)->setChannelScreen((ChannelScreen*)channel_screen);
   contacts_screen = new ContactsScreen(this, &rtc_clock);
   ((ContactsScreen*)contacts_screen)->setDMUnreadPtr(_dmUnread);
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
   text_reader = new TextReaderScreen(this, node_prefs);
   notes_screen = new NotesScreen(this, node_prefs);
 #else
@@ -1365,7 +1365,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
 #endif
-#if HAS_GPS
+#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
   map_screen = new MapScreen(this);
 #else
   map_screen = nullptr;
@@ -1379,6 +1379,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   // Apply saved dark mode preference (both T-Deck Pro and T5S3)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   if (_node_prefs->dark_mode) {
     ::display.setDarkMode(true);
   }
@@ -1387,6 +1388,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   if (_node_prefs->ui_font_style > 0) {
     ::display.setFontStyle(_node_prefs->ui_font_style);
   }
+#endif
 
   setCurrScreen(splash);
 }
@@ -1723,7 +1725,7 @@ void UITask::loop() {
       c = checkDisplayOn(KEY_NEXT);
     } else {
       // Navigate back: reader reading→file list, file list→home, others→home
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
       if (isOnTextReader()) {
         TextReaderScreen* reader = (TextReaderScreen*)text_reader;
         if (reader && reader->isReading()) {
@@ -1890,23 +1892,27 @@ if (curr) curr->poll();
         _next_refresh = millis() + 500;  // Re-check in 500ms
       } else {
       // Sync dark mode with prefs (settings toggle takes effect here)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
       if (_node_prefs && display.isDarkMode() != (_node_prefs->dark_mode != 0)) {
         display.setDarkMode(_node_prefs->dark_mode != 0);
       }
+#endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
       // Sync portrait mode with prefs (T5S3 only)
       if (_node_prefs && display.isPortraitMode() != (_node_prefs->portrait_mode != 0)) {
         display.setPortraitMode(_node_prefs->portrait_mode != 0);
-        // Text reader layout depends on orientation — force recalculation
+        // Text reader layout depends on orientation -- force recalculation
         if (text_reader) {
           ((TextReaderScreen*)text_reader)->invalidateLayout();
         }
       }
 #endif
       // Sync font style with prefs (settings toggle takes effect here)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
       if (_node_prefs && display.getFontStyle() != _node_prefs->ui_font_style) {
         display.setFontStyle(_node_prefs->ui_font_style);
       }
+#endif
       _display->startFrame();
 #if defined(LilyGo_T5S3_EPaper_Pro)
       if (_vkbActive) {
@@ -2425,7 +2431,7 @@ void UITask::onVKBSubmit() {
       break;
     }
     case VKB_NOTES: {
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
       NotesScreen* notes = (NotesScreen*)getNotesScreen();
       if (notes && strlen(text) > 0) {
         for (int i = 0; text[i]; i++) {
@@ -2494,7 +2500,7 @@ void UITask::onVKBSubmit() {
     }
 #endif
     case VKB_TEXT_PAGE: {
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
       if (strlen(text) > 0) {
         int pageNum = atoi(text);
         TextReaderScreen* reader = (TextReaderScreen*)getTextReaderScreen();
@@ -2735,7 +2741,7 @@ void UITask::gotoContactsScreen() {
 
 void UITask::gotoTextReader() {
   if (!text_reader) return;  // Not available on this platform
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
   TextReaderScreen* reader = (TextReaderScreen*)text_reader;
   if (_display != NULL) {
     reader->enter(*_display);
@@ -2751,7 +2757,7 @@ void UITask::gotoTextReader() {
 
 void UITask::gotoNotesScreen() {
   if (!notes_screen) return;  // Not available on this platform
-#if !defined(LILYGO_TECHO_LITE)
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
   NotesScreen* notes = (NotesScreen*)notes_screen;
   if (_display != NULL) {
     notes->enter(*_display);
@@ -3011,6 +3017,8 @@ void UITask::gotoWebReader() {
 
 #if HAS_GPS
 void UITask::gotoMapScreen() {
+  if (!map_screen) return;  // Not available on this platform (T-Echo Card)
+#if !defined(LILYGO_TECHO_CARD)
   MapScreen* map = (MapScreen*)map_screen;
   if (_display != NULL) {
     map->enter(*_display);
@@ -3021,6 +3029,7 @@ void UITask::gotoMapScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+#endif
 }
 #endif
 

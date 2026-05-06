@@ -325,6 +325,7 @@ public:
   NodePrefs* getNodePrefs() const { return _node_prefs; }
   UIScreen* getAudiobookScreen() const { return audiobook_screen; }
   void setAudiobookScreen(UIScreen* s) { audiobook_screen = s; }
+  void setHomeScreen(UIScreen* s) { if (home) delete home; home = s; }
 #ifdef MECK_AUDIO_VARIANT
   UIScreen* getAlarmScreen() const { return alarm_screen; }
   void setAlarmScreen(UIScreen* s) { alarm_screen = s; }

@@ -19,6 +19,37 @@
 #include "MyMesh.h"
 #include "UITask.h"
 
+// =============================================================================
+// Voice recording -- PDM mic -> Codec2 1200bps stream encoding
+// =============================================================================
+#if defined(HAS_MICROPHONE)
+  #include <PDM.h>
+  #include <codec2.h>
+
+  // VE3 protocol constants (wire-compatible with ESP32 VoiceMessageScreen)
+  #define VC_C2_MODE       CODEC2_MODE_1200
+  #define VC_C2_MODE_ID    1       // Codec2 1200bps mode identifier
+  #define VC_C2_FRAME_MS   40      // 40ms per frame at 1200bps
+  #define VC_C2_FRAME_SAM  320     // 320 samples per frame at 8kHz
+  #define VC_C2_FRAME_BYTES 6      // 6 encoded bytes per frame
+  #define VC_MAX_SECONDS   5
+  #define VC_MAX_FRAMES    (VC_MAX_SECONDS * 1000 / VC_C2_FRAME_MS)  // 125
+  #define VC_MAX_BYTES     (VC_MAX_FRAMES * VC_C2_FRAME_BYTES)       // 750
+  #define VC_MESH_PAYLOAD  150     // Usable codec2 bytes per mesh packet
+  #define VC_PKT_MAGIC     0x56    // Voice packet magic byte
+  #define VC_PKT_HDR_SIZE  6       // magic(1) + sessionId(4) + pktIdx(1)
+  #define VC_PDM_RATE      16000
+  #define VC_PDM_FRAME     (VC_C2_FRAME_SAM * 2)  // 640 16kHz samples per codec frame
+
+  // PDM ring buffer -- 2 codec frames of headroom at 16kHz
+  #define VC_PDM_BUF_SAMPLES  (VC_PDM_FRAME * 2)   // 1280 samples = 2560 bytes
+
+  // Forward declaration for static callback
+  class TechoCardHomeScreen;
+  static TechoCardHomeScreen* _vcSelf = nullptr;
+  static void _vcPdmISR();
+#endif
+
 class TechoCardHomeScreen : public UIScreen {
   enum Page {
     STATUS,
@@ -27,6 +58,9 @@ class TechoCardHomeScreen : public UIScreen {
     BLE,
 #endif
     ADVERT,
+#if defined(HAS_MICROPHONE)
+    VOICE,
+#endif
 #if ENV_INCLUDE_GPS == 1
     GPS,
 #endif
@@ -60,6 +94,28 @@ class TechoCardHomeScreen : public UIScreen {
   // Diagnostic counters (temporary)
   uint16_t _magOk;
   uint16_t _magFail;
+
+#if defined(HAS_MICROPHONE)
+  // Voice recording state
+  enum VoiceState { V_IDLE, V_RECORDING, V_REVIEW };
+  VoiceState _vState;
+  struct CODEC2* _vCodec;
+
+  // PDM sample accumulator (filled by ISR, consumed by poll)
+  int16_t  _vPdmBuf[VC_PDM_BUF_SAMPLES];
+  volatile int _vPdmCount;
+  volatile uint32_t _vIsrCount;
+
+  // Codec2 encoded output
+  uint8_t  _vEncoded[VC_MAX_BYTES];   // 750 bytes max
+  uint16_t _vEncBytes;
+  uint16_t _vEncFrames;
+  unsigned long _vRecStart;
+
+  // VE3 outgoing session
+  uint32_t _vSessionId;
+  bool     _vSessionActive;
+#endif
 
   // Four lines at 9px spacing within 40px display.
   // U8g2 handles panel offset natively -- y=0 is the true visible top.
@@ -98,9 +154,204 @@ public:
       _calMinX(0), _calMaxX(0),
       _calMinY(0), _calMaxY(0),
       _calMinZ(0), _calMaxZ(0),
-      _magOk(0), _magFail(0) {}
+      _magOk(0), _magFail(0)
+#if defined(HAS_MICROPHONE)
+      , _vState(V_IDLE), _vCodec(nullptr), _vPdmCount(0), _vIsrCount(0),
+      _vEncBytes(0), _vEncFrames(0), _vRecStart(0),
+      _vSessionId(0), _vSessionActive(false)
+#endif
+  {}
 
   void cancelEditing() { _shutdown_init = false; }
+
+#if defined(HAS_MICROPHONE)
+  // --- Voice recording helpers ---
+
+  void onPDMData() {
+    int avail = PDM.available();
+    if (avail <= 0) return;
+    int samples = avail / (int)sizeof(int16_t);
+    int space = VC_PDM_BUF_SAMPLES - _vPdmCount;
+    if (samples > space) samples = space;
+    if (samples > 0) {
+      PDM.read(&_vPdmBuf[_vPdmCount], samples * sizeof(int16_t));
+      _vPdmCount += samples;
+      _vIsrCount++;
+    }
+  }
+
+  bool voiceStartRecording() {
+    if (_vState == V_RECORDING) return false;
+
+    // Codec2 created lazily on first VOICE page visit (see render)
+    if (!_vCodec) {
+      Serial.println("Voice: no codec2 instance!");
+      return false;
+    }
+
+    // Reset buffers
+    _vPdmCount = 0;
+    _vIsrCount = 0;
+    _vEncBytes = 0;
+    _vEncFrames = 0;
+
+    // Enable speaker amp power rail (RT9080 powers both speaker and mic)
+    Serial.println("Voice: enabling speaker rail...");
+    board.enableSpeaker(true);
+    delay(50);
+
+    // Start PDM capture
+    Serial.println("Voice: starting PDM...");
+    _vcSelf = this;
+    PDM.setPins(PIN_MIC_DATA, PIN_MIC_CLK, -1);
+    PDM.onReceive(_vcPdmISR);
+    if (!PDM.begin(1, VC_PDM_RATE)) {
+      Serial.println("Voice: PDM.begin failed");
+      codec2_destroy(_vCodec);
+      _vCodec = nullptr;
+      board.enableSpeaker(false);
+      return false;
+    }
+    PDM.setGain(80);
+    Serial.println("Voice: PDM started OK");
+
+    _vState = V_RECORDING;
+    _vRecStart = millis();
+    Serial.println("Voice: Recording started");
+    return true;
+  }
+
+  void voiceStopRecording() {
+    if (_vState != V_RECORDING) return;
+
+    // Stop PDM
+    PDM.end();
+    _vcSelf = nullptr;
+
+    // Encode any remaining samples
+    voiceProcessSamples();
+
+    // Keep Codec2 alive -- don't destroy between recordings
+    // (destroying and re-creating causes heap fragmentation)
+    // if (_vCodec) { codec2_destroy(_vCodec); _vCodec = nullptr; }
+
+    // Power down mic/speaker rail
+    board.enableSpeaker(false);
+
+    unsigned long dur = millis() - _vRecStart;
+    Serial.printf("Voice: Stopped -- %d frames, %d bytes, %lums\n",
+                  _vEncFrames, _vEncBytes, dur);
+
+    _vState = (_vEncFrames > 0) ? V_REVIEW : V_IDLE;
+  }
+
+  // Process accumulated PDM samples into Codec2 frames.
+  // Called from poll() during recording.
+  void voiceProcessSamples() {
+    if (_vPdmCount < VC_PDM_FRAME) return;
+    if (_vEncBytes + VC_C2_FRAME_BYTES > VC_MAX_BYTES) return;
+
+    // TEST MODE: drain PDM buffer WITHOUT Codec2 encoding
+    // If this works, PDM pipeline is fine and issue is Codec2
+    int remaining = _vPdmCount - VC_PDM_FRAME;
+    if (remaining > 0) {
+      memmove((void*)_vPdmBuf, (const void*)&_vPdmBuf[VC_PDM_FRAME],
+              remaining * sizeof(int16_t));
+    }
+    _vPdmCount = remaining;
+    _vEncFrames++;
+    _vEncBytes += VC_C2_FRAME_BYTES;  // fake it for display
+  }
+
+  // VE3 base36 encoding (compact wire format)
+  static int toBase36(uint32_t val, char* buf, int bufLen) {
+    static const char digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+    if (bufLen < 2) return 0;
+    if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return 1; }
+    char tmp[12]; int pos = 0;
+    while (val > 0 && pos < 11) { tmp[pos++] = digits[val % 36]; val /= 36; }
+    if (pos >= bufLen) pos = bufLen - 1;
+    for (int i = 0; i < pos; i++) buf[i] = tmp[pos - 1 - i];
+    buf[pos] = '\0';
+    return pos;
+  }
+
+  // --- Public voice API for main.cpp ---
+public:
+  // Codec2 must be created from main loop (shallow stack).
+  // render() call chain is too deep for codec2_create's 3KB+ stack needs.
+  bool needsCodec2() const {
+#if defined(HAS_MICROPHONE)
+    return _page == VOICE && !_vCodec;
+#else
+    return false;
+#endif
+  }
+  void setCodec2Instance(struct CODEC2* c2) {
+#if defined(HAS_MICROPHONE)
+    _vCodec = c2;
+#endif
+  }
+
+  bool isVoiceReview() const {
+#if defined(HAS_MICROPHONE)
+    return _vState == V_REVIEW && _vEncFrames > 0;
+#else
+    return false;
+#endif
+  }
+
+  // Format VE3 envelope: "VE3:{sid}:{mode}:{total}:{dur}"
+  void voiceFormatEnvelope(char* buf, int bufLen, uint32_t sessionId) {
+    int payloadPerPkt = VC_MESH_PAYLOAD;
+    uint8_t totalPkts = (_vEncBytes + payloadPerPkt - 1) / payloadPerPkt;
+    uint8_t durSec = (uint8_t)(_vEncFrames * VC_C2_FRAME_MS / 1000);
+    char sid[12], mode[4], total[4], dur[4];
+    toBase36(sessionId, sid, sizeof(sid));
+    toBase36(VC_C2_MODE_ID, mode, sizeof(mode));
+    toBase36(totalPkts, total, sizeof(total));
+    toBase36(durSec, dur, sizeof(dur));
+    snprintf(buf, bufLen, "VE3:%s:%s:%s:%s", sid, mode, total, dur);
+
+    // Cache session
+    _vSessionId = sessionId;
+    _vSessionActive = true;
+  }
+
+  int voiceBuildPacket(uint8_t* buf, int bufLen, uint32_t sessionId, uint8_t pktIdx) {
+    if (!_vSessionActive || _vSessionId != sessionId) return 0;
+    uint32_t offset = (uint32_t)pktIdx * VC_MESH_PAYLOAD;
+    if (offset >= _vEncBytes) return 0;
+    uint32_t chunkLen = _vEncBytes - offset;
+    if (chunkLen > VC_MESH_PAYLOAD) chunkLen = VC_MESH_PAYLOAD;
+    if ((int)(VC_PKT_HDR_SIZE + chunkLen) > bufLen) return 0;
+    buf[0] = VC_PKT_MAGIC;
+    memcpy(&buf[1], &sessionId, 4);
+    buf[5] = pktIdx;
+    memcpy(&buf[6], &_vEncoded[offset], chunkLen);
+    return VC_PKT_HDR_SIZE + chunkLen;
+  }
+
+  uint8_t voiceGetPacketCount() const {
+    if (!_vSessionActive) return 0;
+    return (_vEncBytes + VC_MESH_PAYLOAD - 1) / VC_MESH_PAYLOAD;
+  }
+
+  void voiceOnSendComplete() {
+    _vSessionActive = false;
+    _vState = V_IDLE;
+    _vEncBytes = 0;
+    _vEncFrames = 0;
+  }
+
+  void voiceDiscard() {
+    _vSessionActive = false;
+    _vState = V_IDLE;
+    _vEncBytes = 0;
+    _vEncFrames = 0;
+  }
+private:
+#endif // HAS_MICROPHONE
 
   int render(DisplayDriver& display) override {
     char tmp[32];
@@ -193,6 +444,73 @@ public:
       display.print("Hold A: send");
       break;
     }
+
+#if defined(HAS_MICROPHONE)
+    // ----- VOICE -----
+    case VOICE: {
+      switch (_vState) {
+      case V_IDLE:
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(0, Y0);
+        display.print("Voice");
+
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(0, Y2);
+        display.print("Hold A: record");
+        break;
+
+      case V_RECORDING: {
+        unsigned long elapsed = (millis() - _vRecStart) / 1000;
+        int remaining = VC_MAX_SECONDS - (int)elapsed;
+        if (remaining < 0) remaining = 0;
+
+        display.setColor(DisplayDriver::RED);
+        display.setCursor(0, Y0);
+        display.print("RECORDING");
+
+        display.setColor(DisplayDriver::YELLOW);
+        display.setCursor(0, Y1);
+        snprintf(tmp, sizeof(tmp), "%ds left", remaining);
+        display.print(tmp);
+
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(0, Y2);
+        snprintf(tmp, sizeof(tmp), "Frames: %d", _vEncFrames);
+        display.print(tmp);
+
+        display.setCursor(0, Y3);
+        snprintf(tmp, sizeof(tmp), "%d bytes", _vEncBytes);
+        display.print(tmp);
+
+        return 200;  // Fast refresh during recording
+      }
+
+      case V_REVIEW: {
+        float durSec = _vEncFrames * VC_C2_FRAME_MS / 1000.0f;
+        int packets = (_vEncBytes + VC_MESH_PAYLOAD - 1) / VC_MESH_PAYLOAD;
+
+        display.setColor(DisplayDriver::GREEN);
+        display.setCursor(0, Y0);
+        display.print("Review");
+
+        display.setColor(DisplayDriver::YELLOW);
+        display.setCursor(0, Y1);
+        snprintf(tmp, sizeof(tmp), "%.1fs  %d pkt", durSec, packets);
+        display.print(tmp);
+
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(0, Y2);
+        snprintf(tmp, sizeof(tmp), "%d bytes", _vEncBytes);
+        display.print(tmp);
+
+        display.setCursor(0, Y3);
+        display.print("A:disc C:disc");
+        break;
+      }
+      } // voice state switch
+      break;
+    }
+#endif
 
 #if ENV_INCLUDE_GPS == 1
     // ----- GPS -----
@@ -444,6 +762,14 @@ public:
       return true;
     }
 
+#if defined(HAS_MICROPHONE)
+    // During recording: any button press stops recording
+    if (_vState == V_RECORDING) {
+      voiceStopRecording();
+      return true;
+    }
+#endif
+
     if (c == KEY_NEXT || c == 'd') {
       _page = (_page + 1) % PAGE_COUNT;
       return true;
@@ -475,6 +801,25 @@ public:
           _task->showAlert("Failed", 800);
         }
         return true;
+
+#if defined(HAS_MICROPHONE)
+      case VOICE:
+        if (_vState == V_IDLE) {
+          if (voiceStartRecording()) {
+            return true;
+          } else {
+            _task->showAlert("Mic fail", 800);
+            return true;
+          }
+        } else if (_vState == V_RECORDING) {
+          voiceStopRecording();
+          return true;
+        } else if (_vState == V_REVIEW) {
+          voiceDiscard();
+          return true;
+        }
+        return false;
+#endif
 
 #if ENV_INCLUDE_GPS == 1
       case GPS:
@@ -508,5 +853,36 @@ public:
         _task->shutdown();
       }
     }
+
+#if defined(HAS_MICROPHONE)
+    // Stream-encode PDM samples during recording
+    if (_vState == V_RECORDING) {
+      // Periodic diagnostic — is PDM delivering data?
+      static unsigned long lastDiag = 0;
+      static uint32_t pollCount = 0;
+      pollCount++;
+      if (millis() - lastDiag > 500) {
+        lastDiag = millis();
+        Serial.printf("Voice poll #%lu: isr=%lu pdm=%d frames=%d\n",
+                      (unsigned long)pollCount, (unsigned long)_vIsrCount,
+                      _vPdmCount, _vEncFrames);
+      }
+
+      voiceProcessSamples();
+
+      // Auto-stop at max duration
+      if (_vEncFrames >= VC_MAX_FRAMES ||
+          (millis() - _vRecStart) >= (unsigned long)(VC_MAX_SECONDS * 1000 + 200)) {
+        voiceStopRecording();
+      }
+    }
+#endif
   }
 };
+
+// Static PDM callback -- must be defined after class so onPDMData() is visible
+#if defined(HAS_MICROPHONE)
+static void _vcPdmISR() {
+  if (_vcSelf) _vcSelf->onPDMData();
+}
+#endif

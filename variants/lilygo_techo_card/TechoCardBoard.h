@@ -27,7 +27,7 @@ private:
   #endif
 
 public:
-  TechoCardBoard() : NRF52Board("TECHO_CARD_OTA") {}
+  TechoCardBoard() {}
 
   void begin();
 

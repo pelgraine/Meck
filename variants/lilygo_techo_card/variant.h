@@ -139,6 +139,7 @@
 // GPS -- L76K Multi-GNSS
 
 #define HAS_GPS                     1
+#define GPS_EN_ACTIVE               HIGH
 #define GPS_BAUDRATE                9600
 #define PIN_GPS_TX                  21    // nRF TX -> GPS RX (vendor GPS_UART_RX / P0.21)
 #define PIN_GPS_RX                  19    // nRF RX <- GPS TX (vendor GPS_UART_TX / P0.19)
