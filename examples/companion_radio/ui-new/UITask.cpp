@@ -8,6 +8,7 @@
 #include "PathEditorScreen.h"
 #include "DiscoveryScreen.h"
 #include "LastHeardScreen.h"
+#include "Tracescreen.h"
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -605,7 +606,12 @@ public:
 #else
         display.setCursor(col1, y); display.print("[F] Discover");
 #endif
-        y += menuLH + 2;
+        y += menuLH;
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, y, "[R] Trace");
+        display.setColor(DisplayDriver::LIGHT);
+        y += menuLH;
+        y += 2;
       } else {
         // Monospaced built-in font (Classic): centered space-padded strings
         y += 6;
@@ -638,6 +644,10 @@ public:
 #else
         display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
 #endif
+        y += 10;
+        display.setColor(DisplayDriver::YELLOW);
+        display.drawTextCentered(display.width() / 2, y, "[R] Trace");
+        display.setColor(DisplayDriver::LIGHT);
         y += 14;
       }
 
@@ -1354,6 +1364,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
+  trace_screen = new TraceScreen(this, &rtc_clock);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -2988,6 +2999,26 @@ void UITask::gotoLastHeardScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+}
+
+void UITask::gotoTraceScreen() {
+  TraceScreen* ts = (TraceScreen*)trace_screen;
+  ts->enter(the_mesh.getNodePrefs()->path_hash_mode);
+  setCurrScreen(trace_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::onTraceResult(uint32_t tag, uint8_t flags, const uint8_t* path_snrs,
+                           const uint8_t* path_hashes, uint8_t path_len, int8_t final_snr) {
+  TraceScreen* ts = (TraceScreen*)trace_screen;
+  if (ts) {
+    ts->onTraceResult(tag, flags, path_snrs, path_hashes, path_len, final_snr);
+    _next_refresh = 100;  // Force refresh to show results
+  }
 }
 
 #ifdef MECK_WEB_READER

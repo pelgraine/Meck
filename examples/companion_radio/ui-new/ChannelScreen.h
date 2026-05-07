@@ -29,7 +29,7 @@
 // On-disk format for message persistence (SD card)
 // ---------------------------------------------------------------------------
 #define MSG_FILE_MAGIC   0x4D434853  // "MCHS" - MeshCore History Store
-#define MSG_FILE_VERSION 3           // v3: MSG_PATH_MAX=20, reserved→snr field
+#define MSG_FILE_VERSION 4           // v4: added dm_peer_hash for DM persistence
 #define MSG_FILE_PATH    "/meshcore/messages.bin"
 
 struct __attribute__((packed)) MsgFileHeader {
@@ -46,10 +46,11 @@ struct __attribute__((packed)) MsgFileRecord {
   uint8_t  path_len;
   uint8_t  channel_idx;
   uint8_t  valid;
-  int8_t   snr;          // Receive SNR × 4 (was reserved; 0 = unknown)
+  int8_t   snr;          // Receive SNR x 4 (was reserved; 0 = unknown)
+  uint32_t dm_peer_hash; // DM peer name hash (v4+, for conversation filtering)
   uint8_t  path[MSG_PATH_MAX];  // Repeater hop hashes (first byte of pub key)
   char     text[CHANNEL_MSG_TEXT_LEN];
-  // 188 bytes total
+  // 192 bytes total
 };
 
 class UITask;  // Forward declaration
@@ -434,6 +435,7 @@ public:
       rec.channel_idx = _messages[i].channel_idx;
       rec.valid       = _messages[i].valid ? 1 : 0;
       rec.snr         = _messages[i].snr;
+      rec.dm_peer_hash = _messages[i].dm_peer_hash;
       memcpy(rec.path, _messages[i].path, MSG_PATH_MAX);
       memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
       f.write((uint8_t*)&rec, sizeof(rec));
@@ -501,6 +503,7 @@ public:
       _messages[i].channel_idx = rec.channel_idx;
       _messages[i].valid       = (rec.valid != 0);
       _messages[i].snr         = rec.snr;
+      _messages[i].dm_peer_hash = rec.dm_peer_hash;
       memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
       if (_messages[i].valid) loaded++;

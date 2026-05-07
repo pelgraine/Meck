@@ -99,6 +99,7 @@ class UITask : public AbstractUITask {
   UIScreen* path_editor;      // Custom path editor screen (lazy-init)
   UIScreen* discovery_screen;  // Node discovery scan screen
   UIScreen* last_heard_screen; // Last heard passive advert list
+  UIScreen* trace_screen;      // Trace path screen (standalone trace tool)
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -200,6 +201,7 @@ public:
   void gotoPathEditor(int contactIdx);     // Navigate to custom path editor
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
   void gotoLastHeardScreen();              // Navigate to last heard passive list
+  void gotoTraceScreen();                  // Navigate to trace path screen
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -256,6 +258,7 @@ public:
   bool isOnPathEditor() const { return curr == path_editor; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
+  bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
@@ -312,6 +315,10 @@ public:
   void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) override;
   void onAdminCliResponse(const char* from_name, const char* text) override;
   void onAdminTelemetryResult(const uint8_t* data, uint8_t len) override;
+
+  // Trace path callback (from MyMesh::onTraceRecv)
+  void onTraceResult(uint32_t tag, uint8_t flags, const uint8_t* path_snrs,
+                     const uint8_t* path_hashes, uint8_t path_len, int8_t final_snr) override;
   
   // Get current screen for checking state
   UIScreen* getCurrentScreen() const { return curr; }
@@ -336,6 +343,7 @@ public:
   UIScreen* getPathEditorScreen() const { return path_editor; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
   UIScreen* getLastHeardScreen() const { return last_heard_screen; }
+  UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }

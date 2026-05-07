@@ -1290,6 +1290,14 @@ void MyMesh::onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code,
   } else {
     MESH_DEBUG_PRINTLN("onTraceRecv(), data received while app offline");
   }
+
+  // Route trace result to standalone UI (TraceScreen)
+#ifdef DISPLAY_CLASS
+  if (_ui) {
+    _ui->onTraceResult(tag, flags, path_snrs, path_hashes, path_len,
+                       (int8_t)(packet->getSNR() * 4));
+  }
+#endif
 }
 
 uint32_t MyMesh::calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const {
@@ -2173,6 +2181,9 @@ void MyMesh::handleCmdFrame(size_t len) {
       memcpy(&auth, &cmd_frame[5], 4);
       auto pkt = createTrace(tag, auth, flags);
       if (pkt) {
+        Serial.printf("[BLE Trace] flags=%d, path_len=%d, path hex:", flags, path_len);
+        for (int pi = 0; pi < path_len; pi++) Serial.printf(" %02X", cmd_frame[10 + pi]);
+        Serial.println();
         sendDirect(pkt, &cmd_frame[10], path_len);
 
         uint32_t t = _radio->getEstAirtimeFor(pkt->payload_len + pkt->path_len + 2);

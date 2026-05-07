@@ -57,4 +57,8 @@ public:
   virtual void onAdminLoginResult(bool success, uint8_t permissions, uint32_t server_time) {}
   virtual void onAdminCliResponse(const char* from_name, const char* text) {}
   virtual void onAdminTelemetryResult(const uint8_t* data, uint8_t len) {}
+
+  // Trace path callback (from MyMesh::onTraceRecv)
+  virtual void onTraceResult(uint32_t tag, uint8_t flags, const uint8_t* path_snrs,
+                             const uint8_t* path_hashes, uint8_t path_len, int8_t final_snr) {}
 };

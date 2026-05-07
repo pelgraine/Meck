@@ -28,6 +28,7 @@
   #include "DiscoveryScreen.h"
   #include "LastHeardScreen.h"
   #include "PathEditorScreen.h"
+  #include "Tracescreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -3204,6 +3205,13 @@ void loop() {
                 ui_task.gotoContactsScreen();
               }
             }
+            // Trace screen: check if Exit was triggered
+            if (ui_task.isOnTraceScreen()) {
+              TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+              if (ts && ts->wantsExit()) {
+                ui_task.gotoHomeScreen();
+              }
+            }
             // Channel picker: check if long-press Enter was handled (wantsExit)
             if (ui_task.isOnChannelPickerScreen()) {
               ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
@@ -3228,6 +3236,13 @@ void loop() {
               PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
               if (pe && pe->wantsExit()) {
                 ui_task.gotoContactsScreen();
+              }
+            }
+            // Trace screen: check if Exit was triggered
+            if (ui_task.isOnTraceScreen()) {
+              TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+              if (ts && ts->wantsExit()) {
+                ui_task.gotoHomeScreen();
               }
             }
             // Channel picker: check if Enter/Q was handled (wantsExit)
@@ -3372,6 +3387,7 @@ void loop() {
                 break;
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
+              case 'r': ui_task.gotoTraceScreen(); break;
               case (char)0xF3: ui_task.injectKey(KEY_LEFT);  break;  // Left arrow → prev page
               case (char)0xF4: ui_task.injectKey(KEY_RIGHT); break;  // Right arrow → next page
 #ifdef MECK_WEB_READER
@@ -3569,6 +3585,13 @@ void loop() {
                 PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
                 if (pe && pe->wantsExit()) {
                   ui_task.gotoContactsScreen();
+                }
+              } else if (ui_task.isOnTraceScreen()) {
+                // Trace screen handles Enter internally
+                ui_task.injectKey('\r');
+                TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+                if (ts && ts->wantsExit()) {
+                  ui_task.gotoHomeScreen();
                 }
               } else if (ui_task.isOnChannelPickerScreen()) {
                 // Channel picker: Enter selects channel
@@ -4675,6 +4698,7 @@ void handleKeyboardInput() {
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4692,6 +4716,7 @@ void handleKeyboardInput() {
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4713,6 +4738,7 @@ void handleKeyboardInput() {
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4730,6 +4756,7 @@ void handleKeyboardInput() {
       if (ui_task.isOnChannelScreen() || ui_task.isOnContactsScreen() || ui_task.isOnRepeaterAdmin()
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4751,6 +4778,7 @@ void handleKeyboardInput() {
         ui_task.gotoChannelPickerScreen();
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -4768,6 +4796,7 @@ void handleKeyboardInput() {
         ui_task.gotoChannelPickerScreen();
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
+          || ui_task.isOnTraceScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -4786,8 +4815,15 @@ void handleKeyboardInput() {
         // Check if Save & Exit was selected
         PathEditorScreen* pe = (PathEditorScreen*)ui_task.getPathEditorScreen();
         if (pe && pe->wantsExit()) {
-          Serial.println("PathEditor: Save & Exit — returning to contacts");
+          Serial.println("PathEditor: Save & Exit -- returning to contacts");
           ui_task.gotoContactsScreen();
+        }
+      } else if (ui_task.isOnTraceScreen()) {
+        ui_task.injectKey('\r');
+        TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+        if (ts && ts->wantsExit()) {
+          Serial.println("TraceScreen: Exit -- returning to home");
+          ui_task.gotoHomeScreen();
         }
       } else if (ui_task.isOnChannelPickerScreen()) {
         ui_task.injectKey('\r');  // Picker handles Enter: selects channel + sets wantsExit
@@ -4936,15 +4972,17 @@ void handleKeyboardInput() {
       break;
 
     case 'r':
-      // Reply select mode (channel screen) or import contacts (contacts screen)
+      // Reply select (channel), import contacts, trace screen passthrough, or open trace (home)
       if (ui_task.isOnChannelScreen()) {
         ui_task.injectKey('r');
+      } else if (ui_task.isOnTraceScreen()) {
+        ui_task.injectKey('r');  // Pass to trace screen (for edit mode)
       } else if (ui_task.isOnContactsScreen()) {
         // Try JSON first, fall back to binary
         Serial.println("Contacts: Importing from SD...");
         int added = importContactsJSON();
         if (added == -1) {
-          // No JSON file — try legacy binary
+          // No JSON file -- try legacy binary
           added = importContactsFromSD();
         }
         if (added > 0) {
@@ -4959,6 +4997,9 @@ void handleKeyboardInput() {
         } else {
           ui_task.showAlert("Import failed (no file?)", 2000);
         }
+      } else if (ui_task.isOnHomeScreen()) {
+        Serial.println("Opening trace path");
+        ui_task.gotoTraceScreen();
       }
       break;
 
@@ -5050,6 +5091,16 @@ void handleKeyboardInput() {
         ui_task.gotoContactsScreen();
         break;
       }
+      // Trace screen: Q/wantsExit goes home
+      if (ui_task.isOnTraceScreen()) {
+        ui_task.injectKey('q');
+        TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+        if (ts && ts->wantsExit()) {
+          Serial.println("Nav: Trace -> Home");
+          ui_task.gotoHomeScreen();
+        }
+        break;
+      }
       // Alarm screen: Q/backspace routing depends on sub-mode
 #ifdef MECK_AUDIO_VARIANT
       if (ui_task.isOnAlarmScreen()) {
@@ -5123,6 +5174,11 @@ void handleKeyboardInput() {
         break;
       }
 #endif
+      // Pass unhandled keys to trace screen (digits, comma for path entry)
+      if (ui_task.isOnTraceScreen()) {
+        ui_task.injectKey(key);
+        break;
+      }
       Serial.printf("Unhandled key in normal mode: '%c' (0x%02X)\n", key, key);
       break;
   }
