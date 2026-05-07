@@ -499,7 +499,7 @@ public:
         };
 
         const int tileW = 40;
-        const int tileH = 28;
+        const int tileH = 22;
         const int gapX = 1;
         const int gapY = 1;
         const int gridW = tileW * 3 + gapX * 2;
@@ -518,20 +518,35 @@ public:
 
             // Icon centered in tile
             int iconX = tx + (tileW - HOME_ICON_W) / 2;
-            int iconY = ty + 4;
+            int iconY = ty + 2;
             display.drawXbm(iconX, iconY, tiles[row][col].icon, HOME_ICON_W, HOME_ICON_H);
 
             // Label centered below icon
             display.setTextSize(_node_prefs->smallTextSize());
-            display.drawTextCentered(tx + tileW / 2, ty + 18, tiles[row][col].label);
+            display.drawTextCentered(tx + tileW / 2, ty + 15, tiles[row][col].label);
           }
         }
 
-        // Nav hint below grid
-        y = gridY + 2 * tileH + gapY + 2;
+        // Third row: single centred Trace tile (column 1 position only)
+        {
+          int row3y = gridY + 2 * (tileH + gapY);
+          int col1x = gridX + (tileW + gapX);
+
+          display.setColor(DisplayDriver::LIGHT);
+          display.drawRect(col1x, row3y, tileW, tileH);
+
+          int iconX = col1x + (tileW - HOME_ICON_W) / 2;
+          int iconY = row3y + 2;
+          display.drawXbm(iconX, iconY, icon_trace, HOME_ICON_W, HOME_ICON_H);
+
+          display.setTextSize(_node_prefs->smallTextSize());
+          display.drawTextCentered(col1x + tileW / 2, row3y + 15, "Trace");
+        }
+
+        // Nav hint at bottom of screen
         display.setColor(DisplayDriver::GREEN);
         display.setTextSize(_node_prefs->smallTextSize());
-        display.drawTextCentered(display.width() / 2, y, "Tap tile to open");
+        display.drawTextCentered(display.width() / 2, display.height() - 8, "Tap tile to open");
       }
       display.setTextSize(1);
 
@@ -2520,6 +2535,14 @@ void UITask::onVKBSubmit() {
         }
       }
 #endif
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_TRACE_PATH: {
+      TraceScreen* ts = (TraceScreen*)getTraceScreen();
+      if (ts) {
+        ts->setTypedPath(text);
+      }
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }

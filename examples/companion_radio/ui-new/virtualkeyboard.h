@@ -39,6 +39,7 @@ enum VKBPurpose {
   VKB_WEB_LINK,       // Web reader link number entry
 #endif
   VKB_TEXT_PAGE,       // Text reader: go to page number
+  VKB_TRACE_PATH,      // Trace screen: type comma-separated path values
 };
 
 class VirtualKeyboard {

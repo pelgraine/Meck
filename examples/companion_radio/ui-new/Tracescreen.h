@@ -306,6 +306,33 @@ public:
   bool wantsExit() const { return _wantExit; }
   bool isEditing() const { return _editing; }
 
+  // --- Public helpers for T5S3 long-press → virtual keyboard integration ---
+
+  // True if the highlighted menu row is the Type Path entry (STATE_BUILD only).
+  bool isOnTypePathRow() const {
+    return _state == STATE_BUILD && menuItemAt(_menuSel) == MENU_TYPE_PATH;
+  }
+
+  // Returns the current path formatted as a comma-separated string, suitable
+  // for pre-populating an external text editor (e.g. the T5S3 virtual keyboard).
+  // The returned pointer references an internal buffer and is valid until the
+  // next call to this method or to setTypedPath()/parseTypedPath().
+  const char* getCurrentPathAsText() {
+    pathToEditBuf();
+    return _editBuf;
+  }
+
+  // Apply a path typed externally (via virtual keyboard submission).
+  // Replaces the working path buffer with whatever parses out of `text`
+  // and ensures the inline editor flag is cleared so the menu redraws cleanly.
+  void setTypedPath(const char* text) {
+    if (!text) return;
+    strncpy(_editBuf, text, sizeof(_editBuf) - 1);
+    _editBuf[sizeof(_editBuf) - 1] = '\0';
+    parseTypedPath();
+    _editing = false;
+  }
+
   void enter(int pathHashMode) {
     _state = STATE_BUILD;
     _hopCount = 0;
@@ -433,7 +460,11 @@ private:
             snprintf(tmp, sizeof(tmp), "%c Path: %s", prefix, pathStr);
             display.print(tmp);
           } else {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+            snprintf(tmp, sizeof(tmp), "%c Type Path: [Long press]", prefix);
+#else
             snprintf(tmp, sizeof(tmp), "%c Type Path: [Press Enter]", prefix);
+#endif
             display.print(tmp);
           }
           break;
@@ -494,9 +525,17 @@ private:
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(0, footerY);
     if (_editing) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Boot:Cancel  Tap:Apply");
+#else
       display.print("Q:Cancel Enter:Apply");
+#endif
     } else {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Boot:Exit  Tap:Sel");
+#else
       display.print("Q:Exit W/S:Nav Ent:Sel");
+#endif
     }
 
     return 5000;
@@ -555,7 +594,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Boot:Back  Tap:Add");
+#else
     display.print("Q:Back W/S:Scroll Ent:Add");
+#endif
 
     return 5000;
   }
@@ -607,7 +650,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Boot:Cancel");
+#else
     display.print("Q:Cancel");
+#endif
 
     return 500;  // Fast refresh for elapsed timer
   }
@@ -699,7 +746,11 @@ private:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::LIGHT);
     display.setCursor(0, footerY);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    display.print("Boot:Back  Tap:New Trace");
+#else
     display.print("Q:Back  Ent:New Trace");
+#endif
 
     return 5000;
   }

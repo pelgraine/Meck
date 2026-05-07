@@ -696,6 +696,7 @@
   #include "DiscoveryScreen.h"
   #include "LastHeardScreen.h"
   #include "PathEditorScreen.h"
+  #include "Tracescreen.h"   
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -1208,18 +1209,18 @@ static void lastHeardToggleContact() {
 
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
-      const int tileW = 40, tileH = 28, gapX = 1, gapY = 1;
+      const int tileW = 40, tileH = 22, gapX = 1, gapY = 1;
       const int gridW = tileW * 3 + gapX * 2;
       const int gridX = (128 - gridW) / 2;  // =3
       int gridY = ui_task.getTileGridVY();
 
       // Check if tap is within the tile grid area
       if (vx >= gridX && vx < gridX + gridW &&
-          vy >= gridY && vy < gridY + 2 * (tileH + gapY)) {
+          vy >= gridY && vy < gridY + 3 * (tileH + gapY)) {
         int col = (vx - gridX) / (tileW + gapX);
         if (col > 2) col = 2;
         int row = (vy - gridY) / (tileH + gapY);
-        if (row > 1) row = 1;
+        if (row > 2) row = 2;
 
         if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen(); return 0; }
@@ -1231,6 +1232,8 @@ static void lastHeardToggleContact() {
 #else
         if (row == 1 && col == 2) { ui_task.gotoDiscoveryScreen(); return 0; }
 #endif
+        // Third row: only centre tile (col 1) is real; col 0 and col 2 fall through to page-flip
+        if (row == 2 && col == 1) { ui_task.gotoTraceScreen(); return 0; }
       }
       // Tap outside tiles — left half backward, right half forward
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
@@ -1691,6 +1694,21 @@ static void lastHeardToggleContact() {
 
     // Path editor: long press = Enter (select item)
     if (ui_task.isOnPathEditor()) {
+      return KEY_ENTER;
+    }
+
+    // Trace screen: long press = Enter on most rows; on T5S3 the Type Path row
+    // opens the virtual keyboard instead so users can enter a comma-separated
+    // hash list without a physical keyboard.
+    if (ui_task.isOnTraceScreen()) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+      if (ts && ts->isOnTypePathRow()) {
+        const char* current = ts->getCurrentPathAsText();
+        ui_task.showVirtualKeyboard(VKB_TRACE_PATH, "Type Path", current, 79);
+        return 0;
+      }
+#endif
       return KEY_ENTER;
     }
 
