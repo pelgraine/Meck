@@ -29,6 +29,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Sending a Direct Message](#sending-a-direct-message)
   - [Roomservers](#roomservers)
   - [Repeater Admin Screen](#repeater-admin-screen)
+  - [Trace Route Screen (v1.9+)](#trace-route-screen-v19)
   - [Settings Screen](#settings-screen)
   - [Font Styles](#font-styles)
   - [Compose Mode](#compose-mode)
@@ -243,6 +244,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | K | Open alarm clock (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
+| R | Open trace route screen (v1.9+) — see [Trace Route Screen](#trace-route-screen-v19) |
 | G | Open map screen (shows contacts with GPS positions) |
 | Mic | Open voice messages (audio variant only) |
 | Q | Back to home screen |
@@ -429,6 +431,58 @@ After a successful login, you'll see a menu with the following remote administra
 | Q | Back to contacts (from menu) or cancel login |
 
 Command responses are displayed in a scrollable view. Use **W / S** to scroll long responses and **Q** to return to the menu.
+
+### Trace Route Screen (v1.9+)
+
+The trace route screen lets you build a chain of repeaters and run a trace through them — the same feature available in the MeshCore companion app, but on-device. Each repeater in the chain that recognises its hash appends its receive SNR before forwarding the packet, giving you per-hop signal quality data for the whole route.
+
+Press **R** from the home screen to open the trace screen. T5S3 users with a CardKB attached can use **R** as well.
+
+**Building the path**
+
+There are two ways to add hops to the path:
+
+- **+ Add repeater** — opens a picker showing all known Repeater contacts. Press W/S to scroll, Enter to append the highlighted repeater to the path. The contact picker uses the repeater's stored public key bytes directly, so the hash is always correct regardless of mode.
+- **Type Path** — opens an inline text editor for comma-separated decimal hash values, matching the format the companion app uses (e.g. `3601,2198,1244,2198,3601`). Useful when the repeater isn't in your contacts but you know its hash from the app or a community listing.
+
+The path is shown as a numbered list below the menu. Individual hops can be edited or removed, and the whole path can be cleared if you need to start over.
+
+**Hash mode**
+
+Meck supports both 1-byte and 2-byte hash modes. The screen defaults to your device's `path.hash.mode` setting but can be toggled on the fly:
+
+- 1-byte mode (`Mode: 1-byte`) — older networks, more collision-prone but smaller packets
+- 2-byte mode (`Mode: 2-byte`) — current MeshCore default in most regions, fewer hash collisions
+
+Use **A / D** on the mode row to toggle, or Enter to cycle.
+
+**Running a trace**
+
+Once at least one hop is in the path, scroll to **Run Trace** and press Enter. Meck creates a `PAYLOAD_TYPE_TRACE` packet and sends it direct-routed through the chain. The screen switches to a "Tracing..." state with an elapsed-time counter while waiting for the response.
+
+When the trace completes, the screen shows:
+
+- Each hop in order with its receive SNR (in dB)
+- The final SNR of the response packet arriving back at your device
+- Total round-trip time in milliseconds
+
+If 30 seconds pass without a response, the trace times out and the screen returns to the build view so you can adjust the path and try again.
+
+**Symmetric paths and direct visibility**
+
+For a round-trip trace, the path needs to be symmetric. To trace through repeaters A → B → C and back, type `A,B,C,B,A`. The trace packet travels out through A→B→C, and the response comes back C→B→A.
+
+You also need to be able to **hear the last repeater in the chain directly** — that's the one that sends the response back to your device. If the last hop is too far away to hear, the trace will time out even though the outbound leg succeeded.
+
+| Key | Action |
+|-----|--------|
+| W / S | Navigate menu items |
+| A / D | Toggle hash mode (1-byte / 2-byte) on the mode row |
+| Enter | Select / confirm / open editor |
+| 0–9 , | Path values (when the inline text editor is open) |
+| Q | Cancel edit / back to home screen |
+
+The screen supports up to **16 hops** per trace.
 
 ### Settings Screen
 
@@ -1085,6 +1139,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Page scroll (Shift+W/S) on all list screens
 - [X] True power off (deep sleep, no wake sources)
 - [X] BLE 2M PHY, DLE, and faster write interval
+- [X] Trace route screen with contact picker and typed-path entry (v1.9)
+- [X] DM message persistence across reboots (v1.9)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -1119,6 +1175,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Selectable font styles (Classic, Noto Sans, Montserrat)
 - [X] Virtual keyboard emoji grid with scrollable pages
 - [X] Accented character / diacritics support (Czech, Polish, French, German, Latin Extended)
+- [X] DM message persistence across reboots (v1.9)
 - [ ] Improve EPUB rendering and EPUB format handling
 
 **Heltec V4:**
