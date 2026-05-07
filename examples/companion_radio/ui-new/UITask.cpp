@@ -1039,15 +1039,15 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.drawXbm((display.width() - 32) / 2, 28, power_icon, 32, 32);
 #else
-        display.drawXbm((display.width() - 32) / 2, 10, power_icon, 32, 32);
+        display.drawXbm((display.width() - 32) / 2, 20, power_icon, 32, 32);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.drawTextCentered(display.width() / 2, 64, "power off device?");
         display.drawTextCentered(display.width() / 2, 76, "usb-c to wake");
 #else
-        display.drawTextCentered(display.width() / 2, 50, "power off device?");
-        display.drawTextCentered(display.width() / 2, 60, "usb-c to wake");
-        display.drawTextCentered(display.width() / 2, 76, "Enter:yes  q:no");
+        display.drawTextCentered(display.width() / 2, 56, "power off device?");
+        display.drawTextCentered(display.width() / 2, 66, "usb-c to wake");
+        display.drawTextCentered(display.width() / 2, 82, "Enter:yes  q:no");
 #endif
       } else {
         // Menu: hibernate / power off
@@ -1055,8 +1055,8 @@ public:
         display.drawXbm((display.width() - 32) / 2, 20, power_icon, 32, 32);
         const int y1 = 58, y2 = 70;
 #else
-        display.drawXbm((display.width() - 32) / 2, 10, power_icon, 32, 32);
-        const int y1 = 50, y2 = 62;
+        display.drawXbm((display.width() - 32) / 2, 20, power_icon, 32, 32);
+        const int y1 = 56, y2 = 68;
 #endif
         char line1[48], line2[48];
 #if defined(LilyGo_TDeck_Pro)

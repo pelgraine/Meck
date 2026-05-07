@@ -280,12 +280,22 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)) != sizeof(_prefs.rx_fail_reboot_threshold)) {
       _prefs.rx_fail_reboot_threshold = 3;  // default: 3
     }
+    if (file.read((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style)) != sizeof(_prefs.ui_font_style)) {
+      _prefs.ui_font_style = 0;  // default: Classic (FreeSans)
+    }
+    if (file.read((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name)) != sizeof(_prefs.default_scope_name)) {
+      memset(_prefs.default_scope_name, 0, sizeof(_prefs.default_scope_name));
+    }
+    if (file.read((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key)) != sizeof(_prefs.default_scope_key)) {
+      memset(_prefs.default_scope_key, 0, sizeof(_prefs.default_scope_key));
+    }
 
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
     if (_prefs.portrait_mode > 1) _prefs.portrait_mode = 0;
     if (_prefs.hint_shown > 1) _prefs.hint_shown = 0;
     if (_prefs.large_font > 1) _prefs.large_font = 0;
+    if (_prefs.ui_font_style > 2) _prefs.ui_font_style = 0;
     if (_prefs.tx_fail_reset_threshold > 10) _prefs.tx_fail_reset_threshold = 3;
     if (_prefs.rx_fail_reboot_threshold > 10) _prefs.rx_fail_reboot_threshold = 3;
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
@@ -344,6 +354,9 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.large_font, sizeof(_prefs.large_font));               // 102
     file.write((uint8_t *)&_prefs.tx_fail_reset_threshold, sizeof(_prefs.tx_fail_reset_threshold)); // 103
     file.write((uint8_t *)&_prefs.rx_fail_reboot_threshold, sizeof(_prefs.rx_fail_reboot_threshold)); // 104
+    file.write((uint8_t *)&_prefs.ui_font_style, sizeof(_prefs.ui_font_style));                 // 105
+    file.write((uint8_t *)_prefs.default_scope_name, sizeof(_prefs.default_scope_name));         // 106
+    file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));           // 137
 
     file.close();
   }
