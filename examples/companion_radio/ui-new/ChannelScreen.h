@@ -148,8 +148,10 @@ public:
 
   // Add a new message to the history
   // peer_name: for DMs, the contact this message belongs to (sender for received, recipient for sent)
+  // suppressUnread: if true, do not increment the unread counter for this message
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
-                  const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr) {
+                  const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr,
+                  bool suppressUnread = false) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -191,8 +193,9 @@ public:
     _replySelectPos = -1;
 
     // Track unread count for this channel (only for received messages, not sent)
-    // path_len == 0 means locally sent
-    if (path_len != 0) {
+    // path_len == 0 means locally sent.
+    // suppressUnread: per-channel notification preference says not to count this message.
+    if (path_len != 0 && !suppressUnread) {
       int unreadSlot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : channel_idx;
       if (unreadSlot >= 0 && unreadSlot <= MAX_GROUP_CHANNELS) {
         _unread[unreadSlot]++;

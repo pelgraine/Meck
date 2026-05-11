@@ -66,6 +66,12 @@
   #include "ModemManager.h"
 #endif
 
+// Per-channel notification suppression flag.
+// Set by newMsg() based on channel_notif preference, checked by notify()
+// to suppress buzzer/vibration.  Safe because both are called sequentially
+// from the same mesh callback on the same thread.
+static bool s_lastMsgSuppressed = false;
+
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
@@ -1454,6 +1460,15 @@ void UITask::dismissBootHint() {
 }
 
 void UITask::notify(UIEventType t) {
+  // Per-channel notification gating: if the last message was from a
+  // muted channel (or mentions-only without an @mention), suppress
+  // buzzer and vibration.  Ack events are never suppressed.
+  if (s_lastMsgSuppressed && t != UIEventType::ack) {
+    s_lastMsgSuppressed = false;  // Consume the flag
+    return;
+  }
+  s_lastMsgSuppressed = false;
+
 #if defined(PIN_BUZZER)
 switch(t){
   case UIEventType::contactMessage:
@@ -1520,6 +1535,44 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       break;
     }
   }
+
+  // --- Per-channel notification preference check ---
+  // Determines whether to suppress toast, buzzer, keyboard flash, vibration,
+  // display wake, and unread counter for this message.  Messages are ALWAYS
+  // stored in history regardless -- only alerts and unread badges are gated.
+  bool suppressNotif = false;
+  {
+    int notifSlot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : (int)channel_idx;
+    if (notifSlot >= 0 && notifSlot < (int)sizeof(_node_prefs->channel_notif)) {
+      uint8_t pref = _node_prefs->channel_notif[notifSlot];
+      if (pref == NOTIF_NONE) {
+        suppressNotif = true;
+      } else if (pref == NOTIF_MENTIONS) {
+        // Check for @nodename or @[nodename] in message text (case-insensitive).
+        // MeshCore companion app sends mentions as @[node name] with brackets.
+        suppressNotif = true;  // Suppress unless mention found
+        if (_node_prefs->node_name[0] != '\0') {
+          char tagPlain[36];
+          char tagBracket[38];
+          snprintf(tagPlain, sizeof(tagPlain), "@%s", _node_prefs->node_name);
+          snprintf(tagBracket, sizeof(tagBracket), "@[%s]", _node_prefs->node_name);
+          int lenPlain = strlen(tagPlain);
+          int lenBracket = strlen(tagBracket);
+          const char* p = text;
+          while (*p) {
+            if (strncasecmp(p, tagBracket, lenBracket) == 0 ||
+                strncasecmp(p, tagPlain, lenPlain) == 0) {
+              suppressNotif = false;  // Mentioned -- notify
+              break;
+            }
+            p++;
+          }
+        }
+      }
+    }
+  }
+  // Set the flag for notify() which is called immediately after newMsg()
+  s_lastMsgSuppressed = suppressNotif;
   
   // Add to channel history screen with channel index, path data, and SNR
   // For DMs (channel_idx == 0xFF):
@@ -1541,15 +1594,15 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     if (isRoomMsg) {
       // Room server: text already has "Poster: message" format — store as-is
       // Tag with room server name for conversation filtering
-      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, from_name);
+      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, from_name, suppressNotif);
     } else {
       // Regular DM: prefix with sender name
       char dmFormatted[CHANNEL_MSG_TEXT_LEN];
       snprintf(dmFormatted, sizeof(dmFormatted), "%s: %s", from_name, text);
-      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr);
+      ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr, nullptr, suppressNotif);
     }
   } else {
-    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr);
+    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, nullptr, suppressNotif);
   }
   
   // If user is currently viewing this channel on the device, or companion
@@ -1572,11 +1625,11 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       }
     }
   }
-  
+
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
   // Suppress toasts for room server messages (bulk sync would spam toasts)
-  if (!isOnRepeaterAdmin() && !isRoomMsg) {
+  if (!isOnRepeaterAdmin() && !isRoomMsg && !suppressNotif) {
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
     showAlert(alertBuf, 2000);
@@ -1586,7 +1639,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     forceRefresh();
   }
 
-  if (_display != NULL) {
+  if (_display != NULL && !suppressNotif) {
     if (!_display->isOn() && !hasConnection()) {
       _display->turnOn();
     }
@@ -1602,9 +1655,9 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     }
   }
 
-  // Keyboard flash notification (suppress for room sync)
+  // Keyboard flash notification (suppress for room sync and muted channels)
 #ifdef KB_BL_PIN
-  if (_node_prefs->kb_flash_notify && !isRoomMsg) {
+  if (_node_prefs->kb_flash_notify && !isRoomMsg && !suppressNotif) {
     digitalWrite(KB_BL_PIN, HIGH);
     _kb_flash_off_at = millis() + 200;  // 200ms flash
   }

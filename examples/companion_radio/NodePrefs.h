@@ -8,6 +8,11 @@
 #define ADVERT_LOC_NONE       0
 #define ADVERT_LOC_SHARE      1
 
+// Per-channel notification preferences (stored in channel_notif[])
+#define NOTIF_ALL       0   // Notify on all messages (default)
+#define NOTIF_MENTIONS  1   // Notify only when @nodename appears in message
+#define NOTIF_NONE      2   // No notifications (muted)
+
 struct NodePrefs {  // persisted to file
   float airtime_factor;
   char node_name[32];
@@ -52,6 +57,12 @@ struct NodePrefs {  // persisted to file
   // priority when set.
   char default_scope_name[31];     // e.g. "au-nsw", empty = unscoped
   uint8_t default_scope_key[16];   // TransportKey derived from "#" + name
+
+  // --- Per-channel notification preferences ---
+  // Index 0..MAX_GROUP_CHANNELS-1 for group channels, index MAX_GROUP_CHANNELS for DMs.
+  // Values: NOTIF_ALL (0), NOTIF_MENTIONS (1), NOTIF_NONE (2).
+  // Defaults to NOTIF_ALL for all channels.
+  uint8_t channel_notif[21];       // 20 group channels + 1 DM slot
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.

@@ -1930,15 +1930,27 @@ public:
                 snprintf(tmp, sizeof(tmp), " %s [*]", ch.name);
               }
               if (selected) {
-                // Show edit/delete hints on right
+                // Build hint with notification state + actions
+                uint8_t nPref = _prefs->channel_notif[chIdx];
+                const char* nTag = (nPref == NOTIF_NONE) ? "Off" :
+                                   (nPref == NOTIF_MENTIONS) ? "@" : "All";
+                char hintBuf[40];
               #if defined(LilyGo_T5S3_EPaper_Pro)
-                const char* hint = chIdx > 0 ? "Ent:Region Hold:Del" : "Ent:Region";
+                if (chIdx > 0) {
+                  snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region Hold:Del", nTag);
+                } else {
+                  snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region", nTag);
+                }
               #else
-                const char* hint = chIdx > 0 ? "Ent:Region X:Del" : "Ent:Region";
+                if (chIdx > 0) {
+                  snprintf(hintBuf, sizeof(hintBuf), "N:%s Ent:Region X:Del", nTag);
+                } else {
+                  snprintf(hintBuf, sizeof(hintBuf), "N:%s Ent:Region", nTag);
+                }
               #endif
-                int hintW = display.getTextWidth(hint);
+                int hintW = display.getTextWidth(hintBuf);
                 display.setCursor(display.width() - hintW - 2, y);
-                display.print(hint);
+                display.print(hintBuf);
                 display.setCursor(0, y);
               }
             }
@@ -3282,6 +3294,20 @@ public:
       if (_rows[_cursor].type == ROW_CHANNEL && _rows[_cursor].param > 0) {
         _editMode = EDIT_CONFIRM;
         _confirmAction = 1;
+        return true;
+      }
+    }
+
+    // N: cycle notification preference (All -> Mentions -> None -> All)
+    if (c == 'n' || c == 'N') {
+      if (_rows[_cursor].type == ROW_CHANNEL) {
+        uint8_t chIdx = _rows[_cursor].param;
+        uint8_t cur = _prefs->channel_notif[chIdx];
+        _prefs->channel_notif[chIdx] = (cur + 1) % 3;
+        the_mesh.savePrefs();
+        const char* labels[] = {"All", "Mentions", "Off"};
+        Serial.printf("Settings: Channel %d notif -> %s\n",
+                      chIdx, labels[_prefs->channel_notif[chIdx]]);
         return true;
       }
     }
