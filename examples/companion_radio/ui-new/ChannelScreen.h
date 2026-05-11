@@ -398,6 +398,42 @@ public:
   }
 
   // -----------------------------------------------------------------------
+  // Per-channel history deletion
+  // -----------------------------------------------------------------------
+
+  // Clear all stored messages for a specific channel (or all DMs if 0xFF).
+  // Invalidates matching slots in the circular buffer and persists to SD.
+  // Does NOT alter _newestIdx -- gaps are naturally overwritten as new
+  // messages arrive.
+  int clearHistoryForChannel(uint8_t channel_idx) {
+    int cleared = 0;
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      if (_messages[i].valid && _messages[i].channel_idx == channel_idx) {
+        _messages[i].valid = false;
+        cleared++;
+      }
+    }
+    if (cleared > 0) {
+      // Reset unread counter for the cleared channel
+      markChannelRead(channel_idx);
+      // Reset scroll if we're viewing the cleared channel
+      if (_viewChannelIdx == channel_idx) {
+        _scrollPos = 0;
+      }
+      // Reset DM inbox state if clearing DMs
+      if (channel_idx == 0xFF) {
+        _dmInboxScroll = 0;
+        _dmFilterName[0] = '\0';
+        _dmInboxMode = true;
+      }
+      saveToSD();
+      Serial.printf("ChannelScreen: Cleared %d messages for channel %d\n",
+                    cleared, (int)channel_idx);
+    }
+    return cleared;
+  }
+
+  // -----------------------------------------------------------------------
   // SD card persistence
   // -----------------------------------------------------------------------
 

@@ -32,7 +32,13 @@ extern MyMesh the_mesh;
 //   T-Deck Pro / MAX : vertical list with "> " cursor, unread badge, right-
 //                      aligned.  Same highlight/tap convention as Contacts.
 //
-// Navigation signals use a wantsExit() flag (same pattern as PathEditor) —
+// Delete history:
+//   Press X on a highlighted channel to enter delete confirmation mode.
+//   Confirmation overlay asks the user to press Enter to confirm or Q to
+//   cancel.  On confirm, all messages for that channel are invalidated in
+//   the circular buffer and persisted to SD.
+//
+// Navigation signals use a wantsExit() flag (same pattern as PathEditor) --
 // UITask is only forward-declared, so the picker cannot call UITask methods
 // directly.  main.cpp / UITask.cpp check the flag after injectKey().
 // ---------------------------------------------------------------------------
@@ -50,11 +56,14 @@ class ChannelPickerScreen : public UIScreen {
   int _cursor;
   int _scrollTop;  // Scroll offset (T-Deck Pro list only)
 
-  // Grid layout cache (T5S3) — set in render(), consumed by touch hit test
+  // Grid layout cache (T5S3) -- set in render(), consumed by touch hit test
   int _cellW;
   int _cellH;
   int _gridTop;
   int _gridCols;
+
+  // Delete confirmation sub-menu
+  bool _confirmDelete;  // True when showing "Delete history?" overlay
 
   // Rebuild the items list from MyMesh.  O(20), safe every render.
   void rebuildItems() {
@@ -100,13 +109,14 @@ public:
     : _task(task), _channelScreen(nullptr),
       _itemCount(0), _cursor(0), _scrollTop(0),
       _cellW(40), _cellH(12), _gridTop(14), _gridCols(3),
+      _confirmDelete(false),
       _wantExit(false) {
     _items[0] = 0xFF;
   }
 
   void setChannelScreen(ChannelScreen* cs) { _channelScreen = cs; }
 
-  // --- wantsExit flag — checked by main.cpp / UITask after injectKey() ---
+  // --- wantsExit flag -- checked by main.cpp / UITask after injectKey() ---
   bool _wantExit;
   bool wantsExit() const { return _wantExit; }
 
@@ -118,6 +128,7 @@ public:
       if (_items[i] == currentChannelIdx) { _cursor = i; break; }
     }
     _scrollTop = 0;
+    _confirmDelete = false;
     _wantExit = false;
   }
 
@@ -171,7 +182,7 @@ public:
     _cellW = bubbleW;
     _cellH = bubbleH + gap;
     _gridTop = headerH;
-    _gridCols = 1;  // Single column — list mode
+    _gridCols = 1;  // Single column -- list mode
 
     // Centre scroll window on cursor
     _scrollTop = max(0, min(_cursor - maxVisible / 2, _itemCount - maxVisible));
@@ -200,7 +211,7 @@ public:
         display.drawRect(x + 1, y + 1, w - 2, h - 2);
       }
 
-      // Channel name — left-aligned with inner padding
+      // Channel name -- left-aligned with inner padding
       char name[32];
       getItemName(i, name, sizeof(name));
       char filtered[32];
@@ -229,7 +240,7 @@ public:
         display.drawTextEllipsized(textX, textY, nameMaxW, filtered);
       }
 
-      // Unread badge — right-aligned inside bubble
+      // Unread badge -- right-aligned inside bubble
       if (unread > 0) {
         int bx = x + w - badgeW;
         display.setCursor(bx, textY);
@@ -329,6 +340,47 @@ public:
     }
 #endif
 
+    // =================================================================
+    // Delete confirmation overlay
+    // Drawn on top of the list when _confirmDelete is active.
+    // =================================================================
+    if (_confirmDelete) {
+      // Clear a centred box and draw a border
+      int boxW = display.width() - 16;
+      int boxH = 42;
+      int boxX = 8;
+      int boxY = (display.height() - boxH) / 2;
+
+      // Clear the box area
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(boxX, boxY, boxW, boxH);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(boxX, boxY, boxW, boxH);
+      display.drawRect(boxX + 1, boxY + 1, boxW - 2, boxH - 2);
+
+      // Channel name
+      display.setTextSize(1);
+      char name[32];
+      getItemName(_cursor, name, sizeof(name));
+      char filtered[32];
+      display.translateUTF8ToBlocks(filtered, name, sizeof(filtered));
+
+      display.setColor(DisplayDriver::GREEN);
+      display.drawTextEllipsized(boxX + 4, boxY + 5, boxW - 8, filtered);
+
+      // "Delete history?" prompt
+      display.setColor(DisplayDriver::LIGHT);
+      const char* prompt = "Delete message history?";
+      display.setCursor(boxX + 4, boxY + 17);
+      display.print(prompt);
+
+      // Key hints
+      display.setColor(DisplayDriver::YELLOW);
+      const char* hints = "Enter:Yes  Q:Cancel";
+      display.setCursor(boxX + 4, boxY + 29);
+      display.print(hints);
+    }
+
     // === Footer ===
     display.setTextSize(1);
     int footerY = display.height() - 12;
@@ -337,20 +389,31 @@ public:
     display.setCursor(0, footerY);
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-    display.print("Tap:Open");
-    const char* rt = "Boot:Back";
-    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
-    display.print(rt);
+    if (_confirmDelete) {
+      display.print("Tap:Yes");
+      const char* rt = "Boot:Cancel";
+      display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+      display.print(rt);
+    } else {
+      display.print("Tap:Open");
+      const char* rt = "Hold:Del Boot:Back";
+      display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+      display.print(rt);
+    }
 #elif defined(LILYGO_TECHO_LITE)
     display.print("Q:Bk");
     const char* rt = "Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
 #else
-    display.print("W/S:Nav Q:Back");
-    const char* rt = "Ent:Open";
-    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
-    display.print(rt);
+    if (_confirmDelete) {
+      display.print("Enter:Yes Q:Cancel");
+    } else {
+      display.print("W/S:Nav Q:Back");
+      const char* rt = "Ent:Open";
+      display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+      display.print(rt);
+    }
 #endif
 
 #ifdef USE_EINK
@@ -364,6 +427,30 @@ public:
   // Input
   // -----------------------------------------------------------------------
   bool handleInput(char c) override {
+    // --- Delete confirmation mode ---
+    if (_confirmDelete) {
+      // Enter -- confirm deletion
+      if (c == '\r' || c == 13 || c == KEY_ENTER || c == KEY_SELECT) {
+        if (_channelScreen && _cursor >= 0 && _cursor < _itemCount) {
+          int cleared = _channelScreen->clearHistoryForChannel(_items[_cursor]);
+          char name[32];
+          getItemName(_cursor, name, sizeof(name));
+          Serial.printf("ChannelPicker: Deleted %d messages for '%s'\n", cleared, name);
+        }
+        _confirmDelete = false;
+        return true;
+      }
+      // Q / backspace -- cancel
+      if (c == 'q' || c == 'Q' || c == '\b' || c == KEY_CANCEL) {
+        _confirmDelete = false;
+        return true;
+      }
+      // Consume all other keys while confirmation is showing
+      return true;
+    }
+
+    // --- Normal picker mode ---
+
     // W / UP
     if (c == 'w' || c == 'W' || c == 0xF2 || c == KEY_UP) {
       if (_cursor > 0) { _cursor--; return true; }
@@ -376,7 +463,7 @@ public:
       return false;
     }
 
-    // A / D — consumed (no channel cycling from picker)
+    // A / D -- consumed (no channel cycling from picker)
     if (c == 'a' || c == 'A' || c == KEY_LEFT) {
       return true;
     }
@@ -384,16 +471,24 @@ public:
       return true;
     }
 
-    // Enter — select the highlighted channel and signal exit
+    // X -- delete message history for highlighted channel
+    if (c == 'x' || c == 'X') {
+      if (_cursor >= 0 && _cursor < _itemCount) {
+        _confirmDelete = true;
+      }
+      return true;
+    }
+
+    // Enter -- select the highlighted channel and signal exit
     if (c == '\r' || c == 13 || c == KEY_ENTER || c == KEY_SELECT) {
       if (_channelScreen && _cursor >= 0 && _cursor < _itemCount) {
         _channelScreen->setViewChannelIdx(_items[_cursor]);
       }
       _wantExit = true;
-      return true;  // Consumed — caller checks wantsExit() and navigates
+      return true;  // Consumed -- caller checks wantsExit() and navigates
     }
 
-    // Q / backspace — cancel without changing channel, signal exit
+    // Q / backspace -- cancel without changing channel, signal exit
     if (c == 'q' || c == 'Q' || c == '\b' || c == KEY_CANCEL) {
       _wantExit = true;
       return true;
@@ -405,10 +500,22 @@ public:
   // -----------------------------------------------------------------------
   // Touch hit test (virtual coordinates)
   // Returns: 0=miss, 1=cursor moved, 2=activate.
-  // T5S3 bubbles: any tap on a bubble → 2 (direct open).
-  // T-Deck Pro list: 1st tap → 1 (highlight), 2nd tap same row → 2.
+  // T5S3 bubbles: any tap on a bubble -> 2 (direct open).
+  // T-Deck Pro list: 1st tap -> 1 (highlight), 2nd tap same row -> 2.
   // -----------------------------------------------------------------------
   int selectAtVxVy(int vx, int vy) {
+    // If delete confirmation is showing:
+    //   T5S3: tap = confirm (return 2 → KEY_ENTER → handleInput confirms)
+    //   T-Deck Pro: tap = cancel (dismiss overlay, stay on picker)
+    if (_confirmDelete) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
+      return 2;  // Confirm — maps to KEY_ENTER in mapTouchTap
+#else
+      _confirmDelete = false;
+      return 1;  // Cancel — redraw without activating
+#endif
+    }
+
 #if defined(LilyGo_T5S3_EPaper_Pro)
     // Vertical bubble list hit test
     if (vy < _gridTop || _cellH == 0) return 0;
@@ -420,7 +527,7 @@ public:
     _cursor = idx;
     return 2;  // Direct open on tap
 #else
-    // T-Deck Pro / MAX list hit test — uses NodePrefs for large_font compatibility
+    // T-Deck Pro / MAX list hit test -- uses NodePrefs for large_font compatibility
     NodePrefs* prefs = the_mesh.getNodePrefs();
     int lineH = prefs->smallLineH();
     const int headerH = 14;

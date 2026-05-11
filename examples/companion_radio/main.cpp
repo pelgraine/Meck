@@ -1751,6 +1751,11 @@ static void lastHeardToggleContact() {
       return KEY_ENTER;  // Not editing: toggle/edit selected row
     }
 
+    // Channel picker: long press = delete message history for highlighted channel
+    if (ui_task.isOnChannelPickerScreen()) {
+      return 'x';
+    }
+
     // Default: enter/select
     return KEY_ENTER;
   }
