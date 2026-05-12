@@ -84,6 +84,9 @@
   #endif
   #ifdef MECK_AUDIO_VARIANT
     #include "VoiceMessageScreen.h"
+    #include "BundledSounds.h"
+    #include "NotifSounds.h"
+    NotifSounds notifSounds;  // Global singleton for per-channel notification tones
   #endif
   static bool audiobookMode = false;
   static bool voiceMode = false;
@@ -2034,6 +2037,15 @@ void setup() {
   }
   #endif
 
+  // Copy bundled notification sounds to SD card (audio variant only).
+  // Skips files that already exist so user customisations are preserved.
+  #ifdef MECK_AUDIO_VARIANT
+  if (sdCardReady) {
+    copyBundledSoundsToSD();
+    notifSounds.begin();
+  }
+  #endif
+
   MESH_DEBUG_PRINTLN("setup() - about to call store.begin()");
   store.begin();
   MESH_DEBUG_PRINTLN("setup() - store.begin() done");
@@ -2659,6 +2671,137 @@ void loop() {
           Serial.printf("ALARM: Fired slot %d, switched to ringing screen\n", fireSlot);
         }
       }
+    }
+  }
+  #endif
+
+  // Notification tone: play custom MP3 for per-channel notification sounds.
+  // Polls the notifSounds pending request, lazy-inits Audio*, plays the file,
+  // and disables DAC when playback finishes.
+  #if defined(LilyGo_TDeck_Pro) && defined(MECK_AUDIO_VARIANT)
+  {
+    static bool notifTonePlaying = false;
+    static bool notifFadingOut = false;
+    static bool notifMuted = false;
+    static uint32_t notifStartMs = 0;
+    static uint32_t notifDurationMs = 0;
+
+    // Service audio decode while notification tone is playing
+    if (notifTonePlaying && audio) {
+      audio->loop();
+
+      // Fade-out: ramp volume down near the end of the file.
+      // Window scales with duration -- 15% of estimated length, capped at 400ms.
+      // Prevents short tones from losing too much audio to the fade.
+      if (!notifFadingOut && notifDurationMs > 0) {
+        uint32_t elapsed = millis() - notifStartMs;
+        uint32_t fadeWindow = notifDurationMs * 15 / 100;  // 15% of duration
+        if (fadeWindow > 400) fadeWindow = 400;
+        if (fadeWindow < 80) fadeWindow = 80;
+        uint32_t fadePoint = notifDurationMs - fadeWindow;
+        if (elapsed >= fadePoint) {
+          notifFadingOut = true;
+          audio->setVolume(3);
+          Serial.printf("NotifTone: Fade at %lums (window %lums)\n", elapsed, fadeWindow);
+        }
+      }
+
+      // Mute completely at 40% through the fade window
+      if (notifFadingOut && !notifMuted && notifDurationMs > 0) {
+        uint32_t elapsed = millis() - notifStartMs;
+        uint32_t muteWindow = notifDurationMs * 6 / 100;  // 6% of duration
+        if (muteWindow > 150) muteWindow = 150;
+        if (muteWindow < 30) muteWindow = 30;
+        uint32_t mutePoint = notifDurationMs - muteWindow;
+        if (elapsed >= mutePoint) {
+          notifMuted = true;
+          audio->setVolume(0);
+        }
+      }
+
+      if (!audio->isRunning()) {
+        audio->setVolume(0);
+        audio->stopSong();
+        delay(50);
+        digitalWrite(41, LOW);
+        notifTonePlaying = false;
+        notifFadingOut = false;
+        notifMuted = false;
+        notifDurationMs = 0;
+        Serial.println("NotifTone: Playback finished");
+      }
+    }
+
+    // Check for new play request
+    if (notifSounds.hasPendingPlay()) {
+      const char* file = notifSounds.getPendingFile();
+
+      // Don't interrupt alarm or active audiobook
+      AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+      AudiobookPlayerScreen* abPlayer =
+        (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+      bool audioBusy = (alarmScr && alarmScr->isRinging()) ||
+                       (alarmScr && alarmScr->isAlarmAudioActive()) ||
+                       (abPlayer && abPlayer->isAudioActive());
+
+      if (!audioBusy && file[0] != '\0') {
+        // Lazy-init Audio object
+        if (!audio) audio = new Audio();
+
+        // Read file size to estimate duration for fade-out timing.
+        // Estimate assumes 256kbps CBR: durationMs = fileBytes / 32.
+        // Slightly overestimates for lower bitrates (fade triggers early
+        // rather than late — better than hiss at end).
+        uint32_t estimatedMs = 0;
+        {
+          File f = SD.open(file, "r");
+          if (f) {
+            uint32_t sz = f.size();
+            estimatedMs = sz / 32;  // 256kbps: bytes * 8 / 256000 * 1000
+            Serial.printf("NotifTone: File %lu bytes, est %lums\n", sz, estimatedMs);
+            f.close();
+            digitalWrite(SDCARD_CS, HIGH);
+          }
+        }
+
+        // Stop any stale playback before touching DAC
+        audio->stopSong();
+
+        // Configure I2S pins first (before DAC power)
+        bool ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
+        if (!ok) ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
+
+        // Start playback at volume 0 (silence into DAC during power-on)
+        audio->setVolume(0);
+        audio->connecttoFS(SD, file);
+
+        // Enable DAC amplifier and let it stabilise with silence flowing
+        pinMode(41, OUTPUT);
+        digitalWrite(41, HIGH);
+        delay(80);
+
+        // Fill audio buffer with silence at volume 0 (prevents power-on pop)
+        for (int i = 0; i < 30; i++) {
+          audio->loop();
+          delay(2);
+        }
+
+        // Ramp volume up to max
+        audio->setVolume(21);
+        notifTonePlaying = true;
+        notifFadingOut = false;
+        notifMuted = false;
+        notifStartMs = millis();
+        // Subtract ~140ms of pre-decode (80ms DAC warmup + 60ms buffer fill)
+        // that elapsed between connecttoFS and now — the file is already
+        // that far into decoding when we start timing.
+        notifDurationMs = (estimatedMs > 140) ? (estimatedMs - 140) : estimatedMs;
+
+        Serial.printf("NotifTone: Playing '%s'\n", file);
+      } else if (audioBusy) {
+        Serial.println("NotifTone: Skipped -- audio busy");
+      }
+      notifSounds.clearPending();
     }
   }
   #endif

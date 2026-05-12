@@ -65,6 +65,9 @@
   #include "SMSScreen.h"
   #include "ModemManager.h"
 #endif
+#ifdef MECK_AUDIO_VARIANT
+  #include "NotifSounds.h"
+#endif
 
 // Per-channel notification suppression flag.
 // Set by newMsg() based on channel_notif preference, checked by notify()
@@ -1571,8 +1574,26 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       }
     }
   }
-  // Set the flag for notify() which is called immediately after newMsg()
+  // Set the flag for notify() which is called immediately after newMsg().
+  // If a custom notification tone is assigned and notifications are active,
+  // request MP3 playback and suppress the RTTTL buzzer so they don't overlap.
+  #ifdef MECK_AUDIO_VARIANT
+  if (!suppressNotif) {
+    const char* customSound = notifSounds.getSoundForChannel(channel_idx);
+    if (customSound && customSound[0] != '\0') {
+      char soundPath[48];
+      snprintf(soundPath, sizeof(soundPath), "/alarms/%s", customSound);
+      notifSounds.requestPlay(soundPath);
+      s_lastMsgSuppressed = true;  // Suppress buzzer -- MP3 replaces it
+    } else {
+      s_lastMsgSuppressed = suppressNotif;
+    }
+  } else {
+    s_lastMsgSuppressed = suppressNotif;
+  }
+  #else
   s_lastMsgSuppressed = suppressNotif;
+  #endif
   
   // Add to channel history screen with channel index, path data, and SNR
   // For DMs (channel_idx == 0xFF):

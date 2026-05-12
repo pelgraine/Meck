@@ -7,6 +7,9 @@
 #include <MeshCore.h>
 #include "../NodePrefs.h"
 #include "MeckFonts.h"
+#ifdef MECK_AUDIO_VARIANT
+#include "NotifSounds.h"
+#endif
 
 // Inline edit hint shown next to values being adjusted
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -170,6 +173,7 @@ enum EditMode : uint8_t {
   EDIT_PICKER,       // A/D cycles options (radio preset, contact mode)
   EDIT_NUMBER,       // W/S adjusts value (freq, BW, SF, CR, TX, UTC)
   EDIT_CONFIRM,      // Confirmation dialog (delete channel, apply radio)
+  EDIT_NOTIF_SOUND,  // Sound picker for per-channel notification tone
   #ifdef MECK_WIFI_COMPANION
   EDIT_WIFI,         // WiFi scan/select/password flow
   #endif
@@ -251,6 +255,13 @@ private:
   int _editInt;             // for SF/CR/TX/UTC editing
   uint8_t _fontPickerOriginal;  // font style before edit (for cancel revert)
   int _confirmAction;       // 0=none, 1=delete channel, 2=apply radio
+
+  // Notification sound picker state (audio variant only)
+  #ifdef MECK_AUDIO_VARIANT
+  int _notifSoundSelected;      // Cursor in sound picker (0=default/silent, 1+=files)
+  int _notifSoundScroll;        // Scroll offset in picker list
+  uint8_t _notifSoundChannel;   // Channel index being edited
+  #endif
 
   // Onboarding mode
   bool _onboarding;
@@ -594,6 +605,11 @@ public:
     _fmPhase = FM_PHASE_CONFIRM;
     _fmError = nullptr;
     _dnsServer = nullptr;
+    #endif
+    #ifdef MECK_AUDIO_VARIANT
+    _notifSoundSelected = 0;
+    _notifSoundScroll = 0;
+    _notifSoundChannel = 0;
     #endif
   }
 
@@ -1941,6 +1957,12 @@ public:
                 } else {
                   snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region", nTag);
                 }
+              #elif defined(MECK_AUDIO_VARIANT)
+                if (chIdx > 0) {
+                  snprintf(hintBuf, sizeof(hintBuf), "N:%s T:Tone X:Del", nTag);
+                } else {
+                  snprintf(hintBuf, sizeof(hintBuf), "N:%s T:Tone Ent:Region", nTag);
+                }
               #else
                 if (chIdx > 0) {
                   snprintf(hintBuf, sizeof(hintBuf), "N:%s Ent:Region X:Del", nTag);
@@ -2086,6 +2108,92 @@ public:
     #endif
       display.setTextSize(1);
     }
+
+    // === Notification sound picker overlay (audio variant) ===
+    #ifdef MECK_AUDIO_VARIANT
+    if (_editMode == EDIT_NOTIF_SOUND) {
+      int bx = 2, by = 14, bw = display.width() - 4;
+      int bh = display.height() - 28;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, bh);
+
+      display.setTextSize(_prefs->smallTextSize());
+      int lineH = _prefs->smallLineH();
+
+      // Header
+      display.setColor(DisplayDriver::GREEN);
+      display.setCursor(bx + 4, by + 3);
+      display.print("Notification Tone");
+
+      int listTop = by + 14;
+      int listBot = by + bh - 14;
+      int maxVisible = (listBot - listTop) / lineH;
+      if (maxVisible < 3) maxVisible = 3;
+
+      // Total items: 1 ("Default") + sound file count
+      const auto& files = notifSounds.getSoundFiles();
+      int totalItems = 1 + (int)files.size();
+
+      // Centre scroll on selection
+      _notifSoundScroll = max(0, min(_notifSoundSelected - maxVisible / 2,
+                                     totalItems - maxVisible));
+      if (_notifSoundScroll < 0) _notifSoundScroll = 0;
+      int endIdx = min(totalItems, _notifSoundScroll + maxVisible);
+
+      int sy = listTop;
+      for (int i = _notifSoundScroll; i < endIdx && sy + lineH <= listBot; i++) {
+        bool isSel = (i == _notifSoundSelected);
+
+        if (isSel) {
+          display.setColor(DisplayDriver::LIGHT);
+          display.fillRect(bx + 2, sy + _prefs->smallHighlightOff(), bw - 4, lineH);
+          display.setColor(DisplayDriver::DARK);
+        } else {
+          display.setColor(DisplayDriver::LIGHT);
+        }
+
+        display.setCursor(bx + 6, sy);
+        if (i == 0) {
+          display.print("Default (silent)");
+        } else {
+          // Show MP3 filename without extension
+          String displayName = files[i - 1];
+          int dot = displayName.lastIndexOf('.');
+          if (dot > 0) displayName = displayName.substring(0, dot);
+          if (displayName.length() > 28) displayName = displayName.substring(0, 28);
+          display.print(displayName.c_str());
+        }
+        sy += lineH;
+      }
+
+      // Footer
+      display.setTextSize(1);
+      display.setColor(DisplayDriver::YELLOW);
+      int fy = by + bh - 11;
+    #if defined(LilyGo_T5S3_EPaper_Pro)
+      display.setCursor(bx + 4, fy);
+      display.print("Tap:Pick  Boot:Back");
+    #else
+      display.setCursor(bx + 4, fy);
+      display.print("Enter:Pick  Q:Back");
+    #endif
+
+      // Scroll indicator
+      if (totalItems > maxVisible) {
+        int sbX = bx + bw - 4;
+        int sbH = listBot - listTop;
+        display.setColor(DisplayDriver::LIGHT);
+        display.drawRect(sbX, listTop, 3, sbH);
+        int thumbH = max(4, (maxVisible * sbH) / totalItems);
+        int maxScroll = totalItems - maxVisible;
+        if (maxScroll < 1) maxScroll = 1;
+        int thumbY = listTop + (_notifSoundScroll * (sbH - thumbH)) / maxScroll;
+        display.fillRect(sbX + 1, thumbY + 1, 1, thumbH - 2);
+      }
+    }
+    #endif
 
     #ifdef MECK_WIFI_COMPANION
     // === WiFi setup overlay ===
@@ -2547,6 +2655,41 @@ public:
       }
       return true;  // consume all keys in confirm mode
     }
+
+    // --- Notification sound picker (audio variant) ---
+    #ifdef MECK_AUDIO_VARIANT
+    if (_editMode == EDIT_NOTIF_SOUND) {
+      const auto& files = notifSounds.getSoundFiles();
+      int totalItems = 1 + (int)files.size();  // 0=Default, rest=files
+
+      if (c == 'w' || c == 'W' || c == 0xF2 || c == KEY_UP) {
+        if (_notifSoundSelected > 0) _notifSoundSelected--;
+        return true;
+      }
+      if (c == 's' || c == 'S' || c == 0xF1 || c == KEY_DOWN) {
+        if (_notifSoundSelected < totalItems - 1) _notifSoundSelected++;
+        return true;
+      }
+      if (c == '\r' || c == 13) {
+        // Select: 0 = clear (default silent), 1+ = file
+        if (_notifSoundSelected == 0) {
+          notifSounds.clearSoundForChannel(_notifSoundChannel);
+        } else {
+          int fileIdx = _notifSoundSelected - 1;
+          if (fileIdx >= 0 && fileIdx < (int)files.size()) {
+            notifSounds.setSoundForChannel(_notifSoundChannel, files[fileIdx].c_str());
+          }
+        }
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      if (c == 'q' || c == 'Q' || c == '\b') {
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      return true;  // consume all keys in picker mode
+    }
+    #endif
 
     #ifdef MECK_OTA_UPDATE
     // --- OTA update flow ---
@@ -3311,6 +3454,31 @@ public:
         return true;
       }
     }
+
+    // T: open notification tone picker (audio variant only)
+    #ifdef MECK_AUDIO_VARIANT
+    if (c == 't' || c == 'T') {
+      if (_rows[_cursor].type == ROW_CHANNEL) {
+        _notifSoundChannel = _rows[_cursor].param;
+        notifSounds.scanSoundFiles();
+        _notifSoundSelected = 0;  // 0 = "Default (silent)"
+        _notifSoundScroll = 0;
+        // Pre-select current assignment
+        const char* current = notifSounds.getSoundForChannel(_notifSoundChannel);
+        if (current && current[0] != '\0') {
+          const auto& files = notifSounds.getSoundFiles();
+          for (int i = 0; i < (int)files.size(); i++) {
+            if (files[i] == String(current)) {
+              _notifSoundSelected = i + 1;  // +1 because 0 is "Default"
+              break;
+            }
+          }
+        }
+        _editMode = EDIT_NOTIF_SOUND;
+        return true;
+      }
+    }
+    #endif
 
     // Q: back -- if in sub-screen, return to top level; else exit settings
     if (c == 'q' || c == 'Q') {
