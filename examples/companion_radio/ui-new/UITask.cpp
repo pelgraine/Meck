@@ -68,7 +68,7 @@
   #include "SMSScreen.h"
   #include "ModemManager.h"
 #endif
-#ifdef MECK_AUDIO_VARIANT
+#if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
   #include "NotifSounds.h"
 #endif
 
@@ -1601,6 +1601,21 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       snprintf(soundPath, sizeof(soundPath), "/alarms/%s", customSound);
       notifSounds.requestPlay(soundPath);
       s_lastMsgSuppressed = true;  // Suppress buzzer -- MP3 replaces it
+    } else {
+      s_lastMsgSuppressed = suppressNotif;
+    }
+  } else {
+    s_lastMsgSuppressed = suppressNotif;
+  }
+  #elif defined(HAS_4G_MODEM)
+  if (!suppressNotif) {
+    const char* customSound = notifSounds.getSoundForChannel(channel_idx);
+    if (customSound && customSound[0] != '\0') {
+      int8_t toneIdx = ModemManager::findToneByName(customSound);
+      if (toneIdx >= 0) {
+        modemManager.requestNotifTone(toneIdx);
+      }
+      s_lastMsgSuppressed = true;  // Suppress buzzer -- modem tone replaces it
     } else {
       s_lastMsgSuppressed = suppressNotif;
     }

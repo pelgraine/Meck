@@ -7,7 +7,7 @@
 #include <MeshCore.h>
 #include "../NodePrefs.h"
 #include "MeckFonts.h"
-#ifdef MECK_AUDIO_VARIANT
+#if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
 #include "NotifSounds.h"
 #endif
 
@@ -256,8 +256,8 @@ private:
   uint8_t _fontPickerOriginal;  // font style before edit (for cancel revert)
   int _confirmAction;       // 0=none, 1=delete channel, 2=apply radio
 
-  // Notification sound picker state (audio variant only)
-  #ifdef MECK_AUDIO_VARIANT
+  // Notification sound picker state
+  #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
   int _notifSoundSelected;      // Cursor in sound picker (0=default/silent, 1+=files)
   int _notifSoundScroll;        // Scroll offset in picker list
   uint8_t _notifSoundChannel;   // Channel index being edited
@@ -606,7 +606,7 @@ public:
     _fmError = nullptr;
     _dnsServer = nullptr;
     #endif
-    #ifdef MECK_AUDIO_VARIANT
+    #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     _notifSoundSelected = 0;
     _notifSoundScroll = 0;
     _notifSoundChannel = 0;
@@ -1957,7 +1957,7 @@ public:
                 } else {
                   snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region", nTag);
                 }
-              #elif defined(MECK_AUDIO_VARIANT)
+              #elif defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
                 if (chIdx > 0) {
                   snprintf(hintBuf, sizeof(hintBuf), "N:%s T:Tone X:Del", nTag);
                 } else {
@@ -2109,8 +2109,8 @@ public:
       display.setTextSize(1);
     }
 
-    // === Notification sound picker overlay (audio variant) ===
-    #ifdef MECK_AUDIO_VARIANT
+    // === Notification sound picker overlay ===
+    #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     if (_editMode == EDIT_NOTIF_SOUND) {
       int bx = 2, by = 14, bw = display.width() - 4;
       int bh = display.height() - 28;
@@ -2158,7 +2158,7 @@ public:
         if (i == 0) {
           display.print("Default (silent)");
         } else {
-          // Show MP3 filename without extension
+          // Show filename without extension
           String displayName = files[i - 1];
           int dot = displayName.lastIndexOf('.');
           if (dot > 0) displayName = displayName.substring(0, dot);
@@ -2656,8 +2656,8 @@ public:
       return true;  // consume all keys in confirm mode
     }
 
-    // --- Notification sound picker (audio variant) ---
-    #ifdef MECK_AUDIO_VARIANT
+    // --- Notification sound picker ---
+    #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     if (_editMode == EDIT_NOTIF_SOUND) {
       const auto& files = notifSounds.getSoundFiles();
       int totalItems = 1 + (int)files.size();  // 0=Default, rest=files
@@ -3455,8 +3455,8 @@ public:
       }
     }
 
-    // T: open notification tone picker (audio variant only)
-    #ifdef MECK_AUDIO_VARIANT
+    // T: open notification tone picker
+    #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     if (c == 't' || c == 'T') {
       if (_rows[_cursor].type == ROW_CHANNEL) {
         _notifSoundChannel = _rows[_cursor].param;

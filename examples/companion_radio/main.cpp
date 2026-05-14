@@ -88,6 +88,8 @@
   #ifdef MECK_AUDIO_VARIANT
     #include "VoiceMessageScreen.h"
     #include "BundledSounds.h"
+  #endif
+  #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     #include "NotifSounds.h"
     NotifSounds notifSounds;  // Global singleton for per-channel notification tones
   #endif
@@ -2110,6 +2112,12 @@ void setup() {
   #ifdef MECK_AUDIO_VARIANT
   if (sdCardReady) {
     copyBundledSoundsToSD();
+  }
+  #endif
+
+  // Initialise per-channel notification sound config (audio + 4G variants).
+  #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
+  if (sdCardReady) {
     notifSounds.begin();
   }
   #endif

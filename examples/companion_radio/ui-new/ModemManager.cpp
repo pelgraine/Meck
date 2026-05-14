@@ -37,6 +37,10 @@ void ModemManager::begin() {
   _ringing = false;
   _nextRingTone = 0;
   _toneActive = false;
+  _pendingToneIdx = -1;
+  _tonesTransferred = false;
+  _notifTonePlaying = false;
+  _notifToneStartTime = 0;
   _urcPos = 0;
   _imei[0] = '\0';
   _imsi[0] = '\0';
@@ -66,6 +70,12 @@ void ModemManager::shutdown() {
   if (!_taskHandle) return;
 
   MESH_DEBUG_PRINTLN("[Modem] shutdown()");
+
+  // Stop any playing notification tone
+  if (_notifTonePlaying) {
+    // Best-effort stop -- task is about to be deleted
+    _pendingToneIdx = -1;
+  }
 
   // Hang up any active call first
   if (isCallActive()) {
@@ -172,6 +182,38 @@ bool ModemManager::pollCallEvent(CallEvent& out) {
 }
 
 // ---------------------------------------------------------------------------
+// Public API - Notification Tones
+// ---------------------------------------------------------------------------
+
+void ModemManager::requestNotifTone(int8_t toneIdx) {
+  if (toneIdx < 0 || toneIdx >= MODEM_BUNDLED_TONE_COUNT) return;
+  if (!_tonesTransferred) return;  // Not ready yet
+  if (isCallActive()) return;      // Don't interrupt voice calls
+  _pendingToneIdx = toneIdx;
+}
+
+int8_t ModemManager::findToneByName(const char* name) {
+  if (!name || !name[0]) return -1;
+
+  for (int i = 0; i < MODEM_BUNDLED_TONE_COUNT; i++) {
+    // Match against filename (with or without .wav extension)
+    const char* fn = modemBundledTones[i].filename;
+    if (strcasecmp(name, fn) == 0) return i;
+
+    // Try matching without extension
+    const char* dot = strrchr(fn, '.');
+    if (dot) {
+      int baseLen = dot - fn;
+      if ((int)strlen(name) == baseLen && strncasecmp(name, fn, baseLen) == 0) return i;
+    }
+
+    // Also match against label
+    if (strcasecmp(name, modemBundledTones[i].label) == 0) return i;
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------------
 // State helpers
 // ---------------------------------------------------------------------------
 
@@ -262,11 +304,11 @@ void ModemManager::saveAPNConfig(const char* apn) {
 }
 
 // ---------------------------------------------------------------------------
-// APN Resolution — called during init after network registration
+// APN Resolution -- called during init after network registration
 //
 // Priority:
 //   1. User-configured APN (from /sms/apn.cfg)
-//   2. Network-provisioned APN (AT+CGDCONT? — modem already has one)
+//   2. Network-provisioned APN (AT+CGDCONT? -- modem already has one)
 //   3. Auto-detected from IMSI via embedded ApnDatabase
 //   4. Blank (some carriers work with empty APN)
 // ---------------------------------------------------------------------------
@@ -327,7 +369,7 @@ void ModemManager::resolveAPN() {
     }
   }
 
-  // 4. No APN found — leave blank
+  // 4. No APN found -- leave blank
   _apn[0] = '\0';
   strcpy(_apnSource, "none");
   MESH_DEBUG_PRINTLN("[Modem] APN: none detected (IMSI=%s)", _imsi[0] ? _imsi : "unknown");
@@ -337,12 +379,13 @@ void ModemManager::resolveAPN() {
 // URC (Unsolicited Result Code) Handling
 // ---------------------------------------------------------------------------
 // The modem can send unsolicited messages at any time:
-//   RING                        — incoming call ringing
-//   +CLIP: "+1234...",145,...   — caller ID (after AT+CLIP=1)
-//   NO CARRIER                  — call ended by remote
-//   BUSY                        — outgoing call busy
-//   NO ANSWER                   — outgoing call no answer
-//   +CMTI: "SM",<idx>          — new SMS arrived
+//   RING                        -- incoming call ringing
+//   +CLIP: "+1234...",145,...   -- caller ID (after AT+CLIP=1)
+//   NO CARRIER                  -- call ended by remote
+//   BUSY                        -- outgoing call busy
+//   NO ANSWER                   -- outgoing call no answer
+//   +CMTI: "SM",<idx>          -- new SMS arrived
+//   +AUDIOSTATE: audio play stop -- notification tone finished
 //
 // drainURCs() accumulates bytes into a line buffer and calls
 // processURCLine() for each complete line.
@@ -354,7 +397,7 @@ void ModemManager::drainURCs() {
 
     // Accumulate into line buffer
     if (c == '\n') {
-      // End of line — process if non-empty
+      // End of line -- process if non-empty
       if (_urcPos > 0) {
         // Trim trailing \r
         while (_urcPos > 0 && _urcBuf[_urcPos - 1] == '\r') _urcPos--;
@@ -418,7 +461,7 @@ void ModemManager::processURCLine(const char* line) {
   if (strcmp(line, "NO CARRIER") == 0) {
     MESH_DEBUG_PRINTLN("[Modem] URC: NO CARRIER");
     if (_state == ModemState::RINGING_IN) {
-      // Incoming call ended before we answered — missed call
+      // Incoming call ended before we answered -- missed call
       queueCallEvent(CallEventType::MISSED, _callPhone);
     } else if (_state == ModemState::DIALING || _state == ModemState::IN_CALL) {
       uint32_t duration = 0;
@@ -465,7 +508,7 @@ void ModemManager::processURCLine(const char* line) {
     return;
   }
 
-  // --- VOICE CALL: BEGIN — A76xx-specific: audio path established ---
+  // --- VOICE CALL: BEGIN -- A76xx-specific: audio path established ---
   if (strncmp(line, "VOICE CALL: BEGIN", 17) == 0) {
     MESH_DEBUG_PRINTLN("[Modem] URC: VOICE CALL: BEGIN");
     if (_state == ModemState::DIALING) {
@@ -477,7 +520,7 @@ void ModemManager::processURCLine(const char* line) {
     return;
   }
 
-  // --- VOICE CALL: END — A76xx-specific: audio path closed ---
+  // --- VOICE CALL: END -- A76xx-specific: audio path closed ---
   // Format: "VOICE CALL: END: <duration>"
   if (strncmp(line, "VOICE CALL: END", 15) == 0) {
     MESH_DEBUG_PRINTLN("[Modem] URC: %s", line);
@@ -500,6 +543,20 @@ void ModemManager::processURCLine(const char* line) {
     _state = ModemState::READY;
     _callPhone[0] = '\0';
     _callStartTime = 0;
+    return;
+  }
+
+  // --- +AUDIOSTATE: notification tone playback status ---
+  // +AUDIOSTATE: audio play       -- playback started
+  // +AUDIOSTATE: audio play stop  -- playback finished
+  if (strncmp(line, "+AUDIOSTATE:", 12) == 0) {
+    if (strstr(line, "play stop") || strstr(line, "PLAY STOP")) {
+      MESH_DEBUG_PRINTLN("[Modem] URC: AUDIOSTATE play stop");
+      _notifTonePlaying = false;
+    } else if (strstr(line, "play") || strstr(line, "PLAY")) {
+      MESH_DEBUG_PRINTLN("[Modem] URC: AUDIOSTATE play");
+      // Playback confirmed started -- _notifTonePlaying already set
+    }
     return;
   }
 }
@@ -526,7 +583,7 @@ bool ModemManager::doDialCall(const char* phone) {
   _callPhone[SMS_PHONE_LEN - 1] = '\0';
   _state = ModemState::DIALING;
 
-  // ATD<number>; — the semicolon makes it a voice call (not data)
+  // ATD<number>; -- the semicolon makes it a voice call (not data)
   char cmd[32];
   snprintf(cmd, sizeof(cmd), "ATD%s;", phone);
 
@@ -538,11 +595,11 @@ bool ModemManager::doDialCall(const char* phone) {
     return false;
   }
 
-  // ATD returned OK — call is being set up.
+  // ATD returned OK -- call is being set up.
   // Connection/failure will come as URCs (NO CARRIER, BUSY, etc.)
   // or we detect active call via AT+CLCC polling.
   // For now, assume we're dialing and wait for URCs.
-  MESH_DEBUG_PRINTLN("[Modem] ATD OK — dialing...");
+  MESH_DEBUG_PRINTLN("[Modem] ATD OK -- dialing...");
   return true;
 }
 
@@ -610,8 +667,8 @@ bool ModemManager::doSetVolume(uint8_t level) {
 }
 
 // ---------------------------------------------------------------------------
-// Incoming call ringtone — tone bursts via AT+SIMTONE on modem speaker
-// Pattern: 400ms tone → 1200ms silence → repeat
+// Incoming call ringtone -- tone bursts via AT+SIMTONE on modem speaker
+// Pattern: 400ms tone -> 1200ms silence -> repeat
 // ---------------------------------------------------------------------------
 
 void ModemManager::handleRingtone() {
@@ -643,10 +700,190 @@ void ModemManager::handleRingtone() {
     _toneActive = true;
     _nextRingTone = now + 400;   // Tone plays for 400ms
   } else {
-    // Tone just finished — gap before next burst
+    // Tone just finished -- gap before next burst
     _toneActive = false;
     _nextRingTone = now + 1200;  // 1.2s silence (classic ring cadence)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Notification Tone Transfer and Playback
+// ---------------------------------------------------------------------------
+// Transfers embedded WAV files from PROGMEM to the modem's internal
+// filesystem using AT+CFTRANRX (confirmed via probe), then plays them
+// on demand via AT+CCMXPLAY through the modem's speaker amplifier.
+//
+// Confirmed working commands on A7682E:
+//   AT+FSMEM              -- filesystem space query
+//   AT+FSDEL="C:/file"    -- delete file
+//   AT+CFTRANRX="C:/file",size -- write file (modem responds CONNECT)
+//   AT+CCMXPLAY="C:/file",0,0  -- play audio
+//   AT+CCMXSTOP           -- stop audio
+//   AT+CRSL=n             -- ringer volume (0-20)
+// ---------------------------------------------------------------------------
+
+bool ModemManager::transferTonesToModem() {
+  MESH_DEBUG_PRINTLN("[Modem] Transferring %d notification tones to modem...", MODEM_BUNDLED_TONE_COUNT);
+
+  // Verify filesystem is accessible
+  if (sendAT("AT+FSMEM", "OK", 3000)) {
+    MESH_DEBUG_PRINTLN("[Modem] Filesystem: %s", _atBuf);
+  } else {
+    MESH_DEBUG_PRINTLN("[Modem] FSMEM failed -- modem filesystem not accessible");
+    _tonesTransferred = true;  // Don't retry every boot
+    return false;
+  }
+
+  int successCount = 0;
+
+  for (int i = 0; i < MODEM_BUNDLED_TONE_COUNT; i++) {
+    const ModemToneEntry& tone = modemBundledTones[i];
+
+    // Build modem filesystem path
+    char modemPath[48];
+    snprintf(modemPath, sizeof(modemPath), "C:/%s", tone.filename);
+
+    // Delete any existing file first (AT+FSDEL, ignore errors if not found)
+    char delCmd[64];
+    snprintf(delCmd, sizeof(delCmd), "AT+FSDEL=\"%s\"", modemPath);
+    sendAT(delCmd, "OK", 2000);
+
+    // Small gap to let modem settle between delete and write
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Drain any stale UART data before transfer
+    while (MODEM_SERIAL.available()) MODEM_SERIAL.read();
+
+    // Transfer file via AT+CFTRANRX="path",<size>
+    // Modem responds with CONNECT, then expects <size> bytes of binary data,
+    // then responds with OK.
+    char txCmd[80];
+    snprintf(txCmd, sizeof(txCmd), "AT+CFTRANRX=\"%s\",%d", modemPath, (int)tone.size);
+    MESH_DEBUG_PRINTLN("[Modem] Tone %d/%d: %s (%d bytes) -- sending...",
+                       i + 1, MODEM_BUNDLED_TONE_COUNT, tone.filename, (int)tone.size);
+
+    Serial.printf("[Modem] TX: %s\n", txCmd);
+    MODEM_SERIAL.println(txCmd);
+
+    // Wait for CONNECT prompt (case-insensitive, also check for ">")
+    unsigned long start = millis();
+    bool gotPrompt = false;
+    bool gotError = false;
+    char promptBuf[128];
+    int ppos = 0;
+    while (millis() - start < 8000) {
+      while (MODEM_SERIAL.available()) {
+        char c = MODEM_SERIAL.read();
+        if (ppos < 127) { promptBuf[ppos++] = c; promptBuf[ppos] = '\0'; }
+        // Check for any known data-ready prompts
+        if (strstr(promptBuf, "CONNECT") || strstr(promptBuf, "connect") ||
+            c == '>') {
+          gotPrompt = true;
+          break;
+        }
+        if (strstr(promptBuf, "ERROR")) { gotError = true; break; }
+      }
+      if (gotPrompt || gotError) break;
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (!gotPrompt) {
+      // Log whatever we DID receive for debugging
+      MESH_DEBUG_PRINTLN("[Modem] Tone %d: no CONNECT/> prompt (got: [%s])",
+                         i + 1, ppos > 0 ? promptBuf : "TIMEOUT");
+      // Drain UART and recover
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      while (MODEM_SERIAL.available()) MODEM_SERIAL.read();
+      continue;
+    }
+
+    MESH_DEBUG_PRINTLN("[Modem] Tone %d: got prompt, sending %d bytes...", i + 1, (int)tone.size);
+
+    // Send the binary WAV data from PROGMEM in chunks
+    const uint8_t* src = tone.data;
+    size_t remaining = tone.size;
+    const size_t CHUNK_SIZE = 256;
+
+    while (remaining > 0) {
+      size_t chunk = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+      uint8_t buf[CHUNK_SIZE];
+      memcpy_P(buf, src, chunk);
+      MODEM_SERIAL.write(buf, chunk);
+      src += chunk;
+      remaining -= chunk;
+      // Brief yield to avoid starving other tasks during large transfers
+      if (remaining > 0) vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    // Wait for OK response after transfer completes
+    if (waitResponse("OK", 15000, _atBuf, AT_BUF_SIZE)) {
+      MESH_DEBUG_PRINTLN("[Modem] Tone %d: %s transferred OK", i + 1, tone.filename);
+      successCount++;
+    } else {
+      MESH_DEBUG_PRINTLN("[Modem] Tone %d: %s transfer FAILED: %s", i + 1, tone.filename, _atBuf);
+      // Drain UART to recover modem state
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      while (MODEM_SERIAL.available()) MODEM_SERIAL.read();
+    }
+
+    // Delay between transfers to let modem flush to storage
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+
+  _tonesTransferred = (successCount > 0);
+  MESH_DEBUG_PRINTLN("[Modem] Notification tones: %d/%d transferred", successCount, MODEM_BUNDLED_TONE_COUNT);
+  return (successCount == MODEM_BUNDLED_TONE_COUNT);
+}
+
+bool ModemManager::playModemTone(const char* filename) {
+  // AT+CCMXPLAY="C:/filename.wav",0,0
+  // param 1: 0 = local speaker output
+  // param 2: 0 = no repeat
+  char cmd[64];
+  snprintf(cmd, sizeof(cmd), "AT+CCMXPLAY=\"C:/%s\",0,0", filename);
+  bool ok = sendAT(cmd, "OK", 2000);
+  if (ok) {
+    _notifTonePlaying = true;
+    _notifToneStartTime = millis();
+    MESH_DEBUG_PRINTLN("[Modem] Playing tone: %s", filename);
+  } else {
+    MESH_DEBUG_PRINTLN("[Modem] CCMXPLAY failed: %s", filename);
+  }
+  return ok;
+}
+
+bool ModemManager::stopModemTone() {
+  if (!_notifTonePlaying) return true;
+  bool ok = sendAT("AT+CCMXSTOP", "OK", 1000);
+  _notifTonePlaying = false;
+  MESH_DEBUG_PRINTLN("[Modem] Tone stop %s", ok ? "OK" : "FAIL");
+  return ok;
+}
+
+void ModemManager::handleNotifTone() {
+  // Auto-stop if playback has been running too long (safety net)
+  if (_notifTonePlaying &&
+      (millis() - _notifToneStartTime) > NOTIF_TONE_TIMEOUT_MS) {
+    MESH_DEBUG_PRINTLN("[Modem] Tone playback timeout -- stopping");
+    stopModemTone();
+  }
+
+  // Check for pending tone request from main loop
+  int8_t idx = _pendingToneIdx;
+  if (idx < 0) return;
+  _pendingToneIdx = -1;  // Consume the request
+
+  if (idx >= MODEM_BUNDLED_TONE_COUNT) return;
+
+  // Stop any currently playing tone before starting new one
+  if (_notifTonePlaying) {
+    stopModemTone();
+  }
+
+  // Don't play during active calls
+  if (isCallActive()) return;
+
+  playModemTone(modemBundledTones[idx].filename);
 }
 
 // ---------------------------------------------------------------------------
@@ -683,7 +920,7 @@ restart:
       vTaskDelay(pdMS_TO_TICKS(500));
     }
     if (!atOk) {
-      MESH_DEBUG_PRINTLN("[Modem] AT check failed — retry from power-on in 30s");
+      MESH_DEBUG_PRINTLN("[Modem] AT check failed -- retry from power-on in 30s");
       _state = ModemState::ERROR;
       vTaskDelay(pdMS_TO_TICKS(30000));
       goto restart;
@@ -705,7 +942,7 @@ restart:
     MESH_DEBUG_PRINTLN("[Modem] IMEI: %s", _imei);
   }
 
-  // IMSI (International Mobile Subscriber Identity) — for APN auto-detection
+  // IMSI (International Mobile Subscriber Identity) -- for APN auto-detection
   if (sendAT("AT+CIMI", "OK", 3000)) {
     char* p = _atBuf;
     while (*p && !isdigit(*p)) p++;
@@ -732,7 +969,7 @@ restart:
   sendAT("AT+CLIP=1", "OK");
 
   // Set audio output to loudspeaker mode (device speaker)
-  // 1=earpiece, 3=loudspeaker — use loudspeaker for T-Deck Pro
+  // 1=earpiece, 3=loudspeaker -- use loudspeaker for T-Deck Pro
   sendAT("AT+CSDVC=3", "OK", 1000);
 
   // Set initial call volume (mid-level)
@@ -805,7 +1042,7 @@ restart:
   // Initial signal query
   pollCSQ();
 
-  // Resolve APN (user config → network provisioned → IMSI auto-detect)
+  // Resolve APN (user config -> network provisioned -> IMSI auto-detect)
   resolveAPN();
 
   // Sync ESP32 system clock from modem network time
@@ -857,6 +1094,11 @@ restart:
   MESH_DEBUG_PRINTLN("[Modem] READY (CSQ=%d, operator=%s, APN=%s [%s], IMEI=%s)",
                      _csq, _operator, _apn[0] ? _apn : "(none)", _apnSource, _imei);
 
+  // ---- Phase 3b: Transfer notification tones to modem filesystem ----
+  // Done after READY so modem is fully initialised. Non-blocking for the
+  // mesh -- runs on Core 0 modem task.  Uses AT+FSDEL + AT+CFTRANRX.
+  transferTonesToModem();
+
   // ---- Phase 4: Main loop ----
   unsigned long lastCSQPoll = 0;
   unsigned long lastSMSPoll = 0;
@@ -867,16 +1109,21 @@ restart:
 
   while (true) {
     // ================================================================
-    // Step 1: Drain URCs — catch RING, NO CARRIER, +CLIP, etc.
+    // Step 1: Drain URCs -- catch RING, NO CARRIER, +CLIP, +AUDIOSTATE
     // This must run every iteration to avoid missing time-sensitive
     // events like incoming calls or call-ended notifications.
     // ================================================================
     drainURCs();
 
     // ================================================================
-    // Step 1b: Ringtone — play tone bursts while incoming call rings
+    // Step 1b: Ringtone -- play tone bursts while incoming call rings
     // ================================================================
     handleRingtone();
+
+    // ================================================================
+    // Step 1c: Notification tone -- play/stop requested tones
+    // ================================================================
+    handleNotifTone();
 
     // ================================================================
     // Step 2: Process call commands from main loop
@@ -888,7 +1135,7 @@ restart:
           if (_state == ModemState::READY) {
             doDialCall(callCmd.phone);
           } else {
-            MESH_DEBUG_PRINTLN("[Modem] Can't dial — state=%d", (int)_state);
+            MESH_DEBUG_PRINTLN("[Modem] Can't dial -- state=%d", (int)_state);
             queueCallEvent(CallEventType::DIAL_FAILED, callCmd.phone);
           }
           break;
@@ -928,7 +1175,7 @@ restart:
         _state == ModemState::DIALING &&
         millis() - lastCLCCPoll > CLCC_POLL_INTERVAL) {
       if (sendAT("AT+CLCC", "OK", 2000)) {
-        // +CLCC: 1,0,0,0,0,"number",129   — stat field:
+        // +CLCC: 1,0,0,0,0,"number",129   -- stat field:
         //   0=active, 1=held, 2=dialing, 3=alerting, 4=incoming, 5=waiting
         char* p = strstr(_atBuf, "+CLCC:");
         if (p) {
@@ -936,16 +1183,16 @@ restart:
           if (sscanf(p, "+CLCC: %d,%d,%d,%d,%d", &idx, &dir, &stat, &mode, &mpty) >= 3) {
             MESH_DEBUG_PRINTLN("[Modem] CLCC: stat=%d", stat);
             if (stat == 0) {
-              // Call is active — remote answered
+              // Call is active -- remote answered
               _state = ModemState::IN_CALL;
               _callStartTime = millis();
               queueCallEvent(CallEventType::CONNECTED, _callPhone);
               MESH_DEBUG_PRINTLN("[Modem] Call connected (detected via CLCC)");
             }
-            // stat 2=dialing, 3=alerting — still setting up, keep polling
+            // stat 2=dialing, 3=alerting -- still setting up, keep polling
           }
         } else {
-          // No +CLCC line in response — no active calls
+          // No +CLCC line in response -- no active calls
           // This shouldn't happen during DIALING unless the call ended
           // and we missed the URC. Check state and clean up.
           // (NO CARRIER URC should have been caught by drainURCs)
@@ -988,9 +1235,9 @@ restart:
 
     // Shorter delay during active call states for responsive URC handling
     if (isCallActive()) {
-      vTaskDelay(pdMS_TO_TICKS(100));  // 100ms — responsive to URCs
+      vTaskDelay(pdMS_TO_TICKS(100));  // 100ms -- responsive to URCs
     } else {
-      vTaskDelay(pdMS_TO_TICKS(500));  // 500ms — normal idle
+      vTaskDelay(pdMS_TO_TICKS(500));  // 500ms -- normal idle
     }
   }
 }
@@ -1108,7 +1355,7 @@ bool ModemManager::waitResponse(const char* expect, uint32_t timeout_ms,
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 
-  // Timeout — check one more time
+  // Timeout -- check one more time
   if (buf && expect && strstr(buf, expect)) return true;
   return false;
 }

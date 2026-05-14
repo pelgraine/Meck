@@ -6,7 +6,8 @@
 // Runs AT commands on a dedicated FreeRTOS task (Core 0, priority 1) to never
 // block the mesh radio loop.  Communicates with main loop via lock-free queues.
 //
-// Supports: SMS send/receive, voice call dial/answer/hangup/DTMF
+// Supports: SMS send/receive, voice call dial/answer/hangup/DTMF,
+//           notification tone playback via AT+CCMXPLAY
 //
 // Guard: HAS_4G_MODEM (defined only for the 4G build environment)
 // =============================================================================
@@ -23,6 +24,7 @@
 #include <freertos/semphr.h>
 #include "variant.h"
 #include "ApnDatabase.h"
+#include "ModemBundledSounds.h"
 
 // ---------------------------------------------------------------------------
 // Modem pins (from variant.h, always defined for reference)
@@ -49,6 +51,10 @@
 #define MODEM_RECV_QUEUE_SIZE  8
 #define MODEM_CALL_CMD_QUEUE_SIZE  4
 #define MODEM_CALL_EVT_QUEUE_SIZE  4
+
+// Notification tone auto-stop timeout (ms) -- stop playback after this
+// even if no +AUDIOSTATE URC received, to avoid stuck audio
+#define NOTIF_TONE_TIMEOUT_MS  4000
 
 // ---------------------------------------------------------------------------
 // Modem state machine
@@ -88,7 +94,7 @@ struct SMSIncoming {
 // Voice call structures
 // ---------------------------------------------------------------------------
 
-// Commands from main loop → modem task
+// Commands from main loop -> modem task
 enum class CallCmd : uint8_t {
   DIAL,           // Initiate outgoing call
   ANSWER,         // Answer incoming call
@@ -104,7 +110,7 @@ struct CallCommand {
   uint8_t volume;               // Used by SET_VOLUME (0-5)
 };
 
-// Events from modem task → main loop
+// Events from modem task -> main loop
 enum class CallEventType : uint8_t {
   INCOMING,       // Incoming call ringing (+CLIP parsed)
   CONNECTED,      // Call answered / outgoing connected
@@ -142,9 +148,23 @@ public:
   bool setCallVolume(uint8_t level);          // Set volume 0-5
   bool pollCallEvent(CallEvent& out);         // Poll from main loop
 
-  // Ringtone control — called from main loop
+  // Ringtone control -- called from main loop
   void setRingtoneEnabled(bool en) { _ringtoneEnabled = en; }
   bool isRingtoneEnabled() const { return _ringtoneEnabled; }
+
+  // --- Notification tone API ---
+  // Request playback of a bundled notification tone by index (0-based).
+  // Called from main loop (Core 1); playback happens on modem task (Core 0).
+  // Pass -1 or out-of-range to be ignored.
+  void requestNotifTone(int8_t toneIdx);
+
+  // Check if bundled tones have been transferred to modem filesystem
+  bool areTonesReady() const { return _tonesTransferred; }
+
+  // Look up a modem tone index by base filename (e.g. "Bell-01").
+  // Returns index into modemBundledTones[] or -1 if not found.
+  // Matches with or without .wav extension.
+  static int8_t findToneByName(const char* name);
 
   // --- State queries (lock-free reads) ---
   ModemState getState() const { return _state; }
@@ -177,7 +197,7 @@ public:
   // Save user-configured APN to SD card.
   static void saveAPNConfig(const char* apn);
 
-  // Pause/resume polling — used by web reader to avoid Core 0 contention
+  // Pause/resume polling -- used by web reader to avoid Core 0 contention
   // during WiFi TLS handshakes.  While paused, the task skips AT commands
   // (SMS poll, CSQ poll) but still drains URCs and handles call commands
   // so incoming calls aren't missed.
@@ -213,6 +233,12 @@ private:
   unsigned long _nextRingTone = 0;    // Next tone burst timestamp (modem task)
   bool _toneActive = false;           // Is a tone currently sounding
 
+  // Notification tone state
+  volatile int8_t _pendingToneIdx = -1;     // Set by main loop, consumed by modem task
+  volatile bool _tonesTransferred = false;  // True after all tones written to modem C:/
+  bool _notifTonePlaying = false;           // Modem is currently playing a notif tone
+  unsigned long _notifToneStartTime = 0;    // millis() when playback started (for timeout)
+
   TaskHandle_t _taskHandle = nullptr;
 
   // SMS queues
@@ -220,8 +246,8 @@ private:
   QueueHandle_t _recvQueue = nullptr;
 
   // Call queues
-  QueueHandle_t _callCmdQueue = nullptr;   // main loop → modem task
-  QueueHandle_t _callEvtQueue = nullptr;   // modem task → main loop
+  QueueHandle_t _callCmdQueue = nullptr;   // main loop -> modem task
+  QueueHandle_t _callEvtQueue = nullptr;   // modem task -> main loop
 
   SemaphoreHandle_t _uartMutex = nullptr;
 
@@ -253,6 +279,12 @@ private:
   bool doSetVolume(uint8_t level);
   void queueCallEvent(CallEventType type, const char* phone = nullptr, uint32_t duration = 0);
   void handleRingtone();  // Play tone bursts while incoming call rings
+
+  // Notification tone transfer and playback (called from modem task)
+  bool transferTonesToModem();    // Transfer embedded WAVs to modem C:/ filesystem
+  bool playModemTone(const char* filename);  // AT+CCMXPLAY
+  bool stopModemTone();           // AT+CCMXSTOP
+  void handleNotifTone();         // Poll _pendingToneIdx, play/stop as needed
 
   // FreeRTOS task
   static void taskEntry(void* param);

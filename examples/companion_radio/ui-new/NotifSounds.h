@@ -3,18 +3,22 @@
 // =============================================================================
 // NotifSounds.h -- Per-channel notification sound configuration
 //
-// Stores a custom MP3 filename per channel for notification tones.
+// Stores a custom sound filename per channel for notification tones.
 // Config persisted to /meshcore/notif_sounds.cfg on SD card.
-// Sound files live in /alarms/ (shared with alarm clock sounds).
 //
-// Playback is request-based: UITask calls requestPlay() when a message
-// arrives on a channel with a custom tone.  main.cpp loop() polls
-// hasPendingPlay() and drives the Audio* object.
+// Audio variant: Sound files are MP3s in /alarms/ (shared with alarm clock).
+//   Playback is request-based: UITask calls requestPlay() when a message
+//   arrives on a channel with a custom tone.  main.cpp loop() polls
+//   hasPendingPlay() and drives the Audio* object.
 //
-// Guard: MECK_AUDIO_VARIANT (requires speaker hardware)
+// 4G variant: Sound files are 8kHz mono WAVs embedded in firmware
+//   (ModemBundledSounds.h) and transferred to modem C:/ filesystem on boot.
+//   UITask calls modemManager.requestNotifTone() directly.
+//
+// Guard: MECK_AUDIO_VARIANT || HAS_4G_MODEM
 // =============================================================================
 
-#ifdef MECK_AUDIO_VARIANT
+#if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
 
 #ifndef NOTIF_SOUNDS_H
 #define NOTIF_SOUNDS_H
@@ -24,6 +28,10 @@
 #include <vector>
 #include <algorithm>
 #include "variant.h"
+
+#ifdef HAS_4G_MODEM
+#include "ModemBundledSounds.h"
+#endif
 
 #ifndef MAX_GROUP_CHANNELS
 #define MAX_GROUP_CHANNELS 20
@@ -48,9 +56,12 @@ struct __attribute__((packed)) NotifSoundCfgHeader {
 
 class NotifSounds {
 public:
-  NotifSounds() : _pendingPlay(false) {
+  NotifSounds() {
     memset(_sounds, 0, sizeof(_sounds));
+#ifdef MECK_AUDIO_VARIANT
+    _pendingPlay = false;
     _pendingFile[0] = '\0';
+#endif
   }
 
   void begin() {
@@ -89,10 +100,20 @@ public:
     setSoundForChannel(channel_idx, nullptr);
   }
 
-  // --- Sound file scanning (reuses /alarms/ folder) ---
+  // --- Sound file scanning ---
 
   void scanSoundFiles() {
     _soundFiles.clear();
+
+#ifdef HAS_4G_MODEM
+    // 4G variant: available tones are embedded in firmware
+    for (int i = 0; i < MODEM_BUNDLED_TONE_COUNT; i++) {
+      _soundFiles.push_back(String(modemBundledTones[i].filename));
+    }
+    Serial.printf("NotifSounds: %d modem tones available\n", (int)_soundFiles.size());
+
+#else  // MECK_AUDIO_VARIANT
+    // Audio variant: scan SD card /alarms/ folder for MP3 files
     if (!SD.exists(ALARMS_FOLDER)) {
       SD.mkdir(ALARMS_FOLDER);
     }
@@ -119,14 +140,27 @@ public:
     digitalWrite(SDCARD_CS, HIGH);
     std::sort(_soundFiles.begin(), _soundFiles.end());
     Serial.printf("NotifSounds: Found %d sound files\n", (int)_soundFiles.size());
+#endif
   }
 
   int getSoundFileCount() const { return (int)_soundFiles.size(); }
   const String& getSoundFile(int idx) const { return _soundFiles[idx]; }
   const std::vector<String>& getSoundFiles() const { return _soundFiles; }
 
-  // --- Pending playback request ---
+#ifdef HAS_4G_MODEM
+  // Get the display label for a tone file (4G variant only).
+  // Returns the human-readable label from ModemBundledSounds.
+  const char* getToneLabel(int idx) const {
+    if (idx < 0 || idx >= MODEM_BUNDLED_TONE_COUNT) return "";
+    return modemBundledTones[idx].label;
+  }
+#endif
 
+  // --- Pending playback request (audio variant only) ---
+  // The 4G variant calls modemManager.requestNotifTone() directly
+  // from UITask; no pending mechanism needed.
+
+#ifdef MECK_AUDIO_VARIANT
   void requestPlay(const char* fullPath) {
     strncpy(_pendingFile, fullPath, sizeof(_pendingFile) - 1);
     _pendingFile[sizeof(_pendingFile) - 1] = '\0';
@@ -141,13 +175,16 @@ public:
     _pendingPlay = false;
     _pendingFile[0] = '\0';
   }
+#endif
 
 private:
   char _sounds[NOTIF_SOUND_SLOTS][NOTIF_SOUND_NAME_MAX];
   std::vector<String> _soundFiles;
 
+#ifdef MECK_AUDIO_VARIANT
   bool _pendingPlay;
   char _pendingFile[48];
+#endif
 
   void loadConfig() {
     memset(_sounds, 0, sizeof(_sounds));
@@ -220,4 +257,4 @@ private:
 extern NotifSounds notifSounds;
 
 #endif // NOTIF_SOUNDS_H
-#endif // MECK_AUDIO_VARIANT
+#endif // MECK_AUDIO_VARIANT || HAS_4G_MODEM
