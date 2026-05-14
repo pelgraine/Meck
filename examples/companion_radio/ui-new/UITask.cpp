@@ -9,6 +9,8 @@
 #include "DiscoveryScreen.h"
 #include "LastHeardScreen.h"
 #include "Tracescreen.h"
+#include "GamesMenuScreen.h"
+#include "SnakeScreen.h"
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -536,20 +538,29 @@ public:
           }
         }
 
-        // Third row: single centred Trace tile (column 1 position only)
+        // Third row: Trace (col 0) + Games (col 1)
         {
           int row3y = gridY + 2 * (tileH + gapY);
-          int col1x = gridX + (tileW + gapX);
 
+          // Trace tile (column 0)
+          int col0x = gridX;
           display.setColor(DisplayDriver::LIGHT);
-          display.drawRect(col1x, row3y, tileW, tileH);
-
-          int iconX = col1x + (tileW - HOME_ICON_W) / 2;
+          display.drawRect(col0x, row3y, tileW, tileH);
+          int iconX = col0x + (tileW - HOME_ICON_W) / 2;
           int iconY = row3y + 2;
           display.drawXbm(iconX, iconY, icon_trace, HOME_ICON_W, HOME_ICON_H);
-
           display.setTextSize(_node_prefs->smallTextSize());
-          display.drawTextCentered(col1x + tileW / 2, row3y + 15, "Trace");
+          display.drawTextCentered(col0x + tileW / 2, row3y + 15, "Trace");
+
+          // Games tile (column 1)
+          int col1x = gridX + (tileW + gapX);
+          display.setColor(DisplayDriver::LIGHT);
+          display.drawRect(col1x, row3y, tileW, tileH);
+          iconX = col1x + (tileW - HOME_ICON_W) / 2;
+          iconY = row3y + 2;
+          display.drawXbm(iconX, iconY, icon_gamepad, HOME_ICON_W, HOME_ICON_H);
+          display.setTextSize(_node_prefs->smallTextSize());
+          display.drawTextCentered(col1x + tileW / 2, row3y + 15, "Games");
         }
 
         // Nav hint at bottom of screen
@@ -632,7 +643,8 @@ public:
 #endif
         y += menuLH;
         display.setColor(DisplayDriver::YELLOW);
-        display.drawTextCentered(display.width() / 2, y, "[R] Trace");
+        display.setCursor(col1, y); display.print("[R] Trace");
+        display.setCursor(col2, y); display.print("[J] Games");
         display.setColor(DisplayDriver::LIGHT);
         y += menuLH;
         y += 2;
@@ -670,7 +682,7 @@ public:
 #endif
         y += 10;
         display.setColor(DisplayDriver::YELLOW);
-        display.drawTextCentered(display.width() / 2, y, "[R] Trace");
+        display.drawTextCentered(display.width() / 2, y, "[R] Trace      [J] Games     ");
         display.setColor(DisplayDriver::LIGHT);
         y += 14;
       }
@@ -1389,6 +1401,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
   trace_screen = new TraceScreen(this, &rtc_clock);
+  games_menu_screen = new GamesMenuScreen(this);
+  snake_screen = new SnakeScreen(this, &rtc_clock);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -3102,6 +3116,28 @@ void UITask::gotoTraceScreen() {
   TraceScreen* ts = (TraceScreen*)trace_screen;
   ts->enter(the_mesh.getNodePrefs()->path_hash_mode);
   setCurrScreen(trace_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoGamesMenu() {
+  GamesMenuScreen* gm = (GamesMenuScreen*)games_menu_screen;
+  gm->enter();
+  setCurrScreen(games_menu_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoSnakeScreen() {
+  SnakeScreen* ss = (SnakeScreen*)snake_screen;
+  ss->enter();
+  setCurrScreen(snake_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

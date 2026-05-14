@@ -62,7 +62,7 @@ class UITask : public AbstractUITask {
   unsigned long _alert_expiry;
   bool _hintActive = false;          // Boot navigation hint overlay
   unsigned long _hintExpiry = 0;     // Auto-dismiss time for hint
-  bool _pendingBootHint = false;     // Deferred hint — show after splash screen
+  bool _pendingBootHint = false;     // Deferred hint -- show after splash screen
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
   uint8_t _low_batt_count = 0;  // Consecutive low-voltage readings for debounce
@@ -100,6 +100,8 @@ class UITask : public AbstractUITask {
   UIScreen* discovery_screen;  // Node discovery scan screen
   UIScreen* last_heard_screen; // Last heard passive advert list
   UIScreen* trace_screen;      // Trace path screen (standalone trace tool)
+  UIScreen* games_menu_screen; // Games launcher menu
+  UIScreen* snake_screen;      // Snake game screen
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -119,7 +121,7 @@ class UITask : public AbstractUITask {
   UIScreen* _screenBeforeVKB = nullptr;
   unsigned long _vkbOpenedAt = 0;
 
-  // Powersaving: light sleep when locked + idle (standalone only — no BLE/WiFi)
+  // Powersaving: light sleep when locked + idle (standalone only -- no BLE/WiFi)
   // Wakes on LoRa packet (DIO1), boot button (GPIO0), or 30-min timer
 #if !defined(BLE_PIN_CODE) && !defined(MECK_WIFI_COMPANION)
   unsigned long _psLastActive = 0;       // millis() at last wake or lock entry
@@ -202,6 +204,8 @@ public:
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
   void gotoLastHeardScreen();              // Navigate to last heard passive list
   void gotoTraceScreen();                  // Navigate to trace path screen
+  void gotoGamesMenu();                    // Navigate to games launcher menu
+  void gotoSnakeScreen();                  // Navigate to snake game
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -234,7 +238,7 @@ public:
   int  getDMUnreadCount(int contactIdx) const;
   void clearDMUnread(int contactIdx);
 
-  // Flag: suppress room→conversation redirect on next login (L key admin access)
+  // Flag: suppress room->conversation redirect on next login (L key admin access)
   bool _skipRoomRedirect = false;
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
@@ -259,6 +263,8 @@ public:
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
   bool isOnTraceScreen() const { return curr == trace_screen; }
+  bool isOnGamesMenu() const { return curr == games_menu_screen; }
+  bool isOnSnakeScreen() const { return curr == snake_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
@@ -344,6 +350,8 @@ public:
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
   UIScreen* getLastHeardScreen() const { return last_heard_screen; }
   UIScreen* getTraceScreen() const { return trace_screen; }
+  UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
+  UIScreen* getSnakeScreen() const { return snake_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }

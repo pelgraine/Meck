@@ -1,6 +1,6 @@
 #pragma once
 // =============================================================================
-// HomeIcons — 12x12 icon sprites for T5S3 home screen tiles
+// HomeIcons -- 12x12 icon sprites for T5S3 home screen tiles
 // MSB-first, 2 bytes per row (same format as emoji sprites)
 // =============================================================================
 
@@ -48,7 +48,7 @@ static const uint8_t icon_search[] PROGMEM = {
   0x3C,0x00, 0x03,0x00, 0x01,0x80, 0x00,0xC0, 0x00,0x40, 0x00,0x00,
 };
 
-// ⏰ Alarm Clock (AlarmScreen) — 12x12 home tile icon
+// ⏰ Alarm Clock (AlarmScreen) -- 12x12 home tile icon
 static const uint8_t icon_alarm[] PROGMEM = {
   0x40,0x40, 0x9E,0x20, 0x20,0x80, 0x44,0x40, 0x44,0x40, 0x46,0x40,
   0x40,0x40, 0x20,0x80, 0x1F,0x00, 0x00,0x00, 0x20,0x40, 0x40,0x20,
@@ -60,7 +60,22 @@ static const uint8_t icon_trace[] PROGMEM = {
   0xFF,0xF0, 0x00,0xE0, 0x00,0xC0, 0x00,0x80, 0x00,0x00, 0x00,0x00,
 };
 
-// 🔔 Bell — 7x8 status bar indicator (alarm enabled)
+// 🎮 Gamepad (Games)
+//   ..########..
+//   .#........#.
+//   .#..#..##.#.
+//   .#.###....#.
+//   .#..#..##.#.
+//   .#........#.
+//   ..##....##..
+//   ...#....#...
+//   ...######...
+static const uint8_t icon_gamepad[] PROGMEM = {
+  0x00,0x00, 0x3F,0xC0, 0x40,0x20, 0x49,0xA0, 0x5C,0x20, 0x49,0xA0,
+  0x40,0x20, 0x30,0xC0, 0x10,0x80, 0x1F,0x80, 0x00,0x00, 0x00,0x00,
+};
+
+// 🔔 Bell -- 7x8 status bar indicator (alarm enabled)
 // MSB-first, 1 byte per row
 #define BELL_ICON_W 7
 #define BELL_ICON_H 8

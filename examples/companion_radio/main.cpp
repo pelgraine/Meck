@@ -29,6 +29,8 @@
   #include "LastHeardScreen.h"
   #include "PathEditorScreen.h"
   #include "Tracescreen.h"
+  #include "GamesMenuScreen.h"
+  #include "SnakeScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -700,6 +702,8 @@
   #include "LastHeardScreen.h"
   #include "PathEditorScreen.h"
   #include "Tracescreen.h"   
+  #include "GamesMenuScreen.h"
+  #include "SnakeScreen.h"
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -1210,6 +1214,21 @@ static void lastHeardToggleContact() {
       return 0;
     }
 
+    // Games menu: tap to select game entry
+    if (ui_task.isOnGamesMenu()) {
+      GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
+      if (gm) {
+        int result = gm->selectRowAtVY(vy);
+        if (result == 2) return '\r';  // Tapped current selection -- launch
+      }
+      return 0;  // Cursor moved or miss -- just refresh
+    }
+
+    // Snake screen: tap = Enter (start / restart)
+    if (ui_task.isOnSnakeScreen()) {
+      return '\r';
+    }
+
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
       const int tileW = 40, tileH = 22, gapX = 1, gapY = 1;
@@ -1235,8 +1254,9 @@ static void lastHeardToggleContact() {
 #else
         if (row == 1 && col == 2) { ui_task.gotoDiscoveryScreen(); return 0; }
 #endif
-        // Third row: only centre tile (col 1) is real; col 0 and col 2 fall through to page-flip
-        if (row == 2 && col == 1) { ui_task.gotoTraceScreen(); return 0; }
+        // Third row: Trace (col 0) + Games (col 1)
+        if (row == 2 && col == 0) { ui_task.gotoTraceScreen(); return 0; }
+        if (row == 2 && col == 1) { ui_task.gotoGamesMenu(); return 0; }
       }
       // Tap outside tiles — left half backward, right half forward
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
@@ -1473,6 +1493,23 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
 
+    // Snake screen: swipes control direction
+    if (ui_task.isOnSnakeScreen()) {
+      if (horizontal) {
+        return (dx < 0) ? 'a' : 'd';
+      } else {
+        return (dy < 0) ? 'w' : 's';
+      }
+    }
+
+    // Games menu: vertical swipe scrolls list
+    if (ui_task.isOnGamesMenu()) {
+      if (!horizontal) {
+        return (dy > 0) ? 's' : 'w';
+      }
+      return 0;
+    }
+
     // Reader (reading mode): swipe left/right for page turn
     if (ui_task.isOnTextReader()) {
       TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
@@ -1544,6 +1581,16 @@ static void lastHeardToggleContact() {
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
+
+    // Snake screen: long press exits to games menu
+    if (ui_task.isOnSnakeScreen()) {
+      return 'q';
+    }
+
+    // Games menu: long press exits to home
+    if (ui_task.isOnGamesMenu()) {
+      return 'q';
+    }
 
     // Home screen: long press = activate current page action
     // (BLE toggle, send advert, hibernate, GPS toggle, etc.)
@@ -3378,6 +3425,25 @@ void loop() {
                 ui_task.gotoHomeScreen();
               }
             }
+            // Snake screen: check if Exit was triggered
+            if (ui_task.isOnSnakeScreen()) {
+              SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+              if (ss && ss->wantsExit()) {
+                ui_task.gotoGamesMenu();
+              }
+            }
+            // Games menu: check if game launch was triggered
+            if (ui_task.isOnGamesMenu()) {
+              GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
+              if (gm && gm->wantsLaunch()) {
+                GameID sel = gm->selectedGame();
+                gm->clearFlags();
+                switch (sel) {
+                  case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                  default: break;
+                }
+              }
+            }
             // Channel picker: check if long-press Enter was handled (wantsExit)
             if (ui_task.isOnChannelPickerScreen()) {
               ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
@@ -3409,6 +3475,25 @@ void loop() {
               TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
               if (ts && ts->wantsExit()) {
                 ui_task.gotoHomeScreen();
+              }
+            }
+            // Snake screen: check if Exit was triggered
+            if (ui_task.isOnSnakeScreen()) {
+              SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+              if (ss && ss->wantsExit()) {
+                ui_task.gotoGamesMenu();
+              }
+            }
+            // Games menu: check if game launch was triggered
+            if (ui_task.isOnGamesMenu()) {
+              GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
+              if (gm && gm->wantsLaunch()) {
+                GameID sel = gm->selectedGame();
+                gm->clearFlags();
+                switch (sel) {
+                  case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                  default: break;
+                }
               }
             }
             // Channel picker: check if Enter/Q was handled (wantsExit)
@@ -3554,6 +3639,7 @@ void loop() {
               case 'f': ui_task.gotoDiscoveryScreen(); break;
               case 'h': ui_task.gotoLastHeardScreen(); break;
               case 'r': ui_task.gotoTraceScreen(); break;
+              case 'j': ui_task.gotoGamesMenu(); break;
               case (char)0xF3: ui_task.injectKey(KEY_LEFT);  break;  // Left arrow → prev page
               case (char)0xF4: ui_task.injectKey(KEY_RIGHT); break;  // Right arrow → next page
 #ifdef MECK_WEB_READER
@@ -3604,7 +3690,15 @@ void loop() {
           if (!handled) {
             // ESC or Q → back navigation
             if (ckb == 0x1B || ckb == 'q') {
-              if (ui_task.isOnChannelPickerScreen()) {
+              if (ui_task.isOnSnakeScreen()) {
+                ui_task.injectKey('q');
+                SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+                if (ss && ss->wantsExit()) {
+                  ui_task.gotoGamesMenu();
+                }
+              } else if (ui_task.isOnGamesMenu()) {
+                ui_task.gotoHomeScreen();
+              } else if (ui_task.isOnChannelPickerScreen()) {
                 ui_task.gotoHomeScreen();
               } else if (ui_task.isOnChannelScreen()) {
                 ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
@@ -3758,6 +3852,25 @@ void loop() {
                 TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
                 if (ts && ts->wantsExit()) {
                   ui_task.gotoHomeScreen();
+                }
+              } else if (ui_task.isOnGamesMenu()) {
+                // Games menu: Enter launches selected game
+                ui_task.injectKey('\r');
+                GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
+                if (gm && gm->wantsLaunch()) {
+                  GameID sel = gm->selectedGame();
+                  gm->clearFlags();
+                  switch (sel) {
+                    case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                    default: break;
+                  }
+                }
+              } else if (ui_task.isOnSnakeScreen()) {
+                // Snake: Enter starts/restarts game
+                ui_task.injectKey('\r');
+                SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+                if (ss && ss->wantsExit()) {
+                  ui_task.gotoGamesMenu();
                 }
               } else if (ui_task.isOnChannelPickerScreen()) {
                 // Channel picker: Enter selects channel
@@ -4865,6 +4978,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4883,6 +4997,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4905,6 +5020,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4923,6 +5039,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4945,6 +5062,7 @@ void handleKeyboardInput() {
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnSnakeScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -4963,6 +5081,7 @@ void handleKeyboardInput() {
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
+          || ui_task.isOnSnakeScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -4990,6 +5109,25 @@ void handleKeyboardInput() {
         if (ts && ts->wantsExit()) {
           Serial.println("TraceScreen: Exit -- returning to home");
           ui_task.gotoHomeScreen();
+        }
+      } else if (ui_task.isOnGamesMenu()) {
+        ui_task.injectKey('\r');
+        GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
+        if (gm && gm->wantsLaunch()) {
+          GameID sel = gm->selectedGame();
+          gm->clearFlags();
+          switch (sel) {
+            case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+            // case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+            // case GAME_2048: ui_task.goto2048Screen(); break;
+            default: break;
+          }
+        }
+      } else if (ui_task.isOnSnakeScreen()) {
+        ui_task.injectKey('\r');
+        SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+        if (ss && ss->wantsExit()) {
+          ui_task.gotoGamesMenu();
         }
       } else if (ui_task.isOnChannelPickerScreen()) {
         ui_task.injectKey('\r');  // Picker handles Enter: selects channel + sets wantsExit
@@ -5188,6 +5326,14 @@ void handleKeyboardInput() {
       }
       break;
 
+    case 'j':
+      // Open games menu from home screen
+      if (ui_task.isOnHomeScreen()) {
+        Serial.println("Opening games menu");
+        ui_task.gotoGamesMenu();
+      }
+      break;
+
     case 'l':
       // L = Login/Admin — from DM conversation, open repeater admin with auto-login
       if (ui_task.isOnChannelScreen()) {
@@ -5265,6 +5411,22 @@ void handleKeyboardInput() {
           Serial.println("Nav: Trace -> Home");
           ui_task.gotoHomeScreen();
         }
+        break;
+      }
+      // Snake screen: Q goes back to games menu
+      if (ui_task.isOnSnakeScreen()) {
+        ui_task.injectKey('q');
+        SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
+        if (ss && ss->wantsExit()) {
+          Serial.println("Nav: Snake -> Games Menu");
+          ui_task.gotoGamesMenu();
+        }
+        break;
+      }
+      // Games menu: Q goes back to home
+      if (ui_task.isOnGamesMenu()) {
+        Serial.println("Nav: Games Menu -> Home");
+        ui_task.gotoHomeScreen();
         break;
       }
       // Alarm screen: Q/backspace routing depends on sub-mode
