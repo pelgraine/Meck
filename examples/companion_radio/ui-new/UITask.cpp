@@ -11,6 +11,7 @@
 #include "Tracescreen.h"
 #include "GamesMenuScreen.h"
 #include "SnakeScreen.h"
+#include "MinesweeperScreen.h"
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -1403,6 +1404,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   trace_screen = new TraceScreen(this, &rtc_clock);
   games_menu_screen = new GamesMenuScreen(this);
   snake_screen = new SnakeScreen(this, &rtc_clock);
+  minesweeper_screen = new MinesweeperScreen(this);
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -3138,6 +3140,17 @@ void UITask::gotoSnakeScreen() {
   SnakeScreen* ss = (SnakeScreen*)snake_screen;
   ss->enter();
   setCurrScreen(snake_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoMinesweeperScreen() {
+  MinesweeperScreen* ms = (MinesweeperScreen*)minesweeper_screen;
+  ms->enter();
+  setCurrScreen(minesweeper_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

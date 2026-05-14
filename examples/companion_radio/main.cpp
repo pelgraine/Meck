@@ -31,6 +31,7 @@
   #include "Tracescreen.h"
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
+  #include "MinesweeperScreen.h"
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -704,6 +705,7 @@
   #include "Tracescreen.h"   
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
+  #include "MinesweeperScreen.h"
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -1229,6 +1231,11 @@ static void lastHeardToggleContact() {
       return '\r';
     }
 
+    // Minesweeper screen: tap = Enter (reveal cell / start / restart)
+    if (ui_task.isOnMinesweeperScreen()) {
+      return '\r';
+    }
+
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
       const int tileW = 40, tileH = 22, gapX = 1, gapY = 1;
@@ -1502,6 +1509,15 @@ static void lastHeardToggleContact() {
       }
     }
 
+    // Minesweeper screen: swipes move cursor
+    if (ui_task.isOnMinesweeperScreen()) {
+      if (horizontal) {
+        return (dx < 0) ? 'a' : 'd';
+      } else {
+        return (dy < 0) ? 'w' : 's';
+      }
+    }
+
     // Games menu: vertical swipe scrolls list
     if (ui_task.isOnGamesMenu()) {
       if (!horizontal) {
@@ -1585,6 +1601,11 @@ static void lastHeardToggleContact() {
     // Snake screen: long press exits to games menu
     if (ui_task.isOnSnakeScreen()) {
       return 'q';
+    }
+
+    // Minesweeper screen: long press toggles flag on cursor cell
+    if (ui_task.isOnMinesweeperScreen()) {
+      return 'f';
     }
 
     // Games menu: long press exits to home
@@ -3432,6 +3453,13 @@ void loop() {
                 ui_task.gotoGamesMenu();
               }
             }
+            // Minesweeper screen: check if Exit was triggered
+            if (ui_task.isOnMinesweeperScreen()) {
+              MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+              if (ms && ms->wantsExit()) {
+                ui_task.gotoGamesMenu();
+              }
+            }
             // Games menu: check if game launch was triggered
             if (ui_task.isOnGamesMenu()) {
               GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
@@ -3440,6 +3468,7 @@ void loop() {
                 gm->clearFlags();
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                  case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
                   default: break;
                 }
               }
@@ -3484,6 +3513,13 @@ void loop() {
                 ui_task.gotoGamesMenu();
               }
             }
+            // Minesweeper screen: check if Exit was triggered
+            if (ui_task.isOnMinesweeperScreen()) {
+              MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+              if (ms && ms->wantsExit()) {
+                ui_task.gotoGamesMenu();
+              }
+            }
             // Games menu: check if game launch was triggered
             if (ui_task.isOnGamesMenu()) {
               GamesMenuScreen* gm = (GamesMenuScreen*)ui_task.getGamesMenuScreen();
@@ -3492,6 +3528,7 @@ void loop() {
                 gm->clearFlags();
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                  case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
                   default: break;
                 }
               }
@@ -3696,6 +3733,12 @@ void loop() {
                 if (ss && ss->wantsExit()) {
                   ui_task.gotoGamesMenu();
                 }
+              } else if (ui_task.isOnMinesweeperScreen()) {
+                ui_task.injectKey('q');
+                MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+                if (ms && ms->wantsExit()) {
+                  ui_task.gotoGamesMenu();
+                }
               } else if (ui_task.isOnGamesMenu()) {
                 ui_task.gotoHomeScreen();
               } else if (ui_task.isOnChannelPickerScreen()) {
@@ -3862,6 +3905,7 @@ void loop() {
                   gm->clearFlags();
                   switch (sel) {
                     case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
+                    case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
                     default: break;
                   }
                 }
@@ -3870,6 +3914,13 @@ void loop() {
                 ui_task.injectKey('\r');
                 SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
                 if (ss && ss->wantsExit()) {
+                  ui_task.gotoGamesMenu();
+                }
+              } else if (ui_task.isOnMinesweeperScreen()) {
+                // Minesweeper: Enter reveals cell or starts/restarts
+                ui_task.injectKey('\r');
+                MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+                if (ms && ms->wantsExit()) {
                   ui_task.gotoGamesMenu();
                 }
               } else if (ui_task.isOnChannelPickerScreen()) {
@@ -4978,7 +5029,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -4997,7 +5048,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5020,7 +5071,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5039,7 +5090,7 @@ void handleKeyboardInput() {
           || ui_task.isOnDiscoveryScreen() || ui_task.isOnLastHeardScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen()
+          || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5062,7 +5113,7 @@ void handleKeyboardInput() {
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnSnakeScreen()
+          || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -5081,7 +5132,7 @@ void handleKeyboardInput() {
       } else if (ui_task.isOnContactsScreen() || ui_task.isOnMapScreen()
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
-          || ui_task.isOnSnakeScreen()
+          || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
@@ -5118,7 +5169,7 @@ void handleKeyboardInput() {
           gm->clearFlags();
           switch (sel) {
             case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
-            // case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+            case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
             // case GAME_2048: ui_task.goto2048Screen(); break;
             default: break;
           }
@@ -5127,6 +5178,12 @@ void handleKeyboardInput() {
         ui_task.injectKey('\r');
         SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
         if (ss && ss->wantsExit()) {
+          ui_task.gotoGamesMenu();
+        }
+      } else if (ui_task.isOnMinesweeperScreen()) {
+        ui_task.injectKey('\r');
+        MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+        if (ms && ms->wantsExit()) {
           ui_task.gotoGamesMenu();
         }
       } else if (ui_task.isOnChannelPickerScreen()) {
@@ -5308,8 +5365,12 @@ void handleKeyboardInput() {
       break;
 
     case 'f':
+      // Minesweeper: F toggles flag on cursor cell
+      if (ui_task.isOnMinesweeperScreen()) {
+        ui_task.injectKey('f');
+      }
       // Start discovery scan from home/contacts screen, or rescan on discovery screen
-      if (ui_task.isOnContactsScreen() || ui_task.isOnHomeScreen()) {
+      else if (ui_task.isOnContactsScreen() || ui_task.isOnHomeScreen()) {
         Serial.println("Starting discovery scan...");
         the_mesh.startDiscovery();
         ui_task.gotoDiscoveryScreen();
@@ -5419,6 +5480,16 @@ void handleKeyboardInput() {
         SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
         if (ss && ss->wantsExit()) {
           Serial.println("Nav: Snake -> Games Menu");
+          ui_task.gotoGamesMenu();
+        }
+        break;
+      }
+      // Minesweeper screen: Q goes back to games menu
+      if (ui_task.isOnMinesweeperScreen()) {
+        ui_task.injectKey('q');
+        MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
+        if (ms && ms->wantsExit()) {
+          Serial.println("Nav: Minesweeper -> Games Menu");
           ui_task.gotoGamesMenu();
         }
         break;

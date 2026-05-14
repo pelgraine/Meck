@@ -102,6 +102,7 @@ class UITask : public AbstractUITask {
   UIScreen* trace_screen;      // Trace path screen (standalone trace tool)
   UIScreen* games_menu_screen; // Games launcher menu
   UIScreen* snake_screen;      // Snake game screen
+  UIScreen* minesweeper_screen; // Minesweeper game screen
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -206,6 +207,7 @@ public:
   void gotoTraceScreen();                  // Navigate to trace path screen
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
+  void gotoMinesweeperScreen();            // Navigate to minesweeper game
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -265,6 +267,7 @@ public:
   bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
+  bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
@@ -352,6 +355,7 @@ public:
   UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
+  UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }

@@ -18,7 +18,7 @@ class UITask;
 enum GameID {
   GAME_NONE = 0,
   GAME_SNAKE,
-  // GAME_MINESWEEPER,
+  GAME_MINESWEEPER,
   // GAME_2048,
   GAME_COUNT   // Must be last -- used for array sizing
 };
@@ -38,12 +38,12 @@ private:
     const char* description;
   };
 
-  static constexpr int NUM_GAMES = 1;  // Increment as games are added
+  static constexpr int NUM_GAMES = 2;  // Increment as games are added
 
   static const GameEntry* getGames() {
     static const GameEntry games[NUM_GAMES] = {
       { GAME_SNAKE,       "Snake",       "Classic Nokia-style" },
-      // { GAME_MINESWEEPER, "Minesweeper", "Tap to reveal" },
+      { GAME_MINESWEEPER, "Minesweeper", "Find the mines" },
       // { GAME_2048,        "2048",        "Slide and merge" },
     };
     return games;
@@ -110,11 +110,7 @@ public:
 
     // --- Game list ---
     int y = 18;
-#if defined(LilyGo_T5S3_EPaper_Pro)
     int lineH = 16;
-#else
-    int lineH = 20;
-#endif
 
     for (int i = 0; i < NUM_GAMES; i++) {
       bool selected = (i == _cursor);
@@ -129,26 +125,10 @@ public:
       }
 
 #if defined(LilyGo_T5S3_EPaper_Pro)
-      // T5S3: name centred, description below
-      display.drawTextCentered(display.width() / 2, y + 1, getGames()[i].name);
-      if (!selected) display.setColor(DisplayDriver::GREEN);
-      // Description on next line at smaller size
-      display.setTextSize(0);
-      display.drawTextCentered(display.width() / 2, y + 9, getGames()[i].description);
-      display.setTextSize(1);
-      lineH = 20;  // Accommodate two-line entries
+      display.drawTextCentered(display.width() / 2, y + 2, getGames()[i].name);
 #else
-      // T-Deck Pro: name + description on one line
-      char buf[48];
-      snprintf(buf, sizeof(buf), "%s", getGames()[i].name);
       display.setCursor(6, y + 2);
-      display.print(buf);
-
-      // Description in green (or dark if highlighted)
-      if (!selected) display.setColor(DisplayDriver::GREEN);
-      int nameW = display.getTextWidth(buf);
-      display.setCursor(6 + nameW + 8, y + 2);
-      display.print(getGames()[i].description);
+      display.print(getGames()[i].name);
 #endif
 
       y += lineH;
@@ -174,11 +154,7 @@ public:
   // --- T5S3 touch: tap to select game entry ---
   int selectRowAtVY(int vy) {
     int y = 18;
-#if defined(LilyGo_T5S3_EPaper_Pro)
-    int lineH = 20;
-#else
-    int lineH = 20;
-#endif
+    int lineH = 16;
     if (vy < y) return 0;  // Above list
     int row = (vy - y) / lineH;
     if (row >= NUM_GAMES) return 0;  // Below list
