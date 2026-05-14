@@ -30,6 +30,10 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Roomservers](#roomservers)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Trace Route Screen (v1.9+)](#trace-route-screen-v19)
+  - [Delete Message History (v1.10+)](#delete-message-history-v110)
+  - [Per-Channel Notification Preferences (v1.10+)](#per-channel-notification-preferences-v110)
+  - [Custom Notification Tones (v1.10+)](#custom-notification-tones-v110)
+  - [Games (v1.10+)](#games-v110)
   - [Settings Screen](#settings-screen)
   - [Font Styles](#font-styles)
   - [Compose Mode](#compose-mode)
@@ -244,7 +248,8 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | K | Open alarm clock (audio variant only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
-| R | Open trace route screen (v1.9+) — see [Trace Route Screen](#trace-route-screen-v19) |
+| R | Open trace route screen (v1.9+) -- see [Trace Route Screen](#trace-route-screen-v19) |
+| J | Open games menu (v1.10+) -- see [Games](#games-v110) |
 | G | Open map screen (shows contacts with GPS positions) |
 | Mic | Open voice messages (audio variant only) |
 | Q | Back to home screen |
@@ -312,9 +317,12 @@ Pressing **A** or **D** on the channel messages screen opens the channel picker.
 |-----|--------|
 | W / S | Navigate up / down |
 | Enter | Switch to selected channel |
+| X | Delete message history for highlighted channel (v1.10+) |
 | Q | Back to home screen |
 
-On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **vertical bubble list** matching the Meck P4 aesthetic.
+Pressing **X** on any highlighted channel brings up a confirmation overlay. Press **Enter** to confirm deletion or **Q** to cancel. This clears all stored messages for that channel from the circular buffer and saves to SD. The channel itself is not removed -- only its message history.
+
+On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **vertical bubble list** matching the Meck P4 aesthetic. Long-press a channel to bring up the delete history confirmation.
 
 ### Contacts Screen
 
@@ -484,6 +492,63 @@ You also need to be able to **hear the last repeater in the chain directly** —
 
 The screen supports up to **16 hops** per trace.
 
+### Delete Message History (v1.10+)
+
+You can clear all stored messages for any individual channel or the DM inbox without removing the channel itself.
+
+From the home screen, press **M** to open the channel messages screen, then **A** or **D** to open the channel picker. Navigate to the channel you want to clear and press **X**. A confirmation overlay appears asking "Delete message history?" -- press **Enter** to confirm or **Q** to cancel.
+
+On the T5S3, long-press the channel in the channel picker to bring up the same confirmation. Tap to confirm or press the Boot button to cancel.
+
+Messages are invalidated in the circular buffer and the change is saved to SD immediately. The unread counter is also reset. New messages will continue to appear as they arrive.
+
+### Per-Channel Notification Preferences (v1.10+)
+
+Each channel (and the DM inbox) can be individually set to one of three notification levels:
+
+- **All** -- notify on every message (default)
+- **@ (Mentions)** -- only notify when someone tags you with @YourNodeName or @[YourNodeName]
+- **Off** -- completely muted (no buzzer, no keyboard flash, no screen wake, no toast)
+
+Messages are always stored in history regardless of the notification setting -- only the alerts and unread badges are suppressed.
+
+To change a channel's notification preference: from the home screen, press **S** to open settings, scroll down to the **Channels >>** section and open it. Navigate to the channel you want to configure, and press **N** to cycle through the three modes. The current setting is shown in the channel row hint as `N:All`, `N:@`, or `N:Off`.
+
+### Custom Notification Tones (v1.10+)
+
+Each channel can have its own notification tone instead of the default buzzer sound. When a message arrives on a channel with a custom tone assigned, that tone plays through the speaker instead of the RTTTL buzzer.
+
+To assign a tone: from the home screen, press **S** to open settings, scroll down to the **Channels >>** section and open it. Navigate to the channel you want, and press **T**. The tone picker appears with a list of available sounds. Use **W/S** to browse, **Enter** to select, or **Q** to cancel. Select "Default (silent)" to remove a custom tone and revert to the standard buzzer.
+
+**Audio variant (PCM5102A DAC):** A selection of bundled tones are copied to the `/alarms/` folder on the SD card on first boot. You can also add your own MP3 files to that folder -- they'll appear in the tone picker alongside the bundled options. This gives you complete flexibility to use any short MP3 as a notification sound.
+
+**4G variant (A7682E modem):** Seven bundled notification tones are embedded in the firmware as 8kHz mono WAV files and transferred to the modem's internal filesystem on boot. Playback goes through the modem's own speaker amplifier via AT+CCMXPLAY. Custom user-supplied tones are not supported on the 4G variant -- only the bundled set is available.
+
+**Available bundled tones:** Bell, Ding, High Trill, Low Soft Ding (x2), Mid Trill, and Soft Notif. All are short, 1-2 second alert sounds.
+
+### Games (v1.10+)
+
+Press **J** from the home screen to open the games menu. Two classic games are included:
+
+**Snake** -- the Nokia classic. Guide the snake around the screen to eat food and grow longer without crashing into the walls or your own tail. The game runs on the e-ink display at a pace suited to the refresh rate.
+
+| Key | Action |
+|-----|--------|
+| W | Turn up |
+| A | Turn left |
+| S | Turn down |
+| D | Turn right |
+| Q | Quit to games menu |
+
+**Minesweeper** -- clear the board without hitting a mine. Numbers reveal how many adjacent cells contain mines. Flag cells you suspect are mines to keep track.
+
+| Key | Action |
+|-----|--------|
+| W / A / S / D | Move cursor |
+| Enter | Reveal cell |
+| F | Toggle flag on cell |
+| Q | Quit to games menu |
+
 ### Settings Screen
 
 Press **S** from the home screen to open settings. On first boot (when the device name is still the default hex ID), the settings screen launches automatically as an onboarding wizard to set your device name and radio preset.
@@ -532,7 +597,15 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 
 Press Q to return to the top-level settings list.
 
-**Channels sub-screen** — press Enter on the `Channels >>` row to open. Lists all current channels with their region scope tags (e.g. `[au-nsw]` or `[*]` for device default). Press Enter on a channel to edit its region scope. Press X to delete non-primary channels. Press Q to return to the top-level settings list.
+**Channels sub-screen** -- press Enter on the `Channels >>` row to open. Lists all current channels with their region scope tags (e.g. `[au-nsw]` or `[*]` for device default). The hint line for each channel shows its current notification preference (`N:All`, `N:@`, or `N:Off`) and available actions.
+
+| Key | Action |
+|-----|--------|
+| Enter | Edit channel region scope |
+| N | Cycle notification preference (All / Mentions / Off) -- see [Per-Channel Notification Preferences](#per-channel-notification-preferences-v110) |
+| T | Open notification tone picker (audio and 4G variants) -- see [Custom Notification Tones](#custom-notification-tones-v110) |
+| X | Delete channel (non-primary channels only) |
+| Q | Back to top-level settings |
 
 The top-level settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
 
@@ -1141,11 +1214,15 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] BLE 2M PHY, DLE, and faster write interval
 - [X] Trace route screen with contact picker and typed-path entry (v1.9)
 - [X] DM message persistence across reboots (v1.9)
+- [X] Per-channel message history deletion (v1.10)
+- [X] Per-channel notification preferences with @mention support (v1.10)
+- [X] Custom notification tones per channel -- audio variant (MP3) and 4G variant (WAV via modem) (v1.10)
+- [X] Games menu with Snake and Minesweeper (v1.10)
+- [X] MAX_GROUP_CHANNELS expanded to 40 for all builds (v1.10)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
-- [ ] Figure out a way to silence the ringtone
-- [ ] Figure out a way to customise the ringtone
+- [ ] Incoming call ringer silence (hardware limitation -- A7682E drives speaker autonomously on RING, no software mute path available)
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
