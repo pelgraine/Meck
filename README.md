@@ -237,7 +237,7 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | W / A | Previous page |
 | D | Next page |
 | Enter | Select / Confirm |
-| M | Open channel messages |
+| M | Open channel picker |
 | C | Open contacts list |
 | E | Open e-book reader |
 | N | Open notes |
@@ -303,7 +303,6 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 | Key | Action |
 |-----|--------|
 | W / S | Scroll messages up/down |
-| A / D | Open channel picker — shows all channels and DM inbox with unread badges. Select a channel and press Enter to switch. |
 | Enter | Compose new message |
 | R | Reply to a message — enter reply select mode, scroll to a message with W/S, then press Enter to compose a reply with an @mention |
 | V | View relay path of the last received message (scrollable, up to 20 hops) |
@@ -311,7 +310,7 @@ The GPS page also shows the current time, satellite count, position, altitude, a
 
 ### Channel Picker
 
-Pressing **A** or **D** on the channel messages screen opens the channel picker. All your channels and the DM inbox are shown in a single view with unread message badges, letting you jump directly to any channel instead of cycling through them one at a time.
+Pressing **M** from the home screen opens the channel picker. All your channels and the DM inbox are shown in a single view with unread message badges, letting you jump directly to any channel instead of cycling through them one at a time. Pressing **Q** from a channel view (e.g. the Public feed) also returns to the channel picker.
 
 | Key | Action |
 |-----|--------|
@@ -407,7 +406,7 @@ Select a **Chat** contact in the contacts list and press **Enter** to start comp
 
 Contacts with unread direct messages show a `*` marker next to their name in the contacts list.
 
-**Reading received DMs:** On the Channel Messages screen, press **A** or **D** to open the channel picker, then select the **DM Inbox** entry to view received direct messages. This shows all received direct messages with sender name and timestamp. Entering the DM inbox marks all DM messages as read and clears the unread indicator.
+**Reading received DMs:** From the home screen, press **M** to open the channel picker, then select the **DM Inbox** entry to view received direct messages. This shows all received direct messages with sender name and timestamp. Entering the DM inbox marks all DM messages as read and clears the unread indicator.
 
 ### Roomservers
 
@@ -496,7 +495,7 @@ The screen supports up to **16 hops** per trace.
 
 You can clear all stored messages for any individual channel or the DM inbox without removing the channel itself.
 
-From the home screen, press **M** to open the channel messages screen, then **A** or **D** to open the channel picker. Navigate to the channel you want to clear and press **X**. A confirmation overlay appears asking "Delete message history?" -- press **Enter** to confirm or **Q** to cancel.
+From the home screen, press **M** to open the channel picker. Navigate to the channel you want to clear and press **X**. A confirmation overlay appears asking "Delete message history?" -- press **Enter** to confirm or **Q** to cancel.
 
 On the T5S3, long-press the channel in the channel picker to bring up the same confirmation. Tap to confirm or press the Boot button to cancel.
 
@@ -629,7 +628,6 @@ Font styles are available in both Tiny and Larger text size modes. Custom fonts 
 
 | Key | Action |
 |-----|--------|
-| A / D | Switch destination channel (when message is empty, channel compose only) |
 | Enter | Send message |
 | Backspace | Delete last character |
 | Shift + Backspace | Cancel and exit compose mode |
