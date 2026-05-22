@@ -4591,6 +4591,37 @@ void handleKeyboardInput() {
       }
     }
     #endif
+    // Check for channel share request from the settings screen
+    if (settings->isShareRequested()) {
+      int contactIdx = settings->getShareContactIdx();
+      uint8_t channelIdx = settings->getShareChannelIdx();
+      settings->clearShareRequest();
+
+      ChannelDetails ch;
+      ContactInfo contact;
+      if (the_mesh.getChannel(channelIdx, ch) && ch.name[0] != '\0'
+          && the_mesh.getContactByIdx(contactIdx, contact)) {
+        // Build share message: [MECK:CH]name|secret_hex
+        char shareMsg[128];
+        char hexSecret[33];
+        mesh::Utils::toHex(hexSecret, ch.channel.secret, 16);
+        snprintf(shareMsg, sizeof(shareMsg), "%s%s|%s",
+                 MECK_CH_PREFIX, ch.name, hexSecret);
+
+        if (the_mesh.uiSendDirectMessage((uint32_t)contactIdx, shareMsg)) {
+          // Add sanitised version to DM conversation view
+          char displayMsg[64];
+          snprintf(displayMsg, sizeof(displayMsg), "Shared channel: %s", ch.name);
+          ui_task.addSentDM(contact.name, the_mesh.getNodePrefs()->node_name, displayMsg);
+
+          char alertBuf[48];
+          snprintf(alertBuf, sizeof(alertBuf), "Shared with %s", contact.name);
+          ui_task.showAlert(alertBuf, 2000);
+        } else {
+          ui_task.showAlert("Share failed", 1500);
+        }
+      }
+    }
     return;
   }
 

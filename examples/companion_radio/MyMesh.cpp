@@ -661,6 +661,34 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
     _voiceEnvHandler(from.name, text);
   }
 
+  // Intercept channel share messages before BLE gets them
+  if (text && strncmp(text, MECK_CH_PREFIX, MECK_CH_PREFIX_LEN) == 0) {
+    const char* payload = text + MECK_CH_PREFIX_LEN;
+    const char* sep = strchr(payload, '|');
+    if (sep && (sep - payload) > 0 && (sep - payload) < 32) {
+      char chName[32];
+      int nameLen = sep - payload;
+      memcpy(chName, payload, nameLen);
+      chName[nameLen] = '\0';
+
+      // Parse hex secret (32 hex chars = 16 bytes)
+      const char* hexStr = sep + 1;
+      int hexLen = strlen(hexStr);
+      if (hexLen >= 32) {
+        uint8_t secret[16];
+        mesh::Utils::fromHex(secret, 16, hexStr);
+        addPendingInvite(chName, secret, from.name);
+        Serial.printf("Channel invite from %s: '%s'\n", from.name, chName);
+      }
+
+      // Sanitise display text
+      char sanitised[64];
+      snprintf(sanitised, sizeof(sanitised), "Shared channel: %s", chName);
+      queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, sanitised);
+      return;
+    }
+  }
+
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
@@ -1327,6 +1355,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
+  memset(_pendingInvites, 0, sizeof(_pendingInvites));
   _admin_contact_idx = -1;
   _discoveredCount = 0;
   _discoveryActive = false;

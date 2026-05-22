@@ -164,7 +164,8 @@ enum SettingsRowType : uint8_t {
   ROW_CHANNELS_SUBMENU,  // Folder row → enters Channels sub-screen
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
-  ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
+  ROW_ADD_CHANNEL,    // "+ Add Channel (# = public)"
+  ROW_PENDING_INVITE, // Pending channel invite (param = invite index)
   #ifdef HAS_SDCARD
   ROW_EXPORT_IMPORT_SUBMENU, // Folder row: "Export/Import >>"
   ROW_EXPORT_TO_SD,      // "Export to SD >>" (enters flags sub-screen)
@@ -201,6 +202,7 @@ enum EditMode : uint8_t {
   EDIT_NUMBER,       // W/S adjusts value (freq, BW, SF, CR, TX, UTC)
   EDIT_CONFIRM,      // Confirmation dialog (delete channel, apply radio)
   EDIT_NOTIF_SOUND,  // Sound picker for per-channel notification tone
+  EDIT_SHARE_PICK,   // Contact picker for channel sharing
   #ifdef MECK_WIFI_COMPANION
   EDIT_WIFI,         // WiFi scan/select/password flow
   #endif
@@ -306,6 +308,16 @@ private:
   bool _exportRequested;   // set by key handler, cleared by main.cpp after calling export
   bool _importRequested;   // set by key handler, cleared by main.cpp after calling import
   #endif
+
+  // Channel share picker state
+  #define SHARE_MAX_CONTACTS 32
+  uint8_t _shareChannelIdx;            // channel being shared
+  int _shareContacts[SHARE_MAX_CONTACTS]; // indices of DM-capable contacts
+  int _shareContactCount;              // number of entries in _shareContacts
+  int _sharePickerIdx;                 // highlighted item in picker
+  int _sharePickerScroll;              // scroll offset in picker
+  bool _shareRequested;                // flag for main.cpp
+  int _shareContactIdx;                // selected contact index (for main.cpp)
 
   // Dirty flag for radio params Ã¢â‚¬â€ prompt to apply
   bool _radioChanged;
@@ -433,6 +445,10 @@ private:
         }
       }
       addRow(ROW_ADD_CHANNEL);
+      // Pending channel invites (received via DM)
+      for (int pi = 0; pi < the_mesh.getPendingInviteCount(); pi++) {
+        addRow(ROW_PENDING_INVITE, pi);
+      }
     #ifdef MECK_OTA_UPDATE
     } else if (_subScreen == SUB_OTA_TOOLS) {
       // --- OTA Tools sub-screen ---
@@ -564,28 +580,33 @@ private:
   // Hashtag channel creation
   // ---------------------------------------------------------------------------
 
-  void createHashtagChannel(const char* name) {
-    // Build channel name with # prefix if not already present
-    char chanName[32];
-    if (name[0] == '#') {
-      strncpy(chanName, name, sizeof(chanName));
-    } else {
-      chanName[0] = '#';
-      strncpy(&chanName[1], name, sizeof(chanName) - 1);
-    }
-    chanName[31] = '\0';
-
-    // Generate 128-bit PSK from SHA-256 of channel name
+  void createChannel(const char* name) {
     ChannelDetails newCh;
     memset(&newCh, 0, sizeof(newCh));
-    strncpy(newCh.name, chanName, sizeof(newCh.name));
-    newCh.name[31] = '\0';
 
-    // SHA-256 the channel name Ã¢â€ â€™ first 16 bytes become the secret
-    uint8_t hash[32];
-    mesh::Utils::sha256(hash, 32, (const uint8_t*)chanName, strlen(chanName));
-    memcpy(newCh.channel.secret, hash, 16);
-    // Upper 16 bytes left as zero Ã¢â€ â€™ setChannel uses 128-bit mode
+    if (name[0] == '#') {
+      // Public hashtag channel -- derive secret from SHA-256 of name
+      strncpy(newCh.name, name, sizeof(newCh.name));
+      newCh.name[31] = '\0';
+
+      uint8_t hash[32];
+      mesh::Utils::sha256(hash, 32, (const uint8_t*)name, strlen(name));
+      memcpy(newCh.channel.secret, hash, 16);
+      Serial.printf("Settings: Creating public channel '%s'\n", name);
+    } else {
+      // Private channel -- random 16-byte secret
+      strncpy(newCh.name, name, sizeof(newCh.name));
+      newCh.name[31] = '\0';
+
+      uint8_t secret[16];
+      uint32_t r;
+      for (int i = 0; i < 16; i++) {
+        if (i % 4 == 0) r = esp_random();
+        secret[i] = (r >> ((i % 4) * 8)) & 0xFF;
+      }
+      memcpy(newCh.channel.secret, secret, 16);
+      Serial.printf("Settings: Creating private channel '%s'\n", name);
+    }
 
     // Find next empty slot
     for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
@@ -593,12 +614,13 @@ private:
       if (!the_mesh.getChannel(i, existing) || existing.name[0] == '\0') {
         if (the_mesh.setChannel(i, newCh)) {
           the_mesh.saveChannels();
-          Serial.printf("Settings: Created hashtag channel '%s' at idx %d\n", chanName, i);
+          Serial.printf("Settings: Channel '%s' created at idx %d\n", newCh.name, i);
         }
         break;
       }
     }
   }
+
 
   void deleteChannel(uint8_t idx) {
     // Clear the channel by writing an empty ChannelDetails
@@ -656,6 +678,12 @@ public:
     _exportRequested = false;
     _importRequested = false;
     #endif
+    _shareChannelIdx = 0;
+    _shareContactCount = 0;
+    _sharePickerIdx = 0;
+    _sharePickerScroll = 0;
+    _shareRequested = false;
+    _shareContactIdx = -1;
     #ifdef MECK_OTA_UPDATE
     _otaServer = nullptr;
     _otaPhase = OTA_PHASE_CONFIRM;
@@ -686,6 +714,9 @@ public:
     _exportRequested = false;
     _importRequested = false;
     #endif
+    _shareRequested = false;
+    _shareContactIdx = -1;
+    _shareContactCount = 0;
     #ifdef HAS_4G_MODEM
     _modemEnabled = ModemManager::loadEnabledConfig();
     #endif
@@ -884,6 +915,12 @@ public:
   bool isImportRequested() const { return _importRequested; }
   void clearImportRequest() { _importRequested = false; }
   #endif
+
+  // Channel share request -- checked and cleared by main.cpp
+  bool isShareRequested() const { return _shareRequested; }
+  int getShareContactIdx() const { return _shareContactIdx; }
+  uint8_t getShareChannelIdx() const { return _shareChannelIdx; }
+  void clearShareRequest() { _shareRequested = false; _shareContactIdx = -1; }
 
   // ---------------------------------------------------------------------------
   // OTA firmware update
@@ -2111,13 +2148,23 @@ public:
 
         case ROW_ADD_CHANNEL:
           if (editing && _editMode == EDIT_TEXT) {
-            snprintf(tmp, sizeof(tmp), "# %s_", _editBuf);
+            snprintf(tmp, sizeof(tmp), "> %s_", _editBuf);
           } else {
             display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
-            strcpy(tmp, "+ Add Hashtag Channel");
+            strcpy(tmp, "+ Add Channel (# = public)");
           }
           display.print(tmp);
           break;
+
+        case ROW_PENDING_INVITE: {
+          const PendingChannelInvite* inv = the_mesh.getPendingInvite(_rows[i].param);
+          if (inv) {
+            display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::YELLOW);
+            snprintf(tmp, sizeof(tmp), "Pending: %s", inv->name);
+            display.print(tmp);
+          }
+          break;
+        }
 
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
@@ -2568,6 +2615,69 @@ public:
     }
     #endif
 
+    // === Share contact picker overlay ===
+    if (_editMode == EDIT_SHARE_PICK) {
+      int bx = 2, by = 14, bw = display.width() - 4;
+      int bh = display.height() - 28;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(bx, by, bw, bh);
+
+      display.setTextSize(_prefs->smallTextSize());
+      int lineH = _prefs->smallLineH();
+
+      // Header
+      display.setColor(DisplayDriver::GREEN);
+      display.setCursor(bx + 4, by + 3);
+      display.print("Share with contact:");
+
+      if (_shareContactCount == 0) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(bx + 4, by + 16);
+        display.print("No contacts available");
+      } else {
+        int listTop = by + 14;
+        int listBot = by + bh - 14;
+        int maxVisible = (listBot - listTop) / lineH;
+        if (maxVisible < 3) maxVisible = 3;
+
+        // Scroll to keep selection visible
+        if (_sharePickerIdx < _sharePickerScroll) _sharePickerScroll = _sharePickerIdx;
+        if (_sharePickerIdx >= _sharePickerScroll + maxVisible) _sharePickerScroll = _sharePickerIdx - maxVisible + 1;
+
+        for (int vi = 0; vi < maxVisible && (_sharePickerScroll + vi) < _shareContactCount; vi++) {
+          int ci = _sharePickerScroll + vi;
+          int iy = listTop + vi * lineH;
+          bool sel = (ci == _sharePickerIdx);
+
+          if (sel) {
+            display.setColor(DisplayDriver::GREEN);
+            display.fillRect(bx + 1, iy, bw - 2, lineH);
+            display.setColor(DisplayDriver::DARK);
+          } else {
+            display.setColor(DisplayDriver::LIGHT);
+          }
+
+          ContactInfo ci_info;
+          if (the_mesh.getContactByIdx(_shareContacts[ci], ci_info)) {
+            display.setCursor(bx + 4, iy + 1);
+            display.print(ci_info.name);
+          }
+        }
+      }
+
+      // Footer hint
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(bx + 4, by + bh - 12);
+    #if defined(LilyGo_T5S3_EPaper_Pro)
+      display.print("Tap:Send  Boot:Cancel");
+    #else
+      display.print("Enter:Send  Q:Cancel");
+    #endif
+      display.setTextSize(1);
+    }
+
     // === Footer ===
     int footerY = display.height() - 12;
     display.drawRect(0, footerY - 2, display.width(), 1);
@@ -2817,6 +2927,33 @@ public:
     }
     #endif
 
+    // --- Share contact picker ---
+    if (_editMode == EDIT_SHARE_PICK) {
+      if (c == 'w' || c == 'W' || c == 0xF2 || c == KEY_UP) {
+        if (_sharePickerIdx > 0) _sharePickerIdx--;
+        return true;
+      }
+      if (c == 's' || c == 'S' || c == 0xF1 || c == KEY_DOWN) {
+        if (_sharePickerIdx < _shareContactCount - 1) _sharePickerIdx++;
+        return true;
+      }
+      if (c == '\r' || c == 13) {
+        if (_shareContactCount > 0) {
+          _shareContactIdx = _shareContacts[_sharePickerIdx];
+          _shareRequested = true;
+          Serial.printf("Settings: share channel %d with contact %d\n",
+                        _shareChannelIdx, _shareContactIdx);
+        }
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      if (c == 'q' || c == 'Q' || c == '\b') {
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      return true;  // consume all keys in picker mode
+    }
+
     #ifdef MECK_OTA_UPDATE
     // --- OTA update flow ---
     if (_editMode == EDIT_OTA) {
@@ -3015,7 +3152,7 @@ public:
           _editMode = EDIT_NONE;
         } else if (type == ROW_ADD_CHANNEL) {
           if (_editPos > 0) {
-            createHashtagChannel(_editBuf);
+            createChannel(_editBuf);
             rebuildRows();
           }
           _editMode = EDIT_NONE;
@@ -3520,6 +3657,35 @@ public:
         case ROW_ADD_CHANNEL:
           startEditText("");
           break;
+
+        case ROW_PENDING_INVITE: {
+          // Accept pending channel invite
+          const PendingChannelInvite* inv = the_mesh.getPendingInvite(_rows[_cursor].param);
+          if (inv) {
+            ChannelDetails newCh;
+            memset(&newCh, 0, sizeof(newCh));
+            strncpy(newCh.name, inv->name, sizeof(newCh.name));
+            newCh.name[31] = '\0';
+            memcpy(newCh.channel.secret, inv->secret, 16);
+
+            // Find next empty slot
+            bool added = false;
+            for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+              ChannelDetails existing;
+              if (!the_mesh.getChannel(i, existing) || existing.name[0] == '\0') {
+                if (the_mesh.setChannel(i, newCh)) {
+                  the_mesh.saveChannels();
+                  Serial.printf("Settings: Accepted channel '%s' at idx %d\n", inv->name, i);
+                  added = true;
+                }
+                break;
+              }
+            }
+            the_mesh.removePendingInvite(_rows[_cursor].param);
+            rebuildRows();
+          }
+          break;
+        }
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
           _savedTopCursor = _cursor;
@@ -3609,10 +3775,17 @@ public:
     }
 
     // X: delete channel (when on a channel row, idx > 0)
+    //    dismiss pending invite (when on a pending invite row)
     if (c == 'x' || c == 'X') {
       if (_rows[_cursor].type == ROW_CHANNEL && _rows[_cursor].param > 0) {
         _editMode = EDIT_CONFIRM;
         _confirmAction = 1;
+        return true;
+      }
+      if (_rows[_cursor].type == ROW_PENDING_INVITE) {
+        the_mesh.removePendingInvite(_rows[_cursor].param);
+        rebuildRows();
+        Serial.println("Settings: dismissed pending channel invite");
         return true;
       }
     }
@@ -3627,6 +3800,28 @@ public:
         const char* labels[] = {"All", "Mentions", "Off"};
         Serial.printf("Settings: Channel %d notif -> %s\n",
                       chIdx, labels[_prefs->channel_notif[chIdx]]);
+        return true;
+      }
+    }
+
+    // S: share channel with a contact via DM
+    if (c == 's' || c == 'S') {
+      if (_rows[_cursor].type == ROW_CHANNEL) {
+        _shareChannelIdx = _rows[_cursor].param;
+        // Populate contact list with DM-capable contacts
+        _shareContactCount = 0;
+        int numContacts = the_mesh.getNumContacts();
+        for (int ci = 0; ci < numContacts && _shareContactCount < SHARE_MAX_CONTACTS; ci++) {
+          ContactInfo contact;
+          if (the_mesh.getContactByIdx(ci, contact) && contact.type == ADV_TYPE_CHAT) {
+            _shareContacts[_shareContactCount++] = ci;
+          }
+        }
+        _sharePickerIdx = 0;
+        _sharePickerScroll = 0;
+        _editMode = EDIT_SHARE_PICK;
+        Serial.printf("Settings: sharing channel %d, %d contacts available\n",
+                      _shareChannelIdx, _shareContactCount);
         return true;
       }
     }
