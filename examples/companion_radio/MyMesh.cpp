@@ -661,7 +661,7 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
     _voiceEnvHandler(from.name, text);
   }
 
-  // Intercept channel share messages before BLE gets them
+  // Intercept channel share messages -- auto-add the channel
   if (text && strncmp(text, MECK_CH_PREFIX, MECK_CH_PREFIX_LEN) == 0) {
     const char* payload = text + MECK_CH_PREFIX_LEN;
     const char* sep = strchr(payload, '|');
@@ -677,11 +677,53 @@ void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t 
       if (hexLen >= 32) {
         uint8_t secret[16];
         mesh::Utils::fromHex(secret, 16, hexStr);
-        addPendingInvite(chName, secret, from.name);
-        Serial.printf("Channel invite from %s: '%s'\n", from.name, chName);
+
+        // Check if channel already exists (by name)
+        bool exists = false;
+        for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+          ChannelDetails existing;
+          if (getChannel(i, existing) && existing.name[0] != '\0'
+              && strcmp(existing.name, chName) == 0) {
+            exists = true;
+            break;
+          }
+        }
+
+        if (!exists) {
+          // Find empty slot and add
+          ChannelDetails newCh;
+          memset(&newCh, 0, sizeof(newCh));
+          strncpy(newCh.name, chName, sizeof(newCh.name));
+          newCh.name[31] = '\0';
+          memcpy(newCh.channel.secret, secret, 16);
+
+          bool added = false;
+          for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+            ChannelDetails existing;
+            if (!getChannel(i, existing) || existing.name[0] == '\0') {
+              if (setChannel(i, newCh)) {
+                saveChannels();
+                added = true;
+                Serial.printf("Channel '%s' added from %s at idx %d\n",
+                              chName, from.name, i);
+              }
+              break;
+            }
+          }
+
+          if (added && _ui) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Channel '%s' added from %s", chName, from.name);
+            _ui->showAlert(buf, 3000);
+          } else if (!added) {
+            Serial.printf("Channel '%s' from %s: no empty slot\n", chName, from.name);
+          }
+        } else {
+          Serial.printf("Channel '%s' from %s: already exists\n", chName, from.name);
+        }
       }
 
-      // Sanitise display text
+      // Sanitise display text for the DM conversation
       char sanitised[64];
       snprintf(sanitised, sizeof(sanitised), "Shared channel: %s", chName);
       queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, sanitised);
@@ -1355,7 +1397,6 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
-  memset(_pendingInvites, 0, sizeof(_pendingInvites));
   _admin_contact_idx = -1;
   _discoveredCount = 0;
   _discoveryActive = false;

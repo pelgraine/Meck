@@ -683,7 +683,7 @@ public:
 #endif
         y += 10;
         display.setColor(DisplayDriver::YELLOW);
-        display.drawTextCentered(display.width() / 2, y, "[R] Trace      [J] Games     ");
+        display.drawTextCentered(display.width() / 2, y, "[R] Trace       [J] Games     ");
         display.setColor(DisplayDriver::LIGHT);
         y += 14;
       }

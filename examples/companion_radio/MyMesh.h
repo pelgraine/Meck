@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 11
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "15 May 2026"
+#define FIRMWARE_BUILD_DATE "23 May 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.10"
+#define FIRMWARE_VERSION "Meck v1.11"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -100,17 +100,9 @@ struct DiscoveredNode {
   bool already_in_contacts;   // true if contact was auto-added or already known
 };
 
-// Channel invite received via DM -- stored in RAM until accepted/dismissed
-#define MAX_PENDING_INVITES 8
+// Channel share DM prefix
 #define MECK_CH_PREFIX "[MECK:CH]"
 #define MECK_CH_PREFIX_LEN 9
-
-struct PendingChannelInvite {
-  char name[32];          // channel name
-  uint8_t secret[16];     // channel secret (CIPHER_KEY_SIZE bytes)
-  char senderName[32];    // who shared it
-  bool active;            // is this slot in use
-};
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
@@ -269,48 +261,6 @@ public:
     _store->saveMainIdentity(self_id);
   }
 
-  // --- Pending channel invites (received via DM) ---
-  int getPendingInviteCount() const {
-    int count = 0;
-    for (int i = 0; i < MAX_PENDING_INVITES; i++) {
-      if (_pendingInvites[i].active) count++;
-    }
-    return count;
-  }
-  const PendingChannelInvite* getPendingInvite(int idx) const {
-    int seen = 0;
-    for (int i = 0; i < MAX_PENDING_INVITES; i++) {
-      if (_pendingInvites[i].active) {
-        if (seen == idx) return &_pendingInvites[i];
-        seen++;
-      }
-    }
-    return nullptr;
-  }
-  bool addPendingInvite(const char* name, const uint8_t* secret, const char* senderName) {
-    for (int i = 0; i < MAX_PENDING_INVITES; i++) {
-      if (!_pendingInvites[i].active) {
-        strncpy(_pendingInvites[i].name, name, 31);
-        _pendingInvites[i].name[31] = '\0';
-        memcpy(_pendingInvites[i].secret, secret, 16);
-        strncpy(_pendingInvites[i].senderName, senderName, 31);
-        _pendingInvites[i].senderName[31] = '\0';
-        _pendingInvites[i].active = true;
-        return true;
-      }
-    }
-    return false;  // no free slots
-  }
-  void removePendingInvite(int idx) {
-    int seen = 0;
-    for (int i = 0; i < MAX_PENDING_INVITES; i++) {
-      if (_pendingInvites[i].active) {
-        if (seen == idx) { _pendingInvites[i].active = false; return; }
-        seen++;
-      }
-    }
-  }
-
 private:
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
@@ -336,7 +286,6 @@ private:
   mutable bool _forceNextImport = false;
   bool _deferSaves = false;
   unsigned long _lastUserInput = 0;  // millis() of last keypress -- defer saves until idle
-  PendingChannelInvite _pendingInvites[MAX_PENDING_INVITES];  // RAM-only pending channel shares
   uint32_t pending_login;
   uint32_t pending_status;
   uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ

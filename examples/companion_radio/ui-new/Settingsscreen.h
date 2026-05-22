@@ -165,7 +165,6 @@ enum SettingsRowType : uint8_t {
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Channel (# = public)"
-  ROW_PENDING_INVITE, // Pending channel invite (param = invite index)
   #ifdef HAS_SDCARD
   ROW_EXPORT_IMPORT_SUBMENU, // Folder row: "Export/Import >>"
   ROW_EXPORT_TO_SD,      // "Export to SD >>" (enters flags sub-screen)
@@ -445,10 +444,6 @@ private:
         }
       }
       addRow(ROW_ADD_CHANNEL);
-      // Pending channel invites (received via DM)
-      for (int pi = 0; pi < the_mesh.getPendingInviteCount(); pi++) {
-        addRow(ROW_PENDING_INVITE, pi);
-      }
     #ifdef MECK_OTA_UPDATE
     } else if (_subScreen == SUB_OTA_TOOLS) {
       // --- OTA Tools sub-screen ---
@@ -2156,16 +2151,6 @@ public:
           display.print(tmp);
           break;
 
-        case ROW_PENDING_INVITE: {
-          const PendingChannelInvite* inv = the_mesh.getPendingInvite(_rows[i].param);
-          if (inv) {
-            display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::YELLOW);
-            snprintf(tmp, sizeof(tmp), "Pending: %s", inv->name);
-            display.print(tmp);
-          }
-          break;
-        }
-
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
           display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
@@ -2662,8 +2647,24 @@ public:
           ContactInfo ci_info;
           if (the_mesh.getContactByIdx(_shareContacts[ci], ci_info)) {
             display.setCursor(bx + 4, iy + 1);
+            if (ci_info.flags & 0x01) {
+              display.print("* ");
+            }
             display.print(ci_info.name);
           }
+        }
+
+        // Scroll indicator
+        if (_shareContactCount > maxVisible) {
+          int sbX = bx + bw - 4;
+          int sbH = listBot - listTop;
+          display.setColor(DisplayDriver::LIGHT);
+          display.drawRect(sbX, listTop, 3, sbH);
+          int thumbH = max(4, (maxVisible * sbH) / _shareContactCount);
+          int maxScroll = _shareContactCount - maxVisible;
+          if (maxScroll < 1) maxScroll = 1;
+          int thumbY = listTop + (_sharePickerScroll * (sbH - thumbH)) / maxScroll;
+          display.fillRect(sbX + 1, thumbY + 1, 1, thumbH - 2);
         }
       }
 
@@ -2825,7 +2826,9 @@ public:
     } else if (_editMode == EDIT_CONFIRM) {
       // Footer already covered by overlay
     } else {
-      if (_subScreen != SUB_NONE) {
+      if (_subScreen == SUB_CHANNELS) {
+        display.print("Q:Bk C:Share");
+      } else if (_subScreen != SUB_NONE) {
         display.print("Q:Back");
       } else {
         display.print("Q:Bk");
@@ -3658,34 +3661,6 @@ public:
           startEditText("");
           break;
 
-        case ROW_PENDING_INVITE: {
-          // Accept pending channel invite
-          const PendingChannelInvite* inv = the_mesh.getPendingInvite(_rows[_cursor].param);
-          if (inv) {
-            ChannelDetails newCh;
-            memset(&newCh, 0, sizeof(newCh));
-            strncpy(newCh.name, inv->name, sizeof(newCh.name));
-            newCh.name[31] = '\0';
-            memcpy(newCh.channel.secret, inv->secret, 16);
-
-            // Find next empty slot
-            bool added = false;
-            for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
-              ChannelDetails existing;
-              if (!the_mesh.getChannel(i, existing) || existing.name[0] == '\0') {
-                if (the_mesh.setChannel(i, newCh)) {
-                  the_mesh.saveChannels();
-                  Serial.printf("Settings: Accepted channel '%s' at idx %d\n", inv->name, i);
-                  added = true;
-                }
-                break;
-              }
-            }
-            the_mesh.removePendingInvite(_rows[_cursor].param);
-            rebuildRows();
-          }
-          break;
-        }
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
           _savedTopCursor = _cursor;
@@ -3775,17 +3750,10 @@ public:
     }
 
     // X: delete channel (when on a channel row, idx > 0)
-    //    dismiss pending invite (when on a pending invite row)
     if (c == 'x' || c == 'X') {
       if (_rows[_cursor].type == ROW_CHANNEL && _rows[_cursor].param > 0) {
         _editMode = EDIT_CONFIRM;
         _confirmAction = 1;
-        return true;
-      }
-      if (_rows[_cursor].type == ROW_PENDING_INVITE) {
-        the_mesh.removePendingInvite(_rows[_cursor].param);
-        rebuildRows();
-        Serial.println("Settings: dismissed pending channel invite");
         return true;
       }
     }
@@ -3804,19 +3772,47 @@ public:
       }
     }
 
-    // S: share channel with a contact via DM
-    if (c == 's' || c == 'S') {
+    // C: share channel with a contact via DM (channels sub-screen only)
+    if ((c == 'c' || c == 'C') && _subScreen == SUB_CHANNELS) {
       if (_rows[_cursor].type == ROW_CHANNEL) {
         _shareChannelIdx = _rows[_cursor].param;
-        // Populate contact list with DM-capable contacts
+        // Populate contact list with DM-capable contacts, favourites first
         _shareContactCount = 0;
         int numContacts = the_mesh.getNumContacts();
+        // First pass: favourites
         for (int ci = 0; ci < numContacts && _shareContactCount < SHARE_MAX_CONTACTS; ci++) {
           ContactInfo contact;
-          if (the_mesh.getContactByIdx(ci, contact) && contact.type == ADV_TYPE_CHAT) {
+          if (the_mesh.getContactByIdx(ci, contact) && contact.type == ADV_TYPE_CHAT
+              && (contact.flags & 0x01)) {
             _shareContacts[_shareContactCount++] = ci;
           }
         }
+        int favCount = _shareContactCount;
+        // Second pass: non-favourites
+        for (int ci = 0; ci < numContacts && _shareContactCount < SHARE_MAX_CONTACTS; ci++) {
+          ContactInfo contact;
+          if (the_mesh.getContactByIdx(ci, contact) && contact.type == ADV_TYPE_CHAT
+              && !(contact.flags & 0x01)) {
+            _shareContacts[_shareContactCount++] = ci;
+          }
+        }
+        // Sort each group alphabetically by name
+        auto sortRange = [&](int start, int end) {
+          for (int a = start; a < end - 1; a++) {
+            for (int b = a + 1; b < end; b++) {
+              ContactInfo ca, cb;
+              the_mesh.getContactByIdx(_shareContacts[a], ca);
+              the_mesh.getContactByIdx(_shareContacts[b], cb);
+              if (strcasecmp(ca.name, cb.name) > 0) {
+                int tmp = _shareContacts[a];
+                _shareContacts[a] = _shareContacts[b];
+                _shareContacts[b] = tmp;
+              }
+            }
+          }
+        };
+        sortRange(0, favCount);
+        sortRange(favCount, _shareContactCount);
         _sharePickerIdx = 0;
         _sharePickerScroll = 0;
         _editMode = EDIT_SHARE_PICK;
