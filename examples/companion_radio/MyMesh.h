@@ -253,6 +253,9 @@ public:
   void saveContacts() {
     _store->saveContacts(this);
   }
+  void saveMainIdentity() {
+    _store->saveMainIdentity(self_id);
+  }
 
 private:
   void writeOKFrame();

@@ -23,6 +23,8 @@
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
   #include "ChannelPickerScreen.h"
+  #include "MeckExport.h"
+  #include "MeckImport.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -699,6 +701,8 @@
   #include "ContactsScreen.h"
   #include "ChannelScreen.h"
   #include "ChannelPickerScreen.h"
+  #include "MeckExport.h"
+  #include "MeckImport.h"
   #include "SettingsScreen.h"
   #include "RepeaterAdminScreen.h"
   #include "DiscoveryScreen.h"
@@ -2135,6 +2139,20 @@ void setup() {
     #endif
   );
   MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
+
+  // Boot-time config import: check for /meshcore/import.json on SD
+  #ifdef HAS_SDCARD
+  if (sdCardReady) {
+    int importResult = meckImportConfig(the_mesh,
+                                        sensors.node_lat, sensors.node_lon,
+                                        sdCardReady);
+    if (importResult > 0) {
+      MESH_DEBUG_PRINTLN("setup() - config imported from SD");
+    }
+    // importResult == 0 means no file found (normal), -1 means error (logged inside)
+    // If identity was changed, meckImportConfig already rebooted before returning.
+  }
+  #endif
 
 #ifdef WIFI_SSID
   MESH_DEBUG_PRINTLN("setup() - WiFi mode (compile-time credentials)");
@@ -4536,6 +4554,43 @@ void handleKeyboardInput() {
 
     // All other keys Ã¢â€ â€™ settings screen via injectKey
     ui_task.injectKey(key);
+
+    // Check for export/import requests from the settings screen
+    #ifdef HAS_SDCARD
+    if (settings->isExportRequested()) {
+      settings->clearExportRequest();
+      uint8_t flags = settings->getExportFlags();
+      if (flags == 0) {
+        ui_task.showAlert("No sections selected", 1500);
+      } else {
+        char exportedPath[64];
+        int result = meckExportConfig(the_mesh, flags,
+                                      sensors.node_lat, sensors.node_lon,
+                                      rtc_clock, sdCardReady,
+                                      exportedPath, sizeof(exportedPath));
+        if (result >= 0) {
+          char buf[96];
+          snprintf(buf, sizeof(buf), "Exported to %s", exportedPath);
+          ui_task.showAlert(buf, 3500);
+        } else {
+          ui_task.showAlert("Export failed (SD?)", 2000);
+        }
+      }
+    }
+    if (settings->isImportRequested()) {
+      settings->clearImportRequest();
+      int added = meckImportConfig(the_mesh,
+                                   sensors.node_lat, sensors.node_lon,
+                                   sdCardReady);
+      if (added > 0) {
+        ui_task.showAlert("Config imported!", 2500);
+      } else if (added == 0) {
+        ui_task.showAlert("No import.json found", 2000);
+      } else {
+        ui_task.showAlert("Import failed", 2000);
+      }
+    }
+    #endif
     return;
   }
 

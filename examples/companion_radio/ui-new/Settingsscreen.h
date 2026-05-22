@@ -46,21 +46,37 @@ extern MyMesh the_mesh;
 // ---------------------------------------------------------------------------
 // Auto-add config bitmask (mirrored from MyMesh.cpp for UI access)
 // ---------------------------------------------------------------------------
+#ifndef AUTO_ADD_OVERWRITE_OLDEST
 #define AUTO_ADD_OVERWRITE_OLDEST (1 << 0)  // 0x01 - overwrite oldest non-favourite when full
 #define AUTO_ADD_CHAT             (1 << 1)  // 0x02 - auto-add Chat (Companion) (ADV_TYPE_CHAT)
 #define AUTO_ADD_REPEATER         (1 << 2)  // 0x04 - auto-add Repeater (ADV_TYPE_REPEATER)
 #define AUTO_ADD_ROOM_SERVER      (1 << 3)  // 0x08 - auto-add Room Server (ADV_TYPE_ROOM)
 #define AUTO_ADD_SENSOR           (1 << 4)  // 0x10 - auto-add Sensor (ADV_TYPE_SENSOR)
+#endif
 
 // All type bits combined (excludes overwrite flag)
+#ifndef AUTO_ADD_ALL_TYPES
 #define AUTO_ADD_ALL_TYPES (AUTO_ADD_CHAT | AUTO_ADD_REPEATER | \
                             AUTO_ADD_ROOM_SERVER | AUTO_ADD_SENSOR)
+#endif
 
 // Contact mode indices for picker
 #define CONTACT_MODE_AUTO_ALL 0  // Add all contacts automatically
 #define CONTACT_MODE_CUSTOM   1  // Per-type toggles
 #define CONTACT_MODE_MANUAL   2  // No auto-add, companion app only
 #define CONTACT_MODE_COUNT    3
+
+// ---------------------------------------------------------------------------
+// Export section flags (must match MeckExport.h)
+// ---------------------------------------------------------------------------
+#ifndef MECK_EXPORT_IDENTITY
+#define MECK_EXPORT_IDENTITY  0x01
+#define MECK_EXPORT_CHANNELS  0x02
+#define MECK_EXPORT_CONTACTS  0x04
+#define MECK_EXPORT_RADIO     0x08
+#define MECK_EXPORT_AUTOADD   0x10
+#define MECK_EXPORT_ALL       0x1F
+#endif
 
 // ---------------------------------------------------------------------------
 // Radio presets (shared with Serial CLI in MyMesh.cpp)
@@ -149,6 +165,17 @@ enum SettingsRowType : uint8_t {
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
   ROW_ADD_CHANNEL,    // "+ Add Hashtag Channel"
+  #ifdef HAS_SDCARD
+  ROW_EXPORT_IMPORT_SUBMENU, // Folder row: "Export/Import >>"
+  ROW_EXPORT_TO_SD,      // "Export to SD >>" (enters flags sub-screen)
+  ROW_IMPORT_FROM_SD,    // "Import from SD" action
+  ROW_EXPORT_IDENTITY,   // Checkbox: include identity in export
+  ROW_EXPORT_RADIO,      // Checkbox: include radio settings
+  ROW_EXPORT_CHANNELS,   // Checkbox: include channels
+  ROW_EXPORT_CONTACTS,   // Checkbox: include contacts
+  ROW_EXPORT_AUTOADD,    // Checkbox: include auto-add preferences (sub-item of contacts)
+  ROW_EXPORT_NOW,        // ">> Export Now" action trigger
+  #endif
   ROW_INFO_HEADER,    // "--- Info ---" separator
   #ifdef MECK_OTA_UPDATE
   ROW_OTA_TOOLS_SUBMENU, // Folder row → enters OTA Tools sub-screen
@@ -193,6 +220,10 @@ enum SubScreen : uint8_t {
   #ifdef MECK_OTA_UPDATE
   SUB_OTA_TOOLS,   // OTA Tools sub-screen (FW update + File Manager)
   #endif
+  #ifdef HAS_SDCARD
+  SUB_EXPORT_IMPORT,  // Export/Import menu
+  SUB_EXPORT_FLAGS,   // Export checkboxes + trigger
+  #endif
 };
 
 #ifdef MECK_OTA_UPDATE
@@ -218,13 +249,13 @@ enum FmPhase : uint8_t {
 
 // Max rows in the settings list (increased for contact sub-toggles + WiFi)
 #if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 57  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope
+#define SETTINGS_MAX_ROWS 63  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope, export
 #elif defined(HAS_4G_MODEM)
-#define SETTINGS_MAX_ROWS 55  // Extra rows for IMEI, Carrier, APN + contacts + scope
+#define SETTINGS_MAX_ROWS 61  // Extra rows for IMEI, Carrier, APN + contacts + scope + export
 #elif defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 51  // Extra rows for contacts + WiFi + scope
+#define SETTINGS_MAX_ROWS 57  // Extra rows for contacts + WiFi + scope + export
 #else
-#define SETTINGS_MAX_ROWS 49  // Contacts section + scope
+#define SETTINGS_MAX_ROWS 55  // Contacts section + scope + export
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 
@@ -269,6 +300,12 @@ private:
   // Sub-screen navigation
   SubScreen _subScreen;
   int _savedTopCursor;  // cursor position to restore when leaving sub-screen
+  #ifdef HAS_SDCARD
+  int _savedExportCursor;  // cursor in SUB_EXPORT_IMPORT when entering SUB_EXPORT_FLAGS
+  uint8_t _exportFlags;    // bitmask of MECK_EXPORT_* flags for export checkboxes
+  bool _exportRequested;   // set by key handler, cleared by main.cpp after calling export
+  bool _importRequested;   // set by key handler, cleared by main.cpp after calling import
+  #endif
 
   // Dirty flag for radio params Ã¢â‚¬â€ prompt to apply
   bool _radioChanged;
@@ -402,6 +439,20 @@ private:
       addRow(ROW_FW_UPDATE);
       addRow(ROW_SD_FILE_MGR);
     #endif
+    #ifdef HAS_SDCARD
+    } else if (_subScreen == SUB_EXPORT_IMPORT) {
+      // --- Export/Import sub-screen ---
+      addRow(ROW_EXPORT_TO_SD);
+      addRow(ROW_IMPORT_FROM_SD);
+    } else if (_subScreen == SUB_EXPORT_FLAGS) {
+      // --- Export checkboxes + trigger ---
+      addRow(ROW_EXPORT_IDENTITY);
+      addRow(ROW_EXPORT_RADIO);
+      addRow(ROW_EXPORT_CHANNELS);
+      addRow(ROW_EXPORT_CONTACTS);
+      addRow(ROW_EXPORT_AUTOADD);
+      addRow(ROW_EXPORT_NOW);
+    #endif
     } else {
       // --- Top-level settings list ---
       addRow(ROW_NAME);
@@ -442,6 +493,9 @@ private:
       addRow(ROW_CHANNELS_SUBMENU);
       #ifdef MECK_OTA_UPDATE
       addRow(ROW_OTA_TOOLS_SUBMENU);
+      #endif
+      #ifdef HAS_SDCARD
+      addRow(ROW_EXPORT_IMPORT_SUBMENU);
       #endif
 
       // Info section (stays at top level)
@@ -596,6 +650,12 @@ public:
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
       _radioChanged(false), _needsTextVKB(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
+    #ifdef HAS_SDCARD
+    _savedExportCursor = 0;
+    _exportFlags = 0x1F;  // MECK_EXPORT_ALL
+    _exportRequested = false;
+    _importRequested = false;
+    #endif
     #ifdef MECK_OTA_UPDATE
     _otaServer = nullptr;
     _otaPhase = OTA_PHASE_CONFIRM;
@@ -620,6 +680,12 @@ public:
     _cursor = 0;
     _scrollTop = 0;
     _radioChanged = false;
+    #ifdef HAS_SDCARD
+    _savedExportCursor = 0;
+    _exportFlags = 0x1F;  // MECK_EXPORT_ALL
+    _exportRequested = false;
+    _importRequested = false;
+    #endif
     #ifdef HAS_4G_MODEM
     _modemEnabled = ModemManager::loadEnabledConfig();
     #endif
@@ -809,6 +875,15 @@ public:
     // Simulate Enter to confirm the edit through the normal path
     handleInput('\r');
   }
+
+  // Export/Import request flags — checked and cleared by main.cpp
+  #ifdef HAS_SDCARD
+  bool isExportRequested() const { return _exportRequested; }
+  uint8_t getExportFlags() const { return _exportFlags; }
+  void clearExportRequest() { _exportRequested = false; }
+  bool isImportRequested() const { return _importRequested; }
+  void clearImportRequest() { _importRequested = false; }
+  #endif
 
   // ---------------------------------------------------------------------------
   // OTA firmware update
@@ -1877,6 +1952,57 @@ public:
           display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
           display.print("Channels >>");
           break;
+
+        #ifdef HAS_SDCARD
+        case ROW_EXPORT_IMPORT_SUBMENU:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Export/Import >>");
+          break;
+
+        case ROW_EXPORT_TO_SD:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Export to SD >>");
+          break;
+
+        case ROW_IMPORT_FROM_SD:
+          display.print("Import from SD");
+          break;
+
+        case ROW_EXPORT_IDENTITY:
+          snprintf(tmp, sizeof(tmp), "  [%c] Identity",
+                   (_exportFlags & MECK_EXPORT_IDENTITY) ? 'X' : ' ');
+          display.print(tmp);
+          break;
+
+        case ROW_EXPORT_RADIO:
+          snprintf(tmp, sizeof(tmp), "  [%c] Radio Settings",
+                   (_exportFlags & MECK_EXPORT_RADIO) ? 'X' : ' ');
+          display.print(tmp);
+          break;
+
+        case ROW_EXPORT_CHANNELS:
+          snprintf(tmp, sizeof(tmp), "  [%c] Channels",
+                   (_exportFlags & MECK_EXPORT_CHANNELS) ? 'X' : ' ');
+          display.print(tmp);
+          break;
+
+        case ROW_EXPORT_CONTACTS:
+          snprintf(tmp, sizeof(tmp), "  [%c] Contacts",
+                   (_exportFlags & MECK_EXPORT_CONTACTS) ? 'X' : ' ');
+          display.print(tmp);
+          break;
+
+        case ROW_EXPORT_AUTOADD:
+          snprintf(tmp, sizeof(tmp), "    [%c] Auto-Add Prefs",
+                   (_exportFlags & MECK_EXPORT_AUTOADD) ? 'X' : ' ');
+          display.print(tmp);
+          break;
+
+        case ROW_EXPORT_NOW:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print(">> Export Now");
+          break;
+        #endif
 
         // --- Contacts section ---
         case ROW_CONTACT_HEADER:
@@ -3410,6 +3536,56 @@ public:
           startFileMgr();
           break;
         #endif
+
+        #ifdef HAS_SDCARD
+        case ROW_EXPORT_IMPORT_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_EXPORT_IMPORT;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered Export/Import sub-screen");
+          break;
+
+        case ROW_EXPORT_TO_SD:
+          _savedExportCursor = _cursor;
+          _subScreen = SUB_EXPORT_FLAGS;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered Export flags sub-screen");
+          break;
+
+        case ROW_IMPORT_FROM_SD:
+          _importRequested = true;
+          Serial.println("Settings: import requested");
+          break;
+
+        case ROW_EXPORT_IDENTITY:
+          _exportFlags ^= MECK_EXPORT_IDENTITY;
+          break;
+        case ROW_EXPORT_RADIO:
+          _exportFlags ^= MECK_EXPORT_RADIO;
+          break;
+        case ROW_EXPORT_CHANNELS:
+          _exportFlags ^= MECK_EXPORT_CHANNELS;
+          break;
+        case ROW_EXPORT_CONTACTS:
+          _exportFlags ^= MECK_EXPORT_CONTACTS;
+          break;
+        case ROW_EXPORT_AUTOADD:
+          _exportFlags ^= MECK_EXPORT_AUTOADD;
+          break;
+
+        case ROW_EXPORT_NOW:
+          if (_exportFlags == 0) {
+            Serial.println("Settings: export requested but no sections selected");
+          } else {
+            _exportRequested = true;
+            Serial.printf("Settings: export requested (flags=0x%02X)\n", _exportFlags);
+          }
+          break;
+        #endif
         case ROW_CHANNEL: {
           // Enter on a channel row → edit its region scope
           uint8_t chIdx = _rows[_cursor].param;
@@ -3482,6 +3658,18 @@ public:
 
     // Q: back -- if in sub-screen, return to top level; else exit settings
     if (c == 'q' || c == 'Q') {
+      #ifdef HAS_SDCARD
+      if (_subScreen == SUB_EXPORT_FLAGS) {
+        // Return to Export/Import sub-screen
+        _subScreen = SUB_EXPORT_IMPORT;
+        rebuildRows();
+        _cursor = _savedExportCursor;
+        if (_cursor >= _numRows) _cursor = _numRows - 1;
+        skipNonSelectable(1);
+        Serial.println("Settings: back to Export/Import");
+        return true;
+      }
+      #endif
       if (_subScreen != SUB_NONE) {
         // Return to top-level settings list
         _subScreen = SUB_NONE;

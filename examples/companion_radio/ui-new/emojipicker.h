@@ -1,7 +1,7 @@
 #pragma once
 
 // Emoji Picker with scrolling grid and scroll bar
-// 5 columns, 4 visible rows, scrollable through all 76 emoji
+// 5 columns, 4 visible rows, scrollable through all 79 emoji
 // WASD navigation, Enter to select, $/Q/Backspace to cancel
 
 #include <helpers/ui/DisplayDriver.h>
@@ -18,80 +18,82 @@ static const char* EMOJI_LABELS[EMOJI_COUNT] = {
   "Cry",    // 2  loudly_crying
   "Grim",   // 3  grimace
   "Zany",   // 4  zany_face
-  "Cowb",   // 5  cowboy
+  "100",    // 5  hundred_points
+  "Grin",   // 6  grinning
+  "Cowb",   // 7  cowboy
   // Thumbsup + heart
-  "Like",   // 6  thumbsup
-  "Love",   // 7  heart
+  "Like",   // 8  thumbsup
+  "Love",   // 9  heart
   // Everything else
-  "WiFi",   // 8  wireless
-  "Inf",    // 9  infinity
-  "Rex",    // 10 trex
-  "Skul",   // 11 skull
-  "Cros",   // 12 cross
-  "Bolt",   // 13 lightning
-  "Hat",    // 14 tophat
-  "Moto",   // 15 motorcycle
-  "Leaf",   // 16 seedling
-  "AU",     // 17 flag_au
-  "Umbr",   // 18 umbrella
-  "Eye",    // 19 nazar
-  "Glob",   // 20 globe
-  "Rad",    // 21 radioactive
-  "Cow",    // 22 cow
-  "ET",     // 23 alien
-  "Inv",    // 24 invader
-  "Dagr",   // 25 dagger
-  "Mtn",    // 26 mountain
-  "End",    // 27 end_arrow
-  "Ring",   // 28 hollow_circle
-  "Drag",   // 29 dragon
-  "Web",    // 30 globe_meridians
-  "Eggp",   // 31 eggplant
-  "Shld",   // 32 shield
-  "Gogl",   // 33 goggles
-  "Lzrd",   // 34 lizard
-  "Roo",    // 35 kangaroo
-  "Fthr",   // 36 feather
-  "Sun",    // 37 bright
-  "Wave",   // 38 part_alt
-  "Boat",   // 39 motorboat
-  "Domi",   // 40 domino
-  "Dish",   // 41 satellite
-  "Pass",   // 42 customs
-  "Whl",    // 43 wheel
-  "Koal",   // 44 koala
-  "Knob",   // 45 control_knobs
-  "Pch",    // 46 peach
-  "Race",   // 47 racing_car
-  "Mous",   // 48 mouse
-  "Shrm",   // 49 mushroom
-  "Bio",    // 50 biohazard
-  "Pnda",   // 51 panda
-  "Bang",   // 52 anger
-  "DrgF",   // 53 dragon_face
-  "Pagr",   // 54 pager
-  "Bee",    // 55 bee
-  "Bulb",   // 56 bulb
-  "Cat",    // 57 cat
-  "Flur",   // 58 fleur
-  "Moon",   // 59 moon
-  "Cafe",   // 60 coffee
-  "Toth",   // 61 tooth
-  "Prtz",   // 62 pretzel
-  "Abac",   // 63 abacus
-  "Moai",   // 64 moai
-  "Hiii",   // 65 tipping
-  "Hedg",   // 66 hedgehog
-  "Diam",   // 67 diamond_suit
-  "Spde",   // 68 spade_suit
-  "Piza",   // 69 pizza
-  "Luck",   // 70 four_leaf_clover
-  "Cld",    // 71 cloud
-  "Rckt",   // 72 rocket
-  "HFC",    // 73 passport_control
-  "Star",   // 74 eight_spoked_asterisk
-  "Sig",    // 75 signal_strength
-  "Beer",   // 76 beer
+  "WiFi",   // 10 wireless
+  "Inf",    // 11 infinity
+  "Rex",    // 12 trex
+  "Skul",   // 13 skull
+  "Cros",   // 14 cross
+  "Bolt",   // 15 lightning
+  "Hat",    // 16 tophat
+  "Moto",   // 17 motorcycle
+  "Leaf",   // 18 seedling
+  "AU",     // 19 flag_au
+  "Umbr",   // 20 umbrella
+  "Eye",    // 21 nazar
+  "Glob",   // 22 globe
+  "Rad",    // 23 radioactive
+  "Cow",    // 24 cow
+  "ET",     // 25 alien
+  "Inv",    // 26 invader
+  "Dagr",   // 27 dagger
+  "Mtn",    // 28 mountain
+  "End",    // 29 end_arrow
+  "Ring",   // 30 hollow_circle
+  "Drag",   // 31 dragon
+  "Web",    // 32 globe_meridians
+  "Eggp",   // 33 eggplant
+  "Shld",   // 34 shield
+  "Gogl",   // 35 goggles
+  "Lzrd",   // 36 lizard
+  "Roo",    // 37 kangaroo
+  "Fthr",   // 38 feather
+  "Sun",    // 39 bright
+  "Wave",   // 40 part_alt
+  "Boat",   // 41 motorboat
+  "Domi",   // 42 domino
+  "Dish",   // 43 satellite
+  "Pass",   // 44 customs
+  "Whl",    // 45 wheel
+  "Koal",   // 46 koala
+  "Knob",   // 47 control_knobs
+  "Pch",    // 48 peach
+  "Race",   // 49 racing_car
+  "Mous",   // 50 mouse
+  "Shrm",   // 51 mushroom
+  "Bio",    // 52 biohazard
+  "Pnda",   // 53 panda
+  "Bang",   // 54 anger
+  "DrgF",   // 55 dragon_face
+  "Pagr",   // 56 pager
+  "Bee",    // 57 bee
+  "Bulb",   // 58 bulb
+  "Cat",    // 59 cat
+  "Flur",   // 60 fleur
+  "Moon",   // 61 moon
+  "Cafe",   // 62 coffee
+  "Toth",   // 63 tooth
+  "Prtz",   // 64 pretzel
+  "Abac",   // 65 abacus
+  "Moai",   // 66 moai
+  "Hiii",   // 67 tipping
+  "Hedg",   // 68 hedgehog
+  "Diam",   // 69 diamond_suit
+  "Spde",   // 70 spade_suit
+  "Piza",   // 71 pizza
+  "Luck",   // 72 four_leaf_clover
+  "Cld",    // 73 cloud
+  "Rckt",   // 74 rocket
+  "HFC",    // 75 passport_control
+  "Star",   // 76 eight_spoked_asterisk
+  "Sig",    // 77 signal_strength
+  "Beer",   // 78 beer
 };
 
 struct EmojiPicker {
