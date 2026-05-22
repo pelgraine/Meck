@@ -34,6 +34,9 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Per-Channel Notification Preferences (v1.10+)](#per-channel-notification-preferences-v110)
   - [Custom Notification Tones (v1.10+)](#custom-notification-tones-v110)
   - [Games (v1.10+)](#games-v110)
+  - [Private Channels (v1.11+)](#private-channels-v111)
+  - [Channel Sharing via DM (v1.11+)](#channel-sharing-via-dm-v111)
+  - [Config Export/Import (v1.11+)](#config-exportimport-v111)
   - [Settings Screen](#settings-screen)
   - [Font Styles](#font-styles)
   - [Compose Mode](#compose-mode)
@@ -548,6 +551,66 @@ Press **J** from the home screen to open the games menu. Two classic games are i
 | F | Toggle flag on cell |
 | Q | Quit to games menu |
 
+### Private Channels (v1.11+)
+
+Meck supports both public hashtag channels and private channels. The difference is in how the channel secret is generated:
+
+- **Public (hashtag) channels** — type a name starting with `#` (e.g. `#camping`). The 16-byte secret is derived deterministically from the name via SHA-256, so anyone on any MeshCore device who creates the same hashtag name gets the same key and can communicate on that channel.
+- **Private channels** — type a name **without** the `#` prefix (e.g. `team-alpha`). A cryptographically random 16-byte secret is generated, meaning only devices that have been explicitly given the key can participate.
+
+**How to create a private channel:**
+
+1. From the home screen, press **S** to open settings
+2. Scroll down to the **Channels >>** section and press Enter to open it
+3. Navigate to **+ Add Channel (# = public)** and press Enter
+4. Type the channel name **without** a `#` prefix, then press Enter
+
+The channel is created with a random secret. To let other Meck users join, use channel sharing (see below).
+
+### Channel Sharing via DM (v1.11+)
+
+You can share any channel — public or private — with another Meck user by sending them the channel name and secret as an encrypted direct message. This is particularly useful for private channels, where sharing the secret manually would mean typing 32 hex characters.
+
+**How to share a channel:**
+
+1. From the home screen, press **S** to open settings
+2. Scroll down to the **Channels >>** section and press Enter to open it
+3. Navigate to the channel you want to share
+4. Press **C** to open the contact picker
+5. Select a contact and press Enter to send
+
+The recipient's device automatically adds the channel to their channel list (if it doesn't already exist and there's an empty slot). An alert confirms the channel was added. In the DM conversation, both sender and recipient see a sanitised message ("Shared channel: name") rather than the raw protocol data.
+
+On the T5S3, channel sharing works the same way via the CardKB keyboard.
+
+### Config Export/Import (v1.11+)
+
+The **Export/Import >>** sub-screen in Settings lets you back up and restore your device configuration via JSON files on the SD card. This is useful for migrating settings to a new board, keeping a backup before reflashing, or cloning a configuration across multiple devices.
+
+**Exporting:**
+
+1. From the home screen, press **S** to open settings
+2. Scroll down to **Export/Import >>** and press Enter
+3. Select **Export to SD >>** and press Enter
+4. Toggle which sections to include using Enter on each checkbox:
+   - **Identity** — public and private key (full identity backup)
+   - **Radio Settings** — frequency, bandwidth, spreading factor, coding rate, TX power, and GPS position
+   - **Channels** — all channel names and secrets
+   - **Contacts** — all contacts with public keys, type, flags, position, and timestamps
+   - **Auto-Add Prefs** — contact auto-add mode and per-type toggles
+5. Navigate to **>> Export Now** and press Enter
+
+The config is saved as a timestamped JSON file in `/meshcore/` on the SD card (e.g. `meshcore_config_20260523_1430.json`). The format is compatible with the MeshCore companion app config export.
+
+**Importing:**
+
+Place a file named `import.json` in the `/meshcore/` folder on your SD card. Then either:
+
+- **From settings:** go to **Export/Import >> → Import from SD** and press Enter
+- **On boot:** the firmware automatically checks for `/meshcore/import.json` at startup and imports it if found
+
+If the import includes a different identity (private key), the device reboots after applying the new identity. Channels and contacts are merged into the existing configuration.
+
 ### Settings Screen
 
 Press **S** from the home screen to open settings. On first boot (when the device name is still the default hex ID), the settings screen launches automatically as an onboarding wizard to set your device name and radio preset.
@@ -582,6 +645,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
 | OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
+| Export/Import >> | Opens the Export/Import sub-screen — export device config to SD or import from `/meshcore/import.json` (see [Config Export/Import](#config-exportimport-v111)) |
 | Device Info | Public key and firmware version (read-only) |
 
 **Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
@@ -603,12 +667,13 @@ Press Q to return to the top-level settings list.
 | Enter | Edit channel region scope |
 | N | Cycle notification preference (All / Mentions / Off) -- see [Per-Channel Notification Preferences](#per-channel-notification-preferences-v110) |
 | T | Open notification tone picker (audio and 4G variants) -- see [Custom Notification Tones](#custom-notification-tones-v110) |
+| C | Share channel with a contact via DM -- see [Channel Sharing via DM](#channel-sharing-via-dm-v111) |
 | X | Delete channel (non-primary channels only) |
 | Q | Back to top-level settings |
 
 The top-level settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
 
-When adding a hashtag channel, type the channel name and press Enter. The channel secret is automatically derived from the name via SHA-256, matching the standard MeshCore hashtag convention.
+When adding a channel, type the channel name and press Enter. Names starting with `#` create a public hashtag channel (secret derived from the name via SHA-256, matching the standard MeshCore convention). Names without a `#` prefix create a private channel with a random secret — see [Private Channels](#private-channels-v111).
 
 If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
 
@@ -659,7 +724,7 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 
 ### Emoji Picker
 
-While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 77 emoji is displayed in a 5-column layout, with faces and emotions grouped first. Scrolling wraps around — pressing W on the first row goes to the last row and vice versa.
+While in compose mode, press the **$** key to open the emoji picker. A scrollable grid of 79 emoji is displayed in a 5-column layout, with faces and emotions grouped first. Scrolling wraps around — pressing W on the first row goes to the last row and vice versa.
 
 | Key | Action |
 |-----|--------|
@@ -849,12 +914,13 @@ The T5S3 uses a combination of touch gestures and the Boot button for all intera
 
 ### T5S3 Home Screen
 
-The home screen displays a 3×2 grid of tappable tiles:
+The home screen displays a grid of tappable tiles across three rows:
 
 | | Column 1 | Column 2 | Column 3 |
 |---|----------|----------|----------|
 | **Row 1** | Messages | Contacts | Settings |
 | **Row 2** | Reader | Notes | Browser (WiFi) / Discover (other) |
+| **Row 3** | Trace | Games | |
 
 Tap a tile to open that screen. Tap outside the tile grid (or swipe left/right) to cycle between home pages. The additional home pages show BLE status, battery info, GPS status, and a hibernate option — same as the T-Deck Pro but navigated by swiping or tapping the left/right halves of the screen instead of pressing keys.
 
@@ -898,7 +964,7 @@ The virtual keyboard supports:
 - QWERTY letter layout with a symbol/number layer (tap the **123** key to switch)
 - Shift toggle for uppercase
 - Backspace (UTF-8 aware — correctly deletes multi-byte emoji) and Enter keys
-- **Emoji picker** — tap the **$** key to open a scrollable 8-column grid of 77 emoji sprites with page indicators. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard. Faces and emotions are grouped first for quick access.
+- **Emoji picker** — tap the **$** key to open a scrollable 8-column grid of 79 emoji sprites with page indicators. Tap an emoji to insert it inline in your message. Tap **Back** to return to the keyboard. Faces and emotions are grouped first for quick access.
 - Inline emoji rendering — emoji appear as pixel sprites in the text field as you type
 - Phantom keystroke prevention (a brief cooldown after the keyboard opens prevents accidental taps)
 
@@ -1217,6 +1283,11 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Custom notification tones per channel -- audio variant (MP3) and 4G variant (WAV via modem) (v1.10)
 - [X] Games menu with Snake and Minesweeper (v1.10)
 - [X] MAX_GROUP_CHANNELS expanded to 40 for all builds (v1.10)
+- [X] Private channel support with random secret generation (v1.11)
+- [X] Channel sharing via encrypted DM with auto-add on receive (v1.11)
+- [X] Config export/import to SD card with selectable sections (v1.11)
+- [X] Contact recency fix for nodes with stuck/behind clocks (v1.11)
+- [X] Expanded emoji picker (79 emoji) (v1.11)
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -1251,6 +1322,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Virtual keyboard emoji grid with scrollable pages
 - [X] Accented character / diacritics support (Czech, Polish, French, German, Latin Extended)
 - [X] DM message persistence across reboots (v1.9)
+- [X] Expanded Minesweeper grid to 14x14 with 25 mines (v1.11)
 - [ ] Improve EPUB rendering and EPUB format handling
 
 **Heltec V4:**
@@ -1262,7 +1334,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 **In development (WIP):**
 - [ ] T-Deck Pro MAX — ESP32-S3 with XL9555 I/O expander, combined 4G (A7682E) + audio (ES8311), working e-ink front-light, 1500 mAh battery. Variant files created; deferred until hardware ships.
-- [ ] T-Echo Card — nRF52840 (BLE-native) with SX1262, SSD1315 OLED (72×40), L76K GPS, speaker, PDM mic, IMU, solar charging, NFC. Preliminary variant files created; awaiting hardware.
 
 ## 📞 Get Support
 
