@@ -376,7 +376,11 @@ public:
 
       // Key hints
       display.setColor(DisplayDriver::YELLOW);
+    #if defined(LilyGo_T5S3_EPaper_Pro)
+      const char* hints = "Tap:Yes  Boot:Cancel";
+    #else
       const char* hints = "Enter:Yes  Q:Cancel";
+    #endif
       display.setCursor(boxX + 4, boxY + 29);
       display.print(hints);
     }
@@ -396,7 +400,7 @@ public:
       display.print(rt);
     } else {
       display.print("Tap:Open");
-      const char* rt = "Hold:Del Boot:Back";
+      const char* rt = "Long Press:Del Hist Boot:Back";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
       display.print(rt);
     }

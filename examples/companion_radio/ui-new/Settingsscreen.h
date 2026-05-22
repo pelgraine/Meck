@@ -2111,9 +2111,9 @@ public:
                 char hintBuf[40];
               #if defined(LilyGo_T5S3_EPaper_Pro)
                 if (chIdx > 0) {
-                  snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region Hold:Del", nTag);
+                  snprintf(hintBuf, sizeof(hintBuf), "Hold:Del");
                 } else {
-                  snprintf(hintBuf, sizeof(hintBuf), "Notif:%s Ent:Region", nTag);
+                  hintBuf[0] = '\0';  // No actionable hints for channel 0 on T5S3
                 }
               #elif defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
                 if (chIdx > 0) {

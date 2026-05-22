@@ -3,12 +3,13 @@
 // =============================================================================
 // MinesweeperScreen -- Classic Minesweeper for Meck e-ink devices
 //
-// 9x9 grid, 10 mines (classic Beginner difficulty).
+// 9x9 grid, 10 mines (classic Beginner difficulty) on T-Deck Pro.
+// 14x14 grid, 25 mines on T5S3 (fills the larger virtual display).
 // First reveal is always safe -- mines are placed after the first click.
 // Fully turn-based: no tick timer, renders only on input. Perfect for e-ink.
 //
 // T-Deck Pro: 14x14 pixel cells (126x126 grid area on 240x320 display)
-// T5S3:        8x8 pixel cells (72x72 grid area on 128x128 virtual display)
+// T5S3:       14x14 grid at 8x8 pixel cells (112x112 on 128x128 virtual display)
 // =============================================================================
 
 #include <helpers/ui/UIScreen.h>
@@ -17,22 +18,23 @@
 // Forward declarations
 class UITask;
 
-// -- Grid parameters --
-#define MINE_GRID_W    9
-#define MINE_GRID_H    9
-#define MINE_COUNT    10
-#define MINE_TOTAL    (MINE_GRID_W * MINE_GRID_H)
-
-// -- Cell sizes per platform --
+// -- Grid and cell parameters per platform --
 #if defined(LilyGo_T5S3_EPaper_Pro)
-  #define MINE_CELL     8
-  #define MINE_HDR     14
-  #define MINE_FTR     10
+  #define MINE_GRID_W   14
+  #define MINE_GRID_H   14
+  #define MINE_COUNT    25
+  #define MINE_CELL      8
+  #define MINE_HDR      14
+  #define MINE_FTR      10
 #else
-  #define MINE_CELL    14
-  #define MINE_HDR     14
-  #define MINE_FTR     14
+  #define MINE_GRID_W    9
+  #define MINE_GRID_H    9
+  #define MINE_COUNT    10
+  #define MINE_CELL     14
+  #define MINE_HDR      14
+  #define MINE_FTR      14
 #endif
+#define MINE_TOTAL    (MINE_GRID_W * MINE_GRID_H)
 
 #define MINE_VALUE  9   // Content value indicating a mine
 

@@ -371,6 +371,21 @@ void MyMesh::onContactsFull() {
   }
 }
 
+void MyMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) {
+  // Let the base class handle normal advert processing (auto-add, replay guard, etc.)
+  BaseChatMesh::onAdvertRecv(packet, id, timestamp, app_data, app_data_len);
+
+  // Unconditionally bump lastmod to local RTC time.
+  // The base class replay guard early-returns without updating lastmod when
+  // timestamp <= last_advert_timestamp, causing nodes with stuck or behind
+  // clocks to sink to the bottom of the recency-sorted contacts list even
+  // though we are actively hearing their adverts.
+  ContactInfo* c = lookupContactByPubKey(id.pub_key, PUB_KEY_SIZE);
+  if (c) {
+    c->lastmod = getRTCClock()->getCurrentTime();
+  }
+}
+
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
   _forceNextImport = false;  // clear force-add flag (set by forceImportContact)
   if (_serial->isConnected()) {
