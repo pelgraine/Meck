@@ -2,8 +2,6 @@
 #include "variant.h"
 #include "TDeckProMaxBoard.h"
 #include <Mesh.h>  // For MESH_DEBUG_PRINTLN
-#include "soc/gpio_reg.h"    // GPIO_ENABLE1_REG/OUT1/IN1/FUNC0_OUT_SEL_CFG (diagnostic)
-#include "soc/io_mux_reg.h"  // IO_MUX_GPIO41_REG / IO_MUX_GPIO42_REG (diagnostic)
 
 // LEDC channel for e-ink backlight PWM (Arduino ESP32 core 2.x channel-based API)
 #ifdef PIN_EINK_BL
@@ -28,39 +26,6 @@
 // NOTE: We do NOT call TDeckBoard::begin() — we reimplement the boot sequence
 // to handle XL9555-routed pins. BQ27220 methods are inherited unchanged.
 // =============================================================================
-
-#ifdef PIN_EINK_BL
-// DIAGNOSTIC helper: dump the low-level state of one GPIO so the frontlight pin
-// (GPIO41 / MTDI) and the keyboard-backlight pin (GPIO42 / MTMS) can be compared
-// directly. Per the V0.1 schematic both are identical S8050 low-side LED switches
-// with VDD3V3 anodes, yet IO42 lights and IO41 does not. This prints the output
-// enable, output/input level, the IO_MUX function select, and the GPIO-matrix
-// output signal so we can see what differs about GPIO41.
-// ESP32-S3 note: GPIO 41/42 live in the *1 register banks (bit = gpio - 32).
-static void dumpGpioState(const char* label, int gpio, uint32_t muxReg) {
-  uint32_t en1  = REG_READ(GPIO_ENABLE1_REG);
-  uint32_t out1 = REG_READ(GPIO_OUT1_REG);
-  uint32_t in1  = REG_READ(GPIO_IN1_REG);
-  uint32_t mux  = REG_READ(muxReg);
-  uint32_t fcfg = REG_READ(GPIO_FUNC0_OUT_SEL_CFG_REG + (uint32_t)gpio * 4);
-  int bit = gpio - 32;  // 41 -> bit 9, 42 -> bit 10
-  Serial.printf(
-    "    %s GPIO%d: OEN=%d OUT=%d IN=%d | IO_MUX=0x%08X MCU_SEL=%d FUN_IE=%d FUN_DRV=%d WPU=%d WPD=%d | FUNC_OUT_SEL=0x%08X sig=%d\n",
-    label, gpio,
-    (int)((en1  >> bit) & 1),
-    (int)((out1 >> bit) & 1),
-    (int)((in1  >> bit) & 1),
-    mux,
-    (int)((mux >> 12) & 0x7),  // MCU_SEL : IO_MUX function select
-    (int)((mux >>  9) & 0x1),  // FUN_IE  : input enable
-    (int)((mux >> 10) & 0x3),  // FUN_DRV : drive strength
-    (int)((mux >>  8) & 0x1),  // FUN_WPU : pull-up
-    (int)((mux >>  7) & 0x1),  // FUN_WPD : pull-down
-    fcfg,
-    (int)(fcfg & 0x1FF)        // func_sel: output signal index (256 = direct GPIO_OUT)
-  );
-}
-#endif
 
 void TDeckProMaxBoard::begin() {
 
@@ -88,23 +53,11 @@ for (uint8_t a = 0x6A; a <= 0x6B; a++) {
     // without XL9555, but LoRa/GPS/modem will be dead.
   }
 
-  // DIAGNOSTIC: GPIO41 (frontlight) vs GPIO42 (keyboard backlight) register
-  // comparison. Per the V0.1 schematic both are identical S8050 low-side LED
-  // switches with VDD3V3 anodes, differing only in the GPIO -- IO42 lights,
-  // IO41 does not. Dump each pin's register state at boot to establish the
-  // baseline that the post-boot backlightOn() dump can be compared against.
+  // Configure the e-ink frontlight pin (IO41) as an output, held LOW so the
+  // panel starts dark at boot. Lit only by backlightOn() (Alt+B).
 #ifdef PIN_EINK_BL
-  Serial.println(">>> BL DIAG: GPIO41 (frontlight) vs GPIO42 (keyboard) register compare");
-  Serial.println("    [baseline -- after XL9555 init, before driving either pin]");
-  dumpGpioState("FRONTLIGHT", 41, IO_MUX_GPIO41_REG);
-  dumpGpioState("KEYBOARD  ", 42, IO_MUX_GPIO42_REG);
-
-  pinMode(42, OUTPUT); digitalWrite(42, HIGH);  // keyboard backlight -- known-good reference
-  pinMode(41, OUTPUT); digitalWrite(41, LOW);   // frontlight -- held LOW so only backlightOn() can light it
-  delay(5);
-  Serial.println("    [after: IO42 HIGH (reference), IO41 output held LOW]");
-  dumpGpioState("FRONTLIGHT", 41, IO_MUX_GPIO41_REG);
-  dumpGpioState("KEYBOARD  ", 42, IO_MUX_GPIO42_REG);
+  pinMode(PIN_EINK_BL, OUTPUT);
+  digitalWrite(PIN_EINK_BL, LOW);
 #endif
 
   // ------ Step 3: Touch reset pulse ------
@@ -170,9 +123,8 @@ for (uint8_t a = 0x6A; a <= 0x6B; a++) {
   #endif
 
   // ------ Step 12: E-ink backlight ------
-  // No-op: the diagnostic block above already configured IO41 as an output and
-  // left it LOW at boot. The frontlight is now lit only by backlightOn() (Alt+B),
-  // so we can capture the post-boot register state from inside that call.
+  // No-op: IO41 was already configured as an output and held LOW earlier in
+  // begin(). The frontlight is lit only by backlightOn() (Alt+B).
 
   MESH_DEBUG_PRINTLN("TDeckProMaxBoard::begin() - complete");
 }
@@ -386,7 +338,6 @@ void TDeckProMaxBoard::loraPowerOff() {
 void TDeckProMaxBoard::backlightOn() {
   #ifdef PIN_EINK_BL
     analogWrite(PIN_EINK_BL, 10);
-    dumpGpioState("FRONTLIGHT", PIN_EINK_BL, IO_MUX_GPIO41_REG);   // TEMP diagnostic
   #endif
   _backlightOn = true;
 }
@@ -394,7 +345,6 @@ void TDeckProMaxBoard::backlightOn() {
 void TDeckProMaxBoard::backlightOff() {
   #ifdef PIN_EINK_BL
     analogWrite(PIN_EINK_BL, 0);
-    dumpGpioState("FRONTLIGHT", PIN_EINK_BL, IO_MUX_GPIO41_REG);   // TEMP diagnostic
   #endif
   _backlightOn = false;
 }
