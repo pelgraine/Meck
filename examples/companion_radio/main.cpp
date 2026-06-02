@@ -2546,17 +2546,6 @@ void setup() {
     if (p4) free(p4); if (p10) free(p10); if (p25) free(p25);
   }
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
-
-  // DIAGNOSTIC: assert the frontlight at the very end of setup(), after ALL
-  // init has run. The factory firmware proves analogWrite(41,50) lights this
-  // panel. If the home screen is lit now (but the early step-12 assert was
-  // not), the pin was being reconfigured during init and this late assert wins.
-  // If it lights now and stays until a specific screen is opened, that screen's
-  // pinMode(41) is the thief. Watch this marker vs the screen you open.
-#ifdef PIN_EINK_BL
-  analogWrite(PIN_EINK_BL, 50);
-  Serial.println(">>> BL DIAG: analogWrite(41,50) asserted at end of setup()");
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -2834,7 +2823,7 @@ void loop() {
         audio->setVolume(0);
         audio->stopSong();
         delay(50);
-        digitalWrite(41, LOW);
+       // digitalWrite(41, LOW);
         notifTonePlaying = false;
         notifFadingOut = false;
         notifMuted = false;
@@ -2887,9 +2876,9 @@ void loop() {
         audio->connecttoFS(SD, file);
 
         // Enable DAC amplifier and let it stabilise with silence flowing
-        pinMode(41, OUTPUT);
-        digitalWrite(41, HIGH);
-        delay(80);
+       // pinMode(41, OUTPUT);
+       // digitalWrite(41, HIGH);
+      //  delay(80);
 
         // Fill audio buffer with silence at volume 0 (prevents power-on pop)
         for (int i = 0; i < 30; i++) {
@@ -4129,7 +4118,7 @@ void handleKeyboardInput() {
   if (key == KB_KEY_KBD_BACKLIGHT) {
     static bool kbdBacklightOn = false;
     kbdBacklightOn = !kbdBacklightOn;
-    analogWrite(KB_BL_PIN, kbdBacklightOn ? 255 : 0);
+    digitalWrite(KB_BL_PIN, kbdBacklightOn ? 255 : 0);
     Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
     return;
   }

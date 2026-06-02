@@ -19,7 +19,7 @@
 #define PIN_EINK_BUSY  37
 #define PIN_EINK_SCLK  36    // Shared with LoRa
 #define PIN_EINK_MOSI  33    // Shared with LoRa
-#define PIN_EINK_BL    45    // Backlight PWM (optional, V1.1 feature)
+#define PIN_EINK_BL    41   // Backlight PWM (optional, V1.1 feature)
 
 // Legacy aliases for MeshCore compatibility
 #define PIN_DISPLAY_CS    PIN_EINK_CS
