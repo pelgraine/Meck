@@ -3,7 +3,8 @@
 // =============================================================================
 // TDeckProMaxBoard — Board support for LilyGo T-Deck Pro MAX V0.1
 //
-// Extends TDeckBoard (which provides all BQ27220 fuel gauge methods) with:
+// Standalone board class inheriting ESP32Board directly (decoupled from the
+// Pro TDeckBoard). Provides its own BQ27220 fuel gauge methods plus:
 //   - XL9555 I/O expander initialisation and control
 //   - XL9555-routed peripheral power management
 //   - Touch/keyboard reset via XL9555
@@ -17,9 +18,31 @@
 // =============================================================================
 
 #include "variant.h"
-#include "TDeckBoard.h"   // Inherits BQ27220 fuel gauge, deep sleep, power management
+#include <Wire.h>
+#include <Arduino.h>
+#include "helpers/ESP32Board.h"   // Direct base -- MAX no longer inherits TDeckBoard (Pro)
+#include <driver/rtc_io.h>
 
-class TDeckProMaxBoard : public TDeckBoard {
+// BQ27220 Fuel Gauge Registers (moved here from TDeckBoard.h when MAX was
+// decoupled from the Pro board class; the BQ27220 hardware is identical).
+#define BQ27220_REG_TEMPERATURE    0x06  // Temperature (0.1 K)
+#define BQ27220_REG_VOLTAGE        0x08
+#define BQ27220_REG_CURRENT        0x0C  // Instantaneous current (mA, signed)
+#define BQ27220_REG_SOC            0x2C
+#define BQ27220_REG_REMAIN_CAP     0x10  // Remaining capacity (mAh)
+#define BQ27220_REG_FULL_CAP       0x12  // Full charge capacity (mAh)
+#define BQ27220_REG_AVG_CURRENT    0x14  // Average current (mA, signed)
+#define BQ27220_REG_TIME_TO_EMPTY  0x16  // Minutes until empty
+#define BQ27220_REG_AVG_POWER      0x24  // Average power (mW, signed)
+#define BQ27220_REG_DESIGN_CAP     0x3C  // Design capacity (mAh, read-only standard cmd)
+#define BQ27220_REG_OP_STATUS      0x3A  // Operation status
+#define BQ27220_I2C_ADDR 0x55
+
+#ifndef BQ27220_DESIGN_CAPACITY_MAH
+#define BQ27220_DESIGN_CAPACITY_MAH  1500
+#endif
+
+class TDeckProMaxBoard : public ESP32Board {
 public:
   void begin();
 
@@ -96,6 +119,76 @@ public:
   void backlightOff();
   void backlightSetBrightness(uint8_t duty);  // 0-255, via LEDC PWM
   bool isBacklightOn() const;
+
+  // -------------------------------------------------------------------------
+  // BQ27220 fuel gauge (moved from TDeckBoard when MAX was decoupled).
+  // Identical hardware to the Pro; these read the same registers.
+  // -------------------------------------------------------------------------
+  uint16_t getBattMilliVolts() override;
+  uint8_t  getBatteryPercent();
+  int16_t  getAvgCurrent();
+  int16_t  getAvgPower();
+  uint16_t getTimeToEmpty();
+  uint16_t getRemainingCapacity();
+  uint16_t getFullChargeCapacity();
+  uint16_t getDesignCapacity();
+  int16_t  getBattTemperature();
+  bool     configureFuelGauge(uint16_t designCapacity_mAh = BQ27220_DESIGN_CAPACITY_MAH);
+
+  // -------------------------------------------------------------------------
+  // Sleep / power-off (moved verbatim from TDeckBoard when MAX was decoupled).
+  // NOTE: powerOff() still references PIN_PERF_POWERON (-1 on MAX) and the
+  // #ifdef P_LORA_EN block (P_LORA_EN undefined on MAX, so it compiles out).
+  // Behaviour-preserving lift-and-shift; a MAX-correct XL9555 powerOff() is a
+  // known follow-up.
+  // -------------------------------------------------------------------------
+  void powerOff() override {
+    // True hibernate: deep sleep with no software wake sources.
+    // Only a hardware reset (reset button) or USB power-on wakes the device.
+    // BLE, WiFi, 4G, GPS, and LoRa are already shut down by UITask
+    // before this method is called.
+
+    btStop();  // Belt and suspenders -- BLE controller stop
+
+    // Cut power to peripherals (keyboard, BQ27220, sensors)
+    pinMode(PIN_PERF_POWERON, OUTPUT);
+    digitalWrite(PIN_PERF_POWERON, LOW);
+
+    // Cut power to LoRa module (radio already in standby from radio_driver.powerOff)
+    #ifdef P_LORA_EN
+      digitalWrite(P_LORA_EN, LOW);
+    #endif
+
+    // Hold LoRa NSS high to prevent SX1262 drawing current from floating CS
+    rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
+
+    // Enter deep sleep with no wake sources -- only hardware reset wakes
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+    esp_deep_sleep_start();
+  }
+
+  void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
+    esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
+
+    // Make sure the DIO1 and NSS GPIOs are held at required levels during deep sleep
+    rtc_gpio_set_direction((gpio_num_t)P_LORA_DIO_1, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pulldown_en((gpio_num_t)P_LORA_DIO_1);
+
+    rtc_gpio_hold_en((gpio_num_t)P_LORA_NSS);
+
+    if (pin_wake_btn < 0) {
+      esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1), ESP_EXT1_WAKEUP_ANY_HIGH);
+    } else {
+      esp_sleep_enable_ext1_wakeup((1ULL << P_LORA_DIO_1) | (1ULL << pin_wake_btn), ESP_EXT1_WAKEUP_ANY_HIGH);
+    }
+
+    if (secs > 0) {
+      esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
+    }
+
+    // Finally set ESP32 into sleep
+    esp_deep_sleep_start();  // CPU halts here and never returns!
+  }
 
 private:
   // Shadow registers for XL9555 output ports (avoid I2C read-modify-write)

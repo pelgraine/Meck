@@ -1865,6 +1865,7 @@ void setup() {
     MESH_DEBUG_PRINTLN("setup() - E-Ink reset pin initialized");
     
     // Initialize Touch reset pin (GPIO 38) 
+    Serial.printf(">>> TOUCH DIAG: compiled CST328_PIN_RST = %d (MAX expects -1; a real GPIO means stale Pro variant)\n", (int)CST328_PIN_RST);
     #ifdef CST328_PIN_RST
       pinMode(CST328_PIN_RST, OUTPUT);
       digitalWrite(CST328_PIN_RST, HIGH);
@@ -2503,7 +2504,7 @@ void setup() {
       #endif
       sensors.setSettingValue("gps", "0");
     }
-    Serial.printf("GPS: power %s, PIN_GPS_EN=%d\n", gps_wanted ? "ON" : "OFF", PIN_GPS_EN);
+    Serial.printf("GPS: power %s\n", gps_wanted ? "ON" : "OFF");
   }
   #endif
 

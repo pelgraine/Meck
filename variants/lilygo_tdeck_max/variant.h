@@ -1,5 +1,8 @@
 #pragma once
 
+#pragma message(">>> VARIANT DIAG: compiling MAX variant.h (variants/lilygo_tdeck_max)")
+
+
 // =============================================================================
 // LilyGo T-Deck Pro MAX V0.1 - Pin Definitions
 // Hardware revision: HD-V3-250911

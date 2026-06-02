@@ -1,5 +1,8 @@
 #pragma once
 
+#pragma message(">>> VARIANT DIAG: compiling PRO variant.h (variants/LilyGo_TDeck_Pro)")
+
+
 // =============================================================================
 // LilyGo T-Deck Pro v1.1 - Pin Definitions
 // Based on Meshtastic PR #9378 for T-Deck Pro V1.1 compatibility
