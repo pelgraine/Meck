@@ -337,7 +337,7 @@ void TDeckProMaxBoard::loraPowerOff() {
 
 void TDeckProMaxBoard::backlightOn() {
   #ifdef PIN_EINK_BL
-    analogWrite(PIN_EINK_BL, 5);
+    analogWrite(PIN_EINK_BL, 1);
   #endif
   _backlightOn = true;
 }

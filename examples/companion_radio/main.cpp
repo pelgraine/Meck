@@ -4118,7 +4118,7 @@ void handleKeyboardInput() {
   if (key == KB_KEY_KBD_BACKLIGHT) {
     static bool kbdBacklightOn = false;
     kbdBacklightOn = !kbdBacklightOn;
-    analogWrite(KB_BL_PIN, kbdBacklightOn ? 32 : 0);
+    analogWrite(KB_BL_PIN, kbdBacklightOn ? 8 : 0);
     Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
     return;
   }
