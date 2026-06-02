@@ -25,6 +25,7 @@
 #define KB_KEY_MIC         0x02   // Mic key press (PTT start / voice screen open)
 #define KB_KEY_MIC_RELEASE 0x03   // Mic key release (PTT stop)
 #define KB_KEY_BACKLIGHT   0x04   // Alt+B backlight toggle (T-Deck Pro MAX only)
+#define KB_KEY_KBD_BACKLIGHT 0x05 // Both shifts together: keyboard backlight toggle (MAX)
 
 class TCA8418Keyboard {
 private:
@@ -34,6 +35,8 @@ private:
   bool _shiftActive;   // Sticky shift (one-shot or held)
   bool _shiftConsumed; // Was shift active for the last returned key
   bool _shiftHeld;     // Shift key physically held down
+  bool _leftShiftHeld;  // Left shift (code 35) physically held -- for both-shifts combo
+  bool _rightShiftHeld; // Right shift (code 31) physically held -- for both-shifts combo
   bool _shiftUsedWhileHeld; // Was shift consumed by any key while held
   bool _altActive;     // Sticky alt (one-shot)
   bool _symActive;     // Sticky sym (one-shot)
@@ -157,7 +160,7 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
+      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _leftShiftHeld(false), _rightShiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
       _enterHeld(false), _enterPressTime(0) {}
 
   bool begin() {
@@ -238,6 +241,8 @@ public:
 
     // Track shift release (before the general release-ignore)
     if (!pressed && (keyCode == 35 || keyCode == 31)) {
+      if (keyCode == 35) _leftShiftHeld = false;
+      else               _rightShiftHeld = false;
       _shiftHeld = false;
       // If shift was used while held (e.g. cursor nav), clear it completely
       // so the next bare keypress isn't treated as shifted.
@@ -271,6 +276,19 @@ public:
 
     // Handle modifier keys - set sticky state and return 0
     if (keyCode == 35 || keyCode == 31) {  // Shift keys
+      // Track left/right separately so we can detect both held at once.
+      if (keyCode == 35) _leftShiftHeld = true;
+      else               _rightShiftHeld = true;
+
+      // Both shifts held together -> keyboard backlight toggle (MAX). Clear the
+      // sticky-shift state so this chord does not leave the next key uppercased.
+      if (_leftShiftHeld && _rightShiftHeld) {
+        _shiftActive = false;
+        _shiftUsedWhileHeld = true;  // ensure release path does not re-arm shift
+        Serial.println("KB: Both shifts -> keyboard backlight toggle");
+        return KB_KEY_KBD_BACKLIGHT;
+      }
+
       _shiftActive = true;
       _shiftHeld = true;
       _shiftUsedWhileHeld = false;

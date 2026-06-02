@@ -4125,6 +4125,14 @@ void handleKeyboardInput() {
     else                       board.backlightOn();
     return;
   }
+  // Both shifts together toggle the keyboard backlight (MAX only -- IO42).
+  if (key == KB_KEY_KBD_BACKLIGHT) {
+    static bool kbdBacklightOn = false;
+    kbdBacklightOn = !kbdBacklightOn;
+    analogWrite(KB_BL_PIN, kbdBacklightOn ? 255 : 0);
+    Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
+    return;
+  }
 #endif
 
   // Alarm ringing: ANY key dismisses (highest priority after lock screen)
