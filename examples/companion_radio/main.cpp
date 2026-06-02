@@ -2140,6 +2140,12 @@ void setup() {
   );
   MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Restore saved LoRa antenna selection (XL9555 boots to internal by default)
+  if (the_mesh.getNodePrefs()->lora_antenna) board.loraAntennaExternal();
+  else                                       board.loraAntennaInternal();
+#endif
+
   // Boot-time config import: check for /meshcore/import.json on SD
   #ifdef HAS_SDCARD
   if (sdCardReady) {
@@ -2540,6 +2546,17 @@ void setup() {
     if (p4) free(p4); if (p10) free(p10); if (p25) free(p25);
   }
   MESH_DEBUG_PRINTLN("=== setup() - COMPLETE ===");
+
+  // DIAGNOSTIC: assert the frontlight at the very end of setup(), after ALL
+  // init has run. The factory firmware proves analogWrite(41,50) lights this
+  // panel. If the home screen is lit now (but the early step-12 assert was
+  // not), the pin was being reconfigured during init and this late assert wins.
+  // If it lights now and stays until a specific screen is opened, that screen's
+  // pinMode(41) is the thief. Watch this marker vs the screen you open.
+#ifdef PIN_EINK_BL
+  analogWrite(PIN_EINK_BL, 50);
+  Serial.println(">>> BL DIAG: analogWrite(41,50) asserted at end of setup()");
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -4100,7 +4117,16 @@ void handleKeyboardInput() {
   
   // Defer contact saves while user is actively pressing keys
   the_mesh.notifyUserInput();
-  
+
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Alt+B toggles the e-ink frontlight (MAX only -- working backlight on IO41)
+  if (key == KB_KEY_BACKLIGHT) {
+    if (board.isBacklightOn()) board.backlightOff();
+    else                       board.backlightOn();
+    return;
+  }
+#endif
+
   // Alarm ringing: ANY key dismisses (highest priority after lock screen)
   #ifdef MECK_AUDIO_VARIANT
   {

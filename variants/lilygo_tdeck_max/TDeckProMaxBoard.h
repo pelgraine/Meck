@@ -95,12 +95,14 @@ public:
   void backlightOn();
   void backlightOff();
   void backlightSetBrightness(uint8_t duty);  // 0-255, via LEDC PWM
+  bool isBacklightOn() const;
 
 private:
   // Shadow registers for XL9555 output ports (avoid I2C read-modify-write)
   uint8_t _xlPort0 = XL9555_BOOT_PORT0;
   uint8_t _xlPort1 = XL9555_BOOT_PORT1;
   bool    _xlReady = false;
+  bool    _backlightOn = false;  // tracks frontlight on/off for isBacklightOn()
 
   // Low-level I2C helpers
   bool xl9555_writeReg(uint8_t reg, uint8_t val);

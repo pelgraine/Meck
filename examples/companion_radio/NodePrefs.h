@@ -64,6 +64,11 @@ struct NodePrefs {  // persisted to file
   // Defaults to NOTIF_ALL for all channels.
   uint8_t channel_notif[21];       // 20 group channels + 1 DM slot
 
+  // --- LoRa antenna selection (T-Deck Pro MAX only) ---
+  // 0 = internal antenna (XL9555 LORA_SEL HIGH), 1 = external (LORA_SEL LOW).
+  // Applied at boot in main.cpp and live on toggle in SettingsScreen.
+  uint8_t lora_antenna;            // 0 = internal (default), 1 = external
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
   // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.

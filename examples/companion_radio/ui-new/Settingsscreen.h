@@ -43,6 +43,11 @@ class UITask;
 class MyMesh;
 extern MyMesh the_mesh;
 
+#if defined(LilyGo_TDeck_Pro_Max)
+#include "TDeckProMaxBoard.h"
+extern TDeckProMaxBoard board;
+#endif
+
 // ---------------------------------------------------------------------------
 // Auto-add config bitmask (mirrored from MyMesh.cpp for UI access)
 // ---------------------------------------------------------------------------
@@ -124,6 +129,9 @@ static inline int findAutoLockIndex(uint8_t minutes) {
 // Settings row types
 // ---------------------------------------------------------------------------
 enum SettingsRowType : uint8_t {
+#if defined(LilyGo_TDeck_Pro_Max)
+  ROW_LORA_ANTENNA,   // LoRa antenna select: internal/external (MAX only)
+#endif
   ROW_NAME,           // Device name (text editor)
   ROW_RADIO_PRESET,   // Radio preset picker
   ROW_FREQ,           // Frequency (float)
@@ -249,14 +257,19 @@ enum FmPhase : uint8_t {
 #endif
 
 // Max rows in the settings list (increased for contact sub-toggles + WiFi)
-#if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 63  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope, export
-#elif defined(HAS_4G_MODEM)
-#define SETTINGS_MAX_ROWS 61  // Extra rows for IMEI, Carrier, APN + contacts + scope + export
-#elif defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS 57  // Extra rows for contacts + WiFi + scope + export
+#if defined(LilyGo_TDeck_Pro_Max)
+#define SETTINGS_LORA_ANTENNA_ROWS 1  // LoRa antenna toggle (MAX only)
 #else
-#define SETTINGS_MAX_ROWS 55  // Contacts section + scope + export
+#define SETTINGS_LORA_ANTENNA_ROWS 0
+#endif
+#if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
+#define SETTINGS_MAX_ROWS (63 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope, export
+#elif defined(HAS_4G_MODEM)
+#define SETTINGS_MAX_ROWS (61 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN + contacts + scope + export
+#elif defined(MECK_WIFI_COMPANION)
+#define SETTINGS_MAX_ROWS (57 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for contacts + WiFi + scope + export
+#else
+#define SETTINGS_MAX_ROWS (55 + SETTINGS_LORA_ANTENNA_ROWS)  // Contacts section + scope + export
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 
@@ -466,6 +479,9 @@ private:
     #endif
     } else {
       // --- Top-level settings list ---
+#if defined(LilyGo_TDeck_Pro_Max)
+      addRow(ROW_LORA_ANTENNA);
+#endif
       addRow(ROW_NAME);
       addRow(ROW_RADIO_PRESET);
       addRow(ROW_FREQ);
@@ -1899,6 +1915,14 @@ public:
           display.print(tmp);
           break;
         }
+
+#if defined(LilyGo_TDeck_Pro_Max)
+        case ROW_LORA_ANTENNA:
+          snprintf(tmp, sizeof(tmp), "LoRa Antenna: %s",
+                   _prefs->lora_antenna ? "External" : "Internal");
+          display.print(tmp);
+          break;
+#endif
 
         case ROW_DARK_MODE:
           snprintf(tmp, sizeof(tmp), "Dark Mode: %s",
@@ -3503,6 +3527,16 @@ public:
         case ROW_GPS_BAUD:
           startEditPicker(findGpsBaudIndex(_prefs->gps_baudrate));
           break;
+#if defined(LilyGo_TDeck_Pro_Max)
+        case ROW_LORA_ANTENNA:
+          _prefs->lora_antenna = _prefs->lora_antenna ? 0 : 1;
+          if (_prefs->lora_antenna) board.loraAntennaExternal();
+          else                      board.loraAntennaInternal();
+          the_mesh.savePrefs();
+          Serial.printf("Settings: LoRa antenna = %s\n",
+                        _prefs->lora_antenna ? "External" : "Internal");
+          break;
+#endif
         case ROW_DARK_MODE:
           _prefs->dark_mode = _prefs->dark_mode ? 0 : 1;
           the_mesh.savePrefs();

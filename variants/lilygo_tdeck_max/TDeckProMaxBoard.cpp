@@ -36,6 +36,13 @@ void TDeckProMaxBoard::begin() {
   // BQ25896, BHI260AP) share SDA=13, SCL=14.
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);  // 100kHz — safe for all devices on the bus
+  // --- TEMP: charger chip probe (BQ25896 @ 0x6B vs SY6970 @ 0x6A) ---
+for (uint8_t a = 0x6A; a <= 0x6B; a++) {
+  Wire.beginTransmission(a);
+  uint8_t e = Wire.endTransmission();
+  Serial.printf("Charger probe 0x%02X -> %s\n", a,
+                e == 0 ? (a == 0x6A ? "ACK (SY6970)" : "ACK (BQ25896)") : "no response");
+}
   MESH_DEBUG_PRINTLN("  I2C initialized (SDA=%d SCL=%d)", I2C_SDA, I2C_SCL);
 
   // ------ Step 2: XL9555 I/O Expander ------
@@ -45,6 +52,15 @@ void TDeckProMaxBoard::begin() {
     // Continue anyway; some things (display, keyboard INT) might still work
     // without XL9555, but LoRa/GPS/modem will be dead.
   }
+
+  // Frontlight on, factory-style: a single analogWrite right after XL9555 init,
+  // exactly as LilyGo's factory firmware does (analogWrite(BOARD_EPD_BL, 50)).
+  // No rail-forcing, no explicit channel -- this is the clean test of whether
+  // the core (2.0.14 vs 2.0.17) was the difference.
+#ifdef PIN_EINK_BL
+  analogWrite(PIN_EINK_BL, 50);
+  Serial.println(">>> BL: analogWrite(41,50) after XL9555 init");
+#endif
 
   // ------ Step 3: Touch reset pulse ------
   // The touch controller (CST328) needs a clean reset via XL9555 IO07
@@ -108,16 +124,10 @@ void TDeckProMaxBoard::begin() {
   }
   #endif
 
-  // ------ Step 12: E-ink backlight (working on MAX!) ------
-  // Configure LEDC PWM for backlight brightness control.
-  // Start with backlight OFF — UI code can enable it when needed.
-  #ifdef PIN_EINK_BL
-    // Arduino ESP32 core 2.x uses channel-based LEDC API
-    ledcSetup(EINK_BL_LEDC_CHANNEL, 1000, 8);  // Channel 0, 1kHz, 8-bit resolution
-    ledcAttachPin(PIN_EINK_BL, EINK_BL_LEDC_CHANNEL);
-    ledcWrite(EINK_BL_LEDC_CHANNEL, 0);        // Off by default
-    MESH_DEBUG_PRINTLN("  Backlight PWM configured on IO%d", PIN_EINK_BL);
-  #endif
+  // ------ Step 12: E-ink backlight ------
+  // Left as no-op during this diagnostic: the early factory-order assert above
+  // (right after XL9555 init) is what we are testing. Do NOT pull IO41 low here,
+  // or it would undo that test.
 
   MESH_DEBUG_PRINTLN("TDeckProMaxBoard::begin() - complete");
 }
@@ -330,18 +340,25 @@ void TDeckProMaxBoard::loraPowerOff() {
 
 void TDeckProMaxBoard::backlightOn() {
   #ifdef PIN_EINK_BL
-    ledcWrite(EINK_BL_LEDC_CHANNEL, 255);
+    analogWrite(PIN_EINK_BL, 50);
   #endif
+  _backlightOn = true;
 }
 
 void TDeckProMaxBoard::backlightOff() {
   #ifdef PIN_EINK_BL
-    ledcWrite(EINK_BL_LEDC_CHANNEL, 0);
+    analogWrite(PIN_EINK_BL, 0);
   #endif
+  _backlightOn = false;
 }
 
 void TDeckProMaxBoard::backlightSetBrightness(uint8_t duty) {
   #ifdef PIN_EINK_BL
-    ledcWrite(EINK_BL_LEDC_CHANNEL, duty);
+    analogWrite(PIN_EINK_BL, duty);
   #endif
+  _backlightOn = (duty > 0);
+}
+
+bool TDeckProMaxBoard::isBacklightOn() const {
+  return _backlightOn;
 }

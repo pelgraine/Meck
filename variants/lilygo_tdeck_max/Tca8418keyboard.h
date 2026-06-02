@@ -21,8 +21,10 @@
 #define KB_KEY_BACKSPACE '\b'
 #define KB_KEY_ENTER     '\r'
 #define KB_KEY_SPACE     ' '
-#define KB_KEY_EMOJI     0x01   // Non-printable code for $ key (emoji picker)
-#define KB_KEY_BACKLIGHT 0x02   // Non-printable code for Alt+B (backlight toggle, MAX only)
+#define KB_KEY_EMOJI       0x01   // Non-printable code for $ key (emoji picker)
+#define KB_KEY_MIC         0x02   // Mic key press (PTT start / voice screen open)
+#define KB_KEY_MIC_RELEASE 0x03   // Mic key release (PTT stop)
+#define KB_KEY_BACKLIGHT   0x04   // Alt+B backlight toggle (T-Deck Pro MAX only)
 
 class TCA8418Keyboard {
 private:
@@ -35,7 +37,10 @@ private:
   bool _shiftUsedWhileHeld; // Was shift consumed by any key while held
   bool _altActive;     // Sticky alt (one-shot)
   bool _symActive;     // Sticky sym (one-shot)
+  bool _micHeld;       // Mic key physically held down (for PTT release detection)
   unsigned long _lastShiftTime;  // For Shift+key combos
+  bool _enterHeld;              // Enter key physically held down
+  unsigned long _enterPressTime; // millis() when Enter was pressed
 
   uint8_t readReg(uint8_t reg) {
     _wire->beginTransmission(_addr);
@@ -152,7 +157,8 @@ private:
 public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
-      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _lastShiftTime(0) {}
+      _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
+      _enterHeld(false), _enterPressTime(0) {}
 
   bool begin() {
     // Check if device responds
@@ -243,7 +249,22 @@ public:
       return 0;
     }
 
+    // Track mic key release — return KB_KEY_MIC_RELEASE for PTT stop
+    if (!pressed && keyCode == 34) {
+      if (_micHeld) {
+        _micHeld = false;
+        Serial.println("KB: Mic released -> KB_KEY_MIC_RELEASE");
+        return KB_KEY_MIC_RELEASE;
+      }
+      return 0;
+    }
+
     // Only act on key press, not release
+    // (Enter release tracked for long-press detection)
+    if (!pressed && keyCode == 21) {
+      _enterHeld = false;
+      return 0;
+    }
     if (!pressed || keyCode == 0) {
       return 0;
     }
@@ -267,6 +288,13 @@ public:
       Serial.println("KB: Sym activated");
       return 0;
     }
+
+    // Track Enter press for long-press detection
+    if (keyCode == 21) {
+      _enterHeld = true;
+      _enterPressTime = millis();
+      // Fall through to normal processing — '\r' is returned below
+    }
     
     // Handle dedicated $ key (key code 22, next to M)
     // Bare press = emoji picker, Sym+$ = literal '$'
@@ -280,24 +308,29 @@ public:
       return KB_KEY_EMOJI;
     }
     
-    // Handle Mic key - always produces '0' (silk-screened on key)
-    // Sym+Mic also produces '0' (consumes sym so it doesn't leak)
+    // Handle Mic key — bare press returns KB_KEY_MIC for PTT / voice screen
+    // Sym+Mic produces '0' (silk-screened on key) for text input
     if (keyCode == 34) {
-      _symActive = false;
-      Serial.println("KB: Mic -> '0'");
-      return '0';
+      if (_symActive) {
+        _symActive = false;
+        Serial.println("KB: Sym+Mic -> '0'");
+        return '0';
+      }
+      _micHeld = true;
+      Serial.println("KB: Mic -> KB_KEY_MIC");
+      return KB_KEY_MIC;
     }
 
-    // Get the character
-    char c = 0;
-    
-    // Alt+B -> backlight toggle (T-Deck Pro MAX only — working front-light on IO41)
+    // Alt+B -> backlight toggle (T-Deck Pro MAX only -- working front-light on IO41)
     if (_altActive && keyCode == 25) {  // keyCode 25 = B
       _altActive = false;
       Serial.println("KB: Alt+B -> backlight toggle");
       return KB_KEY_BACKLIGHT;
     }
 
+    // Get the character
+    char c = 0;
+    
     if (_altActive) {
       c = getAltChar(keyCode);
       _altActive = false;  // Reset sticky alt
@@ -346,6 +379,7 @@ public:
   }
 
   bool isReady() const { return _initialized; }
+  bool isMicHeld() const { return _micHeld; }
   
   // Check if shift was pressed within the last N milliseconds
   bool wasShiftRecentlyPressed(unsigned long withinMs = 500) const {
@@ -356,5 +390,11 @@ public:
   // (immune to e-ink refresh timing unlike wasShiftRecentlyPressed)
   bool wasShiftConsumed() const {
     return _shiftConsumed;
+  }
+
+  // Enter long-press detection
+  bool isEnterHeld() const { return _enterHeld; }
+  unsigned long enterHeldMs() const {
+    return _enterHeld ? (millis() - _enterPressTime) : 0;
   }
 };

@@ -230,7 +230,11 @@
 #define BQ27220_DESIGN_CAPACITY_MAH 1500 // Alias used by TDeckBoard.h
 
 #define HAS_PPM 1
-#define XPOWERS_CHIP_BQ25896
+// This board uses the SY6970 charger @ 0x6A (newer revision -- confirmed by I2C
+// probe: ACK at 0x6A, no response at 0x6B). XPowersLib selects the driver class
+// from this macro: XPOWERS_CHIP_SY6970 -> PowersSY6970 (0x6A). Older boards with
+// the BQ25896 @ 0x6B would use XPOWERS_CHIP_BQ25896 instead.
+#define XPOWERS_CHIP_SY6970
 
 // -----------------------------------------------------------------------------
 // LoRa Radio (SX1262)

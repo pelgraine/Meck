@@ -32,16 +32,30 @@
 #include <Arduino.h>
 #include <Wire.h>
 
+// The CST328 pulses its INT line low (falling edge) when a new touch report is
+// ready. We attach an edge interrupt that sets this flag, and only read/ack the
+// controller when it has fired -- mirroring the Hynitron driver, which reads
+// only on the INT edge instead of blind-polling. Blind polling at 50 Hz was the
+// source of the i2cRead -1/263 errors (reading when no report was pending).
+namespace {
+  volatile bool _touchIrqFired = false;
+  void IRAM_ATTR _touchIsr() { _touchIrqFired = true; }
+}
+
 class TouchInput {
 public:
   static const uint8_t TOUCH_ADDR = 0x1A;
 
   TouchInput(TwoWire* wire = &Wire)
-    : _wire(wire), _intPin(-1), _initialized(false), _debugCount(0), _lastPoll(0) {}
+    : _wire(wire), _intPin(-1), _initialized(false), _debugCount(0) {}
 
   bool begin(int intPin) {
     _intPin = intPin;
     pinMode(_intPin, INPUT);
+    // On ESP32 every GPIO is interrupt-capable and digitalPinToInterrupt is an
+    // identity macro (pin == interrupt number), but it is not always visible in
+    // this header's include context -- pass the GPIO number directly.
+    attachInterrupt(_intPin, _touchIsr, FALLING);
 
     // Verify the touch controller is present on the bus
     _wire->beginTransmission(TOUCH_ADDR);
@@ -52,37 +66,60 @@ public:
     }
 
     Serial.printf("[Touch] CST328 found at 0x%02X, INT=GPIO%d\n", TOUCH_ADDR, _intPin);
+
+    // Enter normal report mode: write command register 0xD109. The Hynitron
+    // driver does this once after reset (cst3xx_init -> set_workmode NOMAL_MODE).
+    _wire->beginTransmission(TOUCH_ADDR);
+    _wire->write(0xD1);
+    _wire->write(0x09);
+    _wire->endTransmission(true);
+
     _initialized = true;
     return true;
   }
 
   bool isReady() const { return _initialized; }
 
-  // Poll for touch. Returns true if a finger is down, fills x and y.
-  // Coordinates are in physical display space (0-239 X, 0-319 Y).
-  // NOTE: CST328 INT pin is pulse-based, not level. We cannot rely on
-  // digitalRead(INT) for touch state. Instead, always read and check buf[0].
+  // Returns true if a finger is down, fills x and y (physical display space:
+  // 0-239 X, 0-319 Y). Reads only when the INT edge interrupt has fired.
   bool getPoint(int16_t &x, int16_t &y) {
     if (!_initialized) return false;
 
-    // Rate limit: poll at most every 20ms (50 Hz) to avoid I2C bus congestion
-    unsigned long now = millis();
-    if (now - _lastPoll < 20) return false;
-    _lastPoll = now;
+    // Only touch the bus when the INT line has signalled a new report. With no
+    // pending report there is nothing to read, and reading anyway is what
+    // produced the i2cRead -1/263 errors.
+    if (!_touchIrqFired) return false;
+    _touchIrqFired = false;
 
     uint8_t buf[7];
     memset(buf, 0, sizeof(buf));
 
-    // Write register address 0xD000
+    // Write register address 0xD000.
+    // Use a STOP here (true), not a repeated start (false): the repeated-start
+    // combined read (i2cWriteReadNonStop) is what was throwing the -1/263 errors
+    // on this bus, while the keyboard's stop-then-read pattern never errors.
     _wire->beginTransmission(TOUCH_ADDR);
     _wire->write(0xD0);
     _wire->write(0x00);
-    if (_wire->endTransmission(false) != 0) return false;
+    if (_wire->endTransmission(true) != 0) return false;
 
     // Read 7 bytes of touch data
     uint8_t received = _wire->requestFrom(TOUCH_ADDR, (uint8_t)7);
     if (received < 7) return false;
     for (int i = 0; i < 7; i++) buf[i] = _wire->read();
+
+    // Acknowledge the report: write 0xAB to register 0xD000 so the controller
+    // releases its buffer for the next frame. Required after EVERY read of
+    // 0xD000 -- without it the CST328 re-serves stale frames (phantom touches)
+    // and eventually NAKs the read. Matches the Hynitron driver tail-end write.
+    _wire->beginTransmission(TOUCH_ADDR);
+    _wire->write(0xD0);
+    _wire->write(0x00);
+    _wire->write(0xAB);
+    _wire->endTransmission(true);
+
+    // Check byte: a valid frame always has buf[6] == 0xAB. Reject anything else.
+    if (buf[6] != 0xAB) return false;
 
     // buf[0] == 0xAB means idle (no touch active)
     if (buf[0] == 0xAB) return false;
@@ -121,7 +158,6 @@ private:
   int _intPin;
   bool _initialized;
   int _debugCount;
-  unsigned long _lastPoll;
 };
 
 #endif // TOUCH_INPUT_H
