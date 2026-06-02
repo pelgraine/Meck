@@ -385,20 +385,15 @@ void TDeckProMaxBoard::loraPowerOff() {
 
 void TDeckProMaxBoard::backlightOn() {
   #ifdef PIN_EINK_BL
-    pinMode(PIN_EINK_BL, OUTPUT);
-    digitalWrite(PIN_EINK_BL, HIGH);
-    // TEMP diagnostic -- dump GPIO41 state right after driving it HIGH, post-boot.
-    // Compare against the begin() baseline: if OEN=1 OUT=1 sig=256 here too but
-    // the panel stays dark, something post-boot is overriding the pad.
-    dumpGpioState("FRONTLIGHT", PIN_EINK_BL, IO_MUX_GPIO41_REG);
+    analogWrite(PIN_EINK_BL, 10);
+    dumpGpioState("FRONTLIGHT", PIN_EINK_BL, IO_MUX_GPIO41_REG);   // TEMP diagnostic
   #endif
   _backlightOn = true;
 }
 
 void TDeckProMaxBoard::backlightOff() {
   #ifdef PIN_EINK_BL
-    pinMode(PIN_EINK_BL, OUTPUT);
-    digitalWrite(PIN_EINK_BL, LOW);
+    analogWrite(PIN_EINK_BL, 0);
     dumpGpioState("FRONTLIGHT", PIN_EINK_BL, IO_MUX_GPIO41_REG);   // TEMP diagnostic
   #endif
   _backlightOn = false;
