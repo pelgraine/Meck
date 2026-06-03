@@ -16,7 +16,7 @@ class UITask;
 // ============================================================================
 #define BOOKS_FOLDER      "/books"
 #define INDEX_FOLDER      "/.indexes"
-#define INDEX_VERSION     13  // v13: font key in header — auto-invalidate on font/style change
+#define INDEX_VERSION     14  // v14: indexer wrap choice keyed to getFontStyle() (matches renderer); invalidates v13 caches
 #define PREINDEX_PAGES    100
 #define READER_MAX_FILES  50
 #define READER_BUF_SIZE   4096
@@ -945,7 +945,7 @@ private:
       }
       drawSplash("Indexing...", "Please wait", shortName);
 
-      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
       if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       if (_pagePositions.empty()) {
         // Cache had no pages (e.g. dummy entry) â€” full index from scratch
@@ -975,7 +975,7 @@ private:
       drawSplash("Indexing...", "Please wait", shortName);
 
       _pagePositions.push_back(0);
-      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
       if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0,
@@ -1516,7 +1516,7 @@ public:
         cache.pagePositions.clear();
         cache.pagePositions.push_back(0);
 
-        DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+        DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
         if (pxd) pxd->setTextSize(_prefs->smallTextSize());
         indexPagesWordWrap(file, 0, cache.pagePositions,
                            _linesPerPage, _charsPerLine,
@@ -1648,7 +1648,7 @@ public:
         cache.pagePositions.clear();
         cache.pagePositions.push_back(0);
 
-        DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+        DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
         if (pxd) pxd->setTextSize(_prefs->smallTextSize());
         int added = indexPagesWordWrap(file, 0, cache.pagePositions,
                                        _linesPerPage, _charsPerLine,
@@ -1716,7 +1716,7 @@ public:
       // Layout was invalidated (orientation change) — reindex the open book
       Serial.println("TextReader: Reindexing after layout change");
       _pagePositions.push_back(0);
-      DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+      DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
       if (pxd) pxd->setTextSize(_prefs->smallTextSize());
       indexPagesWordWrap(_file, 0, _pagePositions,
                          _linesPerPage, _charsPerLine, 0,
@@ -1903,7 +1903,7 @@ public:
             cache.lastReadPage = 0;
             cache.pagePositions.clear();
             cache.pagePositions.push_back(0);
-            DisplayDriver* pxd = (_prefs->large_font || _prefs->ui_font_style > 0) ? _display : nullptr;
+            DisplayDriver* pxd = (_prefs->large_font || _display->getFontStyle() > 0) ? _display : nullptr;
             if (pxd) pxd->setTextSize(_prefs->smallTextSize());
             indexPagesWordWrap(file, 0, cache.pagePositions,
                                _linesPerPage, _charsPerLine,
