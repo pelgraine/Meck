@@ -219,17 +219,21 @@ private:
   // On the audio variant, this pin supplies power to the DAC circuit.
   // TDeckBoard::begin() sets it LOW ("disable modem") which starves the DAC.
   void enableDAC() {
+#ifndef HAS_ES8311_AUDIO
     pinMode(41, OUTPUT);
     digitalWrite(41, HIGH);
     if (!_dacPowered) {
       delay(50);
     }
     _dacPowered = true;
+#endif
   }
 
   void disableDAC() {
+#ifndef HAS_ES8311_AUDIO
     digitalWrite(41, LOW);
     _dacPowered = false;
+#endif
   }
 
   // Restore an M4B file that was temporarily renamed to .m4a for playback.

@@ -264,13 +264,17 @@ private:
   // ---- DAC power (same pattern as AudiobookPlayerScreen) ----
 
   void enableDAC() {
+#ifndef HAS_ES8311_AUDIO
     pinMode(41, OUTPUT);
     digitalWrite(41, HIGH);
     delay(50);
+#endif
   }
 
   void disableDAC() {
+#ifndef HAS_ES8311_AUDIO
     digitalWrite(41, LOW);
+#endif
   }
 
   // ---- Audio control for alarm ringing ----

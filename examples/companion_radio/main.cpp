@@ -90,6 +90,9 @@
   #ifdef MECK_AUDIO_VARIANT
     #include "VoiceMessageScreen.h"
     #include "BundledSounds.h"
+    #ifdef HAS_ES8311_AUDIO
+      #include "ES8311.h"   // MAX: native ES8311 codec init (Arduino Wire)
+    #endif
   #endif
   #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     #include "NotifSounds.h"
@@ -1850,6 +1853,22 @@ void setup() {
   board.begin();
   MESH_DEBUG_PRINTLN("setup() - board.begin() done");
 
+  // Initialize touch input (CST328) HERE, immediately after board.begin(),
+  // while the I2C bus is freshly initialised and quiet -- mirroring LilyGo's
+  // working example, which calls touch.begin() first thing. Running it later
+  // (after display/radio/filesystem init) left the bus in a state where the
+  // CST328 firmware-info read failed.
+  #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
+    #if defined(LilyGo_TDeck_Pro_Max)
+      board.touchReset();   // fresh XL9555 reset immediately before driver init
+    #endif
+    if (touchInput.begin(CST328_PIN_INT)) {
+      MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
+    } else {
+      MESH_DEBUG_PRINTLN("setup() - Touch input FAILED");
+    }
+  #endif
+
 #ifdef DISPLAY_CLASS
   DisplayDriver* disp = NULL;
   MESH_DEBUG_PRINTLN("setup() - about to call display.begin()");
@@ -2283,14 +2302,8 @@ void setup() {
     initKeyboard();
   #endif
 
-  // Initialize touch input (CST328 on T-Deck Pro)
-  #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
-    if (touchInput.begin(CST328_PIN_INT)) {
-      MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
-    } else {
-      MESH_DEBUG_PRINTLN("setup() - Touch input FAILED");
-    }
-  #endif
+  // Touch input (CST328) is initialised earlier, right after board.begin(),
+  // on a freshly-initialised quiet I2C bus (see setup() near board.begin()).
 
   // Initialize GT911 touch (T5S3 E-Paper Pro)
   // Wire is already initialized by T5S3Board::begin(). The 4-arg begin() re-calls
@@ -2824,7 +2837,9 @@ void loop() {
         audio->setVolume(0);
         audio->stopSong();
         delay(50);
-       // digitalWrite(41, LOW);
+#ifndef HAS_ES8311_AUDIO
+        digitalWrite(41, LOW);
+#endif
         notifTonePlaying = false;
         notifFadingOut = false;
         notifMuted = false;
@@ -2868,8 +2883,36 @@ void loop() {
         // Stop any stale playback before touching DAC
         audio->stopSong();
 
-        // Configure I2S pins first (before DAC power)
-        bool ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
+        // MAX: route audio to the ES8311 codec and enable the speaker amp.
+        // NOTE: the codec REGISTER init is deferred until AFTER the I2S clocks
+        // are actually running (after connecttoFS + the silence-fill loop). The
+        // ES8311 appears to need live BCLK/LRCK to lock its clock tree; init'd
+        // on a clockless bus it configures correctly (readback confirms) but
+        // produces no output. Routing/amp are safe to set here.
+        #ifdef HAS_ES8311_AUDIO
+          board.selectAudioES8311();   // XL9555 AUDIO_SEL low -> ES8311
+          board.amplifierEnable();     // XL9555 AMPLIFIER high -> NS4150B on
+          // DIAG: read back the two routing pins to confirm they took effect
+          // (AUDIO_SEL should be LOW=0 for ES8311, AMPLIFIER should be HIGH=1).
+          Serial.printf("NotifTone: routing AUDIO_SEL=%d (want 0) AMP=%d (want 1)\n",
+                        board.xl9555_digitalRead(XL_PIN_AUDIO_SEL) ? 1 : 0,
+                        board.xl9555_digitalRead(XL_PIN_AMPLIFIER) ? 1 : 0);
+        #endif
+
+        // Configure I2S pins. Mirroring Ripple, the ES8311 is driven WITH MCLK
+        // (use_mclk=true), so MCLK must be generated on BOARD_I2S_MCLK. Use the
+        // 5-arg setPinout: the 4th arg is DIN (data-in, unused -> no change), the
+        // 5th is MCK. The earlier 4-arg call mistakenly passed MCLK as the 4th
+        // (DIN) arg, so MCLK was never generated -- this passes it as MCK.
+        #ifdef HAS_ES8311_AUDIO
+          bool ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
+                                     I2S_PIN_NO_CHANGE, BOARD_I2S_MCLK);
+          Serial.printf("NotifTone: setPinout(BCLK=%d LRC=%d DOUT=%d MCK=%d) -> %s\n",
+                        BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, BOARD_I2S_MCLK,
+                        ok ? "ok" : "FAILED");
+        #else
+          bool ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
+        #endif
         if (!ok) ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
 
         // Start playback at volume 0 (silence into DAC during power-on)
@@ -2877,15 +2920,28 @@ void loop() {
         audio->connecttoFS(SD, file);
 
         // Enable DAC amplifier and let it stabilise with silence flowing
-       // pinMode(41, OUTPUT);
-       // digitalWrite(41, HIGH);
-      //  delay(80);
+#ifndef HAS_ES8311_AUDIO
+        pinMode(41, OUTPUT);
+        digitalWrite(41, HIGH);
+        delay(80);
+#endif
 
         // Fill audio buffer with silence at volume 0 (prevents power-on pop)
         for (int i = 0; i < 30; i++) {
           audio->loop();
           delay(2);
         }
+
+        // I2S clocks are now running (connecttoFS started the channel and the
+        // loop above has pushed samples). NOW bring up the ES8311 over I2C, so
+        // it can lock to the live BCLK/LRCK. Done once per boot.
+        #ifdef HAS_ES8311_AUDIO
+          static bool es8311_ready = false;
+          if (!es8311_ready) {
+            es8311_ready = es8311_init_44100_16bit();
+            Serial.printf("NotifTone: ES8311 init (post-I2S) %s\n", es8311_ready ? "OK" : "FAILED");
+          }
+        #endif
 
         // Ramp volume up to max
         audio->setVolume(21);

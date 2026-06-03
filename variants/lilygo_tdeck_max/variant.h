@@ -195,26 +195,36 @@
 //   MCLK  = IO38  (master clock — ES8311 needs this, PCM5102A didn't)
 //   SCLK  = IO39  (bit clock, aka BCLK)
 //   LRCK  = IO18  (word select, aka LRC/WS)
-//   DSDIN = IO17  (DAC serial data in — ESP32 sends audio TO codec)
-//   ASDOUT= IO40  (ADC serial data out — codec sends mic audio TO ESP32)
+//   DSDIN = IO40  (DAC serial data in — ESP32 sends audio TO codec)
+//   ASDOUT= IO17  (ADC serial data out — codec sends mic audio TO ESP32)
 // -----------------------------------------------------------------------------
 #define HAS_ES8311_AUDIO 1
 
 #define BOARD_ES8311_MCLK   38
 #define BOARD_ES8311_SCLK   39
 #define BOARD_ES8311_LRCK   18
-#define BOARD_ES8311_DSDIN  17    // ESP32 → ES8311 (speaker/headphone output)
-#define BOARD_ES8311_ASDOUT 40    // ES8311 → ESP32 (microphone input)
+#define BOARD_ES8311_DSDIN  40    // ESP32 → ES8311 (speaker/headphone output)
+#define BOARD_ES8311_ASDOUT 17    // ES8311 → ESP32 (microphone input)
 
 // Compatibility aliases for ESP32-audioI2S library (setPinout expects BCLK, LRC, DOUT)
 #define BOARD_I2S_BCLK  BOARD_ES8311_SCLK    // IO39
 #define BOARD_I2S_LRC   BOARD_ES8311_LRCK    // IO18
-#define BOARD_I2S_DOUT  BOARD_ES8311_DSDIN   // IO17
+#define BOARD_I2S_DOUT  BOARD_ES8311_DSDIN   // IO40
 #define BOARD_I2S_MCLK  BOARD_ES8311_MCLK    // IO38 (ESP32-audioI2S may need setMCLK)
 
 // Microphone — ES8311 built-in ADC (replaces separate PDM mic on V1.1)
 // Mic data comes through I2S ASDOUT pin, not a separate PDM interface.
-#define BOARD_MIC_I2S_DIN BOARD_ES8311_ASDOUT // IO40
+#define BOARD_MIC_I2S_DIN BOARD_ES8311_ASDOUT // IO17
+
+// The Pro V1.1 had a discrete PDM microphone on BOARD_MIC_CLOCK/BOARD_MIC_DATA.
+// The MAX has no PDM mic; audio capture is via the ES8311 ADC over the shared
+// I2S bus. VoiceMessageScreen::initMic() (PDM path) is therefore not usable on
+// MAX as-is. These are defined as -1 so the audio-variant code compiles; voice
+// message RECORDING is non-functional on MAX until an ES8311-ADC capture path
+// is written. -1 makes any accidental PDM init fail safely rather than driving
+// the codec's real I2S pins.
+#define BOARD_MIC_CLOCK -1
+#define BOARD_MIC_DATA  -1
 
 // -----------------------------------------------------------------------------
 // Sensors

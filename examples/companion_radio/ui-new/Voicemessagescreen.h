@@ -218,15 +218,19 @@ private:
 
   // DAC power control (same as AudiobookPlayerScreen)
   void enableDAC() {
+#ifndef HAS_ES8311_AUDIO
     pinMode(41, OUTPUT);
     digitalWrite(41, HIGH);
     if (!_dacPowered) delay(50);
     _dacPowered = true;
+#endif
   }
 
   void disableDAC() {
+#ifndef HAS_ES8311_AUDIO
     digitalWrite(41, LOW);
     _dacPowered = false;
+#endif
   }
 
   // ---------------------------------------------------------------------------
