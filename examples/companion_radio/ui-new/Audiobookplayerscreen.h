@@ -43,9 +43,6 @@
 // JPEG decoder for cover art — JPEGDEC by bitbank2
 #include <JPEGDEC.h>
 
-// PNG decoder for folder cover art (cover.png) — PNGdec by bitbank2
-#include <PNGdec.h>
-
 #include "../NodePrefs.h"
 
 // Forward declarations
@@ -130,45 +127,6 @@ static int coverDrawCallback(JPEGDRAW* pDraw) {
         uint8_t bitMask = 0x80 >> (destX & 7);
         ctx->bitmap[byteIdx] |= bitMask;
       }
-    }
-  }
-  return 1;
-}
-
-// ============================================================================
-// PNG cover decode — for a standalone folder cover.png. PNGdec has no built-in
-// scaling, so the callback nearest-neighbour downscales the source image to the
-// 1-bit dithered target. g_coverPng / g_coverLineBuf are valid only during a
-// decodeFolderCoverPNG() call (single decode at a time).
-// ============================================================================
-static PNG*      g_coverPng     = nullptr;
-static uint16_t* g_coverLineBuf = nullptr;  // one decoded source row as RGB565 (PSRAM)
-
-static int coverDrawCallbackPNG(PNGDRAW* pDraw) {
-  CoverDecodeCtx* ctx = (CoverDecodeCtx*)pDraw->pUser;
-  if (!ctx || !ctx->bitmap || !g_coverPng || !g_coverLineBuf) return 0;
-
-  // Map this source row to a target row; process only the representative source
-  // row for each target row (nearest-neighbour vertical downscale).
-  int ty = (int)((int64_t)pDraw->y * ctx->bitmapH / ctx->srcH);
-  if (ty < 0 || ty >= ctx->bitmapH) return 1;
-  int repSy = (int)((int64_t)ty * ctx->srcH / ctx->bitmapH);
-  if (pDraw->y != repSy) return 1;
-
-  g_coverPng->getLineAsRGB565(pDraw, g_coverLineBuf, PNG_RGB565_LITTLE_ENDIAN, -1);
-
-  int rowByteW = (ctx->bitmapW + 7) / 8;
-  for (int tx = 0; tx < ctx->bitmapW; tx++) {
-    int sx = (int)((int64_t)tx * ctx->srcW / ctx->bitmapW);
-    if (sx >= ctx->srcW) sx = ctx->srcW - 1;
-    uint16_t rgb565 = g_coverLineBuf[sx];
-    uint8_t r = (rgb565 >> 11) << 3;
-    uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;
-    uint8_t b = (rgb565 & 0x1F) << 3;
-    uint8_t gray = (uint8_t)(((uint16_t)r * 77 + (uint16_t)g * 150 + (uint16_t)b * 29) >> 8);
-    uint8_t threshold = BAYER4x4[ty & 3][tx & 3];
-    if (gray < threshold) {
-      ctx->bitmap[ty * rowByteW + (tx / 8)] |= (0x80 >> (tx & 7));
     }
   }
   return 1;
@@ -412,103 +370,6 @@ private:
     Serial.printf("AB: Cover decoded %dx%d (source %dx%d, scale 1/%d)\n",
                   _coverW, _coverH, srcW, srcH, divider);
     return true;
-  }
-
-  // Decode a standalone folder cover (cover.png) into the 1-bit dithered bitmap.
-  // Used when the track has no embedded cover (e.g. music files).
-  bool decodeFolderCoverPNG(const String& pngPath) {
-    freeCoverBitmap();
-
-    File f = SD.open(pngPath.c_str(), FILE_READ);
-    if (!f) return false;
-    size_t sz = f.size();
-    uint8_t* pngBuf = (uint8_t*)ps_malloc(sz);
-    if (!pngBuf) {
-      Serial.println("AB: PNG cover PSRAM alloc failed");
-      f.close();
-      return false;
-    }
-    int bytesRead = f.read(pngBuf, sz);
-    f.close();
-    digitalWrite(SDCARD_CS, HIGH);
-    if (bytesRead != (int)sz) {
-      free(pngBuf);
-      return false;
-    }
-
-    g_coverPng = new PNG();
-    if (!g_coverPng) {
-      free(pngBuf);
-      return false;
-    }
-
-    if (g_coverPng->openRAM(pngBuf, sz, coverDrawCallbackPNG) != PNG_SUCCESS) {
-      Serial.println("AB: PNGdec failed to open cover.png");
-      delete g_coverPng; g_coverPng = nullptr;
-      free(pngBuf);
-      return false;
-    }
-
-    int srcW = g_coverPng->getWidth();
-    int srcH = g_coverPng->getHeight();
-    if (srcW <= 0 || srcH <= 0) {
-      g_coverPng->close();
-      delete g_coverPng; g_coverPng = nullptr;
-      free(pngBuf);
-      return false;
-    }
-
-    _coverW = AB_COVER_W;
-    _coverH = AB_COVER_H;
-    int bitmapBytes = ((_coverW + 7) / 8) * _coverH;
-    _coverBitmap   = (uint8_t*)ps_calloc(1, bitmapBytes);
-    g_coverLineBuf = (uint16_t*)ps_malloc((size_t)srcW * sizeof(uint16_t));
-    if (!_coverBitmap || !g_coverLineBuf) {
-      Serial.println("AB: PNG cover buffer alloc failed");
-      if (g_coverLineBuf) { free(g_coverLineBuf); g_coverLineBuf = nullptr; }
-      freeCoverBitmap();
-      g_coverPng->close();
-      delete g_coverPng; g_coverPng = nullptr;
-      free(pngBuf);
-      return false;
-    }
-
-    CoverDecodeCtx ctx;
-    ctx.bitmap  = _coverBitmap;
-    ctx.bitmapW = _coverW;
-    ctx.bitmapH = _coverH;
-    ctx.srcW    = srcW;
-    ctx.srcH    = srcH;
-    ctx.offsetX = 0;
-    ctx.offsetY = 0;
-
-    int rc = g_coverPng->decode(&ctx, 0);
-
-    g_coverPng->close();
-    delete g_coverPng; g_coverPng = nullptr;
-    free(g_coverLineBuf); g_coverLineBuf = nullptr;
-    free(pngBuf);
-
-    if (rc != PNG_SUCCESS) {
-      Serial.printf("AB: PNGdec decode failed (%d)\n", rc);
-      freeCoverBitmap();
-      return false;
-    }
-
-    _hasCover = true;
-    Serial.printf("AB: Folder cover decoded %dx%d (source %dx%d)\n",
-                  _coverW, _coverH, srcW, srcH);
-    return true;
-  }
-
-  // If no embedded cover was decoded, fall back to a folder cover.png.
-  void tryLoadFolderCover() {
-    if (_hasCover) return;
-    String coverPath = _currentPath + "/cover.png";
-    if (SD.exists(coverPath.c_str())) {
-      decodeFolderCoverPNG(coverPath);
-      digitalWrite(SDCARD_CS, HIGH);
-    }
   }
 
   void freeCoverBitmap() {
@@ -1096,8 +957,6 @@ private:
     }
     digitalWrite(SDCARD_CS, HIGH);
 
-    tryLoadFolderCover();  // Fall back to folder cover.png if no embedded cover
-
     // Load bookmark for new track (may resume a previous position)
     loadBookmark();
 
@@ -1194,8 +1053,6 @@ private:
       file.close();
     }
     digitalWrite(SDCARD_CS, HIGH);
-
-    tryLoadFolderCover();  // Fall back to folder cover.png if no embedded cover
 
     yield();  // Feed WDT before bookmark load
 
