@@ -376,8 +376,61 @@ private:
     return String(AB_BOOKMARK_FOLDER) + "/" + base + ".bmk";
   }
 
+  // True when the current folder is the music library (/audiobooks/music or any
+  // subfolder). Music files are played without bookmarks: no position is saved
+  // or restored, and any stale bookmark for the file is deleted when it opens.
+  bool isMusicPath() const {
+    String musicRoot = String(AUDIOBOOKS_FOLDER) + "/music";
+    return _currentPath == musicRoot || _currentPath.startsWith(musicRoot + "/");
+  }
+
+  // Compute WAV playback duration (seconds) from the file header by reading the
+  // fmt chunk's byte rate and the data chunk's size. Returns 0 if the header
+  // can't be parsed (caller falls back to the during-playback bitrate estimate).
+  uint32_t parseWavDurationSec(File& f) {
+    if (!f) return 0;
+    f.seek(0);
+    uint8_t hdr[12];
+    if (f.read(hdr, 12) != 12) return 0;
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return 0;
+
+    uint32_t byteRate = 0;
+    uint32_t dataSize = 0;
+    while (f.available() >= 8) {
+      uint8_t ch[8];
+      if (f.read(ch, 8) != 8) break;
+      uint32_t sz = (uint32_t)ch[4] | ((uint32_t)ch[5] << 8) |
+                    ((uint32_t)ch[6] << 16) | ((uint32_t)ch[7] << 24);
+      if (memcmp(ch, "fmt ", 4) == 0) {
+        uint8_t fmt[16];
+        uint32_t toRead = sz < 16 ? sz : 16;
+        if ((uint32_t)f.read(fmt, toRead) != toRead) break;
+        // byteRate is bytes 8-11 of the fmt body (after format, channels, rate)
+        byteRate = (uint32_t)fmt[8] | ((uint32_t)fmt[9] << 8) |
+                   ((uint32_t)fmt[10] << 16) | ((uint32_t)fmt[11] << 24);
+        if (sz > toRead) f.seek(f.position() + (sz - toRead));
+        if (sz & 1) f.seek(f.position() + 1);  // chunks are word-aligned
+      } else if (memcmp(ch, "data", 4) == 0) {
+        dataSize = sz;
+        break;  // have what we need
+      } else {
+        f.seek(f.position() + sz + (sz & 1));  // skip other chunks (word-aligned)
+      }
+    }
+    if (byteRate == 0 || dataSize == 0) return 0;
+    return dataSize / byteRate;
+  }
+
   void loadBookmark() {
     String path = getBookmarkPath(_currentFile);
+    if (isMusicPath()) {
+      // Music files don't use bookmarks — delete any stale one and start at 0.
+      if (SD.exists(path.c_str())) {
+        SD.remove(path.c_str());
+        digitalWrite(SDCARD_CS, HIGH);
+      }
+      return;
+    }
     File f = SD.open(path.c_str(), FILE_READ);
     if (!f) return;
 
@@ -394,6 +447,7 @@ private:
 
   void saveBookmark() {
     if (!_bookOpen || _currentFile.length() == 0) return;
+    if (isMusicPath()) return;  // Music files don't use bookmarks
 
     if (!SD.exists(AB_BOOKMARK_FOLDER)) {
       SD.mkdir(AB_BOOKMARK_FOLDER);
@@ -973,6 +1027,11 @@ private:
         int dot = base.lastIndexOf('.');
         if (dot > 0) base = base.substring(0, dot);
         strncpy(_metadata.title, base.c_str(), M4B_MAX_TITLE - 1);
+        // WAV: exact duration is in the header, so show it at open.
+        if (lower.endsWith(".wav")) {
+          uint32_t wavSec = parseWavDurationSec(file);
+          if (wavSec > 0) _durationSec = wavSec;
+        }
       }
       file.close();
     }
@@ -1626,7 +1685,10 @@ public:
     // auto-refresh once per minute (for time/progress updates). Key presses
     // always trigger immediate refresh regardless of this interval.
     // When paused or stopped, refresh every 5s as normal.
-    if (_isPlaying && !_isPaused) return 60000;  // 1 min between auto-refreshes
+    if (_isPlaying && !_isPaused) {
+      if (_durationSec == 0) return 1000;  // refresh quickly until duration resolves
+      return 60000;                         // then back to once-a-minute (avoids stutter)
+    }
     return 5000;
   }
 

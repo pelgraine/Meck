@@ -2019,7 +2019,9 @@ if (curr) curr->poll();
       // Defer display refresh while BLE is actively transferring contacts.
       // E-ink partial update blocks for ~820ms, stalling the BLE send queue
       // and adding ~1.6s of dead time to a full contact sync.
-      if (_serial != NULL && _serial->hasPendingData()) {
+      if (_notifAudioActive) {
+        _next_refresh = millis() + 200;  // Defer e-ink refresh during notif tone (SPI bus contention)
+      } else if (_serial != NULL && _serial->hasPendingData()) {
         _next_refresh = millis() + 500;  // Re-check in 500ms
       } else {
       // Sync dark mode with prefs (settings toggle takes effect here)

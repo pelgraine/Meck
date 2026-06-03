@@ -2841,6 +2841,7 @@ void loop() {
         digitalWrite(41, LOW);
 #endif
         notifTonePlaying = false;
+        ui_task.setNotifAudioActive(false);
         notifFadingOut = false;
         notifMuted = false;
         notifDurationMs = 0;
@@ -2943,9 +2944,10 @@ void loop() {
           }
         #endif
 
-        // Ramp volume up to max
-        audio->setVolume(21);
+        // Ramp volume up to playback level
+        audio->setVolume(17);
         notifTonePlaying = true;
+        ui_task.setNotifAudioActive(true);
         notifFadingOut = false;
         notifMuted = false;
         notifStartMs = millis();

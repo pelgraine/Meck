@@ -51,6 +51,7 @@ class UITask : public AbstractUITask {
   GenericVibration vibration;
 #endif
   unsigned long _next_refresh, _auto_off;
+  bool _notifAudioActive = false;          // True while a notification tone plays; defers e-ink refresh (SPI bus contention)
   unsigned long _kb_flash_off_at;          // Keyboard flash turn-off timer
 #ifdef HAS_4G_MODEM
   bool _incomingCallRinging;               // Currently ringing (incoming call)
@@ -221,6 +222,7 @@ public:
 #endif
   void showAlert(const char* text, int duration_millis) override;
   void forceRefresh() override { _next_refresh = 100; }
+  void setNotifAudioActive(bool active) { _notifAudioActive = active; }
   void showBootHint(bool immediate = false);  // Show navigation hint overlay on first boot
   void dismissBootHint();  // Dismiss hint and save preference
   bool isHintActive() const { return _hintActive; }
