@@ -38,6 +38,13 @@
 // Forward declarations
 class UITask;
 
+#ifdef HAS_ES8311_AUDIO
+// Defined in target.cpp (where the board object + ES8311 driver are visible).
+// Forward-declared here so this UI header doesn't need the heavy target.h.
+void meck_audio_route_amp();
+void meck_audio_codec_init();
+#endif
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -322,16 +329,31 @@ private:
     delay(100);  // Cold-start needs longer than 50ms
 
     // Configure I2S pins (must be done after any stopSong that resets I2S)
+#ifdef HAS_ES8311_AUDIO
+    // MAX: route to the ES8311 + enable the speaker amp, then configure I2S
+    // WITH MCLK (the ES8311 is clock slave and needs MCLK on BOARD_I2S_MCLK).
+    // The codec registers are initialised after connecttoFS starts the clocks.
+    meck_audio_route_amp();
+    bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
+                                I2S_PIN_NO_CHANGE, BOARD_I2S_MCLK);
+#else
     bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
     if (!ok) {
       ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
     }
+#endif
     if (!ok) {
       Serial.println("ALARM: setPinout FAILED");
     }
 
     // Connect to file FIRST, then set volume (matches audiobook working pattern)
     _audio->connecttoFS(SD, soundFile.c_str());
+#ifdef HAS_ES8311_AUDIO
+    // MAX: I2S clocks are now running, so initialise the ES8311 codec (once;
+    // idempotent). Without this, alarm audio is silent until a notification
+    // tone happens to bring the codec up.
+    meck_audio_codec_init();
+#endif
     _audio->setVolume(slot.volume);
     _alarmAudioActive = true;
     _resolvedSoundPath = soundFile;  // Store for restart loop
