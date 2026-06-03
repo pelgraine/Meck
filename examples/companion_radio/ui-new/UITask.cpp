@@ -32,6 +32,12 @@
 #ifndef AUTO_OFF_MILLIS
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
+// Right-aligned values on the dense home pages compensate for the e-ink X
+// origin offset so they are not clipped at the right edge. Default 0 for
+// boards that do not define EINK_X_OFFSET (no change to their layout).
+#ifndef EINK_X_OFFSET
+  #define EINK_X_OFFSET 0
+#endif
 #define BOOT_SCREEN_MILLIS   3000   // 3 seconds
 
 #ifdef PIN_STATUS_LED
@@ -714,12 +720,12 @@ public:
         }
         
         int timestamp_width = display.getTextWidth(tmp);
-        int max_name_width = display.width() - timestamp_width - 1;
+        int max_name_width = display.width() - timestamp_width - 1 - EINK_X_OFFSET;
         
         char filtered_recent_name[sizeof(a->name)];
         display.translateUTF8ToBlocks(filtered_recent_name, a->name, sizeof(filtered_recent_name));
         display.drawTextEllipsized(0, y, max_name_width, filtered_recent_name);
-        display.setCursor(display.width() - timestamp_width - 1, y);
+        display.setCursor(display.width() - timestamp_width - 1 - EINK_X_OFFSET, y);
         display.print(tmp);
       }
       // Hint for full Last Heard screen
@@ -860,11 +866,11 @@ public:
         display.drawTextLeftAlign(0, y, "Can't access GPS");
       } else {
         strcpy(buf, nmea->isValid()?"fix":"no fix");
-        display.drawTextRightAlign(display.width()-1, y, buf);
+        display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         y = y + 12;
         display.drawTextLeftAlign(0, y, "sat");
         sprintf(buf, "%d", nmea->satellitesCount());
-        display.drawTextRightAlign(display.width()-1, y, buf);
+        display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         y = y + 12;
 
         // NMEA sentence counter — confirms baud rate and data flow
@@ -876,17 +882,17 @@ public:
         } else {
           strcpy(buf, "hw off");
         }
-        display.drawTextRightAlign(display.width()-1, y, buf);
+        display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         y = y + 12;
 
         display.drawTextLeftAlign(0, y, "pos");
         sprintf(buf, "%.4f %.4f", 
           nmea->getLatitude()/1000000., nmea->getLongitude()/1000000.);
-        display.drawTextRightAlign(display.width()-1, y, buf);
+        display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         y = y + 12;
         display.drawTextLeftAlign(0, y, "alt");
         sprintf(buf, "%.2f", nmea->getAltitude()/1000.);
-        display.drawTextRightAlign(display.width()-1, y, buf);
+        display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         y = y + 12;
       }
       // Show RTC time and UTC offset on GPS page
@@ -900,10 +906,10 @@ public:
           if (mins < 0) mins += 60;
           display.drawTextLeftAlign(0, y, "time(U)");
           sprintf(buf, "%02d:%02d UTC%+d", hrs, mins, _node_prefs->utc_offset_hours);
-          display.drawTextRightAlign(display.width()-1, y, buf);
+          display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
         } else {
           display.drawTextLeftAlign(0, y, "time(U)");
-          display.drawTextRightAlign(display.width()-1, y, "no sync");
+          display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, "no sync");
         }
         y = y + 12;
       }
@@ -1023,28 +1029,28 @@ public:
       } else {
         sprintf(buf, "%d min", tte);
       }
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
       y += 10;
 
       // Average current
       int16_t avgCur = board.getAvgCurrent();
       display.drawTextLeftAlign(0, y, "avg current");
       sprintf(buf, "%d mA", avgCur);
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
       y += 10;
 
       // Average power
       int16_t avgPow = board.getAvgPower();
       display.drawTextLeftAlign(0, y, "avg power");
       sprintf(buf, "%d mW", avgPow);
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
       y += 10;
 
       // Voltage (already available)
       uint16_t mv = board.getBattMilliVolts();
       display.drawTextLeftAlign(0, y, "voltage");
       sprintf(buf, "%d.%03d V", mv / 1000, mv % 1000);
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
       y += 10;
 
       // Remaining capacity (clamped to design capacity — gauge FCC may be
@@ -1054,14 +1060,14 @@ public:
       if (desCap > 0 && remCap > desCap) remCap = desCap;
       display.drawTextLeftAlign(0, y, "remaining cap");
       sprintf(buf, "%d mAh", remCap);
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
       y += 10;
 
       // Battery temperature
       int16_t battTemp = board.getBattTemperature();
       display.drawTextLeftAlign(0, y, "temperature");
       sprintf(buf, "%d.%d C", battTemp / 10, abs(battTemp % 10));
-      display.drawTextRightAlign(display.width()-1, y, buf);
+      display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
 #endif
     } else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
