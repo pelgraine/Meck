@@ -2,6 +2,10 @@
 #include "variant.h"
 #include "target.h"
 
+#ifdef HAS_ES8311_AUDIO
+  #include "ES8311.h"   // MAX: native ES8311 codec init (Arduino Wire)
+#endif
+
 TDeckProMaxBoard board;
 
 #if defined(P_LORA_SCLK)
@@ -89,3 +93,20 @@ mesh::LocalIdentity radio_new_identity() {
 void radio_reset_agc() {
   radio.setRxBoostedGainMode(true);
 }
+
+#ifdef HAS_ES8311_AUDIO
+// Route audio to the ES8311 and enable the speaker amp. Safe to call any time
+// (just XL9555 GPIO writes); the outputs latch, so repeat calls are harmless.
+void meck_audio_route_amp() {
+  board.selectAudioES8311();   // XL9555 AUDIO_SEL low -> ES8311
+  board.amplifierEnable();     // XL9555 AMPLIFIER high -> NS4150B on
+}
+
+// One-time ES8311 codec init. Must be called after the I2S clocks are running
+// (after connecttoFS) so the codec can lock to MCLK/BCLK. Idempotent: the
+// static guard means the register init runs at most once per boot.
+void meck_audio_codec_init() {
+  static bool es8311_ready = false;
+  if (!es8311_ready) es8311_ready = es8311_init_44100_16bit();
+}
+#endif

@@ -45,3 +45,12 @@ void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr);
 void radio_set_tx_power(uint8_t dbm);
 mesh::LocalIdentity radio_new_identity();
 void radio_reset_agc();
+
+#ifdef HAS_ES8311_AUDIO
+// Audio hardware bring-up (MAX/ES8311), shared across playback paths.
+// route_amp: select ES8311 output + enable the speaker amp (safe any time).
+// codec_init: one-time ES8311 register init; call AFTER the I2S clocks are
+// running (i.e. after connecttoFS), since the codec locks to MCLK/BCLK.
+void meck_audio_route_amp();
+void meck_audio_codec_init();
+#endif

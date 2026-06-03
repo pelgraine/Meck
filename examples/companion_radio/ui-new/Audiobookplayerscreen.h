@@ -48,6 +48,13 @@
 // Forward declarations
 class UITask;
 
+#ifdef HAS_ES8311_AUDIO
+// Defined in target.cpp (where the board object + ES8311 driver are visible).
+// Forward-declared here so this UI header doesn't need the heavy target.h.
+void meck_audio_route_amp();
+void meck_audio_codec_init();
+#endif
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -253,10 +260,20 @@ private:
 
   void ensureI2SInit() {
     if (!_i2sInitialized && _audio) {
+#ifdef HAS_ES8311_AUDIO
+      // MAX: route to the ES8311 + enable the speaker amp, then configure I2S
+      // WITH MCLK (the ES8311 is clock slave and needs MCLK on BOARD_I2S_MCLK).
+      // The codec registers are initialised after connecttoFS starts the clocks
+      // (see meck_audio_codec_init() in startPlayback).
+      meck_audio_route_amp();
+      bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
+                                  I2S_PIN_NO_CHANGE, BOARD_I2S_MCLK);
+#else
       bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
       if (!ok) {
         ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
       }
+#endif
       if (!ok) Serial.println("AB: setPinout FAILED");
       _i2sInitialized = true;
     }
@@ -1118,6 +1135,12 @@ private:
 
     // Connect to file — library parses headers asynchronously via loop()
     _audio->connecttoFS(SD, fullPath.c_str());
+#ifdef HAS_ES8311_AUDIO
+    // MAX: I2S clocks are now running, so initialise the ES8311 codec (once;
+    // idempotent). Without this, audiobook/music output is silent until a
+    // notification tone happens to bring the codec up.
+    meck_audio_codec_init();
+#endif
     _audio->setVolume(_volume);
 
     // DON'T seek immediately — the library hasn't parsed headers yet.
