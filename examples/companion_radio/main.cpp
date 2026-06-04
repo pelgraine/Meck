@@ -82,7 +82,7 @@
   // Audiobook player — Audio object is heap-allocated on first use to avoid
   // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
   // Not available on 4G variant (I2S pins conflict with modem control lines).
-  #ifndef HAS_4G_MODEM
+  #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
     #include "AudiobookPlayerScreen.h"
     #include "Audio.h"
     Audio* audio = nullptr;
@@ -2444,8 +2444,12 @@ void setup() {
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
       } else {
         // Ensure modem power is off (kills red LED too)
+#if defined(LilyGo_TDeck_Pro_Max)
+        board.modemPowerOff();             // XL9555 6609_EN LOW
+#else
         pinMode(MODEM_POWER_EN, OUTPUT);
         digitalWrite(MODEM_POWER_EN, LOW);
+#endif
         MESH_DEBUG_PRINTLN("setup() - 4G modem disabled by config");
       }
     }
@@ -2720,7 +2724,7 @@ void loop() {
 #endif
 
   // Audiobook: service audio decode regardless of which screen is active
-  #if defined(LilyGo_TDeck_Pro) && !defined(HAS_4G_MODEM)
+  #if defined(LilyGo_TDeck_Pro) && (!defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT))
   {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -4392,7 +4396,7 @@ void handleKeyboardInput() {
   }
   
   // *** AUDIOBOOK MODE ***
-  #ifndef HAS_4G_MODEM
+  #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
   if (audiobookMode) {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
@@ -5070,7 +5074,7 @@ void handleKeyboardInput() {
         }
         break;
       }
-    #ifndef HAS_4G_MODEM
+    #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
       // Otherwise: open audiobook player - lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
@@ -5955,7 +5959,7 @@ void sendComposedMessage() {
 // The audio library calls these global functions - must be defined at file scope.
 // Not available on 4G variant (no audio hardware).
 
-#ifndef HAS_4G_MODEM
+#if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
 void audio_info(const char *info) {
   Serial.printf("Audio: %s\n", info);
 }

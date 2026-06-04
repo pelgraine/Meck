@@ -467,6 +467,8 @@ public:
       display.drawTextCentered(display.width() / 2, y, tmp);
 #if defined(LILYGO_TECHO_LITE)
       y += 12;  // Compact
+#elif defined(LilyGo_TDeck_Pro_Max)
+      y += 10;  // MAX: pull < Connected > up under MSG to make room for [T] Phone
 #else
       y += 14;  // Reduced from 18
 #endif
@@ -627,7 +629,19 @@ public:
         display.setCursor(col1, y); display.print("[E] Reader");
 #endif
         y += menuLH;
-#if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
+#if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
+        display.setCursor(col1, y); display.print("[P] Audio");
+        display.setCursor(col2, y); display.print("[K] Alarm");
+        y += menuLH;
+  #ifdef MECK_WEB_READER
+        display.setCursor(col1, y); display.print("[B] Browser");
+        display.setCursor(col2, y); display.print("[F] Discover");
+  #else
+        display.setCursor(col1, y); display.print("[F] Discover");
+  #endif
+        y += menuLH;
+        display.setCursor(col1, y); display.print("[T] Phone");
+#elif defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
         display.setCursor(col1, y); display.print("[T] Phone");
         display.setCursor(col2, y); display.print("[B] Browser");
 #elif defined(HAS_4G_MODEM)
@@ -657,7 +671,11 @@ public:
         y += 2;
       } else {
         // Monospaced built-in font (Classic): centered space-padded strings
+#if defined(LilyGo_TDeck_Pro_Max)
+        y += 2;  // MAX: Press sits closer under < Connected >
+#else
         y += 6;
+#endif
         display.drawTextCentered(display.width() / 2, y, "Press:");
         y += 12;
         display.drawTextCentered(display.width() / 2, y, "[M] Messages    [C] Contacts  ");
@@ -670,7 +688,15 @@ public:
         display.drawTextCentered(display.width() / 2, y, "[E] Reader                    ");
 #endif
         y += 10;
-#if defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
+#if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
+        display.drawTextCentered(display.width() / 2, y, "[P] Audiobooks  [K] Alarm     ");
+        y += 10;
+  #ifdef MECK_WEB_READER
+        display.drawTextCentered(display.width() / 2, y, "[B] Browser     [F] Discover  ");
+  #else
+        display.drawTextCentered(display.width() / 2, y, "[F] Discover                  ");
+  #endif
+#elif defined(HAS_4G_MODEM) && defined(MECK_WEB_READER)
         display.drawTextCentered(display.width() / 2, y, "[T] Phone       [B] Browser   ");
 #elif defined(HAS_4G_MODEM)
         display.drawTextCentered(display.width() / 2, y, "[T] Phone       [F] Discover  ");
@@ -692,6 +718,11 @@ public:
         display.drawTextCentered(display.width() / 2, y, "[R] Trace       [J] Games     ");
         display.setColor(DisplayDriver::LIGHT);
         y += 14;
+#if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
+        // Phone on its own line below Trace/Games, centered like the "Press:" header
+        display.drawTextCentered(display.width() / 2, y, "[T] Phone");
+        y += 14;
+#endif
       }
 
       // Nav hint (only if room)

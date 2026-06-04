@@ -6,6 +6,11 @@
 #include <time.h>
 #include <sys/time.h>
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include <TDeckProMaxBoard.h>   // MAX: XL9555-routed modem power/PWRKEY
+  extern TDeckProMaxBoard board;  // defined in target.cpp
+#endif
+
 // Global singleton
 ModemManager modemManager;
 
@@ -93,7 +98,11 @@ void ModemManager::shutdown() {
   }
 
   // Cut modem power
+#if defined(LilyGo_TDeck_Pro_Max)
+  board.modemPowerOff();             // XL9555 6609_EN LOW
+#else
   digitalWrite(MODEM_POWER_EN, LOW);
+#endif
 
   // Delete task
   vTaskDelete(_taskHandle);
@@ -511,6 +520,11 @@ void ModemManager::processURCLine(const char* line) {
   // --- VOICE CALL: BEGIN -- A76xx-specific: audio path established ---
   if (strncmp(line, "VOICE CALL: BEGIN", 17) == 0) {
     MESH_DEBUG_PRINTLN("[Modem] URC: VOICE CALL: BEGIN");
+#if defined(LilyGo_TDeck_Pro_Max)
+    // MAX: route the shared speaker mux to the modem and enable the amplifier
+    board.selectAudioModem();
+    board.amplifierEnable();
+#endif
     if (_state == ModemState::DIALING) {
       _state = ModemState::IN_CALL;
       _callStartTime = millis();
@@ -543,6 +557,11 @@ void ModemManager::processURCLine(const char* line) {
     _state = ModemState::READY;
     _callPhone[0] = '\0';
     _callStartTime = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+    // MAX: call audio path closed -- return the speaker mux to ES8311, amp off
+    board.selectAudioES8311();
+    board.amplifierDisable();
+#endif
     return;
   }
 
@@ -638,6 +657,11 @@ bool ModemManager::doHangup() {
     _state = ModemState::READY;
     _callPhone[0] = '\0';
     _callStartTime = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+    // MAX: hung up -- return the speaker mux to ES8311, amp off
+    board.selectAudioES8311();
+    board.amplifierDisable();
+#endif
     MESH_DEBUG_PRINTLN("[Modem] Hangup OK");
     return true;
   }
@@ -679,6 +703,11 @@ void ModemManager::handleRingtone() {
     _ringing = true;
     _nextRingTone = 0;  // Play first burst immediately
     _toneActive = false;
+#if defined(LilyGo_TDeck_Pro_Max)
+    // MAX: route the shared speaker to the modem for the ringtone bursts
+    board.selectAudioModem();
+    board.amplifierEnable();
+#endif
   } else if (!nowRinging && _ringing) {
     // Ringing stopped (answered, rejected, missed)
     _ringing = false;
@@ -686,6 +715,14 @@ void ModemManager::handleRingtone() {
       sendAT("AT+SIMTONE=0", "OK", 500);
       _toneActive = false;
     }
+#if defined(LilyGo_TDeck_Pro_Max)
+    // MAX: if the call was NOT answered (not now in-call), return audio to
+    // ES8311. If it WAS answered, leave the mux on the modem for call audio.
+    if (_state != ModemState::IN_CALL) {
+      board.selectAudioES8311();
+      board.amplifierDisable();
+    }
+#endif
     return;
   }
 
@@ -841,6 +878,11 @@ bool ModemManager::playModemTone(const char* filename) {
   // param 2: 0 = no repeat
   char cmd[64];
   snprintf(cmd, sizeof(cmd), "AT+CCMXPLAY=\"C:/%s\",0,0", filename);
+#if defined(LilyGo_TDeck_Pro_Max)
+  // MAX: route the shared speaker to the modem for tone playback
+  board.selectAudioModem();
+  board.amplifierEnable();
+#endif
   bool ok = sendAT(cmd, "OK", 2000);
   if (ok) {
     _notifTonePlaying = true;
@@ -856,6 +898,11 @@ bool ModemManager::stopModemTone() {
   if (!_notifTonePlaying) return true;
   bool ok = sendAT("AT+CCMXSTOP", "OK", 1000);
   _notifTonePlaying = false;
+#if defined(LilyGo_TDeck_Pro_Max)
+  // MAX: tone finished -- return the speaker mux to ES8311, amp off
+  board.selectAudioES8311();
+  board.amplifierDisable();
+#endif
   MESH_DEBUG_PRINTLN("[Modem] Tone stop %s", ok ? "OK" : "FAIL");
   return ok;
 }
@@ -1249,6 +1296,23 @@ restart:
 bool ModemManager::modemPowerOn() {
   MESH_DEBUG_PRINTLN("[Modem] powering on...");
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  // MAX: 6609_EN and PWRKEY are XL9555-routed, and there is NO modem reset
+  // line (IO9 is the e-ink reset on MAX). Drive power/PWRKEY via the board
+  // helpers and skip the reset pulse entirely.
+  board.modemPowerOn();                 // XL9555 6609_EN HIGH (SGM6609 boost)
+  vTaskDelay(pdMS_TO_TICKS(500));
+  MESH_DEBUG_PRINTLN("[Modem] power supply enabled (XL9555 6609_EN)");
+
+  board.modemPwrkeyPulse();             // XL9555 PWRKEY HIGH/LOW(1200ms)/HIGH
+  MESH_DEBUG_PRINTLN("[Modem] PWRKEY pulsed, waiting for boot...");
+  vTaskDelay(pdMS_TO_TICKS(5000));
+
+  // DTR is a direct GPIO on MAX (IO8)
+  pinMode(MODEM_DTR, OUTPUT);
+  digitalWrite(MODEM_DTR, LOW);
+  MESH_DEBUG_PRINTLN("[Modem] DTR asserted LOW (GPIO %d)", MODEM_DTR);
+#else
   // Enable modem power supply (BOARD_6609_EN)
   pinMode(MODEM_POWER_EN, OUTPUT);
   digitalWrite(MODEM_POWER_EN, HIGH);
@@ -1278,6 +1342,7 @@ bool ModemManager::modemPowerOn() {
   pinMode(MODEM_DTR, OUTPUT);
   digitalWrite(MODEM_DTR, LOW);
   MESH_DEBUG_PRINTLN("[Modem] DTR asserted LOW (GPIO %d)", MODEM_DTR);
+#endif
 
   // Configure UART
   MODEM_SERIAL.begin(MODEM_BAUD, SERIAL_8N1, MODEM_TX, MODEM_RX);
