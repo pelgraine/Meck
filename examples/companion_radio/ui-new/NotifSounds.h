@@ -38,6 +38,10 @@
 #endif
 
 #define NOTIF_SOUND_NAME_MAX   32
+// Reserved one-byte sentinel stored in a channel's name slot to mean
+// "Buzzer (vibrate)" instead of a sound filename. 0x01 can never be the first
+// byte of a real filename, so it is unambiguous and needs no config change.
+#define NOTIF_VIBRATE_MARKER   "\x01"
 #define NOTIF_SOUND_SLOTS      (MAX_GROUP_CHANNELS + 1)  // +1 for DMs
 #define NOTIF_SOUND_CONFIG_PATH "/meshcore/notif_sounds.cfg"
 #define NOTIF_SOUND_MAGIC      0x4E534E44  // "NSND"
@@ -98,6 +102,18 @@ public:
 
   void clearSoundForChannel(uint8_t channel_idx) {
     setSoundForChannel(channel_idx, nullptr);
+  }
+
+  // --- Vibrate (haptic) selection ---
+  // "Buzzer (vibrate)" is stored as a reserved marker in the channel's name
+  // slot, so it persists through the existing config save/load unchanged.
+  bool isVibrateForChannel(uint8_t channel_idx) const {
+    const char* s = getSoundForChannel(channel_idx);
+    return s && (uint8_t)s[0] == (uint8_t)NOTIF_VIBRATE_MARKER[0];
+  }
+
+  void setVibrateForChannel(uint8_t channel_idx) {
+    setSoundForChannel(channel_idx, NOTIF_VIBRATE_MARKER);
   }
 
   // --- Sound file scanning ---

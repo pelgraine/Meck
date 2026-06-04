@@ -2345,9 +2345,14 @@ public:
       int maxVisible = (listBot - listTop) / lineH;
       if (maxVisible < 3) maxVisible = 3;
 
-      // Total items: 1 ("Default") + sound file count
+      // Total items: "Default" (+ "Buzzer (vibrate)" on MAX) + sound file count
       const auto& files = notifSounds.getSoundFiles();
-      int totalItems = 1 + (int)files.size();
+#if defined(LilyGo_TDeck_Pro_Max)
+      const int kFileBase = 2;   // 0=Default, 1=Buzzer(vibrate), 2+=files
+#else
+      const int kFileBase = 1;   // 0=Default, 1+=files
+#endif
+      int totalItems = kFileBase + (int)files.size();
 
       // Centre scroll on selection
       _notifSoundScroll = max(0, min(_notifSoundSelected - maxVisible / 2,
@@ -2370,9 +2375,13 @@ public:
         display.setCursor(bx + 6, sy);
         if (i == 0) {
           display.print("Default (silent)");
+#if defined(LilyGo_TDeck_Pro_Max)
+        } else if (i == 1) {
+          display.print("Buzzer (vibrate)");
+#endif
         } else {
           // Show filename without extension
-          String displayName = files[i - 1];
+          String displayName = files[i - kFileBase];
           int dot = displayName.lastIndexOf('.');
           if (dot > 0) displayName = displayName.substring(0, dot);
           if (displayName.length() > 28) displayName = displayName.substring(0, 28);
@@ -2954,7 +2963,12 @@ public:
     #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     if (_editMode == EDIT_NOTIF_SOUND) {
       const auto& files = notifSounds.getSoundFiles();
-      int totalItems = 1 + (int)files.size();  // 0=Default, rest=files
+#if defined(LilyGo_TDeck_Pro_Max)
+      const int kFileBase = 2;   // 0=Default, 1=Buzzer(vibrate), 2+=files
+#else
+      const int kFileBase = 1;   // 0=Default, 1+=files
+#endif
+      int totalItems = kFileBase + (int)files.size();
 
       if (c == 'w' || c == 'W' || c == 0xF2 || c == KEY_UP) {
         if (_notifSoundSelected > 0) _notifSoundSelected--;
@@ -2965,11 +2979,15 @@ public:
         return true;
       }
       if (c == '\r' || c == 13) {
-        // Select: 0 = clear (default silent), 1+ = file
+        // Select: 0 = clear (default silent), [MAX: 1 = vibrate], rest = file
         if (_notifSoundSelected == 0) {
           notifSounds.clearSoundForChannel(_notifSoundChannel);
+#if defined(LilyGo_TDeck_Pro_Max)
+        } else if (_notifSoundSelected == 1) {
+          notifSounds.setVibrateForChannel(_notifSoundChannel);
+#endif
         } else {
-          int fileIdx = _notifSoundSelected - 1;
+          int fileIdx = _notifSoundSelected - kFileBase;
           if (fileIdx >= 0 && fileIdx < (int)files.size()) {
             notifSounds.setSoundForChannel(_notifSoundChannel, files[fileIdx].c_str());
           }
@@ -3904,14 +3922,26 @@ public:
         notifSounds.scanSoundFiles();
         _notifSoundSelected = 0;  // 0 = "Default (silent)"
         _notifSoundScroll = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+        const int kFileBase = 2;   // 0=Default, 1=Buzzer(vibrate), 2+=files
+#else
+        const int kFileBase = 1;   // 0=Default, 1+=files
+#endif
         // Pre-select current assignment
-        const char* current = notifSounds.getSoundForChannel(_notifSoundChannel);
-        if (current && current[0] != '\0') {
-          const auto& files = notifSounds.getSoundFiles();
-          for (int i = 0; i < (int)files.size(); i++) {
-            if (files[i] == String(current)) {
-              _notifSoundSelected = i + 1;  // +1 because 0 is "Default"
-              break;
+#if defined(LilyGo_TDeck_Pro_Max)
+        if (notifSounds.isVibrateForChannel(_notifSoundChannel)) {
+          _notifSoundSelected = 1;  // 1 = "Buzzer (vibrate)"
+        } else
+#endif
+        {
+          const char* current = notifSounds.getSoundForChannel(_notifSoundChannel);
+          if (current && current[0] != '\0') {
+            const auto& files = notifSounds.getSoundFiles();
+            for (int i = 0; i < (int)files.size(); i++) {
+              if (files[i] == String(current)) {
+                _notifSoundSelected = i + kFileBase;
+                break;
+              }
             }
           }
         }

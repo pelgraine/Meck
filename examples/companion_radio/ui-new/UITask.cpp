@@ -19,6 +19,9 @@
   #include "MapScreen.h"
 #endif
 #include "target.h"
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
+#endif
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT)
   #include "HomeIcons.h"
 #endif
@@ -1645,6 +1648,21 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Set the flag for notify() which is called immediately after newMsg().
   // If a custom notification tone is assigned and notifications are active,
   // request MP3 playback and suppress the RTTTL buzzer so they don't overlap.
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Channel set to "Buzzer (vibrate)": pulse the motor instead of a tone.
+  if (!suppressNotif && notifSounds.isVibrateForChannel(channel_idx)) {
+    static DRV2605Haptic s_haptic;
+    static bool s_hapticReady = false;
+    if (!s_hapticReady) {
+      board.motorEnable();
+      delay(10);                 // let the motor rail settle before I2C
+      s_hapticReady = s_haptic.begin();
+    }
+    if (s_hapticReady) s_haptic.buzz(1);
+    s_lastMsgSuppressed = true;  // suppress the default RTTTL buzzer
+  } else
+#endif
+  {
   #ifdef MECK_AUDIO_VARIANT
   if (!suppressNotif) {
     const char* customSound = notifSounds.getSoundForChannel(channel_idx);
@@ -1677,7 +1695,8 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   #else
   s_lastMsgSuppressed = suppressNotif;
   #endif
-  
+  }
+
   // Add to channel history screen with channel index, path data, and SNR
   // For DMs (channel_idx == 0xFF):
   //   - Regular DMs: prefix text with sender name ("NodeName: hello")

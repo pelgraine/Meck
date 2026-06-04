@@ -12,6 +12,10 @@
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include "DRV2605Haptic.h"     // TEMP: inline haptic driver for the 'buzz' CLI test command
+#endif
+
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
 #define CMD_SEND_CHANNEL_TXT_MSG      3
@@ -3506,7 +3510,27 @@ void MyMesh::checkCLIRescueCmd() {
 
       }
 
-    } else if (strcmp(cli_command, "reboot") == 0) {
+    }
+#if defined(LilyGo_TDeck_Pro_Max)
+    else if (strcmp(cli_command, "buzz") == 0) {
+      // TEMP: fire the DRV2605 haptic motor once to confirm it works.
+      // Lazy-inits the driver (and motor power rail) on first invocation.
+      static DRV2605Haptic haptic;
+      static bool haptic_ready = false;
+      if (!haptic_ready) {
+        board.motorEnable();
+        delay(10);                 // let the motor rail settle before I2C
+        haptic_ready = haptic.begin();
+      }
+      if (haptic_ready) {
+        haptic.buzz(1);
+        Serial.println("  > buzz");
+      } else {
+        Serial.println("  > buzz: DRV2605 not found");
+      }
+    }
+#endif
+    else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
     } else {
       Serial.println("  Error: unknown command (try 'help')");
