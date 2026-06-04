@@ -1658,7 +1658,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       delay(10);                 // let the motor rail settle before I2C
       s_hapticReady = s_haptic.begin();
     }
-    if (s_hapticReady) s_haptic.buzz(1);
+    if (s_hapticReady) s_haptic.buzz(14);  // 14 = Strong Buzz ~1s (effect 1 strong click was too brief)
     s_lastMsgSuppressed = true;  // suppress the default RTTTL buzzer
   } else
 #endif
