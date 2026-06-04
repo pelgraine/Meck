@@ -114,10 +114,19 @@ def merge_bin(source, target, env):
             return
 
     # Read flash settings from board config
-    flash_mode = env.BoardConfig().get("build.flash_mode", "qio")
     flash_freq = env.BoardConfig().get("build.f_flash", "80000000L").rstrip("L")
     flash_size = env.BoardConfig().get("upload.flash_size", "16MB")
     mcu = env.BoardConfig().get("build.mcu", "esp32s3")
+
+    # Force the bootloader inside the MERGED image to DIO. Web flashers such as
+    # flasher.meshcore.io do not set the SPI flash quad-enable (QE) bit, so a
+    # QIO bootloader cannot read flash and the device boot-loops at the ROM
+    # stage (mode:QIO ... TG0WDT_SYS_RST). DIO needs no QE bit, so the merged
+    # image boots when flashed that way. esptool merge_bin re-stamps the
+    # flash-mode byte of the image at 0x0 (the bootloader) only; the app image
+    # is already built DIO and is left untouched. The board config stays QIO,
+    # so VSCode / esptool / OTA flashing is unaffected and keeps using QIO.
+    flash_mode = "dio"
 
     # Convert numeric frequency to esptool format
     freq_map = {"80000000": "80m", "40000000": "40m", "26000000": "26m", "20000000": "20m"}
