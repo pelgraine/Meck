@@ -1,6 +1,6 @@
 ## Meshcore + Fork = Meck
 
-A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro & LilyGo T5 E-Paper S3 Pro. Created wholly with Claude AI using Meshcore v1.11 code. 100% vibecoded.
+A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro, LilyGo T-Deck Max & LilyGo T5 E-Paper S3 Pro. Created wholly with Claude AI using Meshcore v1.11 code. 100% vibecoded.
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
@@ -48,6 +48,14 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Voice Notes Over LoRa (Audio only)](#voice-notes-over-lora-audio-only)
   - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
   - [Shutdown (T-Deck Pro)](#shutdown-t-deck-pro)
+- [T-Deck Max](#t-deck-pro-max)
+  - [Build Variants](#t-deck-pro-max-build-variants)
+  - [4G and Audio at the Same Time](#4g-and-audio-at-the-same-time)
+  - [Buzzer (Vibrate) Notifications](#buzzer-vibrate-notifications)
+  - [Capacitive Touch & Buttons](#capacitive-touch--buttons)
+  - [Frontlight & Backlight Brightness](#frontlight--backlight-brightness)
+  - [Keyboard Backlight](#keyboard-backlight)
+  - [Multi-Constellation GPS](#multi-constellation-gps)
 - [Remote Repeater (T-Deck Pro 4G)](#remote-repeater-t-deck-pro-4g)
 - [WiFi Repeater](#wifi-repeater)
 - [T5S3 E-Paper Pro](#t5s3-e-paper-pro)
@@ -84,16 +92,17 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 ## Supported Devices
 
-Meck currently targets two LilyGo devices and also supports the Heltec V3 and V4 as remote repeaters:
+Meck currently targets three LilyGo devices and also supports the Heltec V3 and V4 as remote repeaters:
 
 | Device | Display | Input | LoRa | Battery | GPS | RTC |
 |--------|---------|-------|------|---------|-----|-----|
 | **T-Deck Pro** | 240×320 e-ink (GxEPD2) | TCA8418 keyboard + optional touch | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes | No (uses GPS time) |
+| **T-Deck Max** | 240×320 e-ink (GxEPD2) + frontlight | TCA8418 keyboard + CST328 capacitive touch + 3 capacitive buttons | SX1262 | BQ27220 fuel gauge, 1500 mAh | Yes (multi-constellation) | No (uses GPS time) |
 | **T5S3 E-Paper Pro** (V2, H752-B) | 960×540 e-ink (FastEPD, parallel) | GT911 capacitive touch (no keyboard) | SX1262 | BQ27220 fuel gauge, 1500 mAh | No (non-GPS variant) | Yes (PCF8563 hardware RTC) |
 | **Heltec V3** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
 | **Heltec V4** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
 
-The T-Deck Pro and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The Heltec V3 and V4 use the ESP32-S3 with 8 MB flash and 8 MB PSRAM.
+The T-Deck Pro, T-Deck Max, and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB PSRAM. The Heltec V3 and V4 use the ESP32-S3 with 8 MB flash and 8 MB PSRAM.
 
 ---
 
@@ -227,7 +236,7 @@ Region scope can also be configured via serial commands — see the [Serial Sett
 | Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
 | WiFi Repeater | `meck_wifi_repeater` | — | Yes (MQTT) | — | — | No | — |
 
-The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. (The T-Deck Max lifts this restriction — it runs both at once. See [T-Deck Max](#t-deck-pro-max).) The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
 
 ### T-Deck Pro Keyboard Controls
 
@@ -527,6 +536,8 @@ To assign a tone: from the home screen, press **S** to open settings, scroll dow
 **4G variant (A7682E modem):** Seven bundled notification tones are embedded in the firmware as 8kHz mono WAV files and transferred to the modem's internal filesystem on boot. Playback goes through the modem's own speaker amplifier via AT+CCMXPLAY. Custom user-supplied tones are not supported on the 4G variant -- only the bundled set is available.
 
 **Available bundled tones:** Bell, Ding, High Trill, Low Soft Ding (x2), Mid Trill, and Soft Notif. All are short, 1-2 second alert sounds.
+
+**T-Deck Max -- Buzzer (vibrate):** On the MAX, the tone picker includes an extra **Buzzer (vibrate)** option above the sound files. When selected, an incoming message on that channel pulses the MAX's DRV2605 haptic motor instead of playing a tone or the RTTTL buzzer -- useful for silent alerts. Because the MAX has its own ES8311 audio codec, it also supports custom MP3 tones from the `/alarms/` folder, exactly like the T-Deck Pro audio variant (and unlike the T-Deck Pro 4G variant). See [Buzzer (Vibrate) Notifications](#buzzer-vibrate-notifications).
 
 ### Games (v1.10+)
 
@@ -841,6 +852,65 @@ An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5
 ### Shutdown (T-Deck Pro)
 
 The home screen includes a **Shutdown** page. Selecting it powers the device off completely — the ESP32-S3 enters deep sleep with no wake sources, peripheral power is cut, and the LoRa module is powered down. Only a hardware reset (reset button) or USB power-on will wake the device. This is distinct from the auto-lock hibernate, which maintains wake-on-LoRa capability.
+
+---
+
+## T-Deck Max
+
+The LilyGo T-Deck Max is a close relative of the T-Deck Pro: same 240×320 e-ink panel and TCA8418 keyboard, same ESP32-S3, and the same on-device UI. **All the [T-Deck Pro](#t-deck-pro) keyboard controls and screens apply unchanged** — this section only covers what's different on the MAX.
+
+The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1500 mAh battery.
+
+### T-Deck Max Build Variants
+
+| Variant | Environment | BLE | WiFi | 4G Modem | Audio Codec | Web Reader | Max Contacts |
+|---------|------------|-----|------|----------|-------------|------------|-------------|
+| MAX + BLE | `meck_max_ble` | Yes | — | A7682E | ES8311 | Yes | 2,000 |
+| MAX + WiFi | `meck_max_wifi` | — | Yes (TCP:5000) | A7682E | ES8311 | Yes | 2,000 |
+| MAX + Standalone | `meck_max_standalone` | — | — | A7682E | ES8311 | Yes | 2,000 |
+
+Unlike the T-Deck Pro, **every** MAX variant includes both the 4G modem and the audio codec — there is no separate "audio" vs "4G" split because the MAX runs both. The web reader is available on all three variants (it has a data path via the 4G modem, plus WiFi on the WiFi build), and all three support up to 2,000 contacts in PSRAM.
+
+### 4G and Audio at the Same Time
+
+Because the modem and codec are independently powered via the XL9555 expander, the MAX home screen exposes the full set of apps that are otherwise split across the T-Deck Pro's audio and 4G variants:
+
+- **[P] Audiobooks / Audio** — the audiobook player (also plays music from `/audiobooks/music`)
+- **[K] Alarm** — the alarm clock with custom MP3 sounds
+- **[T] Phone** — the SMS & Phone app for calls and texts over the 4G modem
+- **[B] Browser** — the web reader & IRC client (BLE / WiFi builds)
+- **[F] Discover** — node discovery
+- **Mic** — the voice messages screen (playback only on the MAX — see note below)
+
+Audio output is routed through a shared speaker mux: when a call, ringtone, or modem notification tone plays, the MAX switches the speaker to the modem; for audiobooks, alarms, and notification MP3s it switches to the ES8311 codec.
+
+> **Voice-note recording is not yet available on the MAX.** The MAX has no PDM microphone — capture would have to run through the ES8311's ADC, and that path isn't written yet. The device can play received voice notes (the same ES8311 output path that drives audiobooks and alarms) but cannot record or send them. Recording works normally on the T-Deck Pro audio variant.
+
+### Buzzer (Vibrate) Notifications
+
+The MAX has a DRV2605 haptic motor, so each channel (and the DM inbox) can be set to vibrate instead of playing a tone. In **Settings → Channels**, highlight a channel and press **T** to open the notification tone picker — on the MAX, a **Buzzer (vibrate)** entry appears just below "Default (silent)". Selecting it makes incoming messages on that channel pulse the motor rather than sounding the buzzer or a tone. See [Custom Notification Tones](#custom-notification-tones-v110).
+
+### Capacitive Touch & Buttons
+
+The MAX adds a CST328 capacitive touchscreen and **three capacitive buttons** along the bottom of the front bezel — none of which the T-Deck Pro has:
+
+| Button | Action |
+|--------|--------|
+| **Heart** | Toggle the e-ink frontlight on/off (at the brightness configured in settings — see below) |
+| **Speech bubble** | Quick access to the channel picker (same as pressing M) |
+| **Paper plane** | Quick access to the DM inbox |
+
+### Frontlight & Backlight Brightness
+
+The MAX has an e-ink frontlight. The brightness it turns on to is set in **Settings → Backlight Brightness**, adjustable from **5% to 100%** in 5% steps (default 100%). The Heart capacitive button toggles the frontlight at that level. This setting only appears on the MAX.
+
+### Keyboard Backlight
+
+Press **both Shift keys together** to toggle the keyboard backlight on and off.
+
+### Multi-Constellation GPS
+
+The MAX's GPS is configured for multi-constellation positioning (GPS, Galileo, and BeiDou) via the `$PCAS04,7` command, for faster fixes and better coverage than single-constellation GPS.
 
 ---
 
@@ -1223,7 +1293,7 @@ The companion firmware can be connected to via BLE (T-Deck Pro and T5S3 BLE vari
 
 ## 🛠 Hardware Compatibility
 
-MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.io). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T5S3 E-Paper Pro, Heltec V3 (remote repeater only), and Heltec V4 (remote repeater only).
+MeshCore is designed for devices listed in the [MeshCore Flasher](https://flasher.meshcore.io). Meck specifically targets the LilyGo T-Deck Pro, LilyGo T-Deck Max, LilyGo T5S3 E-Paper Pro, Heltec V3 (remote repeater only), and Heltec V4 (remote repeater only).
 
 ## Contributing
 
@@ -1270,7 +1340,7 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Channel picker screen with unread badges
 - [X] Region scope (MeshCore v1.15+ compatibility)
 - [X] Selectable font styles (Classic, Noto Sans, Montserrat)
-- [X] Expanded emoji picker (77 emoji, reordered, wrap scrolling)
+- [X] Expanded emoji picker (79 emoji, reordered, wrap scrolling)
 - [X] 1,000-entry advert path cache (PSRAM)
 - [X] Accented character / diacritics support (Czech, Polish, French, German, Latin Extended)
 - [X] Page scroll (Shift+W/S) on all list screens
@@ -1292,6 +1362,23 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
 - [ ] Incoming call ringer silence (hardware limitation -- A7682E drives speaker autonomously on RING, no software mute path available)
+
+**T-Deck Max:**
+- [X] Core port: e-ink display, TCA8418 keyboard, LoRa, battery, GPS (decoupled from the T-Deck Pro variant)
+- [X] Companion radio: BLE, WiFi, and Standalone variants (`meck_max_ble` / `meck_max_wifi` / `meck_max_standalone`)
+- [X] Combined 4G (A7682E) and audio (ES8311) running simultaneously via the XL9555 I/O expander
+- [X] ES8311 audio codec init -- audiobooks, music, alarms, and notification MP3s
+- [X] Music playback from `/audiobooks/music` (no bookmarks, WAV duration from header)
+- [X] SMS & phone app available alongside the audio apps on the same device
+- [X] CST328 capacitive touch support (vendored Hynitron driver)
+- [X] Three capacitive front buttons -- Heart (frontlight), speech bubble (channel picker), paper plane (DM inbox)
+- [X] E-ink frontlight with configurable brightness (Settings, 5--100%)
+- [X] Keyboard backlight toggle (press both Shift keys)
+- [X] Buzzer (vibrate) per-channel notification option via DRV2605 haptic motor
+- [X] Multi-constellation GPS -- GPS, Galileo, BeiDou (`$PCAS04,7`)
+- [X] Home-screen e-ink X-offset and word-wrap fixes
+- [X] Voice-note playback (ES8311 output path)
+- [ ] Voice-note recording on MAX (needs an ES8311 ADC capture path -- no PDM mic)
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
@@ -1331,9 +1418,6 @@ There are a number of fairly major features in the pipeline, with no particular 
 
 **Heltec V3:**
 - [X] WiFi remote repeater with MQTT admin management
-
-**In development (WIP):**
-- [ ] T-Deck Pro MAX — ESP32-S3 with XL9555 I/O expander, combined 4G (A7682E) + audio (ES8311), working e-ink front-light, 1500 mAh battery. Variant files created; deferred until hardware ships.
 
 ## 📞 Get Support
 
