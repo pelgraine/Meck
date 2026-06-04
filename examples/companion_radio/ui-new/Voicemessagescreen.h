@@ -227,6 +227,10 @@ private:
   int _pickSelected;
   int _pickScroll;
   int _pendingSendIdx;  // Contact idx for pending send (-1 = none)
+  bool _pickNoPathMsg;  // Show "no direct path" popup over the picker
+  bool _loadPending;    // Deferred forward-send load (SD read + encode) queued
+  bool _loadingDrawn;   // "Loading" popup has been painted (gates the load)
+  char _loadPendingName[64];  // Filename queued for the deferred load
 
   // DAC power control (same as AudiobookPlayerScreen)
   void enableDAC() {
@@ -1040,10 +1044,37 @@ private:
     display.setTextSize(1);
     display.setCursor(0, footerY);
     display.print("Ent:Send Q:Cancel");
+
+    // No-direct-path popup. RAW_CUSTOM voice packets are direct-route only,
+    // so a contact with no path set cannot receive one. Drawn last so it
+    // overlays the list; dismissed by the next key (see handlePickInput).
+    if (_pickNoPathMsg) {
+      int bx = 8;
+      int bw = display.width() - 16;
+      int by = 32;
+      int bh = 58;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);                  // 1px frame base
+      display.setColor(DisplayDriver::LIGHT);
+      display.fillRect(bx + 1, by + 1, bw - 2, bh - 2);  // panel fill
+      display.setColor(DisplayDriver::DARK);
+      display.setTextSize(1);
+      display.setCursor(bx + 6, by + 8);
+      display.print("No direct path");
+      display.setCursor(bx + 6, by + 20);
+      display.print("to contact.");
+      display.setCursor(bx + 6, by + 34);
+      display.print("Set a path in");
+      display.setCursor(bx + 6, by + 46);
+      display.print("Contacts (P key)");
+      display.setColor(DisplayDriver::GREEN);
+    }
   }
 
   // Contact picker input
   void handlePickInput(char key) {
+    // Any key dismisses a showing "no path" popup before it is acted on.
+    _pickNoPathMsg = false;
     switch (key) {
       case 'w': case 'W': case 0xF0:
         if (_pickSelected > 0) _pickSelected--;
@@ -1059,6 +1090,9 @@ private:
             Serial.printf("Voice: Send confirmed to contact idx %d (%s)\n",
                           _pendingSendIdx, _pickList[_pickSelected].name);
           } else {
+            // No direct route for RAW_CUSTOM voice packets: surface an
+            // on-screen popup instead of failing silently to serial only.
+            _pickNoPathMsg = true;
             Serial.println("Voice: Contact has no direct path — cannot send");
           }
         }
@@ -1143,6 +1177,28 @@ private:
       display.print("Mic:Rec Ent:Ply F:Snd D:Del");
     } else {
       display.print("Mic:Record Q:Exit");
+    }
+
+    // "Loading" popup while a forward-send file is read off SD and encoded.
+    // Drawn last so it overlays the list; setting _loadingDrawn lets the main
+    // loop know the popup is on screen so the blocking load can now run.
+    if (_loadPending) {
+      int bx = 8;
+      int bw = display.width() - 16;
+      int by = 44;
+      int bh = 36;
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx, by, bw, bh);                  // 1px frame base
+      display.setColor(DisplayDriver::LIGHT);
+      display.fillRect(bx + 1, by + 1, bw - 2, bh - 2);  // panel fill
+      display.setColor(DisplayDriver::DARK);
+      display.setTextSize(1);
+      display.setCursor(bx + 6, by + 8);
+      display.print("Loading...");
+      display.setCursor(bx + 6, by + 20);
+      display.print("Encoding voice");
+      display.setColor(DisplayDriver::GREEN);
+      _loadingDrawn = true;
     }
   }
 
@@ -1284,7 +1340,9 @@ public:
       _listPlaying(false), _listPlayIdx(-1),
       _playbackJustFinished(false),
       _c2Bytes(0), _c2Frames(0), _c2Valid(false),
-      _pickSelected(0), _pickScroll(0), _pendingSendIdx(-1) {
+      _pickSelected(0), _pickScroll(0), _pendingSendIdx(-1),
+      _pickNoPathMsg(false), _loadPending(false), _loadingDrawn(false) {
+    _loadPendingName[0] = '\0';
     _reviewFilename[0] = '\0';
     _outSession.active = false;
     _inSession.active = false;
@@ -1488,6 +1546,23 @@ public:
     Serial.printf("Voice: Contact picker loaded %d contacts\n", count);
   }
 
+  // Run a deferred forward-send load (heavy SD read + Codec2 encode). Called
+  // from the main.cpp loop AFTER the "Loading" popup has been drawn, so the
+  // user sees feedback during the multi-second encode. No-op until the popup
+  // has painted (_loadingDrawn). Returns true when it has consumed a pending
+  // load (success or failure) so the caller forces a refresh to clear the
+  // popup -- on success the mode is now CONTACT_PICK; on failure it stays on
+  // the message list.
+  bool runPendingLoad() {
+    if (!_loadPending || !_loadingDrawn) return false;
+    _loadPending = false;
+    _loadingDrawn = false;
+    if (loadWavForSend(_loadPendingName)) {
+      enterContactPick();
+    }
+    return true;
+  }
+
   // Called by main.cpp loop to detect end-of-playback and refresh UI
   void checkPlaybackFinished() {
     if (!_i2sInitialized) return;  // I2S torn down by mic, no playback possible
@@ -1654,10 +1729,15 @@ private:
       case 'f': case 'F':  // Forward/send selected file
         if (!_fileList.empty() && _selectedFile < (int)_fileList.size()) {
           stopPlayback();
-          if (loadWavForSend(_fileList[_selectedFile].name)) {
-            enterContactPick();
-            // main.cpp will detect CONTACT_PICK mode and load contacts
-          }
+          // Defer the SD read + Codec2 encode by one render cycle: it blocks
+          // for several seconds on a long clip, so queue it and let the
+          // "Loading" popup paint first. main.cpp runPendingLoad() runs it once
+          // the popup is on screen, then enters the contact picker.
+          strncpy(_loadPendingName, _fileList[_selectedFile].name,
+                  sizeof(_loadPendingName) - 1);
+          _loadPendingName[sizeof(_loadPendingName) - 1] = '\0';
+          _loadPending = true;
+          _loadingDrawn = false;
         }
         break;
 

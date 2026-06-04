@@ -3096,6 +3096,14 @@ void loop() {
         ui_task.forceRefresh();
       }
 
+      // --- Deferred forward-send load: runs the heavy SD read + Codec2 encode
+      // once the "Loading" popup has painted (see VoiceMessageScreen::'F'),
+      // then enters the contact picker. Gated to the voice screen so a
+      // navigate-away during the load cannot fire it off-screen. ---
+      if (ui_task.isOnVoiceScreen() && voiceScr->runPendingLoad()) {
+        ui_task.forceRefresh();
+      }
+
       // --- Contact picker: load contacts when mode transitions to CONTACT_PICK ---
       static bool pickContactsLoaded = false;
       if (voiceScr->getMode() == VoiceMessageScreen::CONTACT_PICK) {
