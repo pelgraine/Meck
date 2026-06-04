@@ -1228,6 +1228,30 @@ static void lastHeardToggleContact() {
 
 // Touch mapping — must be after ui_task declaration
 #ifdef MECK_TOUCH_ENABLED
+  #if defined(LilyGo_TDeck_Pro_Max)
+  // T-Deck Pro MAX: the three capacitive pads below the screen are CST328 keys,
+  // delivered via the HynTouch key callback. The key_id -> pad mapping is read
+  // off the hardware (TEMP log below); reorder the cases if they come through
+  // in a different order.
+  static void meckHynKeyEvent(uint8_t key_id, bool pressed, void* /*user_data*/) {
+    Serial.printf("[key] id=%u pressed=%u\n", key_id, pressed ? 1u : 0u);  // TEMP: confirm mapping
+    if (!pressed) return;
+    switch (key_id) {
+      case 0:  // heart -- toggle frontlight at full brightness
+        if (board.isBacklightOn()) board.backlightOff();
+        else                       board.backlightSetBrightness(255);
+        break;
+      case 1:  // speech bubble -- open channel picker (same as 'M')
+        ui_task.gotoChannelPickerScreen();
+        break;
+      case 2:  // send / paper plane -- open DM inbox
+        ui_task.gotoDMTab();
+        break;
+      default: break;
+    }
+  }
+  #endif
+
   // Map a single tap based on current screen context
   static char mapTouchTap(int16_t x, int16_t y) {
     // Convert physical screen coords to virtual (128×128)
@@ -1891,6 +1915,7 @@ void setup() {
       board.touchReset();   // fresh XL9555 reset immediately before driver init
       // Route HynTouch's reset (XL9555 P07) through the board, then probe/init.
       hyn_touch_set_virtual_gpio_callbacks(meckHynXl9555Write, meckHynXl9555Read, nullptr);
+      hyn_touch_set_key_callback(meckHynKeyEvent, nullptr);
       {
         HynTouchConfig hcfg = hyn_touch_default_config();
         if (hyn_touch_init_with_config(&hcfg)) {
