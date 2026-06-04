@@ -197,6 +197,11 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
     savePrefs(prefs, node_lat, node_lon);                // save to new filename
     _fs->remove("/node_prefs"); // remove old
   }
+  // Fresh device (no prefs file) leaves backlight at memset 0; treat any
+  // out-of-range value as the default so the heart button has a sane level.
+  if (prefs.backlight_brightness_pct < 5 || prefs.backlight_brightness_pct > 100) {
+    prefs.backlight_brightness_pct = 100;
+  }
 }
 
 void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& node_lat, double& node_lon) {
@@ -295,6 +300,9 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.lora_antenna, sizeof(_prefs.lora_antenna)) != sizeof(_prefs.lora_antenna)) {
       _prefs.lora_antenna = 0;  // default: internal antenna
     }
+    if (file.read((uint8_t *)&_prefs.backlight_brightness_pct, sizeof(_prefs.backlight_brightness_pct)) != sizeof(_prefs.backlight_brightness_pct)) {
+      _prefs.backlight_brightness_pct = 100;  // default: full brightness
+    }
 
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
@@ -309,6 +317,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
       if (_prefs.channel_notif[i] > 2) _prefs.channel_notif[i] = 0;
     }
     if (_prefs.lora_antenna > 1) _prefs.lora_antenna = 0;
+    if (_prefs.backlight_brightness_pct < 5 || _prefs.backlight_brightness_pct > 100) _prefs.backlight_brightness_pct = 100;
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
     {
       uint8_t alm = _prefs.auto_lock_minutes;
@@ -370,6 +379,7 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)_prefs.default_scope_key, sizeof(_prefs.default_scope_key));           // 137
     file.write((uint8_t *)_prefs.channel_notif, sizeof(_prefs.channel_notif));                   // 153
     file.write((uint8_t *)&_prefs.lora_antenna, sizeof(_prefs.lora_antenna));                    // 174
+    file.write((uint8_t *)&_prefs.backlight_brightness_pct, sizeof(_prefs.backlight_brightness_pct)); // 175
 
     file.close();
   }

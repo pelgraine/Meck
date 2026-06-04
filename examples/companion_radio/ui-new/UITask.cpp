@@ -717,7 +717,7 @@ public:
         display.setColor(DisplayDriver::YELLOW);
         display.drawTextCentered(display.width() / 2, y, "[R] Trace       [J] Games     ");
         display.setColor(DisplayDriver::LIGHT);
-        y += 14;
+        y += 10;
 #if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
         // Phone on its own line below Trace/Games, centered like the "Press:" header
         display.drawTextCentered(display.width() / 2, y, "[T] Phone");

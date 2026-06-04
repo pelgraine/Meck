@@ -140,6 +140,7 @@ enum SettingsRowType : uint8_t {
   ROW_CR,             // Coding rate (5-8)
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
+  ROW_BACKLIGHT_BRIGHTNESS,  // Backlight brightness % the heart button toggles to (MAX only)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
   ROW_LARGE_FONT,     // Font size toggle: 0=tiny (default), 1=larger
@@ -490,6 +491,9 @@ private:
       addRow(ROW_CR);
       addRow(ROW_TX_POWER);
       addRow(ROW_UTC_OFFSET);
+#if defined(LilyGo_TDeck_Pro_Max)
+      addRow(ROW_BACKLIGHT_BRIGHTNESS);
+#endif
       addRow(ROW_MSG_NOTIFY);
 #if HAS_GPS
       addRow(ROW_GPS_BAUD);
@@ -1751,10 +1755,7 @@ public:
       display.print("Settings");
     }
 
-    // Right side: row indicator
-    snprintf(tmp, sizeof(tmp), "%d/%d", _cursor + 1, _numRows);
-    display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
-    display.print(tmp);
+    // (Row indicator is now a scrollbar on the right of the list body.)
 
     display.drawRect(0, 11, display.width(), 1);
 
@@ -1771,6 +1772,12 @@ public:
     _scrollTop = max(0, min(_cursor - maxVisible / 2, _numRows - maxVisible));
     int endIdx = min(_numRows, _scrollTop + maxVisible);
 
+    // Scrollbar: always shown on the top-level list; on sub-screens only when
+    // the rows overflow the page. When shown, reserve a few px on the right so
+    // the selection highlight isn't painted under it.
+    bool showScrollbar = (_subScreen == SUB_NONE) || (_numRows > maxVisible);
+    int sbW = showScrollbar ? 6 : 0;
+
     int y = headerH;
 
     for (int i = _scrollTop; i < endIdx && y + lineHeight <= maxY; i++) {
@@ -1783,9 +1790,9 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         // FreeSans12pt: baseline at (y+5)*scale_y, ascent ~17px above.
         // Highlight needs to start above the baseline to cover ascenders.
-        display.fillRect(0, y, display.width(), lineHeight);
+        display.fillRect(0, y, display.width() - sbW, lineHeight);
 #else
-        display.fillRect(0, y + _prefs->smallHighlightOff(), display.width(), lineHeight);
+        display.fillRect(0, y + _prefs->smallHighlightOff(), display.width() - sbW, lineHeight);
 #endif
         display.setColor(DisplayDriver::DARK);
       } else {
@@ -1873,6 +1880,15 @@ public:
             snprintf(tmp, sizeof(tmp), "UTC: %+d " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "UTC Offset: %+d", _prefs->utc_offset_hours);
+          }
+          display.print(tmp);
+          break;
+
+        case ROW_BACKLIGHT_BRIGHTNESS:
+          if (editing && _editMode == EDIT_NUMBER) {
+            snprintf(tmp, sizeof(tmp), "Brightness: %d%% " EDIT_ADJ_HINT, _editInt);
+          } else {
+            snprintf(tmp, sizeof(tmp), "Backlight Brightness: %d%%", _prefs->backlight_brightness_pct);
           }
           display.print(tmp);
           break;
@@ -2258,6 +2274,21 @@ public:
       }
 
       y += lineHeight;
+    }
+
+    // Scrollbar (track + proportional thumb), mirroring the notif-sound picker.
+    if (showScrollbar) {
+      int sbX = display.width() - 6;
+      int sbTop = headerH;
+      int sbH = maxY - headerH;
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawRect(sbX, sbTop, 3, sbH);
+      int thumbH = max(4, (maxVisible * sbH) / _numRows);
+      if (thumbH > sbH) thumbH = sbH;
+      int maxScroll = _numRows - maxVisible;
+      if (maxScroll < 1) maxScroll = 1;
+      int thumbY = sbTop + (_scrollTop * (sbH - thumbH)) / maxScroll;
+      display.fillRect(sbX + 1, thumbY + 1, 1, thumbH - 2);
     }
 
     display.setTextSize(1);
@@ -3384,6 +3415,7 @@ public:
           case ROW_CR:      if (_editInt < 8)  _editInt++; break;
           case ROW_TX_POWER: if (_editInt < MAX_LORA_TX_POWER) _editInt++; break;
           case ROW_UTC_OFFSET: if (_editInt < 14) _editInt++; break;
+          case ROW_BACKLIGHT_BRIGHTNESS: if (_editInt < 100) { _editInt += 5; if (_editInt > 100) _editInt = 100; } break;
           case ROW_PATH_HASH_SIZE: if (_editInt < 3) _editInt++; break;
           default: break;
         }
@@ -3401,6 +3433,7 @@ public:
           case ROW_CR:      if (_editInt > 5)  _editInt--; break;
           case ROW_TX_POWER: if (_editInt > 1)  _editInt--; break;
           case ROW_UTC_OFFSET: if (_editInt > -12) _editInt--; break;
+          case ROW_BACKLIGHT_BRIGHTNESS: if (_editInt > 5) { _editInt -= 5; if (_editInt < 5) _editInt = 5; } break;
           case ROW_PATH_HASH_SIZE: if (_editInt > 1) _editInt--; break;
           default: break;
         }
@@ -3427,6 +3460,10 @@ public:
             break;
           case ROW_UTC_OFFSET:
             _prefs->utc_offset_hours = (int8_t)constrain(_editInt, -12, 14);
+            the_mesh.savePrefs();
+            break;
+          case ROW_BACKLIGHT_BRIGHTNESS:
+            _prefs->backlight_brightness_pct = (uint8_t)constrain(_editInt, 5, 100);
             the_mesh.savePrefs();
             break;
           case ROW_PATH_HASH_SIZE:
@@ -3514,6 +3551,9 @@ public:
           break;
         case ROW_UTC_OFFSET:
           startEditInt(_prefs->utc_offset_hours);
+          break;
+        case ROW_BACKLIGHT_BRIGHTNESS:
+          startEditInt(_prefs->backlight_brightness_pct);
           break;
         case ROW_MSG_NOTIFY:
           _prefs->kb_flash_notify = _prefs->kb_flash_notify ? 0 : 1;

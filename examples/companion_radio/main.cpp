@@ -1237,9 +1237,13 @@ static void lastHeardToggleContact() {
     Serial.printf("[key] id=%u pressed=%u\n", key_id, pressed ? 1u : 0u);  // TEMP: confirm mapping
     if (!pressed) return;
     switch (key_id) {
-      case 0:  // heart -- toggle frontlight at full brightness
-        if (board.isBacklightOn()) board.backlightOff();
-        else                       board.backlightSetBrightness(255);
+      case 0:  // heart -- toggle frontlight at the user-set brightness
+        if (board.isBacklightOn()) {
+          board.backlightOff();
+        } else {
+          uint8_t _blPct = the_mesh.getNodePrefs()->backlight_brightness_pct;
+          board.backlightSetBrightness((uint8_t)((_blPct * 255 + 50) / 100));
+        }
         break;
       case 1:  // speech bubble -- open channel picker (same as 'M')
         ui_task.gotoChannelPickerScreen();
@@ -4170,7 +4174,10 @@ void loop() {
             lastTouchAccepted = now;
             if (smsScr->handleTouch(tx, ty)) {
               dialerNeedsRefresh = true;
-              lastDialerRefresh = millis();
+              // Don't reset the gate on touch: COMPOSE_REFRESH_INTERVAL is
+              // measured from the last completed render (set at the render
+              // site), so the first tap after a pause repaints immediately and
+              // only rapid successive taps stay throttled (no overlap).
             }
           }
         } else {

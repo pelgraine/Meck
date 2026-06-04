@@ -69,6 +69,11 @@ struct NodePrefs {  // persisted to file
   // Applied at boot in main.cpp and live on toggle in SettingsScreen.
   uint8_t lora_antenna;            // 0 = internal (default), 1 = external
 
+  // --- Backlight (e-ink frontlight) brightness, T-Deck Pro MAX only ---
+  // Percentage (5..100) the heart button toggles the frontlight on to.
+  // 0 = unset/legacy; treated as the default 100 on load.
+  uint8_t backlight_brightness_pct; // 5..100, default 100
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
   // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.
