@@ -84,6 +84,21 @@
 // from the same mesh callback on the same thread.
 static bool s_lastMsgSuppressed = false;
 
+#ifdef KB_BL_PIN
+// Drive the keyboard-backlight pin for the message/ring flash. On the T-Deck
+// Pro MAX the manual (both-shifts) keyboard-backlight toggle drives this pin
+// via LEDC (analogWrite); once LEDC is bound to a pin a later digitalWrite is
+// swallowed, so the flash must use analogWrite too or it silently does nothing
+// after the manual toggle has been used. Other boards keep the plain GPIO write.
+static inline void kbBacklightFlashWrite(bool on) {
+  #if defined(LilyGo_TDeck_Pro_Max)
+    analogWrite(KB_BL_PIN, on ? 255 : 0);
+  #else
+    digitalWrite(KB_BL_PIN, on ? HIGH : LOW);
+  #endif
+}
+#endif
+
 class SplashScreen : public UIScreen {
   UITask* _task;
   unsigned long dismiss_after;
@@ -1747,7 +1762,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Keyboard flash notification (suppress for room sync and muted channels)
 #ifdef KB_BL_PIN
   if (_node_prefs->kb_flash_notify && !isRoomMsg && !suppressNotif) {
-    digitalWrite(KB_BL_PIN, HIGH);
+    kbBacklightFlashWrite(true);
     _kb_flash_off_at = millis() + 200;  // 200ms flash
   }
 #endif
@@ -1994,10 +2009,10 @@ void UITask::loop() {
   #ifdef HAS_4G_MODEM
     // Don't turn off LED if incoming call flash is active
     if (!_incomingCallRinging) {
-      digitalWrite(KB_BL_PIN, LOW);
+      kbBacklightFlashWrite(false);
     }
   #else
-    digitalWrite(KB_BL_PIN, LOW);
+    kbBacklightFlashWrite(false);
   #endif
     _kb_flash_off_at = 0;
   }
@@ -2025,7 +2040,7 @@ void UITask::loop() {
       _incomingCallRinging = false;
       // Only turn off LED if message flash isn't also active
       if (!_kb_flash_off_at) {
-        digitalWrite(KB_BL_PIN, LOW);
+        kbBacklightFlashWrite(false);
       }
       _callFlashState = false;
     }
@@ -2035,7 +2050,7 @@ void UITask::loop() {
       unsigned long now = millis();
       if (now >= _nextCallFlash) {
         _callFlashState = !_callFlashState;
-        digitalWrite(KB_BL_PIN, _callFlashState ? HIGH : LOW);
+        kbBacklightFlashWrite(_callFlashState);
         // 250ms on, 250ms off — fast pulse to distinguish from single msg flash
         _nextCallFlash = now + 250;
       }

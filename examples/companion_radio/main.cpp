@@ -2582,6 +2582,15 @@ void setup() {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
       #endif
+#if defined(LilyGo_TDeck_Pro_Max)
+      // Speed up / improve the MAX GPS fix: enable multi-constellation
+      // (GPS + GLONASS + BeiDou) and EASY predicted ephemeris (warm/hot starts
+      // on subsequent boots). A module that doesn't recognise a given sentence
+      // simply ignores it. Sent once here, after the module is powered.
+      delay(300);  // allow the module to finish booting before accepting config
+      Serial2.print("$PCAS04,7*1E\r\n");     // GPS + GLONASS + BeiDou
+      Serial2.print("$PMTK869,1,1*35\r\n");  // EASY predicted ephemeris ON
+#endif
       sensors.setSettingValue("gps", "1");
     } else {
       #ifdef PIN_GPS_EN
@@ -2722,6 +2731,28 @@ void loop() {
 
 
   sensors.loop();
+
+  // Satellite-count diagnostic (MAX): every 10s while GPS is on, print the
+  // reported satellite count, fix state and NMEA rate so the multi-constellation
+  // change can be watched climbing. Remove once confirmed if you don't want it.
+#if defined(LilyGo_TDeck_Pro_Max) && HAS_GPS
+  {
+    static unsigned long lastSatDiag = 0;
+    if (the_mesh.getNodePrefs()->gps_enabled && millis() - lastSatDiag >= 10000) {
+      lastSatDiag = millis();
+      auto* lp = sensors.getLocationProvider();
+      if (lp) {
+        char sv[64];
+        gpsStream.getInViewBreakdown(sv, sizeof(sv));
+        Serial.printf("[GPS] inview=%u [%s] used=%d fix=%s nmea=%u/s total=%lu\n",
+                      gpsStream.getSatellitesInView(), sv,
+                      lp->satellitesCount(), lp->isValid() ? "Y" : "N",
+                      gpsStream.getSentencesPerSec(),
+                      (unsigned long)gpsStream.getSentenceCount());
+      }
+    }
+  }
+#endif
 
   // GPS diagnostic — disabled to reduce serial noise (uncomment for debugging)
   // #if HAS_GPS
