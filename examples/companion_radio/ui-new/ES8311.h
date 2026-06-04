@@ -256,6 +256,197 @@ static inline bool es8311_init_44100_16bit() {
   return id == 0x83;
 }
 
+// =============================================================================
+// es8311_init_capture_16k() -- ANALOGUE-MIC CAPTURE (ADC) init, 16 kHz, 16-bit
+//
+// Recording counterpart to es8311_init_44100_16bit(). Brings up the ES8311 ADC
+// path (mic -> ADC -> I2S SDOUT/ASDOUT) so the ESP32 I2S RX can read PCM. It
+// does NOT power the DAC; call es8311_init_44100_16bit() afterwards to restore
+// the playback path.
+//
+// Same authority as the DAC init: transcribed from esp_codec_dev es8311.c
+//   (es8311_open + es8311_set_bits_per_sample(16) + es8311_config_fmt(I2S) +
+//    es8311_config_sample(16000) + es8311_start) for the configuration:
+//     master_mode = false (ESP32 I2S is master, drives MCLK/BCLK/LRCK)
+//     use_mclk    = true  (real MCLK on BOARD_I2S_MCLK / GPIO38, 256 * fs)
+//     invert_mclk = false, invert_sclk = false
+//     codec_mode  = ADC,  digital_mic = false (analogue mic), no_dac_ref = false
+//     mclk_div    = 256   -> MCLK = 16000 * 256 = 4.096 MHz
+//   using the {4096000, 16000} coefficient row:
+//     pre_div=1 pre_multi=1 adc_div=1 dac_div=1 fs_mode=0
+//     lrck_h=0x00 lrck_l=0xFF bclk_div=0x04 adc_osr=0x10 dac_osr=0x20
+//
+// mic_gain -> REG16 ADC PGA gain (ES8311 mic-gain enum, low 3 bits):
+//   0=0dB 1=6dB 2=12dB 3=18dB 4=24dB 5=30dB 6=36dB 7=42dB
+// 30 dB (5) is a reasonable starting point for the MAX analogue mic; this is
+// the first knob to tune on the bench if recordings are too quiet or clip.
+//
+// Returns true if the chip ID read back as 0x83.
+// =============================================================================
+static inline bool es8311_init_capture_16k(uint8_t mic_gain = 0x05) {
+  uint8_t id = es8311_read(ES8311_REGFD_CHIPID1);
+  Serial.printf("[ES8311] (capture) chip ID REGFD = 0x%02X (expect 0x83)\n", id);
+
+  // ---- open(): base register setup (from es8311_open) ----
+  es8311_write(ES8311_REG44_GPIO, 0x08);   // double write: first I2C write can be unreliable
+  es8311_write(ES8311_REG44_GPIO, 0x08);
+
+  es8311_write(ES8311_REG01_CLK_MANAGER, 0x30);
+  es8311_write(ES8311_REG02_CLK_MANAGER, 0x00);
+  es8311_write(ES8311_REG03_CLK_MANAGER, 0x10);
+  es8311_write(ES8311_REG16_ADC,         0x24);
+  es8311_write(ES8311_REG04_CLK_MANAGER, 0x10);
+  es8311_write(ES8311_REG05_CLK_MANAGER, 0x00);
+  es8311_write(ES8311_REG0B_SYSTEM,      0x00);
+  es8311_write(ES8311_REG0C_SYSTEM,      0x00);
+  es8311_write(ES8311_REG10_SYSTEM,      0x1F);
+  es8311_write(ES8311_REG11_SYSTEM,      0x7F);
+  es8311_write(ES8311_REG00_RESET,       0x80);  // CSM power up
+
+  // Slave mode: REG00 bit6 = 0 (read-modify-write)
+  {
+    uint8_t regv = es8311_read(ES8311_REG00_RESET);
+    regv &= 0xBF;
+    es8311_write(ES8311_REG00_RESET, regv);
+  }
+
+  // REG01 clock source: use_mclk=true (&=0x7F), not inverted (&=~0x40) => 0x3F
+  {
+    uint8_t regv = 0x3F;
+    regv &= 0x7F;
+    regv &= ~0x40;
+    es8311_write(ES8311_REG01_CLK_MANAGER, regv);
+  }
+
+  // SCLK not inverted (REG06)
+  {
+    uint8_t regv = es8311_read(ES8311_REG06_CLK_MANAGER);
+    regv &= ~0x20;
+    es8311_write(ES8311_REG06_CLK_MANAGER, regv);
+  }
+
+  es8311_write(ES8311_REG13_SYSTEM, 0x10);
+  es8311_write(ES8311_REG1B_ADC,    0x0A);
+  es8311_write(ES8311_REG1C_ADC,    0x6A);
+  // no_dac_ref == false: internal reference signal (ADCL + DACR) -> REG44 = 0x58
+  es8311_write(ES8311_REG44_GPIO,   0x58);
+
+  // ---- set_bits_per_sample(16): 16-bit on both SDP regs (REG09 DAC, REG0A ADC) ----
+  {
+    uint8_t dac_iface = es8311_read(ES8311_REG09_SDPIN);
+    uint8_t adc_iface = es8311_read(ES8311_REG0A_SDPOUT);
+    dac_iface |= 0x0C;
+    adc_iface |= 0x0C;
+    es8311_write(ES8311_REG09_SDPIN,  dac_iface);
+    es8311_write(ES8311_REG0A_SDPOUT, adc_iface);
+  }
+
+  // ---- config_fmt(ES_I2S_NORMAL): clear format bits [1:0] on REG09/REG0A ----
+  {
+    uint8_t dac_iface = es8311_read(ES8311_REG09_SDPIN);
+    uint8_t adc_iface = es8311_read(ES8311_REG0A_SDPOUT);
+    dac_iface &= 0xFC;
+    adc_iface &= 0xFC;
+    es8311_write(ES8311_REG09_SDPIN,  dac_iface);
+    es8311_write(ES8311_REG0A_SDPOUT, adc_iface);
+  }
+
+  // ---- config_sample(16000): {4096000,16000} coeff row, write order from es8311.c ----
+  {
+    const uint8_t pre_div = 1, datmp = 0;   // pre_multi=1, use_mclk=true -> datmp=0
+    const uint8_t adc_div = 1, dac_div = 1, fs_mode = 0;
+    const uint8_t lrck_h = 0x00, lrck_l = 0xFF, bclk_div = 0x04;
+    const uint8_t adc_osr = 0x10, dac_osr = 0x20;
+
+    uint8_t regv = es8311_read(ES8311_REG02_CLK_MANAGER);
+    regv &= 0x07;
+    regv |= (pre_div - 1) << 5;
+    regv |= datmp << 3;
+    es8311_write(ES8311_REG02_CLK_MANAGER, regv);
+
+    regv = ((adc_div - 1) << 4) | (dac_div - 1);
+    es8311_write(ES8311_REG05_CLK_MANAGER, regv);
+
+    regv = es8311_read(ES8311_REG03_CLK_MANAGER);
+    regv &= 0x80;
+    regv |= (fs_mode << 6) | adc_osr;
+    es8311_write(ES8311_REG03_CLK_MANAGER, regv);
+
+    regv = es8311_read(ES8311_REG04_CLK_MANAGER);
+    regv &= 0x80;
+    regv |= dac_osr;
+    es8311_write(ES8311_REG04_CLK_MANAGER, regv);
+
+    regv = es8311_read(ES8311_REG07_CLK_MANAGER);
+    regv &= 0xC0;
+    regv |= lrck_h;
+    es8311_write(ES8311_REG07_CLK_MANAGER, regv);
+
+    es8311_write(ES8311_REG08_CLK_MANAGER, lrck_l);
+
+    regv = es8311_read(ES8311_REG06_CLK_MANAGER);
+    regv &= 0xE0;
+    if (bclk_div < 19) regv |= (bclk_div - 1);
+    else               regv |= bclk_div;
+    es8311_write(ES8311_REG06_CLK_MANAGER, regv);
+  }
+
+  // ---- start(): ADC-mode power-up (from es8311_start, codec_mode == ADC) ----
+  {
+    uint8_t regv = 0x80;
+    regv &= 0xBF;             // slave
+    es8311_write(ES8311_REG00_RESET, regv);
+
+    uint8_t r01 = 0x3F;
+    r01 &= 0x7F;              // use_mclk = true
+    r01 &= ~0x40;             // not inverted
+    es8311_write(ES8311_REG01_CLK_MANAGER, r01);
+
+    uint8_t dac_iface = es8311_read(ES8311_REG09_SDPIN);
+    uint8_t adc_iface = es8311_read(ES8311_REG0A_SDPOUT);
+    dac_iface &= 0xBF;
+    adc_iface &= 0xBF;
+    adc_iface &= ~(1 << 6);   // ADC mode: power up ADC serial-port output
+    es8311_write(ES8311_REG09_SDPIN,  dac_iface);
+    es8311_write(ES8311_REG0A_SDPOUT, adc_iface);
+
+    es8311_write(ES8311_REG17_ADC,    0xBF);  // ADC full-scale / volume
+    es8311_write(ES8311_REG0E_SYSTEM,  0x02);
+    // REG12 (DAC enable) intentionally NOT written -- this is the ADC-only path.
+    es8311_write(ES8311_REG14_SYSTEM,  0x1A);
+
+    // digital_mic == false: clear DMIC-enable bit (0x40) on REG14 (analogue mic)
+    {
+      uint8_t r14 = es8311_read(ES8311_REG14_SYSTEM);
+      r14 &= ~0x40;
+      es8311_write(ES8311_REG14_SYSTEM, r14);
+    }
+
+    es8311_write(ES8311_REG0D_SYSTEM,  0x01);
+    es8311_write(ES8311_REG15_ADC,     0x40);
+    es8311_write(ES8311_REG37_DAC,     0x08);
+    es8311_write(ES8311_REG45_GP,      0x00);
+  }
+
+  // ADC PGA / mic gain (REG16). Overwrites the open() default (0x24), mirroring
+  // esp_codec_dev es8311_set_mic_gain which writes the raw enum (0..7) to REG16.
+  es8311_write(ES8311_REG16_ADC, (uint8_t)(mic_gain & 0x07));
+
+  // DIAG: read back the key ADC/clock/format registers to confirm the writes.
+  Serial.printf("[ES8311] (capture) readback R00=%02X R01=%02X R02=%02X R09=%02X R0A=%02X R14=%02X R15=%02X R16=%02X R17=%02X\n",
+                es8311_read(ES8311_REG00_RESET),
+                es8311_read(ES8311_REG01_CLK_MANAGER),
+                es8311_read(ES8311_REG02_CLK_MANAGER),
+                es8311_read(ES8311_REG09_SDPIN),
+                es8311_read(ES8311_REG0A_SDPOUT),
+                es8311_read(ES8311_REG14_SYSTEM),
+                es8311_read(ES8311_REG15_ADC),
+                es8311_read(ES8311_REG16_ADC),
+                es8311_read(ES8311_REG17_ADC));
+
+  return id == 0x83;
+}
+
 // DAC volume, 0..255 (0 = mute-ish, 191 = 0 dB, 255 = +32 dB).
 static inline void es8311_set_dac_volume(uint8_t vol) {
   es8311_write(ES8311_REG32_DAC, vol);

@@ -73,7 +73,9 @@ void meck_audio_codec_init();
 static bool isAudiobookFile(const String& name) {
   String lower = name;
   lower.toLowerCase();
-  return lower.endsWith(".m4b") || lower.endsWith(".m4a") ||
+  // .m4b excluded: these can't currently be played, so they are hidden from
+  // the file explorer. (.m4a/.mp3/.wav remain listed.)
+  return lower.endsWith(".m4a") ||
          lower.endsWith(".mp3") || lower.endsWith(".wav");
 }
 
@@ -1361,21 +1363,10 @@ private:
     }
 
     // Footer (stays at size 1 for readability)
+    // Left label is always the file count — the folder path was overflowing and
+    // colliding with the right-hand nav text, so it is no longer shown here.
     char leftBuf[32];
-    if (_currentPath == String(AUDIOBOOKS_FOLDER)) {
-      snprintf(leftBuf, sizeof(leftBuf), "%d files", (int)_fileList.size());
-    } else {
-      // Show current subfolder name
-      int lastSlash = _currentPath.lastIndexOf('/');
-      String folderName = (lastSlash >= 0) ? _currentPath.substring(lastSlash + 1) : _currentPath;
-      snprintf(leftBuf, sizeof(leftBuf), "/%s", folderName.c_str());
-      if ((int)strlen(leftBuf) > 16) {
-        leftBuf[13] = '.';
-        leftBuf[14] = '.';
-        leftBuf[15] = '.';
-        leftBuf[16] = '\0';
-      }
-    }
+    snprintf(leftBuf, sizeof(leftBuf), "%d files", (int)_fileList.size());
     drawFooter(display, leftBuf, "W/S:Nav Enter:Open");
   }
 

@@ -32,6 +32,12 @@
 #include "Audio.h"
 #include "variant.h"
 
+// MAX (ES8311) capture path: the codec must be configured for ADC over I2C.
+// ES8311.h self-guards on HAS_ES8311_AUDIO, so this is a no-op on the Pro V1.1.
+#if defined(HAS_ES8311_AUDIO)
+#include "ES8311.h"
+#endif
+
 // Codec2 low-bitrate voice codec
 #include <codec2.h>
 
@@ -78,6 +84,12 @@ class MyMesh;
 // This conflicts with ESP32-audioI2S (DAC output), so we time-share:
 // stop audio before recording, uninstall driver after, let audio lib reclaim.
 #define VOICE_I2S_PORT      I2S_NUM_0
+
+// Default DAC sample rate the rest of the firmware (audiobooks, tones) runs at.
+// On the MAX, ESP32-audioI2S leaves the hardware I2S clock fixed at this rate
+// (its setSampleRate is a no-op under HAS_ES8311_AUDIO), so voice playback has
+// to switch the hardware to VOICE_SAMPLE_RATE and switch it back afterwards.
+#define VOICE_PLAYBACK_DEFAULT_RATE 44100
 
 // DMA buffer config for mic capture
 // E-ink refreshes block the CPU for ~650ms. At 16kHz, that's 10,400 samples.
@@ -258,6 +270,53 @@ private:
     _i2sInitialized = false;
 
     i2s_config_t mic_cfg = {};
+#if defined(HAS_ES8311_AUDIO)
+    // ---- MAX: standard I2S master RX, MCLK driven, ES8311 ADC as the source ----
+    // The MAX has no PDM mic. Audio is captured by the ES8311's ADC, which sits
+    // on the standard I2S bus in SLAVE mode (ESP32 is master and drives
+    // MCLK=IO38 / BCLK=IO39 / WS=IO18; mic data returns on ASDOUT=IO17).
+    // APLL + fixed_mclk forces MCLK = 256 * fs (4.096 MHz at 16 kHz), which the
+    // ES8311 needs for its ADC clock derivation.
+    mic_cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
+    mic_cfg.sample_rate = VOICE_SAMPLE_RATE;
+    mic_cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+    mic_cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
+    mic_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+    mic_cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+    mic_cfg.dma_buf_count = VOICE_DMA_BUF_COUNT;
+    mic_cfg.dma_buf_len = VOICE_DMA_BUF_LEN;
+    mic_cfg.use_apll = true;                       // clean MCLK for the ES8311
+    mic_cfg.tx_desc_auto_clear = false;
+    mic_cfg.fixed_mclk = VOICE_SAMPLE_RATE * 256;  // 4.096 MHz = 256 * fs
+
+    esp_err_t err = i2s_driver_install(VOICE_I2S_PORT, &mic_cfg, 0, NULL);
+    if (err != ESP_OK) {
+      Serial.printf("Voice: i2s_driver_install failed: %d\n", err);
+      return false;
+    }
+
+    i2s_pin_config_t mic_pins = {};
+    mic_pins.mck_io_num   = BOARD_ES8311_MCLK;   // IO38 — drive MCLK to codec
+    mic_pins.bck_io_num   = BOARD_ES8311_SCLK;   // IO39 — BCLK
+    mic_pins.ws_io_num    = BOARD_ES8311_LRCK;   // IO18 — LRCK/WS
+    mic_pins.data_out_num = I2S_PIN_NO_CHANGE;
+    mic_pins.data_in_num  = BOARD_MIC_I2S_DIN;   // IO17 — ASDOUT (mic in)
+
+    err = i2s_set_pin(VOICE_I2S_PORT, &mic_pins);
+    if (err != ESP_OK) {
+      Serial.printf("Voice: i2s_set_pin failed: %d\n", err);
+      i2s_driver_uninstall(VOICE_I2S_PORT);
+      return false;
+    }
+
+    // MCLK is now live on IO38; bring up the ES8311 ADC capture path over I2C.
+    delay(10);
+    es8311_init_capture_16k();
+
+    _micInitialized = true;
+    Serial.println("Voice: ES8311 ADC mic initialised (16k I2S RX on I2S_NUM_0)");
+    return true;
+#else
     mic_cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM);
     mic_cfg.sample_rate = VOICE_SAMPLE_RATE;
     mic_cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
@@ -292,15 +351,25 @@ private:
     _micInitialized = true;
     Serial.println("Voice: PDM mic initialised on I2S_NUM_0");
     return true;
+#endif
   }
 
   void deinitMic() {
     if (!_micInitialized) return;
     i2s_driver_uninstall(VOICE_I2S_PORT);
     _micInitialized = false;
+#if defined(HAS_ES8311_AUDIO)
+    // Recording reconfigured the ES8311 for ADC capture. Restore the codec to
+    // its playback (DAC) state by re-running the same init used at audio start,
+    // so subsequent voice/audiobook playback works. ESP32-audioI2S only manages
+    // the I2S stream; it does not touch the codec's registers.
+    es8311_init_44100_16bit();
+    Serial.println("Voice: ES8311 mic deinitialised, codec restored to DAC, I2S_NUM_0 released");
+#else
     // _i2sInitialized already cleared in initMic() — ESP32-audioI2S
     // will reconfigure I2S_NUM_0 on next connecttoFS() call.
     Serial.println("Voice: PDM mic deinitialised, I2S_NUM_0 released");
+#endif
   }
 
   // Allocate PSRAM capture buffer (once, reused across recordings)
@@ -584,9 +653,23 @@ private:
       Serial.println("Voice: Recreating Audio object for clean I2S state");
       delete _audio;
       _audio = new Audio();
+#if defined(HAS_ES8311_AUDIO)
+      // MAX: the ES8311 runs as I2S slave and needs a real MCLK on BOARD_I2S_MCLK
+      // (IO38). Use the 5-arg setPinout (4th = DIN, unused; 5th = MCLK) exactly
+      // as the boot/notification audio bring-up in main.cpp does. The 4-arg form
+      // used on the Pro leaves MCLK unset, which silences the ES8311 DAC — this
+      // is why a just-recorded note played silent while received notes (which
+      // never recreate the Audio object) play fine.
+      bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
+                                  I2S_PIN_NO_CHANGE, BOARD_I2S_MCLK);
+      Serial.printf("Voice: DAC setPinout(BCLK=%d LRC=%d DOUT=%d MCK=%d) -> %s\n",
+                    BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, BOARD_I2S_MCLK,
+                    ok ? "OK" : "FAIL");
+#else
       bool ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT, 0);
       if (!ok) ok = _audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT);
       if (!ok) Serial.println("Voice: DAC setPinout FAILED");
+#endif
       _i2sInitialized = true;
     }
 
@@ -594,6 +677,14 @@ private:
     snprintf(fullPath, sizeof(fullPath), "%s/%s", VOICE_FOLDER, filename);
 
     _audio->setVolume(21);  // Max volume for voice playback
+#if defined(HAS_ES8311_AUDIO)
+    // ESP32-audioI2S's setSampleRate() is a no-op on the MAX (it deliberately
+    // skips i2s_set_sample_rates to avoid disrupting the APLL MCLK mid-stream),
+    // so the hardware I2S stays at VOICE_PLAYBACK_DEFAULT_RATE. A 16 kHz voice
+    // WAV would then clock out ~2.76x too fast (chipmunk). Force the hardware to
+    // the voice rate here; restored on playback end so audiobooks are unaffected.
+    i2s_set_sample_rates((i2s_port_t)VOICE_I2S_PORT, VOICE_SAMPLE_RATE);
+#endif
     bool ok = _audio->connecttoFS(SD, fullPath);
     if (!ok) {
       Serial.printf("Voice: Failed to open %s for playback\n", fullPath);
@@ -608,6 +699,11 @@ private:
     if (_audio && _i2sInitialized) {
       _audio->stopSong();
     }
+#if defined(HAS_ES8311_AUDIO)
+    // Restore the hardware I2S clock to the default rate so audiobook/tone
+    // playback (which the library won't re-rate on this platform) is correct.
+    i2s_set_sample_rates((i2s_port_t)VOICE_I2S_PORT, VOICE_PLAYBACK_DEFAULT_RATE);
+#endif
     _reviewPlaying = false;
     _listPlaying = false;
   }
@@ -986,7 +1082,10 @@ private:
     
     char countStr[16];
     snprintf(countStr, sizeof(countStr), "%d files", (int)_fileList.size());
-    display.setCursor(display.width() - display.getTextWidth(countStr) - 2, 0);
+    // Place the count just after the title rather than right-aligned to the
+    // screen edge. The right-aligned position pushed the trailing 's' of
+    // "files" off the right edge, where it wrapped onto the next line.
+    display.setCursor(display.getTextWidth("Voice Messages") + 6, 0);
     display.print(countStr);
 
     display.fillRect(0, 11, display.width(), 1);  // horizontal rule
@@ -1397,6 +1496,11 @@ public:
       _reviewPlaying = false;
       _listPlaying = false;
       _playbackJustFinished = true;
+#if defined(HAS_ES8311_AUDIO)
+      // Restore the hardware I2S clock to the default rate (see playFile) so the
+      // next audiobook/tone plays at the correct speed.
+      i2s_set_sample_rates((i2s_port_t)VOICE_I2S_PORT, VOICE_PLAYBACK_DEFAULT_RATE);
+#endif
     }
   }
 
