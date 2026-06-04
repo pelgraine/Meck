@@ -113,6 +113,24 @@
   #ifdef HAS_TOUCHSCREEN
     #include "TouchInput.h"
     TouchInput touchInput(&Wire);
+    #if defined(LilyGo_TDeck_Pro_Max)
+      // T-Deck Pro MAX uses the vendored Hynitron driver (HynTouch) for the
+      // CST328 instead of TouchInput. Its reset line is XL9555 P07; route the
+      // driver's virtual-GPIO writes/reads through the board's XL9555 access,
+      // mirroring the LilyGo factory driver (driver self-resets during init).
+      #include "HynTouch.h"
+      #include "HynTouchBoard.h"
+      static bool meckHynXl9555Write(uint32_t gpio_id, bool value, void* /*user_data*/) {
+        if (!XL9555_GPIO_IS((int)gpio_id)) return false;
+        board.xl9555_digitalWrite(XL9555_GPIO_TO_PIN(gpio_id), value);
+        return true;
+      }
+      static bool meckHynXl9555Read(uint32_t gpio_id, int* out_value, void* /*user_data*/) {
+        if (!out_value || !XL9555_GPIO_IS((int)gpio_id)) return false;
+        *out_value = board.xl9555_digitalRead(XL9555_GPIO_TO_PIN(gpio_id)) ? 1 : 0;
+        return true;
+      }
+    #endif
   #endif
 
   void initKeyboard();
@@ -885,6 +903,16 @@
       return readTouchPortrait(outX, outY);
     }
     return readTouchLandscape(outX, outY);
+  #elif defined(LilyGo_TDeck_Pro_Max)
+    {
+      int16_t hx[1], hy[1];
+      if (hyn_touch_get_point(hx, hy, 1) > 0) {
+        *outX = hx[0];
+        *outY = hy[0];
+        return true;
+      }
+      return false;
+    }
   #elif defined(LilyGo_TDeck_Pro)
     return touchInput.getPoint(*outX, *outY);
   #else
@@ -1861,12 +1889,23 @@ void setup() {
   #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
     #if defined(LilyGo_TDeck_Pro_Max)
       board.touchReset();   // fresh XL9555 reset immediately before driver init
+      // Route HynTouch's reset (XL9555 P07) through the board, then probe/init.
+      hyn_touch_set_virtual_gpio_callbacks(meckHynXl9555Write, meckHynXl9555Read, nullptr);
+      {
+        HynTouchConfig hcfg = hyn_touch_default_config();
+        if (hyn_touch_init_with_config(&hcfg)) {
+          MESH_DEBUG_PRINTLN("setup() - Touch input initialized (HynTouch)");
+        } else {
+          MESH_DEBUG_PRINTLN("setup() - Touch input FAILED (HynTouch)");
+        }
+      }
+    #else
+      if (touchInput.begin(CST328_PIN_INT)) {
+        MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
+      } else {
+        MESH_DEBUG_PRINTLN("setup() - Touch input FAILED");
+      }
     #endif
-    if (touchInput.begin(CST328_PIN_INT)) {
-      MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
-    } else {
-      MESH_DEBUG_PRINTLN("setup() - Touch input FAILED");
-    }
   #endif
 
 #ifdef DISPLAY_CLASS
@@ -4092,7 +4131,14 @@ void loop() {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
       if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
         int16_t tx, ty;
+        #if defined(LilyGo_TDeck_Pro_Max)
+        int16_t _htx[1], _hty[1];
+        bool _have = (hyn_touch_get_point(_htx, _hty, 1) > 0);
+        if (_have) { tx = _htx[0]; ty = _hty[0]; }
+        if (_have) {
+        #else
         if (touchInput.getPoint(tx, ty)) {
+        #endif
           unsigned long now = millis();
           if (!touchFingerDown && (now - lastTouchAccepted >= 150)) {
             touchFingerDown = true;
