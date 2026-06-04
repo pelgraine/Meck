@@ -51,6 +51,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 - [T-Deck Max](#t-deck-pro-max)
   - [Build Variants](#t-deck-pro-max-build-variants)
   - [4G and Audio at the Same Time](#4g-and-audio-at-the-same-time)
+  - [Antenna (Internal / External)](#antenna-internal--external)
   - [Buzzer (Vibrate) Notifications](#buzzer-vibrate-notifications)
   - [Capacitive Touch & Buttons](#capacitive-touch--buttons)
   - [Frontlight & Backlight Brightness](#frontlight--backlight-brightness)
@@ -880,11 +881,15 @@ Because the modem and codec are independently powered via the XL9555 expander, t
 - **[T] Phone** — the SMS & Phone app for calls and texts over the 4G modem
 - **[B] Browser** — the web reader & IRC client (BLE / WiFi builds)
 - **[F] Discover** — node discovery
-- **Mic** — the voice messages screen (playback only on the MAX — see note below)
+- **Mic** — the voice messages screen (record and play on the MAX — see note below)
 
 Audio output is routed through a shared speaker mux: when a call, ringtone, or modem notification tone plays, the MAX switches the speaker to the modem; for audiobooks, alarms, and notification MP3s it switches to the ES8311 codec.
 
-> **Voice-note recording is not yet available on the MAX.** The MAX has no PDM microphone — capture would have to run through the ES8311's ADC, and that path isn't written yet. The device can play received voice notes (the same ES8311 output path that drives audiobooks and alarms) but cannot record or send them. Recording works normally on the T-Deck Pro audio variant.
+> **Voice-note recording and playback both work on the MAX.** Capture runs through the ES8311's ADC and playback through the ES8311 output (the same path that drives audiobooks and alarms). Sending recorded notes over the mesh is implemented but has not yet been verified end to end on the MAX.
+
+### Antenna (Internal / External)
+
+The MAX has both an on-board internal antenna and an external MMCX antenna connector, with a switch in **Settings** to select between them. **Internal is the default** — if you want to use an external MMCX antenna, change the switch in Settings first.
 
 ### Buzzer (Vibrate) Notifications
 
@@ -1378,7 +1383,8 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Multi-constellation GPS -- GPS, Galileo, BeiDou (`$PCAS04,7`)
 - [X] Home-screen e-ink X-offset and word-wrap fixes
 - [X] Voice-note playback (ES8311 output path)
-- [ ] Voice-note recording on MAX (needs an ES8311 ADC capture path -- no PDM mic)
+- [X] Voice-note recording on MAX (ES8311 ADC capture path)
+- [ ] BHI260AP gyroscope / IMU support (0x28) -- new on the MAX, not yet used by Meck
 
 **T5S3 E-Paper Pro:**
 - [X] Core port: display, touch input, LoRa, battery, RTC
