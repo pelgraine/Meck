@@ -240,9 +240,10 @@ public:
       smsStore.saveMessage(phone, body, false, timestamp);
     }
     if (_view == CONVERSATION && strcmp(_activePhone, phone) == 0) {
+      smsStore.markConversationRead(_activePhone);
       refreshConversation();
     }
-    if (_view == INBOX) {
+    if (_view == INBOX || _view == APP_MENU) {
       refreshInbox();
     }
     _needsRefresh = true;
@@ -348,10 +349,12 @@ public:
     else display.print("  ");
     display.print("SMS Inbox");
 
-    // Show conversation count hint
-    if (_convCount > 0) {
+    // Show unread count hint (hidden when there are none)
+    int unread = 0;
+    for (int i = 0; i < _convCount; i++) unread += _conversations[i].unreadCount;
+    if (unread > 0) {
       char countHint[12];
-      snprintf(countHint, sizeof(countHint), " [%d]", _convCount);
+      snprintf(countHint, sizeof(countHint), " [%d]", unread);
       display.setColor(DisplayDriver::LIGHT);
       display.print(countHint);
     }
@@ -1317,6 +1320,8 @@ public:
       case '\r':  // Enter - open conversation
         if (_convCount > 0 && _inboxCursor < _convCount) {
           strncpy(_activePhone, _conversations[_inboxCursor].phone, SMS_PHONE_LEN - 1);
+          smsStore.markConversationRead(_activePhone);
+          _conversations[_inboxCursor].unreadCount = 0;
           refreshConversation();
           _view = CONVERSATION;
         }

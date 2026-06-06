@@ -14,6 +14,17 @@ void SMSStore::begin() {
     MESH_DEBUG_PRINTLN("[SMSStore] created %s", SMS_DIR);
   }
   _ready = true;
+
+  // One-time migration: history saved before read-tracking existed has read=0,
+  // which would otherwise all show as unread. Mark it read once, gated by a
+  // marker file so genuine unread state survives later reboots.
+  if (!SD.exists(SMS_READ_MIGRATED)) {
+    migrateExistingAsRead();
+    File m = SD.open(SMS_READ_MIGRATED, FILE_WRITE);
+    if (m) m.close();
+    digitalWrite(SDCARD_CS, HIGH);
+  }
+
   MESH_DEBUG_PRINTLN("[SMSStore] ready");
 }
 
@@ -43,6 +54,7 @@ bool SMSStore::saveMessage(const char* phone, const char* body, bool isSent, uin
   memset(&rec, 0, sizeof(rec));
   rec.timestamp = timestamp;
   rec.isSent = isSent ? 1 : 0;
+  rec.read = isSent ? 1 : 0;   // sent messages are never unread; received start unread
   rec.bodyLen = strlen(body);
   if (rec.bodyLen >= SMS_BODY_LEN) rec.bodyLen = SMS_BODY_LEN - 1;
   strncpy(rec.phone, phone, SMS_PHONE_LEN - 1);
@@ -86,13 +98,20 @@ int SMSStore::loadConversations(SMSConversation* out, int maxCount) {
 
     int numRecords = fileSize / sizeof(SMSRecord);
 
-    // Read the last record for preview
+    // Scan all records: count unread received messages, keep the last for preview
+    SMSRecord rec;
     SMSRecord lastRec;
-    entry.seek(fileSize - sizeof(SMSRecord));
-    if (entry.read((uint8_t*)&lastRec, sizeof(SMSRecord)) != sizeof(SMSRecord)) {
-      entry.close();
-      continue;
+    memset(&lastRec, 0, sizeof(lastRec));
+    int unread = 0;
+    bool haveLast = false;
+    for (int i = 0; i < numRecords; i++) {
+      entry.seek((size_t)i * sizeof(SMSRecord));
+      if (entry.read((uint8_t*)&rec, sizeof(SMSRecord)) != sizeof(SMSRecord)) continue;
+      if (rec.isSent == 0 && rec.read == 0) unread++;
+      lastRec = rec;
+      haveLast = true;
     }
+    if (!haveLast) { entry.close(); continue; }
 
     SMSConversation& conv = out[count];
     memset(&conv, 0, sizeof(SMSConversation));
@@ -101,7 +120,7 @@ int SMSStore::loadConversations(SMSConversation* out, int maxCount) {
     conv.preview[39] = '\0';
     conv.lastTimestamp = lastRec.timestamp;
     conv.messageCount = numRecords;
-    conv.unreadCount = 0;  // TODO: track read state
+    conv.unreadCount = unread;
     conv.valid = true;
 
     count++;
@@ -191,6 +210,65 @@ int SMSStore::getMessageCount(const char* phone) {
   digitalWrite(SDCARD_CS, HIGH);
 
   return count;
+}
+
+void SMSStore::markFileRead(const char* filepath) {
+  // In-place flag update: open read+write without truncating ("r+").
+  // Caller releases SDCARD_CS afterwards.
+  File f = SD.open(filepath, "r+");
+  if (!f) return;
+
+  size_t fileSize = f.size();
+  int numRecords = fileSize / sizeof(SMSRecord);
+
+  SMSRecord rec;
+  for (int i = 0; i < numRecords; i++) {
+    f.seek((size_t)i * sizeof(SMSRecord));
+    if (f.read((uint8_t*)&rec, sizeof(SMSRecord)) != sizeof(SMSRecord)) continue;
+    if (rec.isSent == 0 && rec.read == 0) {
+      rec.read = 1;
+      f.seek((size_t)i * sizeof(SMSRecord));
+      f.write((uint8_t*)&rec, sizeof(SMSRecord));
+    }
+  }
+
+  f.close();
+}
+
+void SMSStore::markConversationRead(const char* phone) {
+  if (!_ready) return;
+
+  char filepath[64];
+  phoneToFilename(phone, filepath, sizeof(filepath));
+  markFileRead(filepath);
+
+  digitalWrite(SDCARD_CS, HIGH);
+}
+
+void SMSStore::migrateExistingAsRead() {
+  File dir = SD.open(SMS_DIR);
+  if (!dir || !dir.isDirectory()) return;
+
+  File entry;
+  while ((entry = dir.openNextFile())) {
+    const char* name = entry.name();
+    if (!strstr(name, ".sms")) { entry.close(); continue; }
+
+    // name() may be a bare basename or a full path depending on core version
+    char fullpath[64];
+    if (name[0] == '/') {
+      strncpy(fullpath, name, sizeof(fullpath) - 1);
+      fullpath[sizeof(fullpath) - 1] = '\0';
+    } else {
+      snprintf(fullpath, sizeof(fullpath), "%s/%s", SMS_DIR, name);
+    }
+    entry.close();
+
+    markFileRead(fullpath);
+  }
+  dir.close();
+
+  digitalWrite(SDCARD_CS, HIGH);
 }
 
 #endif // HAS_4G_MODEM

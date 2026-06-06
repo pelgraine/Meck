@@ -22,12 +22,14 @@
 #define SMS_BODY_LEN    161
 #define SMS_MAX_CONVERSATIONS 20
 #define SMS_DIR          "/sms"
+#define SMS_READ_MIGRATED "/sms/rdmig.dat"  // one-time read-state migration marker
 
 // Fixed-size on-disk record (256 bytes, easy alignment)
 struct SMSRecord {
   uint32_t timestamp;           // epoch seconds
   uint8_t  isSent;              // 1=sent, 0=received
-  uint8_t  reserved[2];
+  uint8_t  read;                // 1=read, 0=unread (received messages only)
+  uint8_t  reserved[1];
   uint8_t  bodyLen;             // actual length of body
   char     phone[SMS_PHONE_LEN]; // 20
   char     body[SMS_BODY_LEN];   // 161
@@ -73,11 +75,20 @@ public:
   // Get total message count for a phone number
   int getMessageCount(const char* phone);
 
+  // Mark all received messages in a conversation as read (persisted to SD)
+  void markConversationRead(const char* phone);
+
 private:
   bool _ready = false;
 
   // Convert phone number to safe filename
   void phoneToFilename(const char* phone, char* out, size_t outLen);
+
+  // Set read=1 on every received-unread record in a conversation file
+  void markFileRead(const char* filepath);
+
+  // One-time: mark all pre-existing history read (it pre-dates read tracking)
+  void migrateExistingAsRead();
 };
 
 // Global singleton
