@@ -30,6 +30,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Roomservers](#roomservers)
   - [Repeater Admin Screen](#repeater-admin-screen)
   - [Trace Route Screen (v1.9+)](#trace-route-screen-v19)
+  - [Rx Log](#rx-log)
   - [Delete Message History (v1.10+)](#delete-message-history-v110)
   - [Per-Channel Notification Preferences (v1.10+)](#per-channel-notification-preferences-v110)
   - [Custom Notification Tones (v1.10+)](#custom-notification-tones-v110)
@@ -504,6 +505,21 @@ You also need to be able to **hear the last repeater in the chain directly** —
 
 The screen supports up to **16 hops** per trace.
 
+### Rx Log
+
+The Rx Log is an on-device packet sniffer, mirroring the Rx Log in the MeshCore companion app. Open it from **Settings -> Rx Log >>**. It captures every packet the radio receives -- including relays destined for other nodes, since capture happens before filtering -- into a buffer of the most recent 100 packets, shown newest first.
+
+Each entry shows the route type (flood or direct) and payload type, the receive time and wire size, the packet hash, the hop path, and the channel hash/name (for group messages) or the From/To node hashes (for addressed packets). For channel messages your device can decrypt, the decoded "sender: message" line is attached as well.
+
+| Key | Action |
+|-----|--------|
+| W / S | Scroll through entries (newest at the top) |
+| Q | Back to settings |
+
+The log is held in RAM only and is cleared on reboot.
+
+A running **RX packets** count also appears on the radio details page on the home screen (page through with **D**), just beneath the noise-floor reading. It counts flood and direct packets received since boot and resets on reboot or whenever you change radio parameters (frequency, bandwidth, or spreading factor).
+
 ### Delete Message History (v1.10+)
 
 You can clear all stored messages for any individual channel or the DM inbox without removing the channel itself.
@@ -562,6 +578,8 @@ Press **J** from the home screen to open the games menu. Two classic games are i
 | Enter | Reveal cell |
 | F | Toggle flag on cell |
 | Q | Quit to games menu |
+
+On the T-Deck Max the board is larger, with a 15x20 grid and 50 mines.
 
 ### Private Channels (v1.11+)
 
@@ -658,6 +676,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Channels >> | Opens the Channels sub-screen (see below) |
 | OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
 | Export/Import >> | Opens the Export/Import sub-screen — export device config to SD or import from `/meshcore/import.json` (see [Config Export/Import](#config-exportimport-v111)) |
+| Rx Log >> | Opens the Rx Log packet sniffer (see [Rx Log](#rx-log)) |
 | Device Info | Public key and firmware version (read-only) |
 
 **Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
@@ -747,7 +766,7 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 
 ### SMS & Phone App (4G only)
 
-Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts).
+Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts). The SMS Inbox entry shows the number of unread received messages in brackets (e.g. **SMS Inbox [3]**); the badge disappears once everything is read.
 
 For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
@@ -763,7 +782,7 @@ For full documentation including key mappings, WiFi setup, bookmarks, IRC config
 
 ### Alarm Clock (Audio only)
 
-Press **K** from the home screen to open the alarm clock. This is available on the audio variant of the T-Deck Pro (PCM5102A DAC). Set up to five daily alarms that play custom MP3 files through the headphone jack.
+Press **K** from the home screen to open the alarm clock. This is available on the T-Deck Pro Audio variant (PCM5102A DAC) and on the T-Deck Max (ES8311 codec). Set up to five daily alarms that play custom MP3 files through the headphone jack.
 
 **Setup:**
 
@@ -812,7 +831,7 @@ SD Card
 
 ### Voice Notes Over LoRa (Audio only)
 
-Press the **Microphone key** (the zero key on the keyboard) to open the Voice Messages screen. This is available on the audio variant of the T-Deck Pro (PCM5102A DAC).
+Press the **Microphone key** (the zero key on the keyboard) to open the Voice Messages screen. This is available on the T-Deck Pro Audio variant (PCM5102A DAC) and on the T-Deck Max (ES8311 codec).
 
 Record and send voice messages of up to 12 seconds over LoRa. Audio is encoded on-device using Codec2 at 1200 bps, compressing each second of speech into a single 150-byte LoRa packet. Voice notes use very little airtime relative to what they deliver — a 5-second message is just 5 packets.
 
