@@ -21,11 +21,21 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
     sprintf(name, "%02X%02X%02X%02X%02X%02X",    // modify (IN-OUT param)
           addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
   }
-  char dev_name[32+16];
-  sprintf(dev_name, "%s%s", prefix, name);
+  // Store the device name and defer the actual controller bring-up
+  // (BLEDevice::init + GATT setup) until the first enable(). This keeps the BT
+  // controller powered down while BLE is disabled -- the standalone-first
+  // default -- which reclaims its idle current. The controller comes up on the
+  // first enable and, as with the web-reader teardown path, stays up until the
+  // next reboot thereafter.
+  snprintf(_dev_name, sizeof(_dev_name), "%s%s", prefix, name);
+  _begun = false;
+}
 
+// Deferred BLE controller + GATT bring-up. Called from the first enable() so
+// the controller is not powered while BLE is disabled.
+void SerialBLEInterface::_realBegin() {
   // Create the BLE Device
-  BLEDevice::init(dev_name);
+  BLEDevice::init(_dev_name);
   BLEDevice::setSecurityCallbacks(this);
   BLEDevice::setMTU(MAX_FRAME_SIZE);
 
@@ -35,7 +45,7 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
   esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P9);
 
   BLESecurity  sec;
-  sec.setStaticPIN(pin_code);
+  sec.setStaticPIN(_pin_code);
   sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
 
   //BLEDevice::setPower(ESP_PWR_LVL_N8);
@@ -160,6 +170,11 @@ void SerialBLEInterface::onWrite(BLECharacteristic* pCharacteristic, esp_ble_gat
 
 void SerialBLEInterface::enable() { 
   if (_isEnabled) return;
+
+  if (!_begun) {        // deferred controller bring-up on first enable
+    _realBegin();
+    _begun = true;
+  }
 
   _isEnabled = true;
   clearBuffers();

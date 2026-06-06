@@ -2596,6 +2596,9 @@ void setup() {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
       #endif
+      #if defined(LilyGo_TDeck_Pro_Max)
+        board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+      #endif
       sensors.setSettingValue("gps", "0");
     }
     Serial.printf("GPS: power %s\n", gps_wanted ? "ON" : "OFF");

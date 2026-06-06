@@ -1584,7 +1584,16 @@ uint32_t MyMesh::getBLEPin() {
 
 void MyMesh::startInterface(BaseSerialInterface &serial) {
   _serial = &serial;
+#if defined(ESP32) && defined(BLE_PIN_CODE) && !defined(WIFI_SSID) && !defined(MECK_WIFI_COMPANION)
+  // ESP32 BLE companion: do NOT power the BT controller at boot. With the
+  // deferred-init SerialBLEInterface the controller stays down until the first
+  // enable(), which now happens only when the user turns Bluetooth on from the
+  // Bluetooth page. Reclaims the controller idle current in the standalone-first
+  // default. nRF52 BLE (separate class, no deferred init) and USB-serial / WiFi
+  // are unaffected and still enable at boot below.
+#else
   serial.enable();
+#endif
 }
 
 void MyMesh::handleCmdFrame(size_t len) {

@@ -1863,6 +1863,9 @@ void UITask::shutdown(bool restart){
         #ifdef PIN_GPS_EN
           digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
         #endif
+        #if defined(LilyGo_TDeck_Pro_Max)
+          board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+        #endif
       }
     }
     #endif
@@ -2804,6 +2807,9 @@ void UITask::toggleGPS() {
         #ifdef PIN_GPS_EN
           digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
         #endif
+        #if defined(LilyGo_TDeck_Pro_Max)
+          board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+        #endif
         notify(UIEventType::ack);
       } else {
         // Enable GPS — power on hardware
@@ -2811,6 +2817,9 @@ void UITask::toggleGPS() {
         _node_prefs->gps_enabled = 1;
         #ifdef PIN_GPS_EN
           digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
+        #endif
+        #if defined(LilyGo_TDeck_Pro_Max)
+          board.gpsPowerOn();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
         #endif
         notify(UIEventType::ack);
       }

@@ -13,9 +13,11 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   bool deviceConnected;
   bool oldDeviceConnected;
   bool _isEnabled;
+  bool _begun;              // has _realBegin() run? (deferred BLE bring-up)
   uint16_t last_conn_id;
   uint8_t _remote_bda[6];   // peer BDA, stored in onConnect for conn param updates
   uint32_t _pin_code;
+  char _dev_name[48];      // stored in begin(), consumed by deferred _realBegin()
   unsigned long _last_write;
   unsigned long adv_restart_time;
 
@@ -31,6 +33,8 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   Frame send_queue[FRAME_QUEUE_SIZE];
 
   void clearBuffers() { recv_queue_len = 0; send_queue_len = 0; }
+
+  void _realBegin();       // deferred BLE controller + GATT bring-up
 
 protected:
   // BLESecurityCallbacks methods
@@ -57,6 +61,7 @@ public:
     oldDeviceConnected = false;
     adv_restart_time = 0;
     _isEnabled = false;
+    _begun = false;
     _last_write = 0;
     last_conn_id = 0;
     memset(_remote_bda, 0, 6);
