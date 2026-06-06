@@ -1577,7 +1577,7 @@ void UITask::msgRead(int msgcount) {
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
-                    const uint8_t* path, int8_t snr) {
+                    const uint8_t* path, int8_t snr, uint8_t scope_idx) {
   _msgcount = msgcount;
 
   // --- Dedup: suppress retry spam (same sender + text within 60s) ---
@@ -1725,7 +1725,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, dmFormatted, path, snr, nullptr, suppressNotif);
     }
   } else {
-    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, nullptr, suppressNotif);
+    ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, nullptr, suppressNotif, scope_idx);
   }
   
   // If user is currently viewing this channel on the device, or companion

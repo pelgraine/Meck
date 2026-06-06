@@ -68,6 +68,7 @@ public:
     uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
+    uint8_t scope_idx;  // Region scope index for display (session only, 0xFF = unscoped). Not persisted.
   };
 
   // Simple hash for DM peer matching
@@ -139,6 +140,7 @@ public:
       _messages[i].valid = false;
       _messages[i].dm_peer_hash = 0;
       memset(_messages[i].path, 0, MSG_PATH_MAX);
+      _messages[i].scope_idx = 0xFF;
     }
     // Initialize unread counts
     memset(_unread, 0, sizeof(_unread));
@@ -151,7 +153,7 @@ public:
   // suppressUnread: if true, do not increment the unread counter for this message
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
                   const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr,
-                  bool suppressUnread = false) {
+                  bool suppressUnread = false, uint8_t scope_idx = 0xFF) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -161,6 +163,7 @@ public:
     msg->channel_idx = channel_idx;
     msg->snr = snr;
     msg->valid = true;
+    msg->scope_idx = scope_idx;
     
     // Set DM peer hash for conversation filtering
     if (channel_idx == 0xFF) {
@@ -545,6 +548,7 @@ public:
       _messages[i].dm_peer_hash = rec.dm_peer_hash;
       memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
+      _messages[i].scope_idx = 0xFF;  // region scope is session-only, not stored on SD
       if (_messages[i].valid) loaded++;
     }
 
@@ -845,10 +849,20 @@ public:
           display.print("Route: Local/Sent");
         } else {
           display.setColor(DisplayDriver::GREEN);
-          sprintf(tmp, "Route: %d hop%s (%dB)", hopCount, hopCount == 1 ? "" : "s", bytesPerHop);
+          sprintf(tmp, "Route: %d hop%s (%d-byte)", hopCount, hopCount == 1 ? "" : "s", bytesPerHop);
           display.print(tmp);
         }
         y += lineH;
+
+        // Region (scoped channel messages only; session, not persisted)
+        const char* rgn = the_mesh.getScopeName(msg->scope_idx);
+        if (rgn) {
+          display.setCursor(0, y);
+          display.setColor(DisplayDriver::YELLOW);
+          sprintf(tmp, "Region: %s", rgn);
+          display.print(tmp);
+          y += lineH;
+        }
 
         // SNR (if available — value is SNR×4)
         if (msg->snr != 0) {
@@ -1245,14 +1259,21 @@ public:
             sprintf(tmp, ">%dd ", age / 86400);
           }
         } else {
+          int hopsDisp = (msg->path_len == 0xFF) ? 0 : (msg->path_len & 63);
+          // Byte mode: flood packets encode it in the upper bits of path_len.
+          // The sentinels (0xFF direct-received, 0 locally-sent) do not encode it,
+          // so fall back to this device's configured path hash size.
+          int bphDisp = (msg->path_len == 0xFF || msg->path_len == 0)
+                          ? (the_mesh.getNodePrefs()->path_hash_mode + 1)
+                          : ((msg->path_len >> 6) + 1);
           if (age < 60) {
-            sprintf(tmp, "(%d) %ds ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age);
+            sprintf(tmp, "(%dh)(%db) %ds ", hopsDisp, bphDisp, age);
           } else if (age < 3600) {
-            sprintf(tmp, "(%d) %dm ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 60);
+            sprintf(tmp, "(%dh)(%db) %dm ", hopsDisp, bphDisp, age / 60);
           } else if (age < 86400) {
-            sprintf(tmp, "(%d) %dh ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 3600);
+            sprintf(tmp, "(%dh)(%db) %dh ", hopsDisp, bphDisp, age / 3600);
           } else {
-            sprintf(tmp, "(%d) %dd ", msg->path_len == 0xFF ? 0 : (msg->path_len & 63), age / 86400);
+            sprintf(tmp, "(%dh)(%db) %dd ", hopsDisp, bphDisp, age / 86400);
           }
         }
         display.print(tmp);

@@ -670,6 +670,43 @@ const char* MyMesh::getChannelScopeName(const mesh::GroupChannel& channel) {
   return nullptr;
 }
 
+// --- Region scope candidate list (display-only resolution of incoming channel msgs) ---
+// Fixed set of nameable regions. Keys are precomputed once at boot in initScopeKeys().
+const char* const MyMesh::SCOPE_NAMES[MyMesh::SCOPE_COUNT] = {
+  "au",
+  "au-nsw", "au-vic", "au-act", "au-sa", "au-wa", "au-tas", "au-nt", "au-qld",
+  "au-nsw-syd", "au-nsw-bhs", "au-nsw-hun", "au-nsw-ntl", "au-nsw-wol",
+  "au-nsw-cw", "au-nsw-wsi", "au-nsw-syd-iwc",
+  "au-vic-mel", "au-vic-east", "au-vic-north", "au-vic-west",
+  "au-act-cbr",
+  "au-tas-hob",
+  "au-qld-bne",
+  "au-wa-per", "au-wa-fre", "au-wa-buy",
+  "au-hume"
+};
+
+void MyMesh::initScopeKeys() {
+  for (uint8_t i = 0; i < SCOPE_COUNT; i++) {
+    deriveScopeKey(SCOPE_NAMES[i], _scope_keys[i]);
+  }
+}
+
+uint8_t MyMesh::resolveScopeIndex(const mesh::Packet* pkt) const {
+  if (!pkt || !pkt->hasTransportCodes()) return 0xFF;  // unscoped
+  uint16_t code = pkt->transport_codes[0];
+  for (uint8_t i = 0; i < SCOPE_COUNT; i++) {
+    if (_scope_keys[i].calcTransportCode(pkt) == code) return i;
+  }
+  return 0xFE;  // scoped, but not one of the known regions
+}
+
+const char* MyMesh::getScopeName(uint8_t idx) const {
+  if (idx == 0xFF) return nullptr;          // unscoped -- no region line
+  if (idx == 0xFE) return "(reg unknown)";  // scoped but unmatched
+  if (idx < SCOPE_COUNT) return SCOPE_NAMES[idx];
+  return nullptr;
+}
+
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
   markConnectionActive(from); // in case this is from a server, and we have a connection
@@ -816,7 +853,8 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
   if (_ui) {
     const uint8_t* msg_path = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path : nullptr;
-    _ui->newMsg(path_len, channel_name, text, offline_queue_len, msg_path, pkt->_snr);
+    uint8_t scope_idx = resolveScopeIndex(pkt);
+    _ui->newMsg(path_len, channel_name, text, offline_queue_len, msg_path, pkt->_snr, scope_idx);
     if (!_prefs.buzzer_quiet) _ui->notify(UIEventType::channelMessage); //buzz if enabled
   }
 #endif
@@ -1530,6 +1568,8 @@ void MyMesh::begin(bool has_display) {
 
   radio_set_params(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_set_tx_power(_prefs.tx_power_dbm);
+
+  initScopeKeys();  // precompute region-scope transport keys for incoming-message display
 }
 
 const char *MyMesh::getNodeName() {

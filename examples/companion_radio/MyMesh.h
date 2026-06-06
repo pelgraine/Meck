@@ -185,6 +185,10 @@ public:
   bool deriveScopeKey(const char* scopeName, TransportKey& keyOut);
   // Look up per-channel scope name by GroupChannel secret match. Returns nullptr if no scope set.
   const char* getChannelScopeName(const mesh::GroupChannel& channel);
+  // Resolve a region scope index (as produced by resolveScopeIndex during onChannelMessageRecv)
+  // to a display name. Returns nullptr for unscoped, "(reg unknown)" for scoped-but-unmatched,
+  // otherwise the candidate region name. Used by the channel path-detail overlay.
+  const char* getScopeName(uint8_t idx) const;
 
 
 protected:
@@ -307,6 +311,18 @@ private:
   unsigned long dirty_contacts_expiry;
 
   TransportKey send_scope;
+
+  // --- Region scope resolution for incoming channel messages (display only) ---
+  // A received scoped flood/direct packet carries a one-way transport code. We match
+  // it against this fixed candidate list, whose keys are precomputed once at boot in
+  // initScopeKeys(). resolveScopeIndex() returns an index into SCOPE_NAMES, 0xFF for
+  // unscoped packets, or 0xFE for scoped-but-unmatched. Result is held in RAM only
+  // (per-message), never persisted.
+  static const uint8_t SCOPE_COUNT = 28;
+  static const char* const SCOPE_NAMES[SCOPE_COUNT];
+  TransportKey _scope_keys[SCOPE_COUNT];
+  void initScopeKeys();
+  uint8_t resolveScopeIndex(const mesh::Packet* pkt) const;
 
   uint8_t cmd_frame[MAX_FRAME_SIZE + 1];
   uint8_t out_frame[MAX_FRAME_SIZE + 1];
