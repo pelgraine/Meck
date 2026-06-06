@@ -78,7 +78,7 @@
 #define I2C_ADDR_KEYBOARD   0x34  // TCA8418
 #define I2C_ADDR_BQ27220    0x55  // Fuel gauge
 #define I2C_ADDR_DRV2605    0x5A  // Motor driver (haptic)
-#define I2C_ADDR_BQ25896    0x6B  // Charger
+#define I2C_ADDR_SY6970     0x6A  // Charger (SY6970 -- confirmed by I2C probe; not BQ25896/0x6B)
 
 // -----------------------------------------------------------------------------
 // XL9555 I/O Expander — Pin Assignments

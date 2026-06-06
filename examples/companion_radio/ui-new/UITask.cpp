@@ -514,6 +514,8 @@ public:
         display.drawTextCentered(display.width() / 2, y, tmp);
 #if defined(LILYGO_TECHO_LITE)
         y += 14;  // Compact
+#elif defined(LilyGo_TDeck_Pro_Max)
+        y += 6;  // MAX: tighter pin-to-menu gap so [T] Phone is not clipped
 #else
         y += 18;
 #endif
@@ -1876,7 +1878,25 @@ void UITask::shutdown(bool restart){
     // the last I2C write to avoid bricking the I2C state machine.
     // After tSM_DLY (~10-15s) the BATFET opens during deep sleep.
     // Wake: USB-C plug-in only (no reset button -- no power to ESP32).
-    #ifdef I2C_ADDR_BQ25896
+    #if defined(LilyGo_TDeck_Pro_Max)
+    if (_full_poweroff) {
+      // MAX uses the SY6970 charger @ 0x6A (the BQ25896 @ 0x6B is absent --
+      // I2C probe ACKs only at 0x6A). XPowersLib's SY6970 shutdown() closes the
+      // battery path by setting REG09 bit 5 (BATFET_DIS) via read-modify-write,
+      // with no BATFET_DLY. Mirror that exactly here so charger plug-in re-wakes
+      // the board after a full power-off.
+      Wire.beginTransmission(I2C_ADDR_SY6970);
+      Wire.write(0x09);
+      Wire.endTransmission(false);
+      Wire.requestFrom((uint8_t)I2C_ADDR_SY6970, (uint8_t)1);
+      uint8_t reg09 = Wire.read();
+
+      Wire.beginTransmission(I2C_ADDR_SY6970);
+      Wire.write(0x09);
+      Wire.write(reg09 | 0x20);  // BATFET_DIS = bit 5
+      Wire.endTransmission();
+    }
+    #elif defined(I2C_ADDR_BQ25896)
     if (_full_poweroff) {
       Wire.beginTransmission(I2C_ADDR_BQ25896);
       Wire.write(0x09);
