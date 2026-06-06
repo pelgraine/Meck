@@ -325,6 +325,33 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   }
 }
 
+void MyMesh::logRx(mesh::Packet* pkt, int len, float score) {
+  if (_rxlog == nullptr) return;
+  RxLogEntry& e = _rxlog[_rxlog_head];
+  memset(&e, 0, sizeof(e));
+  e.timestamp = getRTCClock()->getCurrentTime();
+  e.header    = pkt->header;
+  e.path_len  = pkt->path_len;
+  e.size      = (uint16_t)len;
+  e.snr       = pkt->_snr;
+  e.payload0  = (pkt->payload_len > 0) ? pkt->payload[0] : 0;
+  e.payload1  = (pkt->payload_len > 1) ? pkt->payload[1] : 0;
+  pkt->calculatePacketHash(e.hash);
+  uint16_t pbl = pkt->getPathByteLen();
+  if (pbl > MAX_PATH_SIZE) pbl = MAX_PATH_SIZE;
+  memcpy(e.path, pkt->path, pbl);
+  // channel_name / text stay empty here; attached by onChannelMessageRecv() for
+  // decryptable channel messages, matched on packet hash.
+  _rxlog_head = (_rxlog_head + 1) % RXLOG_SIZE;
+  if (_rxlog_count < RXLOG_SIZE) _rxlog_count++;
+}
+
+const RxLogEntry* MyMesh::getRxLogEntry(int idx) const {
+  if (_rxlog == nullptr || idx < 0 || idx >= _rxlog_count) return nullptr;
+  int oldest = (_rxlog_head - _rxlog_count + RXLOG_SIZE) % RXLOG_SIZE;
+  return &_rxlog[(oldest + idx) % RXLOG_SIZE];
+}
+
 bool MyMesh::isAutoAddEnabled() const {
   return (_prefs.manual_add_contacts & 1) == 0;
 }
@@ -842,6 +869,24 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     uint8_t frame[1];
     frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
     _serial->writeFrame(frame, 1);
+  }
+
+  // Rx Log: attach the decoded text + channel name to the matching captured
+  // entry, found by packet hash. logRx() ran first and stored the header fields.
+  if (_rxlog != nullptr) {
+    uint8_t h[MAX_HASH_SIZE];
+    pkt->calculatePacketHash(h);
+    ChannelDetails cd;
+    const char* cname = getChannel(channel_idx, cd) ? cd.name : "";
+    int oldest = (_rxlog_head - _rxlog_count + RXLOG_SIZE) % RXLOG_SIZE;
+    for (int n = _rxlog_count - 1; n >= 0; n--) {
+      RxLogEntry& e = _rxlog[(oldest + n) % RXLOG_SIZE];
+      if (e.text[0] == 0 && memcmp(e.hash, h, MAX_HASH_SIZE) == 0) {
+        StrHelper::strncpy(e.text, text, sizeof(e.text));
+        StrHelper::strncpy(e.channel_name, cname, sizeof(e.channel_name));
+        break;
+      }
+    }
   }
 
 #ifdef DISPLAY_CLASS
@@ -1451,6 +1496,9 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   sign_data = NULL;
   dirty_contacts_expiry = 0;
   advert_paths = nullptr;  // PSRAM-allocated in begin()
+  _rxlog = nullptr;        // PSRAM-allocated in begin()
+  _rxlog_head = 0;
+  _rxlog_count = 0;
   memset(send_scope.key, 0, sizeof(send_scope.key));
   memset(_sent_track, 0, sizeof(_sent_track));
   _sent_track_idx = 0;
@@ -1478,6 +1526,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
 
 void MyMesh::begin(bool has_display) {
   advert_paths = (AdvertPath*)ps_calloc(ADVERT_PATH_TABLE_SIZE, sizeof(AdvertPath));
+  _rxlog = (RxLogEntry*)ps_calloc(RXLOG_SIZE, sizeof(RxLogEntry));
   BaseChatMesh::begin();
 
   if (!_store->loadMainIdentity(self_id)) {

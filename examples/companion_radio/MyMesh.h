@@ -104,6 +104,29 @@ struct DiscoveredNode {
 #define MECK_CH_PREFIX "[MECK:CH]"
 #define MECK_CH_PREFIX_LEN 9
 
+// Rx Log -- on-device packet sniffer ring buffer that mirrors the MeshCore app's
+// Rx Log. logRx() captures every received packet (including foreign relays, since
+// it fires pre-filter) into header fields; for decryptable channel messages the
+// decoded "name: msg" text and channel name are attached later by
+// onChannelMessageRecv(), matched on packet hash. RAM only, lost on reboot.
+#define RXLOG_SIZE        100
+#define RXLOG_TEXT_LEN    64
+#define RXLOG_CHNAME_LEN  16
+
+struct RxLogEntry {
+  uint32_t timestamp;                       // local RTC at receive
+  uint8_t  header;                          // route type + payload type + ver (Packet::header)
+  uint8_t  path_len;                        // hop count (low 6 bits) + bytes-per-hop mode (high 2)
+  uint16_t size;                            // wire length (getRawLength)
+  int8_t   snr;                             // SNR x4 (snr / 4.0 = dB)
+  uint8_t  payload0;                        // first payload byte: channel hash, or dest hash (addressed)
+  uint8_t  payload1;                        // second payload byte: src hash (addressed types only)
+  uint8_t  hash[MAX_HASH_SIZE];             // packet hash
+  uint8_t  path[MAX_PATH_SIZE];             // hop hashes (layout per path_len)
+  char     channel_name[RXLOG_CHNAME_LEN];  // decrypted channel name (no '#'); empty if undecoded
+  char     text[RXLOG_TEXT_LEN];            // decoded "name: msg"; empty if undecoded
+};
+
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
   MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui=NULL);
@@ -114,6 +137,18 @@ public:
   const char *getNodeName();
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
+
+  // RX packet counter for the radio details page. Returns the number of packets
+  // (flood + direct) received since boot, less a baseline. resetRxPacketCount()
+  // snaps the baseline to the current total so the displayed count can be zeroed
+  // when radio params change. RAM only; reset on boot via Dispatcher::begin().
+  uint32_t getRxPacketCount() const { return (getNumRecvFlood() + getNumRecvDirect()) - _rx_count_baseline; }
+  void resetRxPacketCount() { _rx_count_baseline = getNumRecvFlood() + getNumRecvDirect(); }
+
+  // Rx Log accessors for the Rx Log screen. Entries are ordered oldest..newest.
+  int  getRxLogCount() const { return _rxlog_count; }
+  const RxLogEntry* getRxLogEntry(int idx) const;  // idx 0 = oldest; nullptr if out of range
+  void clearRxLog() { _rxlog_head = 0; _rxlog_count = 0; }
 
   void loop();
   void handleCmdFrame(size_t len);
@@ -210,6 +245,7 @@ protected:
   void sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis=0);
 
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len) override;
+  void logRx(mesh::Packet* pkt, int len, float score) override;
   bool isAutoAddEnabled() const override;
   bool shouldAutoAddContactType(uint8_t type) const override;
   bool shouldOverwriteWhenFull() const override;
@@ -291,6 +327,7 @@ private:
   mutable bool _forceNextImport = false;
   bool _deferSaves = false;
   unsigned long _lastUserInput = 0;  // millis() of last keypress -- defer saves until idle
+  uint32_t _rx_count_baseline = 0;   // baseline for RX packet counter (radio page); RAM only
   uint32_t pending_login;
   uint32_t pending_status;
   uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ
@@ -350,6 +387,11 @@ private:
     #define ADVERT_PATH_TABLE_SIZE   1000
   #endif
   AdvertPath* advert_paths;  // PSRAM-allocated in begin(), size = ADVERT_PATH_TABLE_SIZE
+
+  // Rx Log ring buffer (PSRAM-allocated in begin(), size RXLOG_SIZE). RAM only.
+  RxLogEntry* _rxlog;
+  int _rxlog_head;   // index where the next entry will be written
+  int _rxlog_count;  // number of valid entries (<= RXLOG_SIZE)
 
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4

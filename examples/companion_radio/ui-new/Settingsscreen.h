@@ -185,6 +185,7 @@ enum SettingsRowType : uint8_t {
   ROW_EXPORT_AUTOADD,    // Checkbox: include auto-add preferences (sub-item of contacts)
   ROW_EXPORT_NOW,        // ">> Export Now" action trigger
   #endif
+  ROW_RXLOG,          // Rx Log packet sniffer (opens RxLogScreen)
   ROW_INFO_HEADER,    // "--- Info ---" separator
   #ifdef MECK_OTA_UPDATE
   ROW_OTA_TOOLS_SUBMENU, // Folder row → enters OTA Tools sub-screen
@@ -321,6 +322,8 @@ private:
   bool _exportRequested;   // set by key handler, cleared by main.cpp after calling export
   bool _importRequested;   // set by key handler, cleared by main.cpp after calling import
   #endif
+
+  bool _rxlogRequested = false;  // set by key handler, cleared by main.cpp after opening Rx Log
 
   // Channel share picker state
   #define SHARE_MAX_CONTACTS 32
@@ -529,6 +532,9 @@ private:
       addRow(ROW_EXPORT_IMPORT_SUBMENU);
       #endif
 
+      // Rx Log packet sniffer (opens RxLogScreen)
+      addRow(ROW_RXLOG);
+
       // Info section (stays at top level)
       addRow(ROW_INFO_HEADER);
       addRow(ROW_PUB_KEY);
@@ -673,6 +679,7 @@ private:
     radio_set_params(_prefs->freq, _prefs->bw, _prefs->sf, _prefs->cr);
     radio_set_tx_power(_prefs->tx_power_dbm);
     the_mesh.savePrefs();
+    the_mesh.resetRxPacketCount();   // zero the radio-page RX counter on radio param change
     _radioChanged = false;
     Serial.printf("Settings: Radio params applied - %.3f/%g/%d/%d TX:%d\n",
                   _prefs->freq, _prefs->bw, _prefs->sf, _prefs->cr, _prefs->tx_power_dbm);
@@ -930,6 +937,10 @@ public:
   bool isImportRequested() const { return _importRequested; }
   void clearImportRequest() { _importRequested = false; }
   #endif
+
+  // Rx Log open request -- checked and cleared by main.cpp
+  bool isRxLogRequested() const { return _rxlogRequested; }
+  void clearRxLogRequest() { _rxlogRequested = false; }
 
   // Channel share request -- checked and cleared by main.cpp
   bool isShareRequested() const { return _shareRequested; }
@@ -2023,6 +2034,11 @@ public:
         case ROW_CHANNELS_SUBMENU:
           display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
           display.print("Channels >>");
+          break;
+
+        case ROW_RXLOG:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Rx Log >>");
           break;
 
         #ifdef HAS_SDCARD
@@ -3747,6 +3763,10 @@ public:
           _scrollTop = 0;
           rebuildRows();
           Serial.println("Settings: entered Channels sub-screen");
+          break;
+
+        case ROW_RXLOG:
+          _rxlogRequested = true;
           break;
 
         case ROW_ADD_CHANNEL:

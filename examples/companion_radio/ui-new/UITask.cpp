@@ -8,6 +8,7 @@
 #include "PathEditorScreen.h"
 #include "DiscoveryScreen.h"
 #include "LastHeardScreen.h"
+#include "RxLogScreen.h"
 #include "Tracescreen.h"
 #include "GamesMenuScreen.h"
 #include "SnakeScreen.h"
@@ -808,6 +809,9 @@ public:
       display.setCursor(0, 53);
       sprintf(tmp, "Noise floor: %d", radio_driver.getNoiseFloor());
       display.print(tmp);
+      display.setCursor(0, 64);
+      sprintf(tmp, "RX packets: %u", (unsigned)the_mesh.getRxPacketCount());
+      display.print(tmp);
 #ifdef BLE_PIN_CODE
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
@@ -1458,6 +1462,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   path_editor = nullptr;     // Lazy-initialized on first use from contacts screen
   discovery_screen = new DiscoveryScreen(this, &rtc_clock);
   last_heard_screen = new LastHeardScreen(&rtc_clock);
+  rxlog_screen = new RxLogScreen(this, &rtc_clock);
   trace_screen = new TraceScreen(this, &rtc_clock);
   games_menu_screen = new GamesMenuScreen(this);
   snake_screen = new SnakeScreen(this, &rtc_clock);
@@ -3224,6 +3229,16 @@ void UITask::gotoDiscoveryScreen() {
 void UITask::gotoLastHeardScreen() {
   ((LastHeardScreen*)last_heard_screen)->resetScroll();
   setCurrScreen(last_heard_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoRxLogScreen() {
+  ((RxLogScreen*)rxlog_screen)->resetScroll();
+  setCurrScreen(rxlog_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

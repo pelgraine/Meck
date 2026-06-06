@@ -84,6 +84,8 @@ static const AdminCmdDef CMD_SET_CONFIG[] = {
   { "Set AF",               "set af ",                    "Airtime factor:",       CMDF_PARAM },
   { "Set Repeat",           "set repeat ",                "on/off:",               CMDF_PARAM },
   { "Set Flood Max",        "set flood.max ",             "Max hops (0-64):",      CMDF_PARAM },
+  { "Set Flood Max Unscoped", "set flood.max.unscoped ",  "Max hops (64=off):",    CMDF_PARAM },
+  { "Set Flood Adv Max",    "set flood.max.advert ",      "Max hops (def 8):",     CMDF_PARAM },
   { "Set RX Delay",         "set rxdelay ",               "Base (0=off):",         CMDF_PARAM },
   { "Set TX Delay",         "set txdelay ",               "Factor:",               CMDF_PARAM },
   { "Set Direct TX Delay",  "set direct.txdelay ",        "Factor:",               CMDF_PARAM },
@@ -99,7 +101,7 @@ static const AdminCmdDef CMD_SET_CONFIG[] = {
   { "Temp Radio",           "tempradio ",                 "freq,bw,sf,cr,mins:",   CMDF_PARAM },
   { "Change Admin Pwd",     "password ",                  "New password:",          CMDF_PARAM | CMDF_CONFIRM },
 };
-#define CMD_SET_CONFIG_COUNT 19
+#define CMD_SET_CONFIG_COUNT 21
 
 // --- Power ---
 static const AdminCmdDef CMD_POWER[] = {

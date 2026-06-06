@@ -100,6 +100,7 @@ class UITask : public AbstractUITask {
   UIScreen* path_editor;      // Custom path editor screen (lazy-init)
   UIScreen* discovery_screen;  // Node discovery scan screen
   UIScreen* last_heard_screen; // Last heard passive advert list
+  UIScreen* rxlog_screen;      // Rx Log packet sniffer
   UIScreen* trace_screen;      // Trace path screen (standalone trace tool)
   UIScreen* games_menu_screen; // Games launcher menu
   UIScreen* snake_screen;      // Snake game screen
@@ -205,6 +206,7 @@ public:
   void gotoPathEditor(int contactIdx);     // Navigate to custom path editor
   void gotoDiscoveryScreen();              // Navigate to node discovery scan
   void gotoLastHeardScreen();              // Navigate to last heard passive list
+  void gotoRxLogScreen();                  // Navigate to Rx Log packet sniffer
   void gotoTraceScreen();                  // Navigate to trace path screen
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
@@ -266,6 +268,7 @@ public:
   bool isOnPathEditor() const { return curr == path_editor; }
   bool isOnDiscoveryScreen() const { return curr == discovery_screen; }
   bool isOnLastHeardScreen() const { return curr == last_heard_screen; }
+  bool isOnRxLogScreen() const { return curr == rxlog_screen; }
   bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
@@ -354,6 +357,7 @@ public:
   UIScreen* getPathEditorScreen() const { return path_editor; }
   UIScreen* getDiscoveryScreen() const { return discovery_screen; }
   UIScreen* getLastHeardScreen() const { return last_heard_screen; }
+  UIScreen* getRxLogScreen() const { return rxlog_screen; }
   UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }

@@ -4797,6 +4797,11 @@ void handleKeyboardInput() {
       }
     }
     #endif
+    // Check for Rx Log open request from the settings screen
+    if (settings->isRxLogRequested()) {
+      settings->clearRxLogRequest();
+      ui_task.gotoRxLogScreen();
+    }
     // Check for channel share request from the settings screen
     if (settings->isShareRequested()) {
       int contactIdx = settings->getShareContactIdx();
@@ -5337,6 +5342,7 @@ void handleKeyboardInput() {
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
+          || ui_task.isOnRxLogScreen()
          ) {
         ui_task.injectKey('S');
       }
@@ -5357,6 +5363,7 @@ void handleKeyboardInput() {
           || ui_task.isOnAlarmScreen()
 #endif
           || ui_task.isHomeOnShutdownPage()
+          || ui_task.isOnRxLogScreen()
          ) {
         ui_task.injectKey('s');  // Pass directly for scrolling
       } else {
@@ -5379,6 +5386,7 @@ void handleKeyboardInput() {
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
+          || ui_task.isOnRxLogScreen()
          ) {
         ui_task.injectKey('W');
       }
@@ -5398,6 +5406,7 @@ void handleKeyboardInput() {
 #ifdef MECK_AUDIO_VARIANT
           || ui_task.isOnAlarmScreen()
 #endif
+          || ui_task.isOnRxLogScreen()
          ) {
         ui_task.injectKey('w');  // Pass directly for scrolling
       } else {
@@ -5756,6 +5765,11 @@ void handleKeyboardInput() {
         the_mesh.stopDiscovery();
         Serial.println("Nav: Discovery -> Contacts");
         ui_task.gotoContactsScreen();
+        break;
+      }
+      // Rx Log screen: Q goes back to settings (screen handles it)
+      if (ui_task.isOnRxLogScreen()) {
+        ui_task.injectKey('q');
         break;
       }
       // Path editor: Q goes back to contacts (discards unsaved changes)
