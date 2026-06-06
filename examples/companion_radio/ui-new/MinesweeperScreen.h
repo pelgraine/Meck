@@ -23,16 +23,53 @@ class UITask;
   #define MINE_GRID_W   14
   #define MINE_GRID_H   14
   #define MINE_COUNT    25
-  #define MINE_CELL      8
+  #define MINE_CELL_W    8
+  #define MINE_CELL_H    8
   #define MINE_HDR      14
   #define MINE_FTR      10
+#elif defined(LilyGo_TDeck_Pro_Max)
+  // MAX renders into a 128x128 virtual canvas with non-uniform scaling
+  // (X 1.875, Y 2.5) and a (2,5) virtual offset applied by GxEPDDisplay.
+  // Cells are 8x6 virtual so they land square on the panel (8*1.875 = 6*2.5
+  // = 15 px). The grid is sized to the usable area, and the display offset is
+  // subtracted when centring so nothing clips at the bottom/right edge.
+  #define MINE_GRID_W   15
+  #define MINE_GRID_H   20
+  #define MINE_COUNT    50
+  #define MINE_CELL_W    8
+  #define MINE_CELL_H    6
+  #define MINE_HDR      14
+  #define MINE_FTR      14
+  #define MINE_OFFX_ADJ  2
+  #define MINE_OFFY_ADJ  5
 #else
   #define MINE_GRID_W    9
   #define MINE_GRID_H    9
   #define MINE_COUNT    10
-  #define MINE_CELL     14
+  #define MINE_CELL_W   14
+  #define MINE_CELL_H   14
   #define MINE_HDR      14
   #define MINE_FTR      14
+#endif
+#ifndef MINE_OFFX_ADJ
+  #define MINE_OFFX_ADJ  0
+#endif
+#ifndef MINE_OFFY_ADJ
+  #define MINE_OFFY_ADJ  0
+#endif
+// Cell-text size + vertical nudge. GxEPDDisplay::setCursor adds a +5 baseline
+// fudge sized for the tall FreeSans fonts; for the small built-in (size 0)
+// font on MAX that lands the glyph at the cell's bottom edge, so it needs a
+// negative nudge to sit centred. T5S3 (FastEPD, no fudge) and Pro are unchanged.
+#if defined(LilyGo_TDeck_Pro_Max)
+  #define MINE_TEXT_SIZE  0
+  #define MINE_TEXT_DY   (-3)
+#elif defined(LilyGo_T5S3_EPaper_Pro)
+  #define MINE_TEXT_SIZE  0
+  #define MINE_TEXT_DY    1
+#else
+  #define MINE_TEXT_SIZE  1
+  #define MINE_TEXT_DY    3
 #endif
 #define MINE_TOTAL    (MINE_GRID_W * MINE_GRID_H)
 
@@ -200,8 +237,8 @@ private:
   // -- Drawing helpers --
 
   void drawCell(DisplayDriver& display, int gx, int gy) const {
-    int px = _offsetX + gx * MINE_CELL;
-    int py = _offsetY + gy * MINE_CELL;
+    int px = _offsetX + gx * MINE_CELL_W;
+    int py = _offsetY + gy * MINE_CELL_H;
     int i = idx(gx, gy);
     bool isCursor = (gx == _cursorX && gy == _cursorY && _state == PLAYING);
 
@@ -209,63 +246,53 @@ private:
       if (isCursor && !_cursorBlink) {
         // Cursor blink OFF phase: outline only (visible gap in the solid grid)
         display.setColor(DisplayDriver::LIGHT);
-        display.drawRect(px, py, MINE_CELL, MINE_CELL);
-        display.drawRect(px + 1, py + 1, MINE_CELL - 2, MINE_CELL - 2);
+        display.drawRect(px, py, MINE_CELL_W, MINE_CELL_H);
+        display.drawRect(px + 1, py + 1, MINE_CELL_W - 2, MINE_CELL_H - 2);
       } else {
         // Solid filled with 1px inset (preserves grid lines between cells)
         display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(px + 1, py + 1, MINE_CELL - 2, MINE_CELL - 2);
+        display.fillRect(px + 1, py + 1, MINE_CELL_W - 2, MINE_CELL_H - 2);
       }
     } else if (_cellState[i] == CELL_FLAGGED) {
       if (isCursor && !_cursorBlink) {
         // Cursor blink OFF phase: outline with F
         display.setColor(DisplayDriver::LIGHT);
-        display.drawRect(px, py, MINE_CELL, MINE_CELL);
-        display.drawRect(px + 1, py + 1, MINE_CELL - 2, MINE_CELL - 2);
+        display.drawRect(px, py, MINE_CELL_W, MINE_CELL_H);
+        display.drawRect(px + 1, py + 1, MINE_CELL_W - 2, MINE_CELL_H - 2);
       } else {
         // Solid fill with 1px inset
         display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(px + 1, py + 1, MINE_CELL - 2, MINE_CELL - 2);
+        display.fillRect(px + 1, py + 1, MINE_CELL_W - 2, MINE_CELL_H - 2);
       }
       // F overlay
       display.setColor((isCursor && !_cursorBlink) ? DisplayDriver::LIGHT : DisplayDriver::DARK);
-#if defined(LilyGo_T5S3_EPaper_Pro)
-      display.setTextSize(0);
-      display.drawTextCentered(px + MINE_CELL / 2, py + 1, "F");
-#else
-      display.setTextSize(1);
-      display.drawTextCentered(px + MINE_CELL / 2, py + 3, "F");
-#endif
+      display.setTextSize(MINE_TEXT_SIZE);
+      display.drawTextCentered(px + MINE_CELL_W / 2, py + MINE_TEXT_DY, "F");
     } else {
       // Revealed cell: thin border
       display.setColor(DisplayDriver::LIGHT);
-      display.drawRect(px, py, MINE_CELL, MINE_CELL);
+      display.drawRect(px, py, MINE_CELL_W, MINE_CELL_H);
 
       if (_content[i] == MINE_VALUE) {
         // Mine: solid dot in centre
-        int dotR = MINE_CELL / 4;
+        int dotR = (MINE_CELL_W < MINE_CELL_H ? MINE_CELL_W : MINE_CELL_H) / 4;
         if (dotR < 2) dotR = 2;
         display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(px + MINE_CELL/2 - dotR, py + MINE_CELL/2 - dotR, dotR*2, dotR*2);
+        display.fillRect(px + MINE_CELL_W/2 - dotR, py + MINE_CELL_H/2 - dotR, dotR*2, dotR*2);
       } else if (_content[i] > 0) {
         // Number 1-8
         char num[2] = { (char)('0' + _content[i]), '\0' };
         display.setColor(DisplayDriver::GREEN);
-#if defined(LilyGo_T5S3_EPaper_Pro)
-        display.setTextSize(0);
-        display.drawTextCentered(px + MINE_CELL / 2, py + 1, num);
-#else
-        display.setTextSize(1);
-        display.drawTextCentered(px + MINE_CELL / 2, py + 3, num);
-#endif
+        display.setTextSize(MINE_TEXT_SIZE);
+        display.drawTextCentered(px + MINE_CELL_W / 2, py + MINE_TEXT_DY, num);
       }
       // Revealed 0: just the border (already drawn)
 
       // Cursor on revealed cell: green double border
       if (isCursor) {
         display.setColor(DisplayDriver::GREEN);
-        display.drawRect(px, py, MINE_CELL, MINE_CELL);
-        display.drawRect(px + 1, py + 1, MINE_CELL - 2, MINE_CELL - 2);
+        display.drawRect(px, py, MINE_CELL_W, MINE_CELL_H);
+        display.drawRect(px + 1, py + 1, MINE_CELL_W - 2, MINE_CELL_H - 2);
       }
     }
   }
@@ -338,15 +365,15 @@ public:
     // Compute grid offset based on state
     // PLAYING: full screen (no header/footer) for clean grid
     // Other states: header + footer visible
-    int gridPixW = MINE_GRID_W * MINE_CELL;
-    int gridPixH = MINE_GRID_H * MINE_CELL;
+    int gridPixW = MINE_GRID_W * MINE_CELL_W;
+    int gridPixH = MINE_GRID_H * MINE_CELL_H;
     if (_state == PLAYING) {
-      _offsetX = (display.width() - gridPixW) / 2;
-      _offsetY = (display.height() - gridPixH) / 2;
+      _offsetX = (display.width() - gridPixW) / 2 - MINE_OFFX_ADJ;
+      _offsetY = (display.height() - gridPixH) / 2 - MINE_OFFY_ADJ;
     } else {
       int usableH = display.height() - MINE_HDR - MINE_FTR;
-      _offsetX = (display.width() - gridPixW) / 2;
-      _offsetY = MINE_HDR + (usableH - gridPixH) / 2;
+      _offsetX = (display.width() - gridPixW) / 2 - MINE_OFFX_ADJ;
+      _offsetY = MINE_HDR + (usableH - gridPixH) / 2 - MINE_OFFY_ADJ;
     }
 
     // Toggle cursor blink each render cycle
