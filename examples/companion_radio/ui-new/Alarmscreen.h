@@ -45,6 +45,14 @@ void meck_audio_route_amp();
 void meck_audio_codec_init();
 #endif
 
+#if defined(LilyGo_TDeck_Pro_Max)
+// Silent (vibrate) alarm haptic shims, defined in target.cpp for the same
+// reason as the audio shims above -- this UI header cannot see the board.
+void meck_alarm_haptic_begin();
+void meck_alarm_haptic_buzz();
+void meck_alarm_haptic_stop();
+#endif
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -56,6 +64,17 @@ void meck_audio_codec_init();
 #define ALARM_SNOOZE_MS     300000  // 5 minutes snooze
 #define ALARM_CHECK_INTERVAL_MS   10000   // Check alarms every 10 seconds
 #define ALARM_FIRE_COOLDOWN_S     90      // Don't re-fire same alarm within 90s
+
+#if defined(LilyGo_TDeck_Pro_Max)
+// Silent (vibrate) alarm. The chosen-sound slot stores this one-byte sentinel
+// instead of a filename; 0x01 can never be the first byte of a real filename.
+// Same value as NotifSounds' marker, kept local so this header need not pull in
+// NotifSounds.h.
+#define ALARM_VIBRATE_MARKER   "\x01"
+#define ALARM_VIBRATE_GROUP    3      // buzzes per group
+#define ALARM_VIBRATE_BUZZ_MS  1200   // spacing between buzz starts (~1s effect + margin)
+#define ALARM_VIBRATE_PAUSE_MS 4000   // pause after each group before repeating
+#endif
 
 // Config file magic + version for forward compatibility
 #define ALARM_CFG_MAGIC     0x4D4B414C  // "MKAL"
@@ -144,6 +163,33 @@ private:
   bool   _alarmAudioActive;  // True when alarm is driving the Audio object
   String _resolvedSoundPath; // Full path of currently playing alarm sound
   int    _restartAttempts;   // Retry counter for audio restart loop
+
+  // Synthetic rows shown above the file list in the sound picker.
+  // On MAX this is the "Buzzer (vibrate)" row; elsewhere there are none.
+#if defined(LilyGo_TDeck_Pro_Max)
+  static const int kVibrateRows = 1;
+#else
+  static const int kVibrateRows = 0;
+#endif
+
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Silent (vibrate) alarm cadence state
+  bool          _vibrating;
+  int           _vibBuzzCount;   // Buzzes fired in the current group (0..GROUP)
+  unsigned long _vibNextMs;      // millis() of the next buzz/pause transition
+
+  static bool slotIsVibrate(const AlarmSlot& s) {
+    return (uint8_t)s.sound[0] == (uint8_t)ALARM_VIBRATE_MARKER[0];
+  }
+
+  void startVibrate() {
+    meck_alarm_haptic_begin();
+    _vibrating = true;
+    meck_alarm_haptic_buzz();
+    _vibBuzzCount = 1;
+    _vibNextMs = millis() + ALARM_VIBRATE_BUZZ_MS;
+  }
+#endif
 
   // ---- Day-of-week helpers ----
 
@@ -371,6 +417,13 @@ private:
       _restartAttempts = 0;
       Serial.println("ALARM: Audio stopped");
     }
+#if defined(LilyGo_TDeck_Pro_Max)
+    if (_vibrating) {
+      _vibrating = false;
+      _vibBuzzCount = 0;
+      meck_alarm_haptic_stop();
+    }
+#endif
   }
 
   // ---- Standard footer (matching all Meck screens) ----
@@ -507,6 +560,12 @@ private:
     snprintf(fields[FIELD_VOLUME].value, 32, "%d", _editCopy.volume);
     fields[FIELD_VOLUME].label = "Volume";
 
+#if defined(LilyGo_TDeck_Pro_Max)
+    if (slotIsVibrate(_editCopy)) {
+      strncpy(fields[FIELD_SOUND].value, "Buzzer (vibrate)", 31);
+      fields[FIELD_SOUND].value[31] = '\0';
+    } else
+#endif
     if (_editCopy.sound[0] != '\0') {
       char sndDisplay[28];
       strncpy(sndDisplay, _editCopy.sound, 27);
@@ -600,7 +659,7 @@ private:
 
     display.setColor(DisplayDriver::LIGHT);
 
-    if (_soundFiles.empty()) {
+    if (_soundFiles.empty() && kVibrateRows == 0) {
       display.setTextSize(0);
       display.setCursor(0, 20);
       display.print("No .mp3 files found.");
@@ -617,11 +676,12 @@ private:
     int listTop = 13;
     int listBottom = display.height() - 14;
     int visibleItems = (listBottom - listTop) / itemHeight;
+    int totalItems = kVibrateRows + (int)_soundFiles.size();
 
     if (_soundSelected < _soundScroll) _soundScroll = _soundSelected;
     if (_soundSelected >= _soundScroll + visibleItems) _soundScroll = _soundSelected - visibleItems + 1;
 
-    for (int i = 0; i < visibleItems && (_soundScroll + i) < (int)_soundFiles.size(); i++) {
+    for (int i = 0; i < visibleItems && (_soundScroll + i) < totalItems; i++) {
       int idx = _soundScroll + i;
       int y = listTop + i * itemHeight;
 
@@ -633,10 +693,15 @@ private:
         display.setColor(DisplayDriver::LIGHT);
       }
 
-      // Display filename without extension
-      String displayName = _soundFiles[idx];
-      int dot = displayName.lastIndexOf('.');
-      if (dot > 0) displayName = displayName.substring(0, dot);
+      String displayName;
+      if (kVibrateRows && idx == 0) {
+        displayName = "Buzzer (vibrate)";
+      } else {
+        // Display filename without extension
+        displayName = _soundFiles[idx - kVibrateRows];
+        int dot = displayName.lastIndexOf('.');
+        if (dot > 0) displayName = displayName.substring(0, dot);
+      }
       // Truncate if too long
       if (displayName.length() > 34) displayName = displayName.substring(0, 34);
 
@@ -669,6 +734,12 @@ private:
     display.drawTextCentered(display.width() / 2, 34, label);
 
     // Sound name
+#if defined(LilyGo_TDeck_Pro_Max)
+    if (slotIsVibrate(slot)) {
+      display.setTextSize(0);
+      display.drawTextCentered(display.width() / 2, 48, "Buzzer (vibrate)");
+    } else
+#endif
     if (slot.sound[0] != '\0') {
       display.setTextSize(0);
       char sndDisplay[24];
@@ -807,10 +878,15 @@ private:
           scanSoundFiles();
           _soundSelected = 0;
           _soundScroll = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+          if (slotIsVibrate(_editCopy)) {
+            _soundSelected = 0;
+          } else
+#endif
           if (_editCopy.sound[0] != '\0') {
             for (int i = 0; i < (int)_soundFiles.size(); i++) {
               if (_soundFiles[i] == String(_editCopy.sound)) {
-                _soundSelected = i;
+                _soundSelected = kVibrateRows + i;
                 break;
               }
             }
@@ -836,10 +912,15 @@ private:
         scanSoundFiles();
         _soundSelected = 0;
         _soundScroll = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+        if (slotIsVibrate(_editCopy)) {
+          _soundSelected = 0;
+        } else
+#endif
         if (_editCopy.sound[0] != '\0') {
           for (int i = 0; i < (int)_soundFiles.size(); i++) {
             if (_soundFiles[i] == String(_editCopy.sound)) {
-              _soundSelected = i;
+              _soundSelected = kVibrateRows + i;
               break;
             }
           }
@@ -873,15 +954,25 @@ private:
       return true;
     }
     if (c == 's' || c == 0xF1) {
-      if (_soundSelected < (int)_soundFiles.size() - 1) _soundSelected++;
+      if (_soundSelected < kVibrateRows + (int)_soundFiles.size() - 1) _soundSelected++;
       return true;
     }
 
     // Enter - pick sound
     if (c == '\r' || c == '\n') {
-      if (!_soundFiles.empty() && _soundSelected < (int)_soundFiles.size()) {
-        strncpy(_editCopy.sound, _soundFiles[_soundSelected].c_str(), ALARM_SOUND_MAX - 1);
+#if defined(LilyGo_TDeck_Pro_Max)
+      if (_soundSelected == 0) {
+        // Synthetic "Buzzer (vibrate)" row
+        strncpy(_editCopy.sound, ALARM_VIBRATE_MARKER, ALARM_SOUND_MAX - 1);
         _editCopy.sound[ALARM_SOUND_MAX - 1] = '\0';
+      } else
+#endif
+      {
+        int fileIdx = _soundSelected - kVibrateRows;
+        if (fileIdx >= 0 && fileIdx < (int)_soundFiles.size()) {
+          strncpy(_editCopy.sound, _soundFiles[fileIdx].c_str(), ALARM_SOUND_MAX - 1);
+          _editCopy.sound[ALARM_SOUND_MAX - 1] = '\0';
+        }
       }
       _mode = EDIT_ALARM;
       return true;
@@ -936,6 +1027,11 @@ public:
     _alarmAudioActive = false;
     _resolvedSoundPath = "";
     _restartAttempts = 0;
+#if defined(LilyGo_TDeck_Pro_Max)
+    _vibrating = false;
+    _vibBuzzCount = 0;
+    _vibNextMs = 0;
+#endif
     memset(_lastFiredEpoch, 0, sizeof(_lastFiredEpoch));
     memset(&_editCopy, 0, sizeof(_editCopy));
     loadConfig();
@@ -1023,7 +1119,14 @@ public:
     _ringingStart = millis();
     _lastFiredEpoch[slotIdx] = millis() / 1000;  // Approximate — replaced by RTC below
     _mode = RINGING;
-    startAlarmAudio(slotIdx);
+#if defined(LilyGo_TDeck_Pro_Max)
+    if (slotIsVibrate(_config.slots[slotIdx])) {
+      startVibrate();
+    } else
+#endif
+    {
+      startAlarmAudio(slotIdx);
+    }
     Serial.printf("ALARM: Firing alarm %d (%02d:%02d)\n",
                   slotIdx + 1, _config.slots[slotIdx].hour, _config.slots[slotIdx].minute);
   }
@@ -1038,6 +1141,28 @@ public:
   // ---- Audio tick (called from main loop for alarm playback) ----
 
   void alarmAudioTick() {
+#if defined(LilyGo_TDeck_Pro_Max)
+    if (_vibrating) {
+      // Auto-timeout (mirrors the audio path's 5-minute auto-dismiss)
+      if (_ringing && (millis() - _ringingStart > ALARM_RINGING_TIMEOUT_MS)) {
+        dismiss();
+        return;
+      }
+      // ALARM_VIBRATE_GROUP buzzes spaced ALARM_VIBRATE_BUZZ_MS apart, then a
+      // ALARM_VIBRATE_PAUSE_MS pause, repeating until dismiss/snooze/timeout.
+      if ((long)(millis() - _vibNextMs) >= 0) {
+        meck_alarm_haptic_buzz();
+        _vibBuzzCount++;
+        if (_vibBuzzCount >= ALARM_VIBRATE_GROUP) {
+          _vibBuzzCount = 0;
+          _vibNextMs = millis() + ALARM_VIBRATE_PAUSE_MS;
+        } else {
+          _vibNextMs = millis() + ALARM_VIBRATE_BUZZ_MS;
+        }
+      }
+      return;
+    }
+#endif
     if (!_audio || !_alarmAudioActive) return;
 
     _audio->loop();

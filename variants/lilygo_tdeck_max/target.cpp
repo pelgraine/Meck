@@ -6,6 +6,10 @@
   #include "ES8311.h"   // MAX: native ES8311 codec init (Arduino Wire)
 #endif
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include "DRV2605Haptic.h"   // MAX: haptic motor for the silent (vibrate) alarm
+#endif
+
 TDeckProMaxBoard board;
 
 #if defined(P_LORA_SCLK)
@@ -108,5 +112,34 @@ void meck_audio_route_amp() {
 void meck_audio_codec_init() {
   static bool es8311_ready = false;
   if (!es8311_ready) es8311_ready = es8311_init_44100_16bit();
+}
+#endif
+
+#if defined(LilyGo_TDeck_Pro_Max)
+// Haptic shims for the silent (vibrate) alarm. The alarm UI header cannot see
+// the board object or the DRV2605 driver (same reason the audio shims above
+// exist), so these free functions wrap them. The DRV2605 motor supply is gated
+// by the XL9555 (motorEnable) and MUST be on before begin() or the device will
+// not ACK. This haptic object is independent of the one UITask uses for the
+// "Buzzer (vibrate)" notification channels.
+static DRV2605Haptic s_alarm_haptic;
+static bool s_alarm_haptic_ready = false;
+
+// Power the motor rail and bring the DRV2605 up. Re-running is harmless: the
+// XL9555 write latches and begin() re-applies the same register sequence.
+void meck_alarm_haptic_begin() {
+  board.motorEnable();
+  delay(10);                                   // let the motor rail settle before I2C
+  s_alarm_haptic_ready = s_alarm_haptic.begin();
+}
+
+// Fire one strong buzz (effect 14 ~1s, matching the notification path).
+void meck_alarm_haptic_buzz() {
+  if (s_alarm_haptic_ready) s_alarm_haptic.buzz(14);
+}
+
+// Cut the motor rail when the alarm stops/snoozes/dismisses.
+void meck_alarm_haptic_stop() {
+  board.motorDisable();
 }
 #endif
