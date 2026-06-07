@@ -1085,6 +1085,11 @@ static uint32_t _atoi(const char* sp) {
     #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #endif
   UITask ui_task(&board, &serial_interface);
+  #ifdef MECK_AUDIO_VARIANT
+  // Lets the alarm ringing screen (which only forward-declares UITask) query
+  // the lock state without pulling in the full UITask header.
+  bool meck_alarm_is_locked() { return ui_task.isLocked(); }
+  #endif
 #endif
 
 StdRNG fast_rng;

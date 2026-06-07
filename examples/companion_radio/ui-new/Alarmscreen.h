@@ -53,6 +53,10 @@ void meck_alarm_haptic_buzz();
 void meck_alarm_haptic_stop();
 #endif
 
+// Lock-state query, defined in main.cpp. This UI header only forward-declares
+// UITask, so it cannot call _task->isLocked() directly; the shim bridges it.
+bool meck_alarm_is_locked();
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -753,11 +757,16 @@ private:
     // Dismiss instruction — large and obvious
     display.setColor(DisplayDriver::GREEN);
     display.setTextSize(1);
-    display.drawTextCentered(display.width() / 2, 64, "ANY KEY: Dismiss");
+    if (meck_alarm_is_locked()) {
+      // Keys are ignored while locked; the user unlocks with the button first.
+      display.drawTextCentered(display.width() / 2, 64, "Unlock to dismiss");
+    } else {
+      display.drawTextCentered(display.width() / 2, 64, "ANY KEY: Dismiss");
 
-    display.setTextSize(0);
-    display.setColor(DisplayDriver::LIGHT);
-    display.drawTextCentered(display.width() / 2, 80, "Z: Snooze 5 min");
+      display.setTextSize(0);
+      display.setColor(DisplayDriver::LIGHT);
+      display.drawTextCentered(display.width() / 2, 80, "Z: Snooze 5 min");
+    }
 
     // No footer in ringing mode — keep it clean and urgent
   }
