@@ -107,7 +107,7 @@ for (uint8_t a = 0x6A; a <= 0x6B; a++) {
   #if HAS_BQ27220
     uint16_t voltage = getBattMilliVolts();
     MESH_DEBUG_PRINTLN("  Battery voltage: %d mV", voltage);
-    configureFuelGauge();   // sets 1500 mAh (MAX design capacity)
+    configureFuelGauge();   // sets 1400 mAh (MAX design capacity)
   #endif
 
   // ------ Step 11: Early low-voltage protection ------

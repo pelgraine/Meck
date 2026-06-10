@@ -239,8 +239,8 @@
 #define BQ27220_I2C_ADDR 0x55
 #define BQ27220_I2C_SDA I2C_SDA
 #define BQ27220_I2C_SCL I2C_SCL
-#define BQ27220_DESIGN_CAPACITY 1500    // MAX: 1500 mAh (was 1400 on V1.1)
-#define BQ27220_DESIGN_CAPACITY_MAH 1500 // Alias used by TDeckBoard.h
+#define BQ27220_DESIGN_CAPACITY 1400    // 
+#define BQ27220_DESIGN_CAPACITY_MAH 1400 // Alias used by TDeckBoard.h
 
 #define HAS_PPM 1
 // This board uses the SY6970 charger @ 0x6A (newer revision -- confirmed by I2C
