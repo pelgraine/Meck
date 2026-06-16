@@ -23,8 +23,13 @@ static const arm_cfft_instance_f32* arm_fft_instance2ram(const arm_cfft_instance
 
     if (out) {
         memcpy(out,in,sizeof(arm_cfft_instance_f32));
-        out->pBitRevTable = malloc(out->bitRevLength * sizeof(uint16_t));
-        out->pTwiddle = malloc(out->fftLen * sizeof(float32_t));
+        if (out->bitRevLength > SIZE_MAX / sizeof(uint16_t) ||
+            out->fftLen > SIZE_MAX / sizeof(float32_t)) {
+            free(out);
+            return NULL;
+        }
+        out->pBitRevTable = calloc(out->bitRevLength, sizeof(uint16_t));
+        out->pTwiddle = calloc(out->fftLen, sizeof(float32_t));
         memcpy((void*)out->pBitRevTable,in->pBitRevTable,out->bitRevLength * sizeof(uint16_t));
         memcpy((void*)out->pTwiddle,in->pTwiddle,out->fftLen * sizeof(float32_t));
     }
