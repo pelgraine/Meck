@@ -4764,6 +4764,14 @@ void handleKeyboardInput() {
     }
     #endif
 
+    // Shift+Backspace on the WiFi network picker: exit (same as Q)
+    #ifdef MECK_WIFI_COMPANION
+    if (settings->isInWifiNetworkSelect() && key == '\b' && keyboard.wasShiftConsumed()) {
+      ui_task.injectKey('q');
+      return;
+    }
+    #endif
+
     // All other keys -> settings screen via injectKey
     ui_task.injectKey(key);
 

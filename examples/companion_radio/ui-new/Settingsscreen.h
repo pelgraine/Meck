@@ -869,6 +869,12 @@ public:
   }
   void wifiPasswordBack() { _wifiPhase = WIFI_PHASE_SELECT; }
 
+  // True while the WiFi network picker is showing; UITask uses this so
+  // Shift+Backspace can exit the picker (same as Q).
+  bool isInWifiNetworkSelect() const {
+    return _editMode == EDIT_WIFI && _wifiPhase == WIFI_PHASE_SELECT;
+  }
+
 #if defined(LilyGo_T5S3_EPaper_Pro)
   // T5S3 VKB integration — UITask polls this to open the virtual keyboard
   // when settings enters WiFi password phase (no physical keyboard available).
