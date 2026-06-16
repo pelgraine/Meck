@@ -861,6 +861,14 @@ public:
     }
   }
 
+  // Pro physical-keyboard back-out: UITask uses these to send the WiFi
+  // password phase back to SSID selection on Shift+Backspace (so 'q'/'Q'
+  // remain literal password characters).
+  bool isInWifiPasswordEntry() const {
+    return _editMode == EDIT_WIFI && _wifiPhase == WIFI_PHASE_PASSWORD;
+  }
+  void wifiPasswordBack() { _wifiPhase = WIFI_PHASE_SELECT; }
+
 #if defined(LilyGo_T5S3_EPaper_Pro)
   // T5S3 VKB integration — UITask polls this to open the virtual keyboard
   // when settings enters WiFi password phase (no physical keyboard available).
@@ -2872,7 +2880,7 @@ public:
           display.print("W/S:Pick Enter:Sel R:Rescan");
         }
       } else if (_wifiPhase == WIFI_PHASE_PASSWORD) {
-        display.print("Type, Enter:Connect Q:Bck");
+        display.print("Enter:Connect Sh+Del:Exit");
       } else {
         display.print("Please wait...");
       }
@@ -3186,11 +3194,6 @@ public:
             // Go back to SSID selection so user can retry
             _wifiPhase = WIFI_PHASE_SELECT;
           }
-          return true;
-        }
-        if (c == 'q' || c == 'Q') {
-          // Back to SSID selection
-          _wifiPhase = WIFI_PHASE_SELECT;
           return true;
         }
         if (c == '\b') {

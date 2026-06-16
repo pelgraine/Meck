@@ -77,7 +77,7 @@
   // Notes mode state
   static bool notesMode = false;
 
-  // Audiobook player â€” Audio object is heap-allocated on first use to avoid
+  // Audiobook player -- Audio object is heap-allocated on first use to avoid
   // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
   // Audiobook player — Audio object is heap-allocated on first use to avoid
   // consuming ~40KB of DMA/decode buffers at boot (starves BLE stack).
@@ -1993,7 +1993,7 @@ void setup() {
   }
   MESH_DEBUG_PRINTLN("setup() - radio_init() done");
 
-  // CPU frequency scaling â€” drop to 80 MHz for idle mesh listening
+  // CPU frequency scaling -- drop to 80 MHz for idle mesh listening
   cpuPower.begin();
 
   MESH_DEBUG_PRINTLN("setup() - about to call fast_rng.begin()");
@@ -2117,7 +2117,7 @@ void setup() {
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
   // ---------------------------------------------------------------------------
-  // Early SD card init ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â needed BEFORE the_mesh.begin() so we can restore
+  // Early SD card init -- needed BEFORE the_mesh.begin() so we can restore
   // settings from a previous firmware flash.  The display SPI bus is already
   // up (display.begin() ran earlier), so SD can share it now.
   // ---------------------------------------------------------------------------
@@ -4533,11 +4533,11 @@ void handleKeyboardInput() {
     if (key == 'q') {
       if (abPlayer->isBookOpen()) {
         if (abPlayer->isAudioActive()) {
-          // Audio is playing â€” leave screen, audio continues via audioTick()
+          // Audio is playing -- leave screen, audio continues via audioTick()
           Serial.println("Leaving audiobook player (audio continues in background)");
           ui_task.gotoHomeScreen();
         } else {
-          // Paused or stopped â€” close book, show file list
+          // Paused or stopped -- close book, show file list
           abPlayer->closeCurrentBook();
           Serial.println("Closed audiobook (was paused/stopped)");
           // Stay on audiobook screen showing file list
@@ -4637,14 +4637,6 @@ void handleKeyboardInput() {
       if (key == 'A') { notes->moveCursorLeft();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
       if (key == 'S') { notes->moveCursorDown();   composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
       if (key == 'D') { notes->moveCursorRight();  composeNeedsRefresh = true; lastComposeKeystroke = millis(); return; }
-
-      // Q when buffer is empty or unchanged = exit (nothing to lose)
-      if (key == 'q' && (notes->isEmpty() || !notes->isDirty())) {
-        Serial.println("Notes: Q exit (nothing to save)");
-        notes->discardAndExit();
-        ui_task.forceRefresh();
-        return;
-      }
 
       // Enter = newline (pass through with debounce)
       if (key == '\r') {
@@ -4763,7 +4755,16 @@ void handleKeyboardInput() {
       return;
     }
 
-    // All other keys Ã¢â€ â€™ settings screen via injectKey
+    // Shift+Backspace during WiFi password entry: back to SSID selection
+    #ifdef MECK_WIFI_COMPANION
+    if (settings->isInWifiPasswordEntry() && key == '\b' && keyboard.wasShiftConsumed()) {
+      settings->wifiPasswordBack();
+      ui_task.forceRefresh();
+      return;
+    }
+    #endif
+
+    // All other keys -> settings screen via injectKey
     ui_task.injectKey(key);
 
     // Check for export/import requests from the settings screen
