@@ -4306,7 +4306,8 @@ void handleKeyboardInput() {
   if (key == KB_KEY_KBD_BACKLIGHT) {
     static bool kbdBacklightOn = false;
     kbdBacklightOn = !kbdBacklightOn;
-    analogWrite(KB_BL_PIN, kbdBacklightOn ? 8 : 0);
+    uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
+    analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
     Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
     return;
   }

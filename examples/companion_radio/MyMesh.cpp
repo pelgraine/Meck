@@ -3724,7 +3724,15 @@ void MyMesh::loop() {
   }
 
 #ifdef DISPLAY_CLASS
+#if defined(BLE_PIN_CODE) || defined(MECK_WIFI_COMPANION) || defined(WIFI_SSID) || defined(SERIAL_RX)
   if (_ui) _ui->setHasConnection(_serial->isConnected());
+#else
+  // Standalone build: no companion app. ArduinoSerialInterface::isConnected()
+  // is hardcoded to return true, which would make hasConnection() permanently
+  // true here -- marking every received message read on arrival and preventing
+  // the unread counter (and DM counter / new-message screen wake) from updating.
+  if (_ui) _ui->setHasConnection(false);
+#endif
 #endif
 }
 

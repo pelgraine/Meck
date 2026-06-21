@@ -141,6 +141,7 @@ enum SettingsRowType : uint8_t {
   ROW_TX_POWER,       // TX power (1-20 dBm)
   ROW_UTC_OFFSET,     // UTC offset (-12 to +14)
   ROW_BACKLIGHT_BRIGHTNESS,  // Backlight brightness % the heart button toggles to (MAX only)
+  ROW_KB_BACKLIGHT,   // Keyboard LED brightness % (MAX only)
   ROW_MSG_NOTIFY,     // Keyboard flash on new msg toggle
   ROW_DARK_MODE,      // Dark mode toggle (inverted display)
   ROW_LARGE_FONT,     // Font size toggle: 0=tiny (default), 1=larger
@@ -496,6 +497,7 @@ private:
       addRow(ROW_UTC_OFFSET);
 #if defined(LilyGo_TDeck_Pro_Max)
       addRow(ROW_BACKLIGHT_BRIGHTNESS);
+      addRow(ROW_KB_BACKLIGHT);
 #endif
       addRow(ROW_MSG_NOTIFY);
 #if HAS_GPS
@@ -1914,6 +1916,15 @@ public:
             snprintf(tmp, sizeof(tmp), "Brightness: %d%% " EDIT_ADJ_HINT, _editInt);
           } else {
             snprintf(tmp, sizeof(tmp), "Backlight Brightness: %d%%", _prefs->backlight_brightness_pct);
+          }
+          display.print(tmp);
+          break;
+
+        case ROW_KB_BACKLIGHT:
+          if (editing && _editMode == EDIT_NUMBER) {
+            snprintf(tmp, sizeof(tmp), "Keyboard LED: %d%% " EDIT_ADJ_HINT, _editInt);
+          } else {
+            snprintf(tmp, sizeof(tmp), "Keyboard LED: %d%%", _prefs->kb_backlight_pct);
           }
           display.print(tmp);
           break;
@@ -3459,6 +3470,7 @@ public:
           case ROW_TX_POWER: if (_editInt < MAX_LORA_TX_POWER) _editInt++; break;
           case ROW_UTC_OFFSET: if (_editInt < 14) _editInt++; break;
           case ROW_BACKLIGHT_BRIGHTNESS: if (_editInt < 100) { _editInt += 5; if (_editInt > 100) _editInt = 100; } break;
+          case ROW_KB_BACKLIGHT: if (_editInt < 100) { _editInt += 5; if (_editInt > 100) _editInt = 100; } break;
           case ROW_PATH_HASH_SIZE: if (_editInt < 3) _editInt++; break;
           default: break;
         }
@@ -3477,6 +3489,7 @@ public:
           case ROW_TX_POWER: if (_editInt > 1)  _editInt--; break;
           case ROW_UTC_OFFSET: if (_editInt > -12) _editInt--; break;
           case ROW_BACKLIGHT_BRIGHTNESS: if (_editInt > 5) { _editInt -= 5; if (_editInt < 5) _editInt = 5; } break;
+          case ROW_KB_BACKLIGHT: if (_editInt > 5) { _editInt -= 5; if (_editInt < 5) _editInt = 5; } break;
           case ROW_PATH_HASH_SIZE: if (_editInt > 1) _editInt--; break;
           default: break;
         }
@@ -3507,6 +3520,10 @@ public:
             break;
           case ROW_BACKLIGHT_BRIGHTNESS:
             _prefs->backlight_brightness_pct = (uint8_t)constrain(_editInt, 5, 100);
+            the_mesh.savePrefs();
+            break;
+          case ROW_KB_BACKLIGHT:
+            _prefs->kb_backlight_pct = (uint8_t)constrain(_editInt, 5, 100);
             the_mesh.savePrefs();
             break;
           case ROW_PATH_HASH_SIZE:
@@ -3597,6 +3614,9 @@ public:
           break;
         case ROW_BACKLIGHT_BRIGHTNESS:
           startEditInt(_prefs->backlight_brightness_pct);
+          break;
+        case ROW_KB_BACKLIGHT:
+          startEditInt(_prefs->kb_backlight_pct);
           break;
         case ROW_MSG_NOTIFY:
           _prefs->kb_flash_notify = _prefs->kb_flash_notify ? 0 : 1;

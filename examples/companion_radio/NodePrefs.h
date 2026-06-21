@@ -74,6 +74,11 @@ struct NodePrefs {  // persisted to file
   // 0 = unset/legacy; treated as the default 100 on load.
   uint8_t backlight_brightness_pct; // 5..100, default 100
 
+  // --- Keyboard LED brightness, T-Deck Pro MAX only ---
+  // Percentage (5..100) the both-shifts toggle turns the keyboard backlight on to.
+  // Takes effect on next toggle. Default 50.
+  uint8_t kb_backlight_pct;        // 5..100, default 50
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
   // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.
