@@ -709,8 +709,30 @@
 // =============================================================================
 
 // Define MECK_TOUCH_ENABLED for any platform with touch support
-#if defined(LilyGo_T5S3_EPaper_Pro) || (defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN))
+#if defined(LilyGo_T5S3_EPaper_Pro) || (defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)) || defined(LILYGO_TWATCH_S3_PLUS)
   #define MECK_TOUCH_ENABLED 1
+#endif
+
+// --- T-Watch S3 Plus: screen headers for the touch UI ---
+// The watch needs the same concrete screen types as the gesture machine casts
+// to, but none of the T5S3/T-Deck hardware baggage (GT911, SD, TCA8418 keyboard).
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  #include "TextReaderScreen.h"
+  #include "NotesScreen.h"
+  #include "ContactsScreen.h"
+  #include "ChannelScreen.h"
+  #include "ChannelPickerScreen.h"
+  #include "MeckExport.h"
+  #include "MeckImport.h"
+  #include "SettingsScreen.h"
+  #include "RepeaterAdminScreen.h"
+  #include "DiscoveryScreen.h"
+  #include "LastHeardScreen.h"
+  #include "PathEditorScreen.h"
+  #include "Tracescreen.h"
+  #include "GamesMenuScreen.h"
+  #include "SnakeScreen.h"
+  #include "MinesweeperScreen.h"
 #endif
 
 // --- T5S3: GT911 capacitive touch driver ---
@@ -879,6 +901,8 @@
   #define TOUCH_LONG_PRESS_MS  750
   #if defined(LilyGo_T5S3_EPaper_Pro)
     #define TOUCH_SWIPE_THRESHOLD 60   // T5S3: 960×540 — 60px ≈ 6% of width
+  #elif defined(LILYGO_TWATCH_S3_PLUS)
+    #define TOUCH_SWIPE_THRESHOLD 16   // Watch: getTouch() returns 0..119 (240px/UI_ZOOM); 16 is ~13% of width
   #else
     #define TOUCH_SWIPE_THRESHOLD 30   // T-Deck Pro: 240×320 — 30px ≈ 12.5% of width
   #endif
@@ -915,6 +939,18 @@
     }
   #elif defined(LilyGo_TDeck_Pro)
     return touchInput.getPoint(*outX, *outY);
+  #elif defined(LILYGO_TWATCH_S3_PLUS)
+    {
+      // FT6336U is read through the LovyanGFX panel backing the display.
+      // display.getTouch() returns coordinates already divided by UI_ZOOM.
+      int tx, ty;
+      if (display.getTouch(&tx, &ty)) {
+        *outX = (int16_t)tx;
+        *outY = (int16_t)ty;
+        return true;
+      }
+      return false;
+    }
   #else
     return false;
   #endif
@@ -928,6 +964,11 @@
   #elif defined(LilyGo_TDeck_Pro)
     float sx = (float)EINK_WIDTH / 128.0f;   // 240/128 = 1.875
     float sy = (float)EINK_HEIGHT / 128.0f;   // 320/128 = 2.5
+  #elif defined(LILYGO_TWATCH_S3_PLUS)
+    // display.getTouch() already divides by UI_ZOOM, so px/py span the
+    // 240/UI_ZOOM logical canvas (0..119 at UI_ZOOM=2). Scale to 128 virtual.
+    float sx = (240.0f / UI_ZOOM) / 128.0f;
+    float sy = (240.0f / UI_ZOOM) / 128.0f;
   #endif
     vx = (int)(px / sx);
   #if defined(LilyGo_TDeck_Pro)
@@ -1081,7 +1122,7 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+  #if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
     #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #endif
   UITask ui_task(&board, &serial_interface);
@@ -1683,6 +1724,35 @@ static void lastHeardToggleContact() {
       return 'q';
     }
 
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch FIRST page: long-press on a coloured tile opens its screen.
+    // The grid renders in the logical (display.width()) space; touchToVirtual
+    // yields 128-space coords, so scale them back to render space to hit-test.
+    if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
+      int vx, vy;
+      touchToVirtual(x, y, vx, vy);
+      const int W = display.width();                       // logical width (120)
+      int rvx = vx * W / 128;
+      int rvy = vy * W / 128;
+      const int cols = 2, rows = 3;
+      const int tileW = 56, tileH = 24, gapX = 4, gapY = 3;
+      const int gridW = tileW * cols + gapX * (cols - 1);  // 116
+      const int gridX = (W - gridW) / 2;                   // 2
+      int gridY = ui_task.getTileGridVY();
+      if (rvx >= gridX && rvx < gridX + gridW &&
+          rvy >= gridY && rvy < gridY + rows * (tileH + gapY)) {
+        int col = (rvx - gridX) / (tileW + gapX);  if (col > 1) col = 1;
+        int row = (rvy - gridY) / (tileH + gapY);  if (row > 2) row = 2;
+        if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
+        if (row == 0 && col == 1) { ui_task.gotoContactsScreen();      return 0; }
+        if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
+        if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
+        if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
+        // row 2 col 1 = Maps -- TODO subscreen not yet built; no-op for now.
+      }
+      return 0;  // consume long-press on the tile page
+    }
+#endif
     // Home screen: long press = activate current page action
     // (BLE toggle, send advert, hibernate, GPS toggle, etc.)
     if (ui_task.isOnHomeScreen()) {
@@ -2587,6 +2657,9 @@ void setup() {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
       #endif
+      #if defined(LILYGO_TWATCH_S3_PLUS)
+        board.gpsPowerOn();   // GPS power is the AXP2101 BLDO1 rail
+      #endif
 #if defined(LilyGo_TDeck_Pro_Max)
       // Speed up / improve the MAX GPS fix: enable multi-constellation
       // (GPS + GLONASS + BeiDou) and EASY predicted ephemeris (warm/hot starts
@@ -2603,6 +2676,9 @@ void setup() {
       #endif
       #if defined(LilyGo_TDeck_Pro_Max)
         board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+      #endif
+      #if defined(LILYGO_TWATCH_S3_PLUS)
+        board.gpsPowerOff();  // GPS power is the AXP2101 BLDO1 rail
       #endif
       sensors.setSettingValue("gps", "0");
     }
@@ -2779,7 +2855,7 @@ void loop() {
 
   // Map screen: periodically update own GPS position and contact markers
   #ifdef DISPLAY_CLASS
-  #if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+  #if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
     if (millis() - lastMapUpdate > 30000) {  // Every 30 seconds

@@ -16,14 +16,14 @@
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+#if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
   #include "MapScreen.h"
 #endif
 #include "target.h"
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LILYGO_TWATCH_S3_PLUS)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -131,7 +131,11 @@ public:
 
     // version info
     display.setColor(DisplayDriver::LIGHT);
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    display.setTextSize(1);  // 240x240: size 2 overflows the 120px virtual width and wraps
+#else
     display.setTextSize(2);
+#endif
     display.drawTextCentered(display.width()/2, 22, _version_info);
 
     display.setTextSize(1);
@@ -402,11 +406,29 @@ public:
     #define HOME_HDR_Y 1
 #elif defined(LILYGO_TECHO_LITE)
     #define HOME_HDR_Y 0
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+    #define HOME_HDR_Y 1
 #else
     #define HOME_HDR_Y -3
 #endif
     display.setCursor(0, HOME_HDR_Y);
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: render the name in a very small font so long names fit beside the
+    // centred clock instead of overrunning it. Colour was set above (GREEN).
+    ((LGFXDisplay*)&display)->printSmallFont(0, HOME_HDR_Y, filtered_name);
+#else
     display.print(filtered_name);
+#endif
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // P4-style compact MSG count, stacked under the node name (top-left).
+    {
+      char msgbuf[16];
+      sprintf(msgbuf, "MSG: %d", _task->getUnreadMsgCount());
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, HOME_HDR_Y + 9);
+      display.print(msgbuf);
+    }
+#endif
 
     // battery voltage + status icons
 #ifdef MECK_AUDIO_VARIANT
@@ -453,6 +475,8 @@ public:
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+    int y = 18;  // below the stacked name + MSG header
 #else
     int y = 14;
 #endif
@@ -466,7 +490,7 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
       _task->setHomeShowingTiles(true);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -477,13 +501,17 @@ public:
   #endif
 #elif defined(LILYGO_TECHO_LITE)
       int y = 18;  // Below page dots
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      int y = 21;  // tiles start below header (MSG shown small in header)
 #else
       int y = 20;
 #endif
+#if !defined(LILYGO_TWATCH_S3_PLUS)
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
       display.drawTextCentered(display.width() / 2, y, tmp);
+#endif
 #if defined(LILYGO_TECHO_LITE)
       y += 12;  // Compact
 #elif defined(LilyGo_TDeck_Pro_Max)
@@ -599,6 +627,47 @@ public:
         display.drawTextCentered(display.width() / 2, display.height() - 8, "Tap tile to open");
       }
       display.setTextSize(1);
+
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      // ----- T-Watch S3 Plus: P4-style coloured tile grid (3x2) -----
+      // Border colours approximate the Meck P4 home palette (RGB565): a white
+      // icon + label on a dark navy fill, each tile a distinct bright border.
+      // setRawColor() pushes exact RGB565 past the Color enum + watch grey remap.
+      {
+        struct Tile { const uint8_t* icon; const char* label; uint16_t color; };
+        const Tile tiles[3][2] = {
+          { {icon_envelope, "Messages", 0x0CB1}, {icon_people, "Contacts", 0xCAA0} },
+          { {icon_gear,     "Settings", 0x0560}, {icon_search, "Discover", 0xF81F} },
+          { {icon_trace,    "Trace",    0xF800}, {icon_map,    "Maps",     0x231D} },
+        };
+        const uint16_t TILE_FILL = 0x18C5;   // dark navy
+
+        const int cols = 2, rows = 3;
+        const int tileW = 56, tileH = 24, gapX = 4, gapY = 3;
+        const int gridW = tileW * cols + gapX * (cols - 1);
+        const int gridX = (display.width() - gridW) / 2;
+        const int gridY = y + 2;
+        _task->setTileGridVY(gridY);
+
+        LGFXDisplay* lcd = (LGFXDisplay*)&display;  // watch display is always LGFXDisplay
+        for (int row = 0; row < rows; row++) {
+          for (int col = 0; col < cols; col++) {
+            int tx = gridX + col * (tileW + gapX);
+            int ty = gridY + row * (tileH + gapY);
+            lcd->setRawColor(TILE_FILL);
+            lcd->fillRoundRect(tx, ty, tileW, tileH, 4);
+            lcd->setRawColor(tiles[row][col].color);
+            lcd->drawRoundRect(tx, ty, tileW, tileH, 4);
+            display.setColor(DisplayDriver::LIGHT);
+            int iconX = tx + (tileW - HOME_ICON_W) / 2;
+            int iconY = ty + 3;
+            display.drawXbm(iconX, iconY, tiles[row][col].icon, HOME_ICON_W, HOME_ICON_H);
+            display.setTextSize(_node_prefs->smallTextSize());
+            display.drawTextCentered(tx + tileW / 2, ty + 16, tiles[row][col].label);
+          }
+        }
+        display.setTextSize(1);
+      }
 
 #else
       // Non-T5S3: keyboard shortcut menu
@@ -786,6 +855,9 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, display.height() - 24,
                                "Tap here for full Last Heard list");
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      display.drawTextCentered(display.width() / 2, display.height() - 24,
+                               "Long Press: Full Last Heard List");
 #else
       display.drawTextCentered(display.width() / 2, display.height() - 24,
                                "H: Full Last Heard list");
@@ -844,6 +916,8 @@ public:
       display.setTextSize(1);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 80, "toggle: " PRESS_LABEL);
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
 #else
       display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
       display.drawTextCentered(display.width() / 2, 78, "or press Enter key");
@@ -897,6 +971,8 @@ public:
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 64, "advert: " PRESS_LABEL);
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
 #else
       display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
       display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
@@ -1478,7 +1554,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+#if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
   map_screen = new MapScreen(this);
 #else
   map_screen = nullptr;
@@ -3326,8 +3402,8 @@ void UITask::gotoWebReader() {
 
 #if HAS_GPS
 void UITask::gotoMapScreen() {
-  if (!map_screen) return;  // Not available on this platform (T-Echo Card)
-#if !defined(LILYGO_TECHO_CARD)
+  if (!map_screen) return;  // Not available on this platform (T-Echo Card, T-Watch)
+#if !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
   MapScreen* map = (MapScreen*)map_screen;
   if (_display != NULL) {
     map->enter(*_display);

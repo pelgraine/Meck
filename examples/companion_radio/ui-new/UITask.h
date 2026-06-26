@@ -34,7 +34,7 @@
   #include "AlarmScreen.h"
 #endif
 
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
   #include "VirtualKeyboard.h"
 #endif
 
@@ -112,7 +112,7 @@ class UITask : public AbstractUITask {
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
   int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
@@ -274,12 +274,12 @@ public:
   bool isOnSnakeScreen() const { return curr == snake_screen; }
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
   bool isVKBActive() const { return _vkbActive; }
   unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }

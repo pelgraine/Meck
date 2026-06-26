@@ -2426,6 +2426,10 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (strcmp(sp, "gps") == 0) {
           _prefs.gps_enabled = (np[0] == '1') ? 1 : 0;
           savePrefs();
+          #if defined(LILYGO_TWATCH_S3_PLUS)
+            // Apply the BLDO1 GPS rail live so the toggle takes effect now, no reboot
+            if (_prefs.gps_enabled) board.gpsPowerOn(); else board.gpsPowerOff();
+          #endif
         } else if (strcmp(sp, "gps_interval") == 0) {
           uint32_t interval_seconds = atoi(np);
           _prefs.gps_interval = constrain(interval_seconds, 0, 86400);
