@@ -484,7 +484,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
     } else {
-      display.print("Sh+Del:Bk A/D:Filter");
+      display.print("A/D:Filter");
       const char* right = "P:Path Ent:Sel";
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);

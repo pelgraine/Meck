@@ -791,7 +791,7 @@ public:
       display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
-      display.print("Sh+Del:Bck A/D:Ch");
+      display.print("Sh+Del:Bck");
       const char* rtInbox = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
       display.print(rtInbox);
@@ -1549,7 +1549,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Sh+Del:Bck A/D:Ch R:Rply");
+      display.print("Sh+Del:Bck R:Rply");
       const char* rightText = "Ent:New";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);

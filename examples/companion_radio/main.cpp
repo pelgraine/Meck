@@ -4483,9 +4483,9 @@ void handleKeyboardInput() {
       return;
     }
     
-    if (key == '\b') {
+    if (key == '\b' || key == KEY_CANCEL) {
       // Backspace - check if shift was recently pressed for cancel combo
-      if (keyboard.wasShiftRecentlyPressed(500)) {
+      if (key == KEY_CANCEL) {
         // Shift+Backspace = Cancel (works anytime)
         Serial.println("Compose: Shift+Backspace, cancelling...");
         bool wasDM = composeDM;

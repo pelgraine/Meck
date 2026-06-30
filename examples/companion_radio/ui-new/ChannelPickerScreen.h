@@ -413,7 +413,7 @@ public:
     if (_confirmDelete) {
       display.print("Enter:Yes Sh+Del:Cancel");
     } else {
-      display.print("W/S:Nav Sh+Del:Back");
+      display.print("W/S:Nav Sh+Del:X");
       const char* rt = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
       display.print(rt);

@@ -520,7 +520,7 @@ private:
       display.print(line2);
     }
 
-    drawFooter(display, "O:On/Off Enter:Edit", "Sh+Del:Back");
+    drawFooter(display, "O:On/Off Enter:Edit", "Sh+Del:X");
   }
 
   // ---- Render: Edit alarm ----
@@ -715,7 +715,7 @@ private:
 
     char countBuf[12];
     snprintf(countBuf, sizeof(countBuf), "%d files", (int)_soundFiles.size());
-    drawFooter(display, countBuf, "Enter:Pick Sh+Del:Back");
+    drawFooter(display, countBuf, "Enter:Pick Sh+Del:X");
   }
 
   // ---- Render: Ringing ----

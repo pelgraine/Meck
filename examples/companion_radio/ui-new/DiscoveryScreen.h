@@ -203,7 +203,7 @@ public:
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
-    display.print("Sh+Del:Bk F:Rescan");
+    display.print("Sh+Del:X F:Scan");
 
     const char* right = "Tap/Ent:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
