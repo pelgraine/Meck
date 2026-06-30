@@ -10,6 +10,10 @@ namespace mesh {
 
 #define MAX_RX_DELAY_MILLIS   32000  // 32 seconds
 
+// Rolling-window duty-cycle (token bucket) tuning -- see issue #20
+#define MIN_TX_BUDGET_RESERVE_MS   100    // min budget (ms) required before allowing the next TX
+#define MIN_TX_BUDGET_AIRTIME_DIV  2      // require at least 1/N of estimated airtime as budget before TX
+
 #ifndef NOISE_FLOOR_CALIB_INTERVAL
   #define NOISE_FLOOR_CALIB_INTERVAL   2000     // 2 seconds
 #endif
@@ -20,12 +24,38 @@ void Dispatcher::begin() {
   _err_flags = 0;
   radio_nonrx_start = _ms->getMillis();
 
+  // Initialise the rolling-window TX budget (token bucket) to a full window's
+  // worth of airtime. duty_cycle = 1 / (1 + airtime_factor): factor 2.0 -> 1/3 (33%).
+  duty_cycle_window_ms = getDutyCycleWindowMs();
+  float duty_cycle = 1.0f / (1.0f + getAirtimeBudgetFactor());
+  tx_budget_ms = (unsigned long)(duty_cycle_window_ms * duty_cycle);
+  last_budget_update = _ms->getMillis();
+
   _radio->begin();
   prev_isrecv_mode = _radio->isInRecvMode();
 }
 
 float Dispatcher::getAirtimeBudgetFactor() const {
   return 2.0;   // default, 33.3%  (1/3rd)
+}
+
+// Refill the rolling-window TX budget proportionally to idle time elapsed since
+// the last update, capped at one window's worth. Cheap; safe to call often.
+void Dispatcher::updateTxBudget() {
+  unsigned long now = _ms->getMillis();
+  unsigned long elapsed = now - last_budget_update;
+
+  float duty_cycle = 1.0f / (1.0f + getAirtimeBudgetFactor());
+  unsigned long max_budget = (unsigned long)(getDutyCycleWindowMs() * duty_cycle);
+  unsigned long refill = (unsigned long)(elapsed * duty_cycle);
+
+  if (refill > 0) {
+    tx_budget_ms += refill;
+    if (tx_budget_ms > max_budget) {
+      tx_budget_ms = max_budget;
+    }
+    last_budget_update = now;
+  }
 }
 
 int Dispatcher::calcRxDelay(float score, uint32_t air_time) const {
@@ -82,8 +112,20 @@ void Dispatcher::loop() {
       total_air_time += t;  // keep track of how much air time we are using
       //Serial.print("  airtime="); Serial.println(t);
 
-      // will need radio silence up to next_tx_time
-      next_tx_time = futureMillis(t * getAirtimeBudgetFactor());
+      // Spend this transmission's airtime from the rolling-window budget.
+      updateTxBudget();
+      if (t > (long)tx_budget_ms) {
+        tx_budget_ms = 0;
+      } else {
+        tx_budget_ms -= t;
+      }
+      if (tx_budget_ms < MIN_TX_BUDGET_RESERVE_MS) {
+        float duty_cycle = 1.0f / (1.0f + getAirtimeBudgetFactor());
+        unsigned long needed = MIN_TX_BUDGET_RESERVE_MS - tx_budget_ms;
+        next_tx_time = futureMillis((unsigned long)(needed / duty_cycle));
+      } else {
+        next_tx_time = _ms->getMillis();
+      }
 
       _radio->onSendFinished();
       logTx(outbound, 2 + outbound->getPathByteLen() + outbound->payload_len);
@@ -244,7 +286,18 @@ void Dispatcher::processRecvPacket(Packet* pkt) {
 
 void Dispatcher::checkSend() {
   if (_mgr->getOutboundCount(_ms->getMillis()) == 0) return;  // nothing waiting to send
-  if (!millisHasNowPassed(next_tx_time)) return;   // still in 'radio silence' phase (from airtime budget setting)
+
+  // Rolling-window duty-cycle gate: refill, then require enough budget for a TX.
+  updateTxBudget();
+  uint32_t est_airtime = _radio->getEstAirtimeFor(MAX_TRANS_UNIT);
+  if (tx_budget_ms < est_airtime / MIN_TX_BUDGET_AIRTIME_DIV) {
+    float duty_cycle = 1.0f / (1.0f + getAirtimeBudgetFactor());
+    unsigned long needed = est_airtime / MIN_TX_BUDGET_AIRTIME_DIV - tx_budget_ms;
+    next_tx_time = futureMillis((unsigned long)(needed / duty_cycle));
+    return;
+  }
+
+  if (!millisHasNowPassed(next_tx_time)) return;   // CAD/retry backoff still pending
   if (_radio->isReceiving()) {   // LBT - check if radio is currently mid-receive, or if channel activity
     if (cad_busy_start == 0) {
       cad_busy_start = _ms->getMillis();   // record when CAD busy state started

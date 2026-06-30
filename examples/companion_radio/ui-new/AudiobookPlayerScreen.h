@@ -1279,7 +1279,7 @@ private:
       display.setCursor(0, 38);
       display.print("/audiobooks/ on SD");
 
-      drawFooter(display, "0 files", "Q:Back");
+      drawFooter(display, "0 files", "Sh+Del:Back");
       return;
     }
 
@@ -1505,7 +1505,7 @@ private:
 
     // ---- Footer Nav Bar ----
     {
-      const char* rightText = (_isPlaying && !_isPaused) ? "Q:Leave" : "Q:Close";
+      const char* rightText = (_isPlaying && !_isPaused) ? "Sh+Del:Leave" : "Sh+Del:Close";
       if (_playlist.size() > 1) {
         drawFooter(display, "A/D:Seek N:Next", rightText);
       } else {

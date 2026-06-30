@@ -326,7 +326,7 @@ public:
           _state = PLAYING;
           return true;
         }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
 
       case PLAYING:
@@ -341,7 +341,7 @@ public:
           case 'f': case 'F':
             toggleFlag(_cursorX, _cursorY);
             return true;
-          case 'q': case 'Q':
+          case KEY_CANCEL:
             _wantsExit = true;
             return true;
           default: return false;
@@ -354,7 +354,7 @@ public:
           _state = PLAYING;
           return true;
         }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
     }
     return false;
@@ -431,7 +431,7 @@ public:
       int fy = display.height() - 12;
       display.drawRect(0, fy - 2, display.width(), 1);
       display.setCursor(2, fy);
-      display.print("Enter:Start  Q:Back");
+      display.print("Enter:Start  Sh+Del:Back");
 #endif
       return 5000;
 
@@ -487,7 +487,7 @@ public:
       }
       ty += 16;
       display.setColor(DisplayDriver::GREEN);
-      display.drawTextCentered(cx, ty, "Enter:Retry  Q:Back");
+      display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
 
       return 5000;
     }

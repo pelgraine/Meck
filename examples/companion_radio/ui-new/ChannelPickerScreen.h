@@ -34,7 +34,7 @@ extern MyMesh the_mesh;
 //
 // Delete history:
 //   Press X on a highlighted channel to enter delete confirmation mode.
-//   Confirmation overlay asks the user to press Enter to confirm or Q to
+//   Confirmation overlay asks the user to press Enter to confirm or Shift+Del to
 //   cancel.  On confirm, all messages for that channel are invalidated in
 //   the circular buffer and persisted to SD.
 //
@@ -379,7 +379,7 @@ public:
     #if defined(LilyGo_T5S3_EPaper_Pro)
       const char* hints = "Tap:Yes  Boot:Cancel";
     #else
-      const char* hints = "Enter:Yes  Q:Cancel";
+      const char* hints = "Enter:Yes  Sh+Del:Cancel";
     #endif
       display.setCursor(boxX + 4, boxY + 29);
       display.print(hints);
@@ -411,9 +411,9 @@ public:
     display.print(rt);
 #else
     if (_confirmDelete) {
-      display.print("Enter:Yes Q:Cancel");
+      display.print("Enter:Yes Sh+Del:Cancel");
     } else {
-      display.print("W/S:Nav Q:Back");
+      display.print("W/S:Nav Sh+Del:Back");
       const char* rt = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
       display.print(rt);
@@ -444,8 +444,8 @@ public:
         _confirmDelete = false;
         return true;
       }
-      // Q / backspace -- cancel
-      if (c == 'q' || c == 'Q' || c == '\b' || c == KEY_CANCEL) {
+      // Shift+Del -- cancel
+      if (c == KEY_CANCEL) {
         _confirmDelete = false;
         return true;
       }
@@ -492,8 +492,8 @@ public:
       return true;  // Consumed -- caller checks wantsExit() and navigates
     }
 
-    // Q / backspace -- cancel without changing channel, signal exit
-    if (c == 'q' || c == 'Q' || c == '\b' || c == KEY_CANCEL) {
+    // Shift+Del -- cancel without changing channel, signal exit
+    if (c == KEY_CANCEL) {
       _wantExit = true;
       return true;
     }

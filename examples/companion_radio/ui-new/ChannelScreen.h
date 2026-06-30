@@ -791,7 +791,7 @@ public:
       display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
-      display.print("Q:Bck A/D:Ch");
+      display.print("Sh+Del:Bck A/D:Ch");
       const char* rtInbox = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
       display.print(rtInbox);
@@ -992,7 +992,7 @@ public:
       display.print("Back");
       const char* copyHint = "Tap:Dismiss";
 #else
-      display.print("Q:Back");
+      display.print("Sh+Del:Back");
       // Show scroll hint if path is scrollable
       if (msg && (msg->path_len & 63) > _pathHopsVisible && msg->path_len != 0xFF) {
         const char* scrollHint = "W/S:Scrl";
@@ -1024,7 +1024,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Hold: Compose reply");
 #else
-        display.print("Q: Back to inbox");
+        display.print("Sh+Del: Back to inbox");
         display.setCursor(0, 40);
         display.print("Ent: Compose reply");
 #endif
@@ -1535,21 +1535,21 @@ public:
 #else
     // Left side: abbreviated controls
     if (_replySelectMode) {
-      display.print("W/S:Sel V:Pth Q:X");
+      display.print("W/S:Sel V:Pth Sh+Del:X");
       const char* rightText = "Ent:Reply";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else if (_viewChannelIdx == 0xFF) {
       if (_dmContactPerms > 0) {
-        display.print("Q:Exit L:Admin");
+        display.print("Sh+Del:Exit L:Admin");
       } else {
-        display.print("Q:Exit");
+        display.print("Sh+Del:Exit");
       }
       const char* rightText = "Ent:Reply";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Q:Bck A/D:Ch R:Rply");
+      display.print("Sh+Del:Bck A/D:Ch R:Rply");
       const char* rightText = "Ent:New";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
@@ -1566,7 +1566,7 @@ public:
   bool handleInput(char c) override {
     // If overlay is showing, handle scroll and dismiss
     if (_showPathOverlay) {
-      if (c == 'q' || c == 'Q' || c == '\b' || c == 'v' || c == 'V') {
+      if (c == KEY_CANCEL || c == 'v' || c == 'V') {
         _showPathOverlay = false;
         _pathScrollPos = 0;
         return true;
@@ -1597,8 +1597,8 @@ public:
 
     // --- Reply select mode ---
     if (_replySelectMode) {
-      // Q - exit reply select
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      // Shift+Del - exit reply select
+      if (c == KEY_CANCEL) {
         _replySelectMode = false;
         _replySelectPos = -1;
         return true;
@@ -1705,8 +1705,8 @@ public:
         }
         return true;
       }
-      // Q - let main.cpp handle (back to home)
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      // Shift+Del - let main.cpp handle (back to home)
+      if (c == KEY_CANCEL) {
         return false;
       }
       // A/D pass through to channel switching below
@@ -1717,9 +1717,9 @@ public:
       }
     }
 
-    // --- DM Conversation mode: Q goes back to inbox ---
+    // --- DM Conversation mode: Shift+Del goes back to inbox ---
     if (_viewChannelIdx == 0xFF && !_dmInboxMode) {
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      if (c == KEY_CANCEL) {
         _dmInboxMode = true;
         _dmFilterName[0] = '\0';
         _scrollPos = 0;

@@ -3819,7 +3819,7 @@ void loop() {
                 }
               }
             }
-            // Channel picker: check if Enter/Q was handled (wantsExit)
+            // Channel picker: check if Enter/Shift+Del was handled (wantsExit)
             if (ui_task.isOnChannelPickerScreen()) {
               ChannelPickerScreen* pick = (ChannelPickerScreen*)ui_task.getChannelPickerScreen();
               if (pick && pick->wantsExit()) {
@@ -3990,7 +3990,7 @@ void loop() {
                 if (notesScr->isEditing()) {
                   notesScr->triggerSaveAndExit();
                 } else {
-                  ui_task.injectKey('q');
+                  ui_task.injectKey(KEY_CANCEL);
                 }
               } else if (notesScr->isEditing()) {
                 // Editing mode: arrows move cursor, everything else types directly
@@ -4011,16 +4011,16 @@ void loop() {
 #endif
 
           if (!handled) {
-            // ESC or Q → back navigation
-            if (ckb == 0x1B || ckb == 'q') {
+            // ESC -> back navigation
+            if (ckb == 0x1B) {
               if (ui_task.isOnSnakeScreen()) {
-                ui_task.injectKey('q');
+                ui_task.injectKey(KEY_CANCEL);
                 SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
                 if (ss && ss->wantsExit()) {
                   ui_task.gotoGamesMenu();
                 }
               } else if (ui_task.isOnMinesweeperScreen()) {
-                ui_task.injectKey('q');
+                ui_task.injectKey(KEY_CANCEL);
                 MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
                 if (ms && ms->wantsExit()) {
                   ui_task.gotoGamesMenu();
@@ -4032,9 +4032,9 @@ void loop() {
               } else if (ui_task.isOnChannelScreen()) {
                 ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
                 if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
-                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                  ui_task.injectKey(KEY_CANCEL);  // dismiss overlay/reply first
                 } else if (chScr && chScr->isDMConversation()) {
-                  ui_task.injectKey('q');  // DM conversation → inbox
+                  ui_task.injectKey(KEY_CANCEL);  // DM conversation -> inbox
                 } else {
                   ui_task.gotoChannelPickerScreen();
                 }
@@ -4232,19 +4232,19 @@ void loop() {
                     ui_task.gotoPathEditor(idx);
                   }
                 }
-              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnPathEditor()) {
-                // Q on path editor → back to contacts
+              } else if ((ckb == 0x1B) && ui_task.isOnPathEditor()) {
+                // ESC on path editor -> back to contacts
                 ui_task.gotoContactsScreen();
-              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelPickerScreen()) {
-                // Q on picker → home
+              } else if ((ckb == 0x1B) && ui_task.isOnChannelPickerScreen()) {
+                // ESC on picker -> home
                 ui_task.gotoHomeScreen();
-              } else if ((ckb == 'q' || ckb == 'Q') && ui_task.isOnChannelScreen()) {
-                // Q on channel screen → picker (unless overlay/DM conversation)
+              } else if ((ckb == 0x1B) && ui_task.isOnChannelScreen()) {
+                // ESC on channel screen -> picker (unless overlay/DM conversation)
                 ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
                 if (chScr && (chScr->isReplySelectMode() || chScr->isShowingPathOverlay())) {
-                  ui_task.injectKey('q');  // dismiss overlay/reply first
+                  ui_task.injectKey(KEY_CANCEL);  // dismiss overlay/reply first
                 } else if (chScr && chScr->isDMConversation()) {
-                  ui_task.injectKey('q');  // DM conversation → inbox (handled internally)
+                  ui_task.injectKey(KEY_CANCEL);  // DM conversation -> inbox (handled internally)
                 } else {
                   ui_task.gotoChannelPickerScreen();
                 }
@@ -4354,6 +4354,13 @@ void handleKeyboardInput() {
   
   char key = keyboard.readKey();
   if (key == 0) return;
+
+  // Shift+Backspace is the universal back/cancel token. Convert it to
+  // KEY_CANCEL here at the source so every screen and dispatch path sees one
+  // unambiguous back code -- this leaves plain Backspace as text delete and
+  // frees physical Q as an ordinary letter. Contexts that bind Shift+Del to a
+  // non-back action (notes/contacts item delete) handle KEY_CANCEL explicitly.
+  if (key == '\b' && keyboard.wasShiftConsumed()) key = KEY_CANCEL;
 
   // Block all keyboard input while lock screen is active.
   // Still read the key above to clear the TCA8418 buffer.
@@ -4603,11 +4610,11 @@ void handleKeyboardInput() {
     AudiobookPlayerScreen* abPlayer =
       (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
 
-    // Q key: behavior depends on playback state
+    // Shift+Del: behavior depends on playback state
     //   - Playing: navigate home, audio continues in background
     //   - Paused/stopped: close book, return to file list
     //   - File list: exit player entirely
-    if (key == 'q') {
+    if (key == KEY_CANCEL) {
       if (abPlayer->isBookOpen()) {
         if (abPlayer->isAudioActive()) {
           // Audio is playing -- leave screen, audio continues via audioTick()
@@ -4651,8 +4658,8 @@ void handleKeyboardInput() {
         ui_task.forceRefresh();
         return;
       }
-      // Q from message list exits voice screen
-      if (key == 'q' && voiceScr->getMode() == VoiceMessageScreen::MESSAGE_LIST) {
+      // Shift+Del from message list exits voice screen
+      if (key == KEY_CANCEL && voiceScr->getMode() == VoiceMessageScreen::MESSAGE_LIST) {
         Serial.println("Exiting voice message screen");
         ui_task.gotoHomeScreen();
         return;
@@ -4669,12 +4676,12 @@ void handleKeyboardInput() {
   if (readerMode) {
     TextReaderScreen* reader = (TextReaderScreen*)ui_task.getTextReaderScreen();
     
-    // Q key: if reading, reader handles it (close book -> file list)
+    // Shift+Del: if reading, reader handles it (close book -> file list)
     //         if on file list, exit reader entirely
-    if (key == 'q') {
+    if (key == KEY_CANCEL) {
       if (reader->isReading()) {
-        // Let the reader handle Q (close book, go to file list)
-        ui_task.injectKey('q');
+        // Let the reader handle Shift+Del (close book, go to file list)
+        ui_task.injectKey(KEY_CANCEL);
       } else {
         // On file list - exit reader, go home
         reader->exitReader();
@@ -4695,15 +4702,15 @@ void handleKeyboardInput() {
 
     // ---- EDITING MODE ----
     if (notes->isEditing()) {
-      // Shift+Backspace = save and exit
+      // Shift+Del (KEY_CANCEL) = save and exit
+      if (key == KEY_CANCEL) {
+        Serial.println("Notes: Shift+Del, saving...");
+        notes->saveAndExit();
+        ui_task.forceRefresh();
+        return;
+      }
+      // Plain Backspace = delete before cursor
       if (key == '\b') {
-        if (keyboard.wasShiftConsumed()) {
-          Serial.println("Notes: Shift+Backspace, saving...");
-          notes->saveAndExit();
-          ui_task.forceRefresh();
-          return;
-        }
-        // Regular backspace - delete before cursor
         ui_task.injectKey(key);
         composeNeedsRefresh = true; lastComposeKeystroke = millis();
         return;
@@ -4762,8 +4769,8 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Shift+Backspace on a file = delete with confirmation
-      if (key == '\b' && keyboard.wasShiftConsumed()) {
+      // Shift+Del on a file = delete with confirmation
+      if (key == KEY_CANCEL) {
         if (notes->startDeleteFromList()) {
           ui_task.forceRefresh();
         }
@@ -4796,8 +4803,8 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Shift+Backspace = delete note
-      if (key == '\b' && keyboard.wasShiftConsumed()) {
+      // Shift+Del = delete note
+      if (key == KEY_CANCEL) {
         Serial.println("Notes: Deleting current note");
         notes->deleteCurrentNote();
         ui_task.forceRefresh();
@@ -4820,8 +4827,8 @@ void handleKeyboardInput() {
   if (ui_task.isOnSettingsScreen()) {
     SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
 
-    // Q key: exit settings (when not editing)
-    if (!settings->isEditing() && (key == 'q')) {
+    // Shift+Del: exit settings (when not editing)
+    if (!settings->isEditing() && (key == KEY_CANCEL)) {
       if (settings->hasRadioChanges()) {
         // Let settings show "apply changes?" confirm dialog
         ui_task.injectKey(key);
@@ -4834,17 +4841,17 @@ void handleKeyboardInput() {
 
     // Shift+Backspace during WiFi password entry: back to SSID selection
     #ifdef MECK_WIFI_COMPANION
-    if (settings->isInWifiPasswordEntry() && key == '\b' && keyboard.wasShiftConsumed()) {
+    if (settings->isInWifiPasswordEntry() && key == KEY_CANCEL) {
       settings->wifiPasswordBack();
       ui_task.forceRefresh();
       return;
     }
     #endif
 
-    // Shift+Backspace on the WiFi network picker: exit (same as Q)
+    // Shift+Backspace on the WiFi network picker: exit
     #ifdef MECK_WIFI_COMPANION
-    if (settings->isInWifiNetworkSelect() && key == '\b' && keyboard.wasShiftConsumed()) {
-      ui_task.injectKey('q');
+    if (settings->isInWifiNetworkSelect() && key == KEY_CANCEL) {
+      ui_task.injectKey(KEY_CANCEL);
       return;
     }
     #endif
@@ -4931,7 +4938,7 @@ void handleKeyboardInput() {
   if (ui_task.isOnRepeaterAdmin()) {
     RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
     RepeaterAdminScreen::AdminState astate = admin->getState();
-    bool shiftDel = (key == '\b' && keyboard.wasShiftConsumed());
+    bool shiftDel = (key == KEY_CANCEL);
 
     // Helper: exit admin — room servers go to DM conversation if logged in, otherwise contacts
     auto exitAdmin = [&]() {
@@ -5010,15 +5017,15 @@ void handleKeyboardInput() {
         return;
       }
 
-      // Q from app menu → go home; Q from inner views is handled by SMSScreen
-      if ((key == 'q' || key == '\b') && smsScr->getSubView() == SMSScreen::APP_MENU) {
+      // Shift+Del from app menu -> go home; Shift+Del from inner views is handled by SMSScreen
+      if ((key == KEY_CANCEL) && smsScr->getSubView() == SMSScreen::APP_MENU) {
         Serial.println("Nav: SMS -> Home");
         ui_task.gotoHomeScreen();
         return;
       }
 
       // Phone dialer: debounced refresh for digit entry, immediate render for
-      // view transitions (Enter=call, Q=back). This avoids the 686ms e-ink
+      // view transitions (Enter=call, Shift+Del=back). This avoids the 686ms e-ink
       // block per keypress while ensuring call/back screens render instantly.
       if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
         smsScr->handleInput(key);
@@ -5027,7 +5034,7 @@ void handleKeyboardInput() {
           dialerNeedsRefresh = true;
           lastDialerRefresh = millis();
         } else {
-          // View changed (startCall or Q back) — render immediately
+          // View changed (startCall or Shift+Del back) -- render immediately
           dialerNeedsRefresh = false;
           ui_task.forceRefresh();
           ui_task.loop();
@@ -5089,8 +5096,8 @@ void handleKeyboardInput() {
       // Not in text entry — clear flag so ui_task.loop() resumes
       webReaderTextEntry = false;
 
-      // Q from HOME mode exits the web reader entirely (like text reader)
-      if ((key == 'q' || key == 'Q') && wr && wr->isHome() && !wr->isUrlEditing() && !wr->isSearchEditing()) {
+      // Shift+Del from HOME mode exits the web reader entirely (like text reader)
+      if ((key == KEY_CANCEL) && wr && wr->isHome() && !wr->isUrlEditing() && !wr->isSearchEditing()) {
         Serial.println("Exiting web reader");
         ui_task.gotoHomeScreen();
         return;
@@ -5140,18 +5147,11 @@ void handleKeyboardInput() {
     ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
     if (cs && cs->isInSelectMode()) {
       switch (key) {
-        case 'q':
-          // Exit select mode (don't go home)
-          cs->exitSelectMode();
-          ui_task.forceRefresh();
-          Serial.println("Contacts: exited select mode");
-          return;
-
-        case '\b': {
-          // Backspace in select mode:
-          //   Shift+Backspace = delete selected (with confirmation)
-          //   Plain backspace = exit select mode
-          if (keyboard.wasShiftConsumed()) {
+        case KEY_CANCEL: {
+          // Shift+Del = delete selected (with confirmation). Select mode is
+          // exited via touch long-press (UITask long-press handler); plain
+          // Backspace is text-only and does nothing here.
+          {
             static unsigned long lastDeleteAttempt = 0;
             int selCount = cs->getSelectedCount();
             if (selCount == 0) {
@@ -5177,11 +5177,6 @@ void handleKeyboardInput() {
               snprintf(msg, sizeof(msg), "Delete %d? Shift+Del again", selCount);
               ui_task.showAlert(msg, 2500);
             }
-          } else {
-            // Plain backspace = exit select mode
-            cs->exitSelectMode();
-            ui_task.forceRefresh();
-            Serial.println("Contacts: exited select mode (backspace)");
           }
           return;
         }
@@ -5809,21 +5804,20 @@ void handleKeyboardInput() {
       }
       break;
 
-    case 'q':
-    case '\b':
+    case KEY_CANCEL:
       // If channel screen reply select or path overlay is showing, dismiss it
       if (ui_task.isOnChannelScreen()) {
         ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
         if (chScr && chScr->isReplySelectMode()) {
-          ui_task.injectKey('q');
+          ui_task.injectKey(KEY_CANCEL);
           break;
         }
         if (chScr && chScr->isShowingPathOverlay()) {
-          ui_task.injectKey('q');
+          ui_task.injectKey(KEY_CANCEL);
           break;
         }
-        // DM inbox Q is handled by ChannelScreen (returns false → falls here).
-        // DM conversation Q is handled internally (returns true → never reaches here).
+        // DM inbox back is handled by ChannelScreen (returns false -> falls here).
+        // DM conversation back is handled internally (returns true -> never reaches here).
         // Normal channel view or DM inbox: go back to picker.
         Serial.println("Nav: Channel -> Picker");
         ui_task.gotoChannelPickerScreen();
@@ -5835,12 +5829,12 @@ void handleKeyboardInput() {
       if (ui_task.isOnWebReader()) {
         WebReaderScreen* wr = (WebReaderScreen*)ui_task.getWebReaderScreen();
         if (wr && !wr->isHome()) {
-          ui_task.injectKey('q');
+          ui_task.injectKey(KEY_CANCEL);
           break;
         }
       }
 #endif
-      // Contacts select mode: Q/backspace exits select mode (doesn't go home)
+      // Contacts: select mode handled earlier (Shift+Del = delete); normal -> home
       if (ui_task.isOnContactsScreen()) {
         ContactsScreen* csq = (ContactsScreen*)ui_task.getContactsScreen();
         if (csq && csq->isInSelectMode()) {
@@ -5851,27 +5845,27 @@ void handleKeyboardInput() {
         }
         // Normal mode: fall through to go home
       }
-      // Discovery screen: Q goes back to contacts (not home)
+      // Discovery screen: Shift+Del goes back to contacts (not home)
       if (ui_task.isOnDiscoveryScreen()) {
         the_mesh.stopDiscovery();
         Serial.println("Nav: Discovery -> Contacts");
         ui_task.gotoContactsScreen();
         break;
       }
-      // Rx Log screen: Q goes back to settings (screen handles it)
+      // Rx Log screen: Shift+Del goes back to settings (screen handles it)
       if (ui_task.isOnRxLogScreen()) {
-        ui_task.injectKey('q');
+        ui_task.injectKey(KEY_CANCEL);
         break;
       }
-      // Path editor: Q goes back to contacts (discards unsaved changes)
+      // Path editor: Shift+Del goes back to contacts (discards unsaved changes)
       if (ui_task.isOnPathEditor()) {
         Serial.println("Nav: PathEditor -> Contacts");
         ui_task.gotoContactsScreen();
         break;
       }
-      // Trace screen: Q/wantsExit goes home
+      // Trace screen: Shift+Del/wantsExit goes home
       if (ui_task.isOnTraceScreen()) {
-        ui_task.injectKey('q');
+        ui_task.injectKey(KEY_CANCEL);
         TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
         if (ts && ts->wantsExit()) {
           Serial.println("Nav: Trace -> Home");
@@ -5879,9 +5873,9 @@ void handleKeyboardInput() {
         }
         break;
       }
-      // Snake screen: Q goes back to games menu
+      // Snake screen: Shift+Del goes back to games menu
       if (ui_task.isOnSnakeScreen()) {
-        ui_task.injectKey('q');
+        ui_task.injectKey(KEY_CANCEL);
         SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
         if (ss && ss->wantsExit()) {
           Serial.println("Nav: Snake -> Games Menu");
@@ -5889,9 +5883,9 @@ void handleKeyboardInput() {
         }
         break;
       }
-      // Minesweeper screen: Q goes back to games menu
+      // Minesweeper screen: Shift+Del goes back to games menu
       if (ui_task.isOnMinesweeperScreen()) {
-        ui_task.injectKey('q');
+        ui_task.injectKey(KEY_CANCEL);
         MinesweeperScreen* ms = (MinesweeperScreen*)ui_task.getMinesweeperScreen();
         if (ms && ms->wantsExit()) {
           Serial.println("Nav: Minesweeper -> Games Menu");
@@ -5899,13 +5893,13 @@ void handleKeyboardInput() {
         }
         break;
       }
-      // Games menu: Q goes back to home
+      // Games menu: Shift+Del goes back to home
       if (ui_task.isOnGamesMenu()) {
         Serial.println("Nav: Games Menu -> Home");
         ui_task.gotoHomeScreen();
         break;
       }
-      // Alarm screen: Q/backspace routing depends on sub-mode
+      // Alarm screen: Shift+Del/backspace routing depends on sub-mode
 #ifdef MECK_AUDIO_VARIANT
       if (ui_task.isOnAlarmScreen()) {
         AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
@@ -5913,7 +5907,7 @@ void handleKeyboardInput() {
           alarmScr->dismiss();
           ui_task.gotoHomeScreen();
         } else if (alarmScr && alarmScr->getMode() != AlarmScreen::ALARM_LIST) {
-          // In edit/picker/digit mode — pass to screen (Q = back to list, backspace = delete)
+          // In edit/picker/digit mode -- pass to screen (Shift+Del = back to list, backspace = delete)
           ui_task.injectKey(key);
         } else {
           // On alarm list — go home
@@ -5923,13 +5917,13 @@ void handleKeyboardInput() {
         break;
       }
 #endif
-      // Last Heard: Q goes back to home
+      // Last Heard: Shift+Del goes back to home
       if (ui_task.isOnLastHeardScreen()) {
         Serial.println("Nav: Last Heard -> Home");
         ui_task.gotoHomeScreen();
         break;
       }
-      // Channel picker: Q goes back to home
+      // Channel picker: Shift+Del goes back to home
       if (ui_task.isOnChannelPickerScreen()) {
         Serial.println("Nav: ChannelPicker -> Home");
         ui_task.gotoHomeScreen();

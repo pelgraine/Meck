@@ -15,11 +15,11 @@
 //
 // Keyboard controls:
 //   ALARM_LIST:  W/S = scroll slots, Enter = edit selected alarm,
-//                E = toggle enable/disable, Q = exit to home
+//                E = toggle enable/disable, Shift+Del = exit to home
 //   EDIT_ALARM:  W/S = move between fields, A/D = adjust value,
 //                Enter = open sound picker (on sound field) or save & exit,
-//                Q = cancel edit
-//   PICK_SOUND:  W/S = scroll sounds, Enter = select, Q = cancel
+//                Shift+Del = cancel edit
+//   PICK_SOUND:  W/S = scroll sounds, Enter = select, Shift+Del = cancel
 //   RINGING:     ANY key = dismiss, Z = snooze 5 minutes
 //
 // Library dependencies: ESP32-audioI2S (shared with AudiobookPlayerScreen)
@@ -520,7 +520,7 @@ private:
       display.print(line2);
     }
 
-    drawFooter(display, "O:On/Off Enter:Edit", "Q:Back");
+    drawFooter(display, "O:On/Off Enter:Edit", "Sh+Del:Back");
   }
 
   // ---- Render: Edit alarm ----
@@ -647,9 +647,9 @@ private:
       display.setCursor(bx + 4, by + 16);
       display.print(inputDisplay);
 
-      drawFooter(display, "Type digits", "Enter:OK Q:Cancel");
+      drawFooter(display, "Type digits", "Enter:OK Sh+Del:Cancel");
     } else {
-      drawFooter(display, "A/D:Adjust Enter:Type", "Q:Save");
+      drawFooter(display, "A/D:Adjust Enter:Type", "Sh+Del:Save");
     }
   }
 
@@ -671,7 +671,7 @@ private:
       display.print("Place 44kHz .mp3 in");
       display.setCursor(0, 38);
       display.print("/alarms/ on SD card");
-      drawFooter(display, "0 files", "Q:Back");
+      drawFooter(display, "0 files", "Sh+Del:Back");
       return;
     }
 
@@ -715,7 +715,7 @@ private:
 
     char countBuf[12];
     snprintf(countBuf, sizeof(countBuf), "%d files", (int)_soundFiles.size());
-    drawFooter(display, countBuf, "Enter:Pick Q:Back");
+    drawFooter(display, countBuf, "Enter:Pick Sh+Del:Back");
   }
 
   // ---- Render: Ringing ----
@@ -837,8 +837,8 @@ private:
         if (f < FIELD_COUNT - 1) _editField = (EditField)(f + 1);
         return true;
       }
-      // Q - cancel digit entry
-      if (c == 'q') {
+      // Shift+Del - cancel digit entry
+      if (c == KEY_CANCEL) {
         _digitEntry = false;
         return true;
       }
@@ -944,8 +944,8 @@ private:
       return true;
     }
 
-    // Q - save and exit edit
-    if (c == 'q') {
+    // Shift+Del - save and exit edit
+    if (c == KEY_CANCEL) {
       memcpy(&_config.slots[_editSlot], &_editCopy, sizeof(AlarmSlot));
       saveConfig();
       _mode = ALARM_LIST;
@@ -987,8 +987,8 @@ private:
       return true;
     }
 
-    // Q - cancel
-    if (c == 'q') {
+    // Shift+Del - cancel
+    if (c == KEY_CANCEL) {
       _mode = EDIT_ALARM;
       return true;
     }

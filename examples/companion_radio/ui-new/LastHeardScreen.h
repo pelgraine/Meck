@@ -213,7 +213,7 @@ public:
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
-    display.print("Q:Bk");
+    display.print("Sh+Del:Bk");
     const char* right = "Tap/Ent:Add/Del";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);

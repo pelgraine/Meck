@@ -3,7 +3,7 @@
 // =============================================================================
 // GamesMenuScreen -- Game launcher menu for Meck
 //
-// Lists available games. W/S to navigate, Enter to launch, Q to exit.
+// Lists available games. W/S to navigate, Enter to launch, Shift+Del to exit.
 // Uses wantsExit() and wantsLaunch() flags for navigation -- same pattern
 // as ChannelPickerScreen.
 // =============================================================================
@@ -84,7 +84,7 @@ public:
         _selectedGame = getGames()[_cursor].id;
         _wantsLaunch = true;
         return true;
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         _wantsExit = true;
         return true;
       default:
@@ -145,7 +145,7 @@ public:
     int fy = display.height() - 12;
     display.drawRect(0, fy - 2, display.width(), 1);
     display.setCursor(2, fy);
-    display.print("Enter:Play  Q:Back");
+    display.print("Enter:Play  Sh+Del:Back");
 #endif
 
     return 5000;  // Static menu -- slow refresh

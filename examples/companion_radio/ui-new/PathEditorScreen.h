@@ -385,7 +385,7 @@ public:
     display.print(right);
 #else
     display.setCursor(0, footerY);
-    display.print("Q:Bk W/S:Nav");
+    display.print("Sh+Del:Bk W/S:Nav");
     const char* right = "Enter:Sel";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -474,7 +474,7 @@ public:
     display.print(right);
 #else
     display.setCursor(0, footerY);
-    display.print("Q:Cancel W/S:Scroll");
+    display.print("Sh+Del:Cancel W/S:Scroll");
     const char* right = "Enter:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -596,9 +596,9 @@ public:
       return true;
     }
 
-    // Q - back (discard changes or prompt?)
+    // Shift+Del - back (discard changes or prompt?)
     // For simplicity, just go back without saving
-    if (c == 'q' || c == 'Q') {
+    if (c == KEY_CANCEL) {
       // Return to contacts screen without saving
       // The UITask will handle this via the key falling through
       return false;  // Let UITask handle Q as back
@@ -636,8 +636,8 @@ public:
       return true;
     }
 
-    // Q - cancel picker, return to main
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - cancel picker, return to main
+    if (c == KEY_CANCEL) {
       _state = STATE_MAIN;
       return true;
     }

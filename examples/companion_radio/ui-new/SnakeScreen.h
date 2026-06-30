@@ -317,7 +317,7 @@ public:
     switch (_state) {
       case READY:
         if (c == '\r') { _state = PLAYING; _lastTick = millis(); return true; }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
       case PLAYING:
         switch (c) {
@@ -325,12 +325,12 @@ public:
           case 's': case 'S': if (_dir != UP)    _pendingDir = DOWN;  return true;
           case 'a': case 'A': if (_dir != RIGHT) _pendingDir = LEFT;  return true;
           case 'd': case 'D': if (_dir != LEFT)  _pendingDir = RIGHT; return true;
-          case 'q': case 'Q': _wantsExit = true; return true;
+          case KEY_CANCEL: _wantsExit = true; return true;
           default: return false;
         }
       case GAME_OVER:
         if (c == '\r') { resetGame(); _state = PLAYING; _lastTick = millis(); return true; }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
     }
     return false;
@@ -459,7 +459,7 @@ public:
           ty += 12;
         }
         display.setColor(DisplayDriver::GREEN);
-        display.drawTextCentered(cx, ty, "Enter:Retry  Q:Back");
+        display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
       }
     }
 
@@ -476,10 +476,10 @@ public:
     display.drawRect(0, fy - 2, display.width(), 1);
     if (_state == PLAYING) {
       display.setCursor(2, fy);
-      display.print("Q:Back");
+      display.print("Sh+Del:Back");
     } else if (_state == READY) {
       display.setCursor(2, fy);
-      display.print("Enter:Start  Q:Back");
+      display.print("Enter:Start  Sh+Del:Back");
     }
 #endif
 

@@ -528,13 +528,13 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Boot:Cancel  Tap:Apply");
 #else
-      display.print("Q:Cancel Enter:Apply");
+      display.print("Sh+Del:Cancel Enter:Apply");
 #endif
     } else {
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Boot:Exit  Tap:Sel");
 #else
-      display.print("Q:Exit W/S:Nav Ent:Sel");
+      display.print("Sh+Del:Exit W/S:Nav Ent:Sel");
 #endif
     }
 
@@ -597,7 +597,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Back  Tap:Add");
 #else
-    display.print("Q:Back W/S:Scroll Ent:Add");
+    display.print("Sh+Del:Back W/S:Scroll Ent:Add");
 #endif
 
     return 5000;
@@ -653,7 +653,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Cancel");
 #else
-    display.print("Q:Cancel");
+    display.print("Sh+Del:Cancel");
 #endif
 
     return 500;  // Fast refresh for elapsed timer
@@ -749,7 +749,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Back  Tap:New Trace");
 #else
-    display.print("Q:Back  Ent:New Trace");
+    display.print("Sh+Del:Back  Ent:New Trace");
 #endif
 
     return 5000;
@@ -787,8 +787,8 @@ private:
       }
       return true;
     }
-    // Q or Escape: cancel edit
-    if (c == 'q' || c == 'Q' || c == 27) {
+    // Shift+Del: cancel edit
+    if (c == KEY_CANCEL) {
       _editing = false;
       return true;
     }
@@ -833,8 +833,8 @@ private:
       memset(_pathBuf, 0, sizeof(_pathBuf));
       return true;
     }
-    // Q - exit
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - exit
+    if (c == KEY_CANCEL) {
       _wantExit = true;
       return true;
     }
@@ -888,8 +888,8 @@ private:
       if (_repSel < _repCount - 1) _repSel++;
       return true;
     }
-    // Q - back to build
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - back to build
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       return true;
     }
@@ -915,8 +915,8 @@ private:
   }
 
   bool handleRunningInput(char c) {
-    // Q - cancel
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - cancel
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       return true;
     }
@@ -934,8 +934,8 @@ private:
       _resultScroll++;
       return true;
     }
-    // Q - back to build screen (keep path)
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - back to build screen (keep path)
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       _menuSel = 0;
       return true;

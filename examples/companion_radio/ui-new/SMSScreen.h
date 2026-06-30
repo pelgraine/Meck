@@ -17,7 +17,7 @@
 //
 // Navigation mirrors ChannelScreen conventions:
 //   W/S: scroll     Enter: select/send    C: compose new/reply
-//   Q: back         Sh+Del: cancel compose
+//   Sh+Del: back      Sh+Del: cancel compose
 //   D: contacts (from inbox)
 //   A: add/edit contact (from conversation)
 //   F: call (from conversation, contacts, or phone dialer)
@@ -385,7 +385,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Sh+Del:Back");
     const char* rt = "Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -516,7 +516,7 @@ public:
     display.drawRect(0, footerY - 1, W, 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Bk");
+    display.print("Sh+Del:Bk");
     if (_phoneInputPos > 0) {
       const char* rt = "Ent:Call";
       display.setCursor(W - display.getTextWidth(rt) - 2, footerY);
@@ -620,7 +620,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Sh+Del:Back");
     const char* mid = "D:Contacts";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
@@ -734,7 +734,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Bk A:Add Contact");
+    display.print("Sh+Del:Bk A:Add Contact");
     const char* rt = "C:Reply";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -887,7 +887,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Back");
+    display.print("Sh+Del:Back");
     const char* rt = "Ent:SMS F:Call";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -986,7 +986,7 @@ public:
     display.drawRect(0, footerY - 2, W, 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Ent/Q:Hang up");
+    display.print("Ent/Sh+Del:Hang up");
 
     return 800;  // Fast refresh for dot animation
   }
@@ -1042,7 +1042,7 @@ public:
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, footerY);
     display.print("Ent:Answer");
-    const char* rt = "Q:Reject";
+    const char* rt = "Sh+Del:Reject";
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(W - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -1161,7 +1161,7 @@ public:
         }
         return true;
 
-      case 'q': case 'Q':  // Back to home (handled by main.cpp)
+      case KEY_CANCEL:  // Back to home (handled by main.cpp)
         return false;
 
       default:
@@ -1207,7 +1207,7 @@ public:
         }
         return true;
 
-      case 'q':  // Back to app menu
+      case KEY_CANCEL:  // Back to app menu
         _phoneInputBuf[0] = '\0';
         _phoneInputPos = 0;
         _view = APP_MENU;
@@ -1343,7 +1343,7 @@ public:
         _view = CONTACTS;
         return true;
 
-      case 'q': case 'Q':  // Back to app menu
+      case KEY_CANCEL:  // Back to app menu
         _view = APP_MENU;
         _menuCursor = 0;
         return true;
@@ -1399,7 +1399,7 @@ public:
         return true;
       }
 
-      case 'q': case 'Q':  // Back to inbox
+      case KEY_CANCEL:  // Back to inbox
         refreshInbox();
         _view = INBOX;
         return true;
@@ -1527,7 +1527,7 @@ public:
         }
         return true;
 
-      case 'q': case 'Q':  // Back to inbox
+      case KEY_CANCEL:  // Back to inbox
         refreshInbox();
         _view = INBOX;
         return true;
@@ -1579,11 +1579,11 @@ public:
     }
   }
 
-  // ---- Dialing out input (Enter or Q to cancel/hang up) ----
+  // ---- Dialing out input (Enter or Shift+Del to cancel/hang up) ----
   bool handleDialingOutInput(char c) {
     switch (c) {
       case '\r':  // Enter - hang up
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';
@@ -1594,14 +1594,14 @@ public:
     }
   }
 
-  // ---- Incoming call input (Enter to answer, Q to reject) ----
+  // ---- Incoming call input (Enter to answer, Shift+Del to reject) ----
   bool handleIncomingCallInput(char c) {
     switch (c) {
       case '\r':  // Enter - answer call
         modemManager.answerCall();
         return true;
 
-      case 'q': case 'Q':  // Reject call
+      case KEY_CANCEL:  // Reject call
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';
@@ -1616,7 +1616,7 @@ public:
   bool handleInCallInput(char c) {
     switch (c) {
       case '\r':  // Enter - hang up
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';

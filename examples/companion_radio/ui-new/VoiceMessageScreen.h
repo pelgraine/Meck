@@ -16,9 +16,9 @@
 //   - Review before send: play / re-record / delete
 //
 // Keyboard controls:
-//   MESSAGE_LIST:  W/S = scroll, Enter = play selected, D = delete, Q = exit
+//   MESSAGE_LIST:  W/S = scroll, Enter = play selected, D = delete, Shift+Del = exit
 //   RECORDING:     Mic release or 5s timeout stops recording
-//   REVIEW:        Enter = play, Mic = re-record, D = delete, Q = back to list
+//   REVIEW:        Enter = play, Mic = re-record, D = delete, Shift+Del = back to list
 //
 // Guard: MECK_AUDIO_VARIANT (audio variant only — needs I2S DAC + PDM mic)
 // =============================================================================
@@ -1043,7 +1043,7 @@ private:
     int footerY = display.height() - 12;
     display.setTextSize(1);
     display.setCursor(0, footerY);
-    display.print("Ent:Send Q:Cancel");
+    display.print("Ent:Send Sh+Del:Cancel");
 
     // No-direct-path popup. RAW_CUSTOM voice packets are direct-route only,
     // so a contact with no path set cannot receive one. Drawn last so it
@@ -1097,7 +1097,7 @@ private:
           }
         }
         break;
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         _mode = REVIEW;
         break;
     }
@@ -1172,11 +1172,11 @@ private:
     display.setTextSize(1);
     display.setCursor(0, footerY);
     if (_listPlaying) {
-      display.print("Playing... Q:Stop");
+      display.print("Playing... Sh+Del:Stop");
     } else if (!_fileList.empty()) {
       display.print("Mic:Rec Ent:Ply F:Snd D:Del");
     } else {
-      display.print("Mic:Record Q:Exit");
+      display.print("Mic:Record Sh+Del:Exit");
     }
 
     // "Loading" popup while a forward-send file is read off SD and encoded.
@@ -1321,11 +1321,11 @@ private:
     display.setTextSize(1);
     display.setCursor(0, footerY);
     if (_reviewPlaying) {
-      display.print("Q:Stop");
+      display.print("Sh+Del:Stop");
     } else if (_c2Valid) {
-      display.print("S:Send Ent:Play Mic:Redo Q:List");
+      display.print("S:Send Ent:Play Mic:Redo Sh+Del:List");
     } else {
-      display.print("Ent:Play Mic:Redo D:Del Q:List");
+      display.print("Ent:Play Mic:Redo D:Del Sh+Del:List");
     }
   }
 
@@ -1674,7 +1674,7 @@ public:
         handleListInput(key);
         return true;
       case RECORDING:
-        if (key == 'q' || key == 'Q') {
+        if (key == KEY_CANCEL) {
           stopRecording();
           _mode = MESSAGE_LIST;
         }
@@ -1741,7 +1741,7 @@ private:
         }
         break;
 
-      // q/Q handled by main.cpp (exits voice screen)
+      // Shift+Del handled by main.cpp (exits voice screen)
     }
   }
 
@@ -1765,7 +1765,7 @@ private:
         scanVoiceFolder();
         break;
 
-      case 'q': case 'Q':  // Back to list (keep the file)
+      case KEY_CANCEL:  // Back to list (keep the file)
         stopPlayback();
         _mode = MESSAGE_LIST;
         scanVoiceFolder();

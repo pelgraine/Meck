@@ -116,6 +116,9 @@ class Dispatcher {
   Packet* outbound;  // current outbound packet
   unsigned long outbound_expiry, outbound_start, total_air_time, rx_air_time;
   unsigned long next_tx_time;
+  unsigned long tx_budget_ms;          // rolling-window TX budget (ms airtime) -- issue #20
+  unsigned long last_budget_update;    // millis() at last budget refill
+  unsigned long duty_cycle_window_ms;  // rolling window length (default 1 hour)
   unsigned long cad_busy_start;
   unsigned long radio_nonrx_start;
   unsigned long next_floor_calib_time, next_agc_reset_time;
@@ -139,6 +142,9 @@ protected:
     outbound = NULL;
     total_air_time = rx_air_time = 0;
     next_tx_time = 0;
+    tx_budget_ms = 0;
+    last_budget_update = 0;
+    duty_cycle_window_ms = 3600000;   // 1 hour; begin() sets the real starting budget
     cad_busy_start = 0;
     next_floor_calib_time = next_agc_reset_time = 0;
     _err_flags = 0;
@@ -158,6 +164,7 @@ protected:
   virtual const char* getLogDateTime() { return ""; }
 
   virtual float getAirtimeBudgetFactor() const;
+  virtual unsigned long getDutyCycleWindowMs() const { return 3600000; }  // rolling duty-cycle window (1 hour) -- issue #20
   virtual int calcRxDelay(float score, uint32_t air_time) const;
   virtual uint32_t getCADFailRetryDelay() const;
   virtual uint32_t getCADFailMaxDuration() const;
@@ -178,6 +185,7 @@ public:
   void sendPacket(Packet* packet, uint8_t priority, uint32_t delay_millis=0);
 
   unsigned long getTotalAirTime() const { return total_air_time; }  // in milliseconds
+  unsigned long getRemainingTxBudget() const { return tx_budget_ms; }  // rolling-window TX budget (ms) -- issue #20
   unsigned long getReceiveAirTime() const {return rx_air_time; }
   uint32_t getNumSentFlood() const { return n_sent_flood; }
   uint32_t getNumSentDirect() const { return n_sent_direct; }
@@ -195,6 +203,7 @@ public:
 private:
   void checkRecv();
   void checkSend();
+  void updateTxBudget();   // refill the rolling-window TX budget -- issue #20
 };
 
 }

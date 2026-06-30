@@ -40,8 +40,8 @@ class UITask;
 //               Enter = newline, Shift+WASD = cursor navigation
 //               Shift+Backspace = save & exit
 //   RENAMING:   Type = edit filename, Backspace = delete char
-//               Enter = confirm rename, Q = cancel
-//   CONFIRM_DELETE: Enter = confirm delete, Q = cancel
+//               Enter = confirm rename, Shift+Del = cancel
+//   CONFIRM_DELETE: Enter = confirm delete, Shift+Del = cancel
 //
 // Filenames: RTC timestamp (note_YYYYMMDD_HHMM.txt) or sequential (note_001.txt)
 // Buffer: 16KB on PSRAM for longer notes
@@ -1018,8 +1018,8 @@ private:
   }
 
   bool handleRenameInput(char c) {
-    // Q - cancel rename
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - cancel rename
+    if (c == KEY_CANCEL) {
       _mode = FILE_LIST;
       Serial.println("Notes: Rename cancelled");
       return true;
@@ -1079,8 +1079,8 @@ private:
       return true;
     }
 
-    // Q or backspace - cancel
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - cancel
+    if (c == KEY_CANCEL) {
       _deleteTarget = "";
       _mode = FILE_LIST;
       return true;

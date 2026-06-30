@@ -861,7 +861,7 @@ Packets are sent with staggered 3-second delays to avoid congesting the channel.
 | Enter | Send to selected contact |
 | Q | Back to home screen |
 
-### Lock Screen (T-Deck Pro)
+### Lock Screen (T-Deck Pro & Max)
 
 Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
 
@@ -869,7 +869,7 @@ Double-click the Boot button again to unlock and return to whatever screen you w
 
 An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
 
-### Shutdown (T-Deck Pro)
+### Shutdown (T-Deck Pro & Max)
 
 The home screen includes a **Shutdown** page. Selecting it powers the device off completely — the ESP32-S3 enters deep sleep with no wake sources, peripheral power is cut, and the LoRa module is powered down. Only a hardware reset (reset button) or USB power-on will wake the device. This is distinct from the auto-lock hibernate, which maintains wake-on-LoRa capability.
 
