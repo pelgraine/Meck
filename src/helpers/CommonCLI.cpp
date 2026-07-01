@@ -280,6 +280,9 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
       const char* config = &command[4];
       if (memcmp(config, "af", 2) == 0) {
         sprintf(reply, "> %s", StrHelper::ftoa(_prefs->airtime_factor));
+      } else if (memcmp(config, "dutycycle", 9) == 0) {
+        int pct = (int)(100.0f / (_prefs->airtime_factor + 1.0f) + 0.5f);
+        sprintf(reply, "> %d%%", pct);
       } else if (memcmp(config, "int.thresh", 10) == 0) {
         sprintf(reply, "> %d", (uint32_t) _prefs->interference_threshold);
       } else if (memcmp(config, "agc.reset.interval", 18) == 0) {
@@ -412,6 +415,15 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, const char* command, ch
         _prefs->airtime_factor = atof(&config[3]);
         savePrefs();
         strcpy(reply, "OK");
+      } else if (memcmp(config, "dutycycle ", 10) == 0) {
+        int pct = atoi(&config[10]);
+        if (pct < 10 || pct > 100) {
+          strcpy(reply, "ERR - duty cycle must be 10-100");
+        } else {
+          _prefs->airtime_factor = (100.0f / (float)pct) - 1.0f;
+          savePrefs();
+          sprintf(reply, "OK - duty cycle %d%%", pct);
+        }
       } else if (memcmp(config, "int.thresh ", 11) == 0) {
         _prefs->interference_threshold = atoi(&config[11]);
         savePrefs();
