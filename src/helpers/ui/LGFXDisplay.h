@@ -31,7 +31,7 @@ public:
 #if defined(LILYGO_TWATCH_S3_PLUS)
   // Set an exact RGB565 colour, bypassing the Color enum + watch grey remap.
   // Used by the watch P4-style tile grid for per-tile border/fill colours.
-  void setRawColor(uint16_t c) { _color = c; }
+  void setRawColor(uint16_t c) { _color = c; buffer.setTextColor(c); }
   // Rounded-rect helpers for the P4-style tile grid (LovyanGFX buffer).
   void fillRoundRect(int x, int y, int w, int h, int r) { buffer.fillRoundRect(x, y, w, h, r, _color); }
   void drawRoundRect(int x, int y, int w, int h, int r) { buffer.drawRoundRect(x, y, w, h, r, _color); }
@@ -46,6 +46,14 @@ public:
     buffer.print(str);
     buffer.setFont(&fonts::Font0);   // restore default 6x8 GLCD font
     buffer.setTextSize(1);
+  }
+  // Width of a string in the tiny font (the font printSmallFont uses), for
+  // right-aligning tiny-font header text. Restores the default font after.
+  uint16_t smallTextWidth(const char* str) {
+    buffer.setFont(&fonts::TomThumb);
+    uint16_t w = buffer.textWidth(str);
+    buffer.setFont(&fonts::Font0);
+    return w;
   }
 #endif
   void setCursor(int x, int y) override;

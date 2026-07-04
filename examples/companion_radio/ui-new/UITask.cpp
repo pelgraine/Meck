@@ -371,7 +371,7 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
 
@@ -419,17 +419,6 @@ public:
 #else
     display.print(filtered_name);
 #endif
-#if defined(LILYGO_TWATCH_S3_PLUS)
-    // P4-style compact MSG count, stacked under the node name (top-left).
-    {
-      char msgbuf[16];
-      sprintf(msgbuf, "MSG: %d", _task->getUnreadMsgCount());
-      display.setColor(DisplayDriver::LIGHT);
-      display.setCursor(0, HOME_HDR_Y + 9);
-      display.print(msgbuf);
-    }
-#endif
-
     // battery voltage + status icons
 #ifdef MECK_AUDIO_VARIANT
     int battLeftX = display.width(); // default if battery doesn't render
@@ -440,11 +429,56 @@ public:
 
     // alarm enabled indicator (AL icon, left of audio or battery)
     renderAlarmIndicator(display, battLeftX);
-#else
+#elif !defined(LILYGO_TWATCH_S3_PLUS)
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 #endif
 
     // centered clock — only show when time is valid
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: right-aligned header cluster, right to left -- battery %, unread
+    // count, then clock, all in the tiny node-name font. Battery % is
+    // colour-coded by charge level.
+    {
+      LGFXDisplay* lcd = (LGFXDisplay*)&display;
+
+      // Battery % (voltage-derived, same source as the old icon), rightmost.
+      int mV = (int)_task->getBattMilliVolts();
+      int pct = (mV - 3000) * 100 / 1200;
+      if (pct < 0) pct = 0;
+      if (pct > 100) pct = 100;
+      char battbuf[6];
+      sprintf(battbuf, "%d%%", pct);
+      int battX = display.width() - lcd->smallTextWidth(battbuf) - 2;
+      uint16_t battColor = (pct >= 50) ? 0x07E0     // green  50-100%
+                         : (pct >= 25) ? 0xFFE0     // yellow 25-50%
+                         : (pct >= 10) ? 0xFD20     // orange 10-25%
+                                       : 0xF800;    // red    0-10%
+      lcd->setRawColor(battColor);
+      lcd->printSmallFont(battX, HOME_HDR_Y, battbuf);
+
+      // Unread count (blue), to the left of the battery %.
+      char numbuf[6];
+      sprintf(numbuf, "%d", _task->getUnreadMsgCount());
+      int numX = battX - lcd->smallTextWidth(numbuf) - 3;
+      display.setColor(DisplayDriver::BLUE);
+      lcd->printSmallFont(numX, HOME_HDR_Y, numbuf);
+
+      // Clock (white), to the left of the unread count, when time is valid.
+      uint32_t now = _rtc->getCurrentTime();
+      if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
+        int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
+        int hrs = (local / 3600) % 24;
+        if (hrs < 0) hrs += 24;
+        int mins = (local / 60) % 60;
+        if (mins < 0) mins += 60;
+        char timeBuf[6];
+        sprintf(timeBuf, "%02d:%02d", hrs, mins);
+        int clockX = (display.width() - lcd->smallTextWidth(timeBuf)) / 2;
+        display.setColor(DisplayDriver::LIGHT);
+        lcd->printSmallFont(clockX, HOME_HDR_Y, timeBuf);
+      }
+    }
+#else
     {
       uint32_t now = _rtc->getCurrentTime();
       if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
@@ -470,13 +504,14 @@ public:
         display.setTextSize(1);  // restore
       }
     }
+#endif
     // curr page indicator
 #if defined(LILYGO_TECHO_LITE)
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
 #elif defined(LILYGO_TWATCH_S3_PLUS)
-    int y = 18;  // below the stacked name + MSG header
+    int y = (_page == HomePage::FIRST) ? 9 : 18;  // first page: tuck up under the header
 #else
     int y = 14;
 #endif
@@ -502,7 +537,7 @@ public:
 #elif defined(LILYGO_TECHO_LITE)
       int y = 18;  // Below page dots
 #elif defined(LILYGO_TWATCH_S3_PLUS)
-      int y = 21;  // tiles start below header (MSG shown small in header)
+      int y = 12;  // 4-row grid starts just below the dots
 #else
       int y = 20;
 #endif
@@ -516,6 +551,8 @@ public:
       y += 12;  // Compact
 #elif defined(LilyGo_TDeck_Pro_Max)
       y += 10;  // MAX: pull < Connected > up under MSG to make room for [T] Phone
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+      // watch: no MSG banner gap -- the 4-row grid sits just under the dots
 #else
       y += 14;  // Reduced from 18
 #endif
@@ -635,15 +672,16 @@ public:
       // setRawColor() pushes exact RGB565 past the Color enum + watch grey remap.
       {
         struct Tile { const uint8_t* icon; const char* label; uint16_t color; };
-        const Tile tiles[3][2] = {
-          { {icon_envelope, "Messages", 0x0CB1}, {icon_people, "Contacts", 0xCAA0} },
-          { {icon_gear,     "Settings", 0x0560}, {icon_search, "Discover", 0xF81F} },
-          { {icon_trace,    "Trace",    0xF800}, {icon_map,    "Maps",     0x231D} },
+        const Tile tiles[4][2] = {
+          { {icon_envelope, "Messages", 0x0CB1}, {icon_people,  "Contacts", 0xCAA0} },
+          { {icon_gear,     "Settings", 0x0560}, {icon_search,  "Discover", 0xF81F} },
+          { {icon_trace,    "Trace",    0xF800}, {icon_map,     "Maps",     0x231D} },
+          { {icon_notepad,  "Notes",    0x07FF}, {icon_gamepad, "Games",    0xFFE0} },
         };
         const uint16_t TILE_FILL = 0x18C5;   // dark navy
 
-        const int cols = 2, rows = 3;
-        const int tileW = 56, tileH = 24, gapX = 4, gapY = 3;
+        const int cols = 2, rows = 4;
+        const int tileW = 56, tileH = 24, gapX = 4, gapY = 2;
         const int gridW = tileW * cols + gapX * (cols - 1);
         const int gridX = (display.width() - gridW) / 2;
         const int gridY = y + 2;

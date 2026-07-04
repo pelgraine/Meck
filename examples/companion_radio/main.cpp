@@ -1347,6 +1347,14 @@ static void lastHeardToggleContact() {
       return '\r';
     }
 
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: tiles open on long-press and pages change on swipe, so a plain tap
+    // on any home page does nothing -- skip the T5S3 tile hit-test below (wrong
+    // geometry for the 2-column watch grid) and the left/right page cycling.
+    if (ui_task.isOnHomeScreen()) {
+      return 0;
+    }
+#endif
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
       const int tileW = 40, tileH = 22, gapX = 1, gapY = 1;
@@ -1734,21 +1742,23 @@ static void lastHeardToggleContact() {
       const int W = display.width();                       // logical width (120)
       int rvx = vx * W / 128;
       int rvy = vy * W / 128;
-      const int cols = 2, rows = 3;
-      const int tileW = 56, tileH = 24, gapX = 4, gapY = 3;
+      const int cols = 2, rows = 4;
+      const int tileW = 56, tileH = 24, gapX = 4, gapY = 2;
       const int gridW = tileW * cols + gapX * (cols - 1);  // 116
       const int gridX = (W - gridW) / 2;                   // 2
       int gridY = ui_task.getTileGridVY();
       if (rvx >= gridX && rvx < gridX + gridW &&
           rvy >= gridY && rvy < gridY + rows * (tileH + gapY)) {
         int col = (rvx - gridX) / (tileW + gapX);  if (col > 1) col = 1;
-        int row = (rvy - gridY) / (tileH + gapY);  if (row > 2) row = 2;
+        int row = (rvy - gridY) / (tileH + gapY);  if (row > 3) row = 3;
         if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen();      return 0; }
         if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
         // row 2 col 1 = Maps -- TODO subscreen not yet built; no-op for now.
+        if (row == 3 && col == 0) { ui_task.gotoNotesScreen();         return 0; }
+        // row 3 col 1 = Games -- placeholder, no target yet; no-op for now.
       }
       return 0;  // consume long-press on the tile page
     }
