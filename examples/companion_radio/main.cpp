@@ -1589,6 +1589,13 @@ static void lastHeardToggleContact() {
     // Settings screen: tap to select row, tap same row to activate
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
+#if defined(LILYGO_TWATCH_S3_PLUS)
+      // Watch: while editing the UTC offset, tap the upper half to increment
+      // and the lower half to decrement. Long-press saves.
+      if (ss && ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
+        return (vy < 64) ? 'w' : 's';
+      }
+#endif
       if (ss && !ss->isEditing()) {
         int result = ss->selectRowAtVY(vy);
         if (result == 1) {
@@ -1962,6 +1969,12 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
       if (ss) {
+#if defined(LILYGO_TWATCH_S3_PLUS)
+        // Watch: long-press while editing the UTC offset saves the value.
+        if (ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
+          return '\r';
+        }
+#endif
         if (ss->isEditing()) {
           return 0;  // Consume — don't interfere with active edit mode
         }
