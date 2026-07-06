@@ -1751,7 +1751,7 @@ static void lastHeardToggleContact() {
           rvy >= gridY && rvy < gridY + rows * (tileH + gapY)) {
         int col = (rvx - gridX) / (tileW + gapX);  if (col > 1) col = 1;
         int row = (rvy - gridY) / (tileH + gapY);  if (row > 3) row = 3;
-        if (row == 0 && col == 0) { ui_task.gotoChannelPickerScreen(); return 0; }
+        if (row == 0 && col == 0) { ui_task.openTWatchPicker(); return 0; }
         if (row == 0 && col == 1) { ui_task.gotoContactsScreen();      return 0; }
         if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
@@ -3786,6 +3786,7 @@ void loop() {
         touchDown = false;
         if (!longPressHandled && !swipeHandled) {
           char c = mapTouchTap(touchDownX, touchDownY);
+          ui_task.keepAlive();   // a tap keeps the display awake even if it produces no key
           if (c) {
             ui_task.injectKey(c);
             // Path editor: check if Save & Exit was triggered

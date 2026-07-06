@@ -12,13 +12,19 @@
 //
 // Power is managed by an AXP2101 PMU on the main I2C bus. The PMU power rails
 // (per the T-Watch S3 Plus PowerManage table) are brought up in power_init().
+class SensorBMA423;  // full include kept in the .cpp to avoid a BLE-build header clash
+
 class TWatchS3PlusBoard : public ESP32Board {
   XPowersLibInterface* PMU = NULL;
+  SensorBMA423* _accel = nullptr;
 
   bool power_init();
 
 public:
   void begin();
+
+  // Returns true once when the BMA423 tilt (wrist-raise) interrupt has fired.
+  bool tiltFired();
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);

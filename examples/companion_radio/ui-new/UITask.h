@@ -109,6 +109,11 @@ class UITask : public AbstractUITask {
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
   UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
+#ifdef TWATCH_COMPOSE_ENABLED
+  UIScreen* tw_picker;
+  UIScreen* tw_channel;
+  UIScreen* tw_keyboard;
+#endif
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
   int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
@@ -189,6 +194,9 @@ public:
   void gotoHomeScreen();
   void gotoChannelScreen(bool resetDmView = true);  // Navigate to channel message screen
   void gotoChannelPickerScreen();  // Navigate to channel picker (bubble/list)
+#ifdef TWATCH_COMPOSE_ENABLED
+  void openTWatchPicker();
+#endif
   void gotoDMTab();          // Navigate directly to DM tab on channel screen
   void gotoDMConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0);
   void gotoContactsScreen(); // Navigate to contacts list

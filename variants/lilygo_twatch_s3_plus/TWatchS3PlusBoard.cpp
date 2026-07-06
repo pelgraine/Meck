@@ -1,9 +1,21 @@
 #include <Arduino.h>
 #include "TWatchS3PlusBoard.h"
+#include <SensorBMA423.hpp>
 
 void TWatchS3PlusBoard::begin() {
   ESP32Board::begin();
   power_init();
+
+  // BMA423 accelerometer (always-on I2C, 0x19): enable the tilt / wrist-raise
+  // feature and its interrupt (routed to PIN1 -> GPIO14) for raise-to-wake.
+  _accel = new SensorBMA423();
+  if (_accel->begin(Wire, I2C_ADDR_ACCEL, PIN_BOARD_SDA, PIN_BOARD_SCL)) {
+    _accel->setRemapAxes(SensorRemap::BOTTOM_LAYER_TOP_RIGHT_CORNER);
+    _accel->configAccelerometer(OperationMode::NORMAL, AccelFullScaleRange::FS_2G,
+                                50.0f, AccelBandwidth::OSR2_AVG2, AccelPerfMode::CIC_AVG_MODE);
+    _accel->enableTiltDetector(true, true);
+    pinMode(PIN_ACCEL_IRQ, INPUT_PULLDOWN);
+  }
 
   esp_reset_reason_t reason = esp_reset_reason();
   if (reason == ESP_RST_DEEPSLEEP) {
@@ -76,4 +88,12 @@ void TWatchS3PlusBoard::gpsPowerOn() {
 
 void TWatchS3PlusBoard::gpsPowerOff() {
   if (PMU) PMU->disablePowerOutput(XPOWERS_BLDO1);
+}
+
+bool TWatchS3PlusBoard::tiltFired() {
+  if (digitalRead(PIN_ACCEL_IRQ)) {   // only the tilt IRQ is enabled
+    _accel->update();                 // reading the status clears the latched INT
+    return true;
+  }
+  return false;
 }

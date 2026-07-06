@@ -74,6 +74,9 @@
 #include "AudiobookPlayerScreen.h"
 #include "VoiceMessageScreen.h"
 #endif
+#ifdef TWATCH_COMPOSE_ENABLED
+#include "TWatchComposeScreens.h"
+#endif
 #ifdef HAS_4G_MODEM
   #include "SMSScreen.h"
   #include "ModemManager.h"
@@ -353,6 +356,7 @@ public:
        _poweroff_msg_shown(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
+  bool isFirstPage() const { return _page == HomePage::FIRST; }
   bool isOnRecentPage() const { return _page == HomePage::RECENT; }
   bool isOnShutdownPage() const { return _page == HomePage::SHUTDOWN; }
   void cancelEditing() { 
@@ -1415,6 +1419,68 @@ public:
 // T5S3: Long press boot button to lock/unlock. Touch disabled while locked.
 // T-Deck Pro: Double-press boot button to lock/unlock. Touch+keyboard disabled.
 // ==========================================================================
+#if defined(LILYGO_TWATCH_S3_PLUS)
+// Watch lock/clock screen: big HH:MM plus a day+date line, shown when the
+// display is woken (by raise-to-wake or a tap) after the idle timeout.
+class ClockScreen : public UIScreen {
+  UITask* _task;
+  mesh::RTCClock* _rtc;
+  NodePrefs* _node_prefs;
+public:
+  ClockScreen(UITask* task, mesh::RTCClock* rtc, NodePrefs* node_prefs)
+    : _task(task), _rtc(rtc), _node_prefs(node_prefs) { }
+
+  int render(DisplayDriver& display) override {
+    uint32_t now = _rtc->getCurrentTime();
+    char buf[24];
+    display.setColor(DisplayDriver::LIGHT);
+
+    // big clock
+    if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
+      int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
+      int hrs = (local / 3600) % 24;
+      if (hrs < 0) hrs += 24;
+      int mins = (local / 60) % 60;
+      if (mins < 0) mins += 60;
+      sprintf(buf, "%02d:%02d", hrs, mins);
+    } else {
+      strcpy(buf, "--:--");
+    }
+    display.setTextSize(4);
+    display.drawTextCentered(display.width() / 2, display.height() / 2 - 30, buf);
+
+    // day + date line below the clock
+    if (now > 1700000000) {
+      time_t local = (time_t)now + (time_t)_node_prefs->utc_offset_hours * 3600;
+      struct tm tmv;
+      gmtime_r(&local, &tmv);
+      static const char* const days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+      static const char* const mons[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                         "Jul","Aug","Sep","Oct","Nov","Dec"};
+      sprintf(buf, "%s %d %s", days[tmv.tm_wday], tmv.tm_mday, mons[tmv.tm_mon]);
+      display.setTextSize(2);
+      display.drawTextCentered(display.width() / 2, display.height() / 2 + 12, buf);
+    }
+
+    // battery % and unread count
+    int mv = (int)_task->getBattMilliVolts();
+    int pct = (mv - 3000) * 100 / 1200;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    sprintf(buf, "%d%% | %d unread", pct, _task->getUnreadMsgCount());
+    display.setTextSize(1);
+    display.drawTextCentered(display.width() / 2, display.height() / 2 + 38, buf);
+
+    return 1000;  // refresh about once a second
+  }
+
+  bool handleInput(char c) override {
+    _task->gotoHomeScreen();  // any input dismisses the clock screen back to the tiles
+    return true;
+  }
+};
+#endif
+
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 class LockScreen : public UIScreen {
   UITask* _task;
@@ -1584,6 +1650,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  lock_screen = new ClockScreen(this, &rtc_clock, node_prefs);
+#endif
+#ifdef TWATCH_COMPOSE_ENABLED
+  tw_picker   = new TWatchChannelPicker(_display);
+  tw_channel  = new TWatchChannelScreen(_display);
+  tw_keyboard = new TWatchKeyboardScreen(_display);
+#endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef MECK_AUDIO_VARIANT
   alarm_screen = nullptr;      // Created and assigned from main.cpp if audio hardware present
@@ -1700,6 +1774,9 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
                     const uint8_t* path, int8_t snr, uint8_t scope_idx) {
   _msgcount = msgcount;
+#ifdef TWATCH_COMPOSE_ENABLED
+  if (tw_channel) ((TWatchChannelScreen*)tw_channel)->notifyMsg(from_name, text);
+#endif
 
   // --- Dedup: suppress retry spam (same sender + text within 60s) ---
   uint32_t nameH = simpleHash(from_name);
@@ -2227,6 +2304,57 @@ void UITask::loop() {
 
 if (curr) curr->poll();
 
+#ifdef TWATCH_COMPOSE_ENABLED
+  // Channel picker -> channel screen (long-press select) / exit
+  if (curr == tw_picker) {
+    TWatchChannelPicker* picker = (TWatchChannelPicker*)tw_picker;
+    if (picker->isConfirmed()) {
+      ((TWatchChannelScreen*)tw_channel)->activate(picker->getSelectedChannelIdx(),
+                                                   picker->getSelectedChannelName());
+      setCurrScreen(tw_channel);
+      picker->acknowledgeConfirm();
+    }
+    if (picker->wantsExit()) {
+      picker->acknowledgeExit();
+      gotoHomeScreen();
+    }
+  }
+  // Channel screen -> keyboard (compose bar tap) / exit
+  else if (curr == tw_channel) {
+    TWatchChannelScreen* cs = (TWatchChannelScreen*)tw_channel;
+    if (cs->wantsCompose()) {
+      cs->acknowledgeCompose();
+      ((TWatchKeyboardScreen*)tw_keyboard)->activate(cs->getChannelIdx(), cs->getChannelName());
+      setCurrScreen(tw_keyboard);
+    }
+    if (cs->wantsExit()) {
+      cs->acknowledgeExit();
+      gotoHomeScreen();
+    }
+  }
+  // Keyboard -> send on channel (returns to channel screen) / exit
+  else if (curr == tw_keyboard) {
+    TWatchKeyboardScreen* kb = (TWatchKeyboardScreen*)tw_keyboard;
+    if (kb->wantsExit()) {
+      kb->acknowledgeExit();
+      gotoHomeScreen();
+    }
+    const char* sendText = nullptr;
+    if (kb->consumeSendRequest(&sendText) && sendText) {
+      ChannelDetails ch;
+      if (the_mesh.getChannel(kb->getChannelIdx(), ch)) {
+        uint32_t ts = rtc_clock.getCurrentTime();
+        the_mesh.sendGroupMessage(ts, ch.channel, the_mesh.getNodeName(),
+                                  sendText, strlen(sendText));
+        showAlert("Sent!", 800);
+        ((TWatchChannelScreen*)tw_channel)->addSentMsg(sendText);
+      }
+      kb->clearOutBuf();
+      setCurrScreen(tw_channel);
+    }
+  }
+#endif
+
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
       // Defer display refresh while BLE is actively transferring contacts.
@@ -2412,6 +2540,15 @@ if (curr) curr->poll();
 #if AUTO_OFF_MILLIS > 0
     if (millis() > _auto_off) {
       _display->turnOff();
+    }
+#endif
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Raise-to-wake: a wrist-raise (BMA423 tilt) while the display is off turns
+    // it back on showing the clock screen and restarts the idle timer.
+    if (!_display->isOn() && board.tiltFired()) {
+      _display->turnOn();
+      setCurrScreen(lock_screen);
+      _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
   }
@@ -3064,6 +3201,20 @@ void UITask::gotoChannelPickerScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
 }
+
+#ifdef TWATCH_COMPOSE_ENABLED
+void UITask::openTWatchPicker() {
+  TWatchChannelPicker* picker = (TWatchChannelPicker*)tw_picker;
+  picker->beginChannelSelect();
+  ChannelDetails ch;
+  for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
+    if (the_mesh.getChannel(i, ch) && ch.name[0] != 0) {
+      picker->addChannel(i, ch.name);
+    }
+  }
+  setCurrScreen(tw_picker);
+}
+#endif
 
 void UITask::gotoDMTab() {
   ((ChannelScreen *) channel_screen)->setViewChannelIdx(0xFF);  // switches + marks read
