@@ -55,6 +55,10 @@ public:
     buffer.setFont(&fonts::Font0);
     return w;
   }
+  // Enable/disable horizontal text wrap on the sprite buffer. The compose
+  // ticker turns wrap off so a long scrolling line is clipped at the screen
+  // edge instead of wrapping onto the rows below.
+  void setTextWrap(bool en) { buffer.setTextWrap(en, false); }
 #endif
   void setCursor(int x, int y) override;
   void print(const char* str) override;

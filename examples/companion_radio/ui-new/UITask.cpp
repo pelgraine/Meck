@@ -478,8 +478,15 @@ public:
         char timeBuf[6];
         sprintf(timeBuf, "%02d:%02d", hrs, mins);
         int clockX = (display.width() - lcd->smallTextWidth(timeBuf)) / 2;
-        display.setColor(DisplayDriver::LIGHT);
-        lcd->printSmallFont(clockX, HOME_HDR_Y, timeBuf);
+        // Long node names: keep the clock centred when there is room,
+        // otherwise push it right so it starts just past the name. When even
+        // that would run into the unread count, hide the clock instead.
+        int nameEndX = lcd->smallTextWidth(filtered_name) + 3;
+        if (clockX < nameEndX) clockX = nameEndX;
+        if (clockX + lcd->smallTextWidth(timeBuf) + 3 <= numX) {
+          display.setColor(DisplayDriver::LIGHT);
+          lcd->printSmallFont(clockX, HOME_HDR_Y, timeBuf);
+        }
       }
     }
 #else
@@ -1459,7 +1466,9 @@ public:
                                          "Jul","Aug","Sep","Oct","Nov","Dec"};
       sprintf(buf, "%s %d %s", days[tmv.tm_wday], tmv.tm_mday, mons[tmv.tm_mon]);
       display.setTextSize(2);
+      display.setColor(DisplayDriver::GREEN);  // light grey on the watch palette
       display.drawTextCentered(display.width() / 2, display.height() / 2 + 12, buf);
+      display.setColor(DisplayDriver::LIGHT);  // restore for the battery line
     }
 
     // battery % and unread count
@@ -1657,6 +1666,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   tw_picker   = new TWatchChannelPicker(_display);
   tw_channel  = new TWatchChannelScreen(_display);
   tw_keyboard = new TWatchKeyboardScreen(_display);
+  ((TWatchChannelPicker*)tw_picker)->setStore((ChannelScreen*)channel_screen);
+  ((TWatchChannelScreen*)tw_channel)->setStore((ChannelScreen*)channel_screen);
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef MECK_AUDIO_VARIANT
@@ -1774,9 +1785,6 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
                     const uint8_t* path, int8_t snr, uint8_t scope_idx) {
   _msgcount = msgcount;
-#ifdef TWATCH_COMPOSE_ENABLED
-  if (tw_channel) ((TWatchChannelScreen*)tw_channel)->notifyMsg(from_name, text);
-#endif
 
   // --- Dedup: suppress retry spam (same sender + text within 60s) ---
   uint32_t nameH = simpleHash(from_name);
@@ -1930,6 +1938,10 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // app is connected (they'll see it there), mark as read immediately
   if ((isOnChannelScreen() && 
       ((ChannelScreen *) channel_screen)->getViewChannelIdx() == channel_idx) ||
+#ifdef TWATCH_COMPOSE_ENABLED
+      (curr == tw_channel &&
+      ((TWatchChannelScreen*)tw_channel)->getChannelIdx() == channel_idx) ||
+#endif
       hasConnection()) {
     ((ChannelScreen *) channel_screen)->markChannelRead(channel_idx);
   }
@@ -2309,6 +2321,7 @@ if (curr) curr->poll();
   if (curr == tw_picker) {
     TWatchChannelPicker* picker = (TWatchChannelPicker*)tw_picker;
     if (picker->isConfirmed()) {
+      ((TWatchChannelScreen*)tw_channel)->setSelfName(the_mesh.getNodePrefs()->node_name);
       ((TWatchChannelScreen*)tw_channel)->activate(picker->getSelectedChannelIdx(),
                                                    picker->getSelectedChannelName());
       setCurrScreen(tw_channel);
@@ -2347,7 +2360,7 @@ if (curr) curr->poll();
         the_mesh.sendGroupMessage(ts, ch.channel, the_mesh.getNodeName(),
                                   sendText, strlen(sendText));
         showAlert("Sent!", 800);
-        ((TWatchChannelScreen*)tw_channel)->addSentMsg(sendText);
+        addSentChannelMessage(kb->getChannelIdx(), the_mesh.getNodePrefs()->node_name, sendText);
       }
       kb->clearOutBuf();
       setCurrScreen(tw_channel);
@@ -2542,16 +2555,16 @@ if (curr) curr->poll();
       _display->turnOff();
     }
 #endif
-#if defined(LILYGO_TWATCH_S3_PLUS)
-    // Raise-to-wake: a wrist-raise (BMA423 tilt) while the display is off turns
-    // it back on showing the clock screen and restarts the idle timer.
-    if (!_display->isOn() && board.tiltFired()) {
-      _display->turnOn();
-      setCurrScreen(lock_screen);
-      _auto_off = millis() + AUTO_OFF_MILLIS;
-    }
-#endif
   }
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  // Raise-to-wake: a wrist-raise (BMA423 tilt) while the display is off turns
+  // it back on showing the clock screen and restarts the idle timer.
+  if (_display != NULL && !_display->isOn() && board.tiltFired()) {
+    _display->turnOn();
+    setCurrScreen(lock_screen);
+    _auto_off = millis() + AUTO_OFF_MILLIS;
+  }
+#endif
 
   // Auto-lock idle timer — runs regardless of display on/off state
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)

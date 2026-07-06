@@ -182,7 +182,58 @@ public:
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
     // The text already contains "Sender: message" format
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch build: drop emoji entirely instead of storing sprite escape bytes.
+    // The watch UI has no sprite rendering and no room for emoji at 120x120
+    // virtual. Non-emoji UTF-8 (accented letters etc.) passes through
+    // unchanged, the same as emojiSanitize does.
+    {
+      const uint8_t* s = (const uint8_t*)text;
+      int srcLen = (int)strlen(text);
+      int si = 0, di = 0;
+      while (si < srcLen && di < CHANNEL_MSG_TEXT_LEN - 1) {
+        uint8_t b = s[si];
+        if (b < 0x80) { msg->text[di++] = (char)b; si++; continue; }
+        int consumed;
+        uint32_t cp = emojiDecodeUtf8(s + si, srcLen - si, &consumed);
+        if (cp == 0xFE0F) { si += consumed; continue; }   // variation selector
+        if (cp == 0xFFFD) { si += consumed; continue; }   // invalid UTF-8 -- skip
+        bool isEmoji = false;
+        for (int e = 0; e < EMOJI_COUNT; e++) {
+          if (EMOJI_CODEPOINTS[e].cp == cp) {
+            if (EMOJI_CODEPOINTS[e].cp2 != 0) {
+              // two-codepoint emoji: only a match when the pair matches
+              int consumed2;
+              if (si + consumed < srcLen) {
+                uint32_t cp2 = emojiDecodeUtf8(s + si + consumed, srcLen - si - consumed, &consumed2);
+                if (cp2 == EMOJI_CODEPOINTS[e].cp2) {
+                  si += consumed + consumed2;
+                  isEmoji = true;
+                  break;
+                }
+              }
+              continue;
+            }
+            si += consumed;
+            isEmoji = true;
+            break;
+          }
+        }
+        if (!isEmoji) {
+          for (int a = 0; a < EMOJI_ALIAS_COUNT; a++) {
+            if (EMOJI_ALIASES[a].cp == cp) { si += consumed; isEmoji = true; break; }
+          }
+        }
+        if (isEmoji) continue;   // dropped
+        if (di + consumed >= CHANNEL_MSG_TEXT_LEN) break;
+        for (int k = 0; k < consumed; k++) msg->text[di++] = (char)s[si + k];
+        si += consumed;
+      }
+      msg->text[di] = 0;
+    }
+#else
     emojiSanitize(text, msg->text, CHANNEL_MSG_TEXT_LEN);
+#endif
     
     if (_msgCount < CHANNEL_MSG_HISTORY_SIZE) {
       _msgCount++;
@@ -221,6 +272,23 @@ public:
   }
 
   int getMessageCount() const { return _msgCount; }
+
+  // Read-only access to stored messages for a given channel, by recency.
+  // n = 0 returns the newest message on that channel, n = 1 the next newest,
+  // and so on. Returns nullptr when fewer than n + 1 messages exist.
+  const ChannelMessage* getChannelMsgByRecency(uint8_t channel_idx, int n) const {
+    if (n < 0 || _msgCount == 0) return nullptr;
+    int seen = 0;
+    for (int i = 0; i < _msgCount; i++) {
+      int idx = _newestIdx - i;
+      while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+      const ChannelMessage& m = _messages[idx];
+      if (!m.valid || m.channel_idx != channel_idx) continue;
+      if (seen == n) return &m;
+      seen++;
+    }
+    return nullptr;
+  }
   
   uint8_t getViewChannelIdx() const { return _viewChannelIdx; }
   void setViewChannelIdx(uint8_t idx) {

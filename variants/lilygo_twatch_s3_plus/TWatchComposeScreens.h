@@ -13,10 +13,11 @@
 //                          top half to move the highlight up, the bottom half
 //                          to move it down; long-press selects the highlighted
 //                          channel; the back arrow (top-left) returns home.
-//   TWatchChannelScreen  — shows the last TW_INBOX_SIZE incoming messages for
-//                          the selected channel (live, in-RAM, no history).
-//                          Tap the compose bar to open the keyboard; back
-//                          arrow returns home.
+//   TWatchChannelScreen  -- shows the most recent messages (sent + received)
+//                          for the selected channel, read live from the shared
+//                          ChannelScreen history store. Tap a line to ticker-
+//                          scroll it; tap the compose bar to open the keyboard;
+//                          back arrow returns home.
 //   TWatchKeyboardScreen — on-screen QWERTY. Bottom-left mode key cycles
 //                          lower -> UPPER -> SYM. Bottom row is mode | space |
 //                          enter | backspace. Enter sends on the channel; back
@@ -25,8 +26,8 @@
 // Each screen reads getTouch() itself in poll() and does its own release-edge
 // detection, so actions fire on touch release (finger up) — this keeps the
 // held finger from carrying into the next screen after a transition. Send/exit
-// are delegated to UITask via the consume/flag pattern, so this header has no
-// dependency on MyMesh / BaseChatMesh.
+// are delegated to UITask via the consume/flag pattern; message history and
+// unread counts are read from the shared ChannelScreen store.
 // =============================================================================
 
 #ifdef TWATCH_COMPOSE_ENABLED
@@ -36,12 +37,11 @@
 #include <helpers/ui/LGFXDisplay.h>
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
+#include "ChannelScreen.h"   // shared message history store (-I examples/companion_radio/ui-new)
 
 // ---- Tunables ---------------------------------------------------------------
 #define TW_LONG_PRESS_MS   600    // hold to select a channel in the picker
 #define TW_OUT_BUF_LEN     134    // MeshCore per-channel msg cap (~133) + NUL
-#define TW_INBOX_SIZE      5      // messages kept/shown on the channel screen
-#define TW_INBOX_TEXT_LEN  96
 #define TW_TICKER_MS_PER_PX 20    // channel-screen ticker scroll speed (ms per pixel)
 #define TW_CH_NAME_LEN     32
 #define TW_PICKER_MAX      20     // matches MAX_GROUP_CHANNELS
@@ -57,6 +57,7 @@ class TWatchChannelPicker : public UIScreen {
   uint8_t  _numChannels;
   uint8_t  _highlighted;
   uint8_t  _scrollTop;
+  ChannelScreen* _store;   // unread badge source
 
   // touch edge state
   bool          _touchDown;
@@ -94,10 +95,14 @@ class TWatchChannelPicker : public UIScreen {
 public:
   TWatchChannelPicker(DisplayDriver* display)
     : _display(display), _numChannels(0), _highlighted(0), _scrollTop(0),
+      _store(nullptr),
       _touchDown(false), _downX(0), _downY(0), _downAt(0),
       _confirmed(false), _wantsExit(false) {
     memset(_channels, 0, sizeof(_channels));
   }
+
+  // Shared history store, used for the per-channel unread badges.
+  void setStore(ChannelScreen* store) { _store = store; }
 
   // Called by UITask before showing the screen.
   void beginChannelSelect() {
@@ -170,7 +175,18 @@ public:
       } else {
         display.setColor(DisplayDriver::LIGHT);
       }
-      display.drawTextEllipsized(3, y + 2, W - 6, _channels[ci].name);
+      int nameMaxW = W - 6;
+      int unread = _store ? _store->getUnreadForChannel(_channels[ci].idx) : 0;
+      if (unread > 0) {
+        char cnt[8];
+        snprintf(cnt, sizeof(cnt), "%d", unread > 99 ? 99 : unread);
+        int cw = display.getTextWidth(cnt);
+        display.setColor((ci == _highlighted) ? DisplayDriver::DARK : DisplayDriver::BLUE);
+        display.drawTextRightAlign(W - 3, y + 2, cnt);
+        display.setColor((ci == _highlighted) ? DisplayDriver::DARK : DisplayDriver::LIGHT);
+        nameMaxW = W - 6 - cw - 4;
+      }
+      display.drawTextEllipsized(3, y + 2, nameMaxW, _channels[ci].name);
       y += ROW_H;
     }
     return 500;
@@ -182,13 +198,10 @@ public:
 // =============================================================================
 class TWatchChannelScreen : public UIScreen {
   DisplayDriver* _display;
+  ChannelScreen* _store;          // shared message history store
   uint8_t _channelIdx;
   char    _channelName[TW_CH_NAME_LEN];
-
-  struct InboxEntry { char text[TW_INBOX_TEXT_LEN]; bool valid; bool isSent; };
-  InboxEntry _inbox[TW_INBOX_SIZE];
-  uint8_t    _inboxNewest;
-  uint8_t    _inboxCount;
+  char    _selfPrefix[TW_CH_NAME_LEN + 2];   // "NodeName: " -- marks sent lines
 
   bool _touchDown;
   int  _downX, _downY;
@@ -196,23 +209,35 @@ class TWatchChannelScreen : public UIScreen {
   bool _wantsCompose;
   bool _wantsExit;
 
-  int           _selectedSlot;    // ring slot shown as ticker, -1 = none
+  int           _selectedN;       // recency index shown as ticker, -1 = none
   unsigned long _tickerStartMs;
+  const void*   _lastNewest;      // newest store entry seen last render
+  uint32_t      _lastNewestTs;    //   (a change dismisses the ticker)
 
   static const int HEADER_H      = 14;
   static const int COMPOSE_BAR_H = 18;
   static const int MSG_LINE_H    = 11;
   static const int MSG_TOP       = HEADER_H + 2;
 
-  void pushEntry(const char* text, bool sent) {
-    _inboxNewest = (_inboxCount == 0) ? 0 : (uint8_t)((_inboxNewest + 1) % TW_INBOX_SIZE);
-    InboxEntry& e = _inbox[_inboxNewest];
-    if (text) { strncpy(e.text, text, TW_INBOX_TEXT_LEN - 1); e.text[TW_INBOX_TEXT_LEN - 1] = 0; }
-    else      { e.text[0] = 0; }
-    e.valid = true;
-    e.isSent = sent;
-    if (_inboxCount < TW_INBOX_SIZE) _inboxCount++;
-    _selectedSlot = -1;   // a new message dismisses any open ticker
+  int rowsThatFit() const {
+    int h = _display ? _display->height() : 120;
+    int rows = (h - COMPOSE_BAR_H - 1 - MSG_TOP) / MSG_LINE_H;
+    return rows < 1 ? 1 : rows;
+  }
+
+  // Store messages available for this channel, capped at what fits on screen.
+  int visibleCount() const {
+    if (!_store) return 0;
+    int maxRows = rowsThatFit();
+    int n = 0;
+    while (n < maxRows && _store->getChannelMsgByRecency(_channelIdx, n)) n++;
+    return n;
+  }
+
+  // Sent messages are stored with path_len 0 and a "NodeName: " prefix.
+  bool isSent(const ChannelScreen::ChannelMessage* m) const {
+    return m->path_len == 0 && _selfPrefix[0] != 0 &&
+           strncmp(m->text, _selfPrefix, strlen(_selfPrefix)) == 0;
   }
 
   void drawMsgLine(DisplayDriver& display, int y, const char* text, bool sent) {
@@ -227,7 +252,7 @@ class TWatchChannelScreen : public UIScreen {
       display.drawTextRightAlign(W - 2, y, text);
       return;
     }
-    char buf[TW_INBOX_TEXT_LEN + 4];
+    char buf[CHANNEL_MSG_TEXT_LEN + 4];
     strncpy(buf, text, sizeof(buf) - 4);
     buf[sizeof(buf) - 4] = 0;
     int ellW = display.getTextWidth("...");
@@ -249,48 +274,50 @@ class TWatchChannelScreen : public UIScreen {
     int period = textW + 24;   // full text width + trailing gap
     unsigned long elapsed = millis() - _tickerStartMs;
     int off = (int)((elapsed / TW_TICKER_MS_PER_PX) % (unsigned long)period);
+    // Wrap off while the marquee draws: a long line must clip at the screen
+    // edge, not wrap onto the rows below. Restored straight after.
+    ((LGFXDisplay*)_display)->setTextWrap(false);
     display.setCursor(2 - off, y);
     display.print(text);
     display.setCursor(2 - off + period, y);
     display.print(text);
+    ((LGFXDisplay*)_display)->setTextWrap(true);
   }
 
 public:
   TWatchChannelScreen(DisplayDriver* display)
-    : _display(display), _channelIdx(0),
-      _inboxNewest(0), _inboxCount(0),
+    : _display(display), _store(nullptr), _channelIdx(0),
       _touchDown(false), _downX(0), _downY(0),
       _wantsCompose(false), _wantsExit(false),
-      _selectedSlot(-1), _tickerStartMs(0) {
+      _selectedN(-1), _tickerStartMs(0),
+      _lastNewest(nullptr), _lastNewestTs(0) {
     _channelName[0] = 0;
-    memset(_inbox, 0, sizeof(_inbox));
+    _selfPrefix[0] = 0;
+  }
+
+  // Shared history store this screen renders from.
+  void setStore(ChannelScreen* store) { _store = store; }
+
+  // Own node name, used to right-align sent lines ("NodeName: text").
+  void setSelfName(const char* name) {
+    if (!name || !name[0]) { _selfPrefix[0] = 0; return; }
+    snprintf(_selfPrefix, sizeof(_selfPrefix), "%s: ", name);
   }
 
   // Switch to a channel (called when a channel is selected in the picker).
+  // Opening a channel marks its messages as read.
   void activate(uint8_t idx, const char* name) {
     _channelIdx = idx;
     strncpy(_channelName, name ? name : "", TW_CH_NAME_LEN - 1);
     _channelName[TW_CH_NAME_LEN - 1] = 0;
-    _inboxNewest = 0; _inboxCount = 0;
-    memset(_inbox, 0, sizeof(_inbox));
     _touchDown = false; _wantsCompose = false; _wantsExit = false;
-    _selectedSlot = -1;
+    _selectedN = -1;
+    _lastNewest = nullptr; _lastNewestTs = 0;
+    if (_store) _store->markChannelRead(_channelIdx);
   }
 
   uint8_t getChannelIdx() const { return _channelIdx; }
   const char* getChannelName() const { return _channelName; }
-
-  // Fed by UITask::newMsg for every incoming message; kept only if it matches
-  // this channel by name.
-  void notifyMsg(const char* from, const char* text) {
-    if (!from || strcmp(from, _channelName) != 0) return;
-    pushEntry(text, false);
-  }
-
-  // Called by UITask after a message is sent on this channel.
-  void addSentMsg(const char* text) {
-    pushEntry(text, true);
-  }
 
   bool wantsCompose() const { return _wantsCompose; }
   void acknowledgeCompose() { _wantsCompose = false; }
@@ -308,20 +335,16 @@ public:
     } else if (!now && _touchDown) {
       _touchDown = false;
       int H = _display->height();
-      if (_downX < 20 && _downY < HEADER_H) { _selectedSlot = -1; _wantsExit = true; return; }   // back arrow
-      if (_downY >= H - COMPOSE_BAR_H) { _selectedSlot = -1; _wantsCompose = true; return; }      // compose bar
+      if (_downX < 20 && _downY < HEADER_H) { _selectedN = -1; _wantsExit = true; return; }   // back arrow
+      if (_downY >= H - COMPOSE_BAR_H) { _selectedN = -1; _wantsCompose = true; return; }      // compose bar
       // message area -> tap to open/close ticker
       if (_downY >= MSG_TOP && _downY < H - COMPOSE_BAR_H) {
         int visualRow = (_downY - MSG_TOP) / MSG_LINE_H;
-        if (visualRow >= 0 && visualRow < _inboxCount) {
-          int i = (_inboxCount - 1) - visualRow;
-          int slot = (int)_inboxNewest - i;
-          while (slot < 0) slot += TW_INBOX_SIZE;
-          slot %= TW_INBOX_SIZE;
-          if (_inbox[slot].valid) {
-            if (_selectedSlot == slot) _selectedSlot = -1;
-            else { _selectedSlot = slot; _tickerStartMs = millis(); }
-          }
+        int count = visibleCount();
+        if (visualRow >= 0 && visualRow < count) {
+          int n = (count - 1) - visualRow;   // top row = oldest visible
+          if (_selectedN == n) _selectedN = -1;
+          else { _selectedN = n; _tickerStartMs = millis(); }
         }
       }
     }
@@ -340,22 +363,29 @@ public:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, HEADER_H - 2, W, 1);
 
-    const int areaBottom = H - COMPOSE_BAR_H - 1;
+    // A new message (sent or received) shifts the rows, so dismiss any open
+    // ticker when the newest store entry for this channel changes.
+    const ChannelScreen::ChannelMessage* newest =
+        _store ? _store->getChannelMsgByRecency(_channelIdx, 0) : nullptr;
+    if (newest != _lastNewest || (newest && newest->timestamp != _lastNewestTs)) {
+      _lastNewest = newest;
+      _lastNewestTs = newest ? newest->timestamp : 0;
+      _selectedN = -1;
+    }
 
-    if (_inboxCount == 0) {
+    int count = visibleCount();
+    if (count == 0) {
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(2, MSG_TOP);
       display.print("(no messages)");
     } else {
       int y = MSG_TOP;
-      for (int i = _inboxCount - 1; i >= 0; i--) {   // oldest first (top) -> newest (bottom)
-        int idx = (int)_inboxNewest - i;
-        while (idx < 0) idx += TW_INBOX_SIZE;
-        const InboxEntry& e = _inbox[idx];
-        if (!e.valid) continue;
-        if (y + MSG_LINE_H > areaBottom) break;
-        if (idx == _selectedSlot) drawTicker(display, y, e.text, e.isSent);
-        else                      drawMsgLine(display, y, e.text, e.isSent);
+      for (int n = count - 1; n >= 0; n--) {   // oldest visible (top) -> newest (bottom)
+        const ChannelScreen::ChannelMessage* m = _store->getChannelMsgByRecency(_channelIdx, n);
+        if (!m) continue;
+        bool sent = isSent(m);
+        if (n == _selectedN) drawTicker(display, y, m->text, sent);
+        else                 drawMsgLine(display, y, m->text, sent);
         y += MSG_LINE_H;
       }
     }
@@ -364,7 +394,7 @@ public:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, H - COMPOSE_BAR_H, W, COMPOSE_BAR_H - 1);
     display.drawTextEllipsized(3, H - COMPOSE_BAR_H + 4, W - 6, "Tap to compose");
-    return (_selectedSlot >= 0) ? 60 : 500;
+    return (_selectedN >= 0) ? 60 : 500;
   }
 };
 

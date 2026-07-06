@@ -14,6 +14,10 @@ void TWatchS3PlusBoard::begin() {
     _accel->configAccelerometer(OperationMode::NORMAL, AccelFullScaleRange::FS_2G,
                                 50.0f, AccelBandwidth::OSR2_AVG2, AccelPerfMode::CIC_AVG_MODE);
     _accel->enableTiltDetector(true, true);
+    // INT1 pin electrical config: level trigger, active high, push-pull,
+    // output enabled. INT1_IO_CTRL resets to output-disabled, so without
+    // this the pin never drives and INPUT_PULLDOWN reads low forever.
+    _accel->setInterruptPinConfig(InterruptPinMap::PIN1, false, false, true, false);
     pinMode(PIN_ACCEL_IRQ, INPUT_PULLDOWN);
   }
 
