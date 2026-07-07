@@ -4,7 +4,7 @@ bool LGFXDisplay::begin() {
   turnOn();
   display->init();
   display->setRotation(1);
-  display->setBrightness(54);
+  display->setBrightness(30);
   display->setColorDepth(8);
   display->setTextColor(TFT_WHITE);
 

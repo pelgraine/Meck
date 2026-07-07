@@ -301,7 +301,11 @@ public:
       int selCount = getSelectedCount();
       snprintf(tmp, sizeof(tmp), "%d Selected [%s]", selCount, filterLabel(_filter));
     } else {
+#if defined(LILYGO_TWATCH_S3_PLUS)
+      snprintf(tmp, sizeof(tmp), "Contacts[%s]", filterLabel(_filter));
+#else
       snprintf(tmp, sizeof(tmp), "Contacts [%s]", filterLabel(_filter));
+#endif
     }
     display.print(tmp);
 
@@ -465,6 +469,11 @@ public:
       const char* right = "Hold:DM/Admin";
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
+    }
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+    display.setCursor(0, footerY);
+    if (!_selectMode) {
+      display.print("Long Press: Enter");
     }
 #elif defined(LILYGO_TECHO_LITE)
     display.setCursor(0, footerY);

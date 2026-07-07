@@ -1904,6 +1904,37 @@ static void lastHeardToggleContact() {
           }
         }
         return 0;
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+        // Watch: long press = DM (tw-keyboard) / admin / room action.
+        // purpose ints match TWatchKeyboardScreen::Purpose: DM=1.
+        {
+          int idx = cs->getSelectedContactIdx();
+          uint8_t ctype = cs->getSelectedContactType();
+          if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+            if (ui_task.hasDMUnread(idx)) {
+              char cname[32];
+              cs->getSelectedContactName(cname, sizeof(cname));
+              ui_task.clearDMUnread(idx);
+              ui_task.gotoDMConversation(cname);
+              return 0;
+            }
+            ui_task.openTWatchKeyboard(1, idx);   // TWKB_DM
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+            ui_task.gotoRepeaterAdmin(idx);
+            return 0;
+          } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+            char cname[32];
+            cs->getSelectedContactName(cname, sizeof(cname));
+            ui_task.clearDMUnread(idx);
+            ui_task.gotoDMConversation(cname);
+            return 0;
+          }
+        }
+        return 0;
 #else
         // T-Deck Pro: long press enters select mode
         cs->enterSelectMode();
@@ -1949,10 +1980,18 @@ static void lastHeardToggleContact() {
 #if defined(LilyGo_T5S3_EPaper_Pro)
           ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
           return 0;
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+          ui_task.openTWatchKeyboard(2, 0);   // TWKB_ADMIN_PASSWORD
+          return 0;
 #else
           return KEY_ENTER;  // T-Deck Pro: keyboard handles password entry
 #endif
         }
+#if defined(LILYGO_TWATCH_S3_PLUS)
+        // Watch: any other admin state long-press opens the CLI keyboard.
+        ui_task.openTWatchKeyboard(3, 0);   // TWKB_ADMIN_CLI
+        return 0;
+#endif
       }
     }
 

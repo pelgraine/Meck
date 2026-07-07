@@ -51,7 +51,7 @@ void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr) {
 
   // Longer preamble for low SF improves reliability -- each symbol is shorter
   // at low SF, so more symbols are needed for reliable detection.
-  uint16_t preamble = (sf <= 8) ? 32 : 16;
+  uint16_t preamble = (sf <= 9) ? 32 : 16;
   radio.setPreambleLength(preamble);
 }
 

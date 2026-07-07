@@ -196,6 +196,7 @@ public:
   void gotoChannelPickerScreen();  // Navigate to channel picker (bubble/list)
 #ifdef TWATCH_COMPOSE_ENABLED
   void openTWatchPicker();
+  void openTWatchKeyboard(int purpose, int contextIdx);
 #endif
   void gotoDMTab();          // Navigate directly to DM tab on channel screen
   void gotoDMConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0);

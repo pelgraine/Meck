@@ -1,4 +1,3 @@
-
 #define RADIOLIB_STATIC_ONLY 1
 #include "RadioLibWrappers.h"
 
@@ -63,6 +62,11 @@ void RadioLibWrapper::resetAGC() {
 }
 
 void RadioLibWrapper::loop() {
+#if defined(MECK_RX_DUTY_CYCLE)
+  // Duty-cycle RX sleeps the radio between listen windows, so RSSI floor
+  // sampling would read garbage. Skip it; the noise floor keeps its default.
+  return;
+#endif
   if (state == STATE_RX && _num_floor_samples < NUM_NOISE_FLOOR_SAMPLES) {
     if (!isReceivingPacket()) {
       int rssi = getCurrentRSSI();
@@ -83,7 +87,14 @@ void RadioLibWrapper::loop() {
 }
 
 void RadioLibWrapper::startRecv() {
+#if defined(MECK_RX_DUTY_CYCLE)
+  // Watch: SX126x hardware RX duty cycling. senderPreambleLength 0 = use the
+  // configured preamble; minSymbols 0 = library minimum. At preambles too
+  // short to sleep, RadioLib falls back to continuous startReceive() itself.
+  int err = ((SX126x*)_radio)->startReceiveDutyCycleAuto(0, 0);
+#else
   int err = _radio->startReceive();
+#endif
   if (err == RADIOLIB_ERR_NONE) {
     state = STATE_RX;
   } else {
@@ -114,7 +125,11 @@ int RadioLibWrapper::recvRaw(uint8_t* bytes, int sz) {
   }
 
   if (state != STATE_RX) {
+#if defined(MECK_RX_DUTY_CYCLE)
+    int err = ((SX126x*)_radio)->startReceiveDutyCycleAuto(0, 0);
+#else
     int err = _radio->startReceive();
+#endif
     if (err == RADIOLIB_ERR_NONE) {
       state = STATE_RX;
     } else {

@@ -445,9 +445,8 @@ public:
     {
       LGFXDisplay* lcd = (LGFXDisplay*)&display;
 
-      // Battery % (voltage-derived, same source as the old icon), rightmost.
-      int mV = (int)_task->getBattMilliVolts();
-      int pct = (mV - 3000) * 100 / 1200;
+      // Battery % from the AXP2101 fuel gauge, rightmost.
+      int pct = (int)_task->getBatteryPercent();
       if (pct < 0) pct = 0;
       if (pct > 100) pct = 100;
       char battbuf[6];
@@ -1453,8 +1452,7 @@ public:
     } else {
       strcpy(buf, "--:--");
     }
-    display.setTextSize(4);
-    display.drawTextCentered(display.width() / 2, display.height() / 2 - 30, buf);
+    ((LGFXDisplay*)&display)->printClockFont(display.width() / 2, display.height() / 2 - 30, buf);
 
     // day + date line below the clock
     if (now > 1700000000) {
@@ -1472,8 +1470,7 @@ public:
     }
 
     // battery % and unread count
-    int mv = (int)_task->getBattMilliVolts();
-    int pct = (mv - 3000) * 100 / 1200;
+    int pct = (int)_task->getBatteryPercent();
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     sprintf(buf, "%d%% | %d unread", pct, _task->getUnreadMsgCount());
@@ -1973,6 +1970,21 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   }
 
   if (_display != NULL && !suppressNotif) {
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: a new message must not wake the screen. The unread counter has
+    // already been incremented above; leave the display asleep so the count
+    // is only seen on the next tilt-wake to the clock screen. Only refresh
+    // when the display is already on.
+    if (_display->isOn()) {
+      _auto_off = millis() + AUTO_OFF_MILLIS;  // extend the auto-off timer
+      if (isRoomMsg) {
+        unsigned long earliest = millis() + 3000;  // At most one refresh per 3s during sync
+        if (_next_refresh < earliest) _next_refresh = earliest;
+      } else {
+        _next_refresh = 100;  // trigger refresh
+      }
+    }
+#else
     if (!_display->isOn() && !hasConnection()) {
       _display->turnOn();
     }
@@ -1986,6 +1998,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       _next_refresh = 100;  // trigger refresh
     }
     }
+#endif
   }
 
   // Keyboard flash notification (suppress for room sync and muted channels)
@@ -2143,6 +2156,20 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  // TEMP power-debug probe: every 60s, log display state + board power stats.
+  {
+    static unsigned long _pwr_dbg_next = 0;
+    if (millis() >= _pwr_dbg_next) {
+      _pwr_dbg_next = millis() + 60000;
+      Serial.printf("[PWR] uptime=%lus display=%s auto_off_in=%ldms\n",
+                    millis() / 1000,
+                    (_display && _display->isOn()) ? "ON" : "off",
+                    (long)(_auto_off - millis()));
+      board.printPowerDebug();
+    }
+  }
+#endif
 #if defined(PIN_USER_BTN)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -2354,16 +2381,46 @@ if (curr) curr->poll();
     }
     const char* sendText = nullptr;
     if (kb->consumeSendRequest(&sendText) && sendText) {
-      ChannelDetails ch;
-      if (the_mesh.getChannel(kb->getChannelIdx(), ch)) {
-        uint32_t ts = rtc_clock.getCurrentTime();
-        the_mesh.sendGroupMessage(ts, ch.channel, the_mesh.getNodeName(),
-                                  sendText, strlen(sendText));
-        showAlert("Sent!", 800);
-        addSentChannelMessage(kb->getChannelIdx(), the_mesh.getNodePrefs()->node_name, sendText);
+      TWatchKeyboardScreen::Purpose purpose = kb->getPurpose();
+      int ctxIdx = kb->getContextIdx();
+      if (purpose == TWatchKeyboardScreen::TWKB_CHANNEL) {
+        ChannelDetails ch;
+        if (the_mesh.getChannel(kb->getChannelIdx(), ch)) {
+          uint32_t ts = rtc_clock.getCurrentTime();
+          the_mesh.sendGroupMessage(ts, ch.channel, the_mesh.getNodeName(),
+                                    sendText, strlen(sendText));
+          showAlert("Sent!", 800);
+          addSentChannelMessage(kb->getChannelIdx(), the_mesh.getNodePrefs()->node_name, sendText);
+        }
+        kb->clearOutBuf();
+        setCurrScreen(tw_channel);
+      } else if (purpose == TWatchKeyboardScreen::TWKB_DM) {
+        bool dmSuccess = false;
+        if (strlen(sendText) > 0 && the_mesh.uiSendDirectMessage((uint32_t)ctxIdx, sendText)) {
+          ContactInfo dmRecipient;
+          if (the_mesh.getContactByIdx(ctxIdx, dmRecipient)) {
+            addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, sendText);
+          }
+          dmSuccess = true;
+        }
+        kb->clearOutBuf();
+        ContactInfo dmContact;
+        if (the_mesh.getContactByIdx(ctxIdx, dmContact)) {
+          gotoDMConversation(dmContact.name, ctxIdx, 0);
+        } else {
+          gotoHomeScreen();
+        }
+        showAlert(dmSuccess ? "DM sent!" : "DM failed!", 1500);
+      } else {  // TWKB_ADMIN_PASSWORD or TWKB_ADMIN_CLI
+        RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
+        if (admin) {
+          for (int i = 0; sendText[i]; i++) admin->handleInput(sendText[i]);
+          admin->handleInput('\r');
+        }
+        kb->clearOutBuf();
+        if (repeater_admin) setCurrScreen(repeater_admin);
+        else gotoHomeScreen();
       }
-      kb->clearOutBuf();
-      setCurrScreen(tw_channel);
     }
   }
 #endif
@@ -3226,6 +3283,17 @@ void UITask::openTWatchPicker() {
     }
   }
   setCurrScreen(tw_picker);
+}
+
+void UITask::openTWatchKeyboard(int purpose, int contextIdx) {
+  ((TWatchKeyboardScreen*)tw_keyboard)->activateFor(
+      (TWatchKeyboardScreen::Purpose)purpose, contextIdx);
+  setCurrScreen(tw_keyboard);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
 }
 #endif
 

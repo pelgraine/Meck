@@ -17,6 +17,9 @@ class SensorBMA423;  // full include kept in the .cpp to avoid a BLE-build heade
 class TWatchS3PlusBoard : public ESP32Board {
   XPowersLibInterface* PMU = NULL;
   SensorBMA423* _accel = nullptr;
+  static volatile bool _tilt_flag;
+  static volatile uint32_t _tilt_isr_count;   // TEMP diagnostic
+  static void IRAM_ATTR onTiltISR();   // defined in the .cpp (IRAM relocation)
 
   bool power_init();
 
@@ -50,10 +53,18 @@ public:
     return PMU ? PMU->getBattVoltage() : 0;
   }
 
+  uint8_t getBatteryPercent() override {
+    return PMU ? PMU->getBatteryPercent() : 0;
+  }
+
   // GPS power is the AXP2101 BLDO1 rail. Off at boot; toggled at runtime via
   // the gps_enabled pref (boot) and the "gps on/off" CLI command (live).
   void gpsPowerOn();
   void gpsPowerOff();
+
+  // TEMP power-debug probe: battery, VBUS, CPU clock, BT controller state and
+  // live rail states (incl. GPS/BLDO1). Called periodically from UITask::loop.
+  void printPowerDebug();
 
   const char* getManufacturerName() const override {
     return "LilyGo T-Watch S3 Plus";

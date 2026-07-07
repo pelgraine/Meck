@@ -499,14 +499,18 @@ private:
       addRow(ROW_BACKLIGHT_BRIGHTNESS);
       addRow(ROW_KB_BACKLIGHT);
 #endif
+#if !defined(LILYGO_TWATCH_S3_PLUS)
       addRow(ROW_MSG_NOTIFY);
+#endif
 #if HAS_GPS
       addRow(ROW_GPS_BAUD);
 #endif
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DEFAULT_SCOPE);
+#if !defined(LILYGO_TWATCH_S3_PLUS)
       addRow(ROW_DARK_MODE);
-#if !defined(LILYGO_TECHO_LITE)
+#endif
+#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TWATCH_S3_PLUS)
       addRow(ROW_LARGE_FONT);
       addRow(ROW_FONT_STYLE);
 #endif
@@ -2936,9 +2940,17 @@ public:
       } else if (_subScreen != SUB_NONE) {
         display.print("Sh+Del:Back");
       } else {
+#if defined(LILYGO_TWATCH_S3_PLUS)
+        display.print("Hold:Edit");
+#else
         display.print("Sh+Del:Bk");
+#endif
       }
+#if defined(LILYGO_TWATCH_S3_PLUS)
+      const char* r = (_subScreen == SUB_NONE) ? "Tap:Cycle" : "Tap/Ent:Edit";
+#else
       const char* r = "Tap/Ent:Edit";
+#endif
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
       display.print(r);
     }

@@ -59,6 +59,19 @@ public:
   // ticker turns wrap off so a long scrolling line is clipped at the screen
   // edge instead of wrapping onto the rows below.
   void setTextWrap(bool en) { buffer.setTextWrap(en, false); }
+  // Draw a string centred horizontally at mid_x with its top at y, in
+  // FreeSansBold 24pt (used for the clock HH:MM), then restore the default
+  // GLCD font + size so later text is unaffected.
+  void printClockFont(int mid_x, int y, const char* str) {
+    buffer.setFont(&fonts::FreeSansBold24pt7b);
+    buffer.setTextColor(_color);
+    buffer.setTextSize(1);
+    int w = buffer.textWidth(str);
+    buffer.setCursor(mid_x - w / 2, y);
+    buffer.print(str);
+    buffer.setFont(&fonts::Font0);   // restore default 6x8 GLCD font
+    buffer.setTextSize(1);
+  }
 #endif
   void setCursor(int x, int y) override;
   void print(const char* str) override;

@@ -86,6 +86,7 @@ void Dispatcher::loop() {
       rx_stuck_count = 0;  // radio recovered — reset counter
     }
   }
+#if !defined(MECK_RX_DUTY_CYCLE)
   if (!is_recv && _ms->getMillis() - radio_nonrx_start > 8000) {   // radio has not been in Rx mode for 8 seconds!
     _err_flags |= ERR_EVENT_STARTRX_TIMEOUT;
 
@@ -105,6 +106,7 @@ void Dispatcher::loop() {
     cad_busy_start = 0;
     next_agc_reset_time = futureMillis(getAGCResetInterval());
   }
+#endif
 
   if (outbound) {  // waiting for outbound send to be completed
     if (_radio->isSendComplete()) {
@@ -152,10 +154,12 @@ void Dispatcher::loop() {
     next_agc_reset_time = futureMillis(getAGCResetInterval());
   }
 
+#if !defined(MECK_RX_DUTY_CYCLE)
   if (getAGCResetInterval() > 0 && millisHasNowPassed(next_agc_reset_time)) {
     _radio->resetAGC();
     next_agc_reset_time = futureMillis(getAGCResetInterval());
   }
+#endif
 
   // check inbound (delayed) queue
   {

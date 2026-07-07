@@ -606,6 +606,8 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Exit");
         renderFooterRight(display, footerY, "Hold:Type");
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+        display.print("Long Press: login");
 #else
         display.print("Sh+Del:Exit");
         renderFooterRight(display, footerY, "Ent:Login");
@@ -1075,6 +1077,11 @@ private:
   void renderResponse(DisplayDriver& display, int y, int bodyHeight) {
     display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
     int lineHeight = the_mesh.getNodePrefs()->smallLineH();
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: clip long response lines at the screen edge instead of wrapping
+    // them onto the row below.
+    ((LGFXDisplay*)&display)->setTextWrap(false);
+#endif
 
     display.setColor((_state == STATE_ERROR) ? DisplayDriver::YELLOW : DisplayDriver::LIGHT);
 
@@ -1112,6 +1119,9 @@ private:
     }
 
     display.setTextSize(1);
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    ((LGFXDisplay*)&display)->setTextWrap(true);   // restore default
+#endif
   }
 
   bool handleResponseInput(char c) {

@@ -405,6 +405,17 @@ class TWatchKeyboardScreen : public UIScreen {
   DisplayDriver* _display;
   uint8_t  _channelIdx;
 
+public:
+  enum Purpose { TWKB_CHANNEL, TWKB_DM, TWKB_ADMIN_PASSWORD, TWKB_ADMIN_CLI };
+
+private:
+  Purpose  _purpose;
+  int      _contextIdx;    // channel idx (channel) or contact idx (DM/admin)
+  bool     _mask;          // render composed text as '*' (admin password)
+  unsigned long _lastCharAt;   // when the last char was typed (for reveal window)
+
+  static const unsigned long PW_REVEAL_MS = 2000;   // show last char this long before masking
+
   char     _outBuf[TW_OUT_BUF_LEN];
   uint16_t _outLen;
 
@@ -436,10 +447,10 @@ class TWatchKeyboardScreen : public UIScreen {
   }
 
   void appendChar(char ch) {
-    if (_outLen < MAXLEN) { _outBuf[_outLen++] = ch; _outBuf[_outLen] = 0; }
+    if (_outLen < MAXLEN) { _outBuf[_outLen++] = ch; _outBuf[_outLen] = 0; _lastCharAt = millis(); }
   }
   void backspace() {
-    if (_outLen > 0) { _outLen--; _outBuf[_outLen] = 0; }
+    if (_outLen > 0) { _outLen--; _outBuf[_outLen] = 0; _lastCharAt = 0; }
   }
   void cycleMode() {
     _mode = (_mode == LOWER) ? UPPER : (_mode == UPPER ? SYM : LOWER);
@@ -454,7 +465,9 @@ class TWatchKeyboardScreen : public UIScreen {
 
 public:
   TWatchKeyboardScreen(DisplayDriver* display)
-    : _display(display), _channelIdx(0), _outLen(0), _mode(LOWER),
+    : _display(display), _channelIdx(0),
+      _purpose(TWKB_CHANNEL), _contextIdx(0), _mask(false), _lastCharAt(0),
+      _outLen(0), _mode(LOWER),
       _touchDown(false), _downX(0), _downY(0),
       _wantsSend(false), _wantsExit(false) {
     _outBuf[0] = 0;
@@ -464,10 +477,27 @@ public:
   void activate(uint8_t idx, const char* name) {
     (void)name;
     _channelIdx = idx;
+    _purpose = TWKB_CHANNEL;
+    _contextIdx = idx;
+    _mask = false;
     _outLen = 0; _outBuf[0] = 0;
     _mode = LOWER;
     _touchDown = false; _wantsSend = false; _wantsExit = false;
   }
+
+  // Enter text for a non-channel purpose (DM / admin password / admin CLI).
+  void activateFor(Purpose purpose, int contextIdx) {
+    _purpose = purpose;
+    _contextIdx = contextIdx;
+    _channelIdx = 0;
+    _mask = (purpose == TWKB_ADMIN_PASSWORD);
+    _outLen = 0; _outBuf[0] = 0;
+    _mode = LOWER;
+    _touchDown = false; _wantsSend = false; _wantsExit = false;
+  }
+
+  Purpose getPurpose() const { return _purpose; }
+  int getContextIdx() const { return _contextIdx; }
 
   uint8_t getChannelIdx() const { return _channelIdx; }
   bool consumeSendRequest(const char** textOut) {
@@ -515,15 +545,26 @@ public:
 
     display.setColor(DisplayDriver::LIGHT);
     {
+      // Mask the composed text with '*' for the admin password purpose.
+      char masked[TW_OUT_BUF_LEN];
+      const char* src = _outBuf;
+      if (_mask) {
+        int m = (_outLen < TW_OUT_BUF_LEN - 1) ? _outLen : TW_OUT_BUF_LEN - 1;
+        for (int i = 0; i < m; i++) masked[i] = '*';
+        // Reveal the most recently typed char briefly so it can be read.
+        if (m > 0 && (millis() - _lastCharAt < PW_REVEAL_MS)) masked[m - 1] = _outBuf[m - 1];
+        masked[m] = 0;
+        src = masked;
+      }
       const int avail = W - 16 - 4;   // room after the back arrow, minus cursor
       int len = _outLen;
       int fit = 0;
       for (int n = 1; n <= len; n++) {
-        if (display.getTextWidth(_outBuf + (len - n)) > avail) break;
+        if (display.getTextWidth(src + (len - n)) > avail) break;
         fit = n;
       }
       char tail[TW_OUT_BUF_LEN + 2];
-      strncpy(tail, _outBuf + (len - fit), sizeof(tail) - 2);
+      strncpy(tail, src + (len - fit), sizeof(tail) - 2);
       tail[sizeof(tail) - 2] = 0;
       size_t tl = strlen(tail);
       tail[tl] = '_'; tail[tl + 1] = 0;
