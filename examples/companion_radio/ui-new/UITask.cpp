@@ -34,7 +34,7 @@
 #endif
 
 #ifndef AUTO_OFF_MILLIS
-  #define AUTO_OFF_MILLIS     15000   // 15 seconds
+  #define AUTO_OFF_MILLIS     45000   // 45 seconds
 #endif
 // Right-aligned values on the dense home pages compensate for the e-ink X
 // origin offset so they are not clipped at the right edge. Default 0 for
@@ -2220,6 +2220,20 @@ void UITask::loop() {
     // T-Deck Pro: single click ignored while locked — double-press to unlock
     if (_locked) {
       c = 0;
+    } else {
+      c = checkDisplayOn(KEY_NEXT);
+    }
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+    // Watch: on the contacts screen a button click opens the path editor for
+    // the selected contact; elsewhere it wakes the display / emits KEY_NEXT.
+    if (isOnContactsScreen()) {
+      int idx = ((ContactsScreen*)contacts_screen)->getSelectedContactIdx();
+      if (idx >= 0) {
+        gotoPathEditor(idx);
+        c = 0;
+      } else {
+        c = checkDisplayOn(KEY_NEXT);
+      }
     } else {
       c = checkDisplayOn(KEY_NEXT);
     }

@@ -1613,6 +1613,28 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
 
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Repeater admin (watch): tap selects a menu row (tap again = activate);
+    // param entry opens the keyboard for the value.
+    if (ui_task.isOnRepeaterAdmin()) {
+      RepeaterAdminScreen* admin = (RepeaterAdminScreen*)ui_task.getRepeaterAdminScreen();
+      if (admin) {
+        RepeaterAdminScreen::AdminState astate = admin->getState();
+        if (astate == RepeaterAdminScreen::STATE_CATEGORY_MENU ||
+            astate == RepeaterAdminScreen::STATE_COMMAND_MENU) {
+          int result = admin->selectRowAtVY(vy);
+          if (result == 1) { ui_task.forceRefresh(); return 0; }
+          if (result == 2) return KEY_ENTER;   // tapped current row -- activate
+          return 0;
+        }
+        if (astate == RepeaterAdminScreen::STATE_PARAM_ENTRY) {
+          ui_task.openTWatchKeyboard(3, 0);     // tap opens keyboard for the value
+          return 0;
+        }
+      }
+    }
+#endif
+
     // All other screens: tap = select
     return KEY_ENTER;
   }
@@ -1988,9 +2010,13 @@ static void lastHeardToggleContact() {
 #endif
         }
 #if defined(LILYGO_TWATCH_S3_PLUS)
-        // Watch: any other admin state long-press opens the CLI keyboard.
-        ui_task.openTWatchKeyboard(3, 0);   // TWKB_ADMIN_CLI
-        return 0;
+        // Watch: keyboard only for param entry; menu/other states activate the
+        // highlighted item (no raw CLI keyboard).
+        if (astate == RepeaterAdminScreen::STATE_PARAM_ENTRY) {
+          ui_task.openTWatchKeyboard(3, 0);   // param value entry
+          return 0;
+        }
+        return KEY_ENTER;
 #endif
       }
     }
