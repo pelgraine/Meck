@@ -1058,6 +1058,9 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
+  #if defined(LILYGO_TWATCH_S3_PLUS)
+    #include <LittleFS.h>   // watch: dedicated 'maps' tiles partition
+  #endif
   DataStore store(SPIFFS, rtc_clock);
 #endif
 
@@ -1122,7 +1125,9 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
+  #if defined(LILYGO_TWATCH_S3_PLUS)
+    #include "WatchMapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
+  #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
     #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #endif
   UITask ui_task(&board, &serial_interface);
@@ -1348,6 +1353,13 @@ static void lastHeardToggleContact() {
     }
 
 #if defined(LILYGO_TWATCH_S3_PLUS)
+    // Map screen: footer +/- buttons zoom; a tap in the map area recenters on
+    // GPS. (A top-strip tap is already handled above -> home.)
+    if (ui_task.isOnMapScreen()) {
+      WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
+      if (wms) wms->handleTap(x, y);
+      return 0;
+    }
     // Watch: tiles open on long-press and pages change on swipe, so a plain tap
     // on any home page does nothing -- skip the T5S3 tile hit-test below (wrong
     // geometry for the 2-column watch grid) and the left/right page cycling.
@@ -1648,6 +1660,15 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
 
+#if defined(LILYGO_TWATCH_S3_PLUS)
+    // Map screen: swipe pans the viewport (logical-pixel delta)
+    if (ui_task.isOnMapScreen()) {
+      WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
+      if (wms) wms->panByPixels(dx, dy);
+      return 0;
+    }
+#endif
+
     // Snake screen: swipes control direction
     if (ui_task.isOnSnakeScreen()) {
       if (horizontal) {
@@ -1785,7 +1806,14 @@ static void lastHeardToggleContact() {
         if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
-        // row 2 col 1 = Maps -- TODO subscreen not yet built; no-op for now.
+        if (row == 2 && col == 1) {
+          // Maps: mark the tile FS ready (detectZoomRange in enter() needs it)
+          // before opening; GPS centre + markers are populated in the main loop.
+          WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
+          if (wms) wms->setMapsReady(LittleFS.exists("/tiles"));
+          ui_task.gotoMapScreen();
+          return 0;
+        }
         if (row == 3 && col == 0) { ui_task.gotoNotesScreen();         return 0; }
         if (row == 3 && col == 1) { ui_task.gotoStepsScreen();         return 0; }
       }
@@ -2273,6 +2301,20 @@ void setup() {
     }
   }
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
+
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  // Mount the dedicated 'maps' partition as LittleFS (map tiles live here,
+  // kept separate from the SPIFFS DataStore that holds identity/contacts).
+  // formatOnFail=true so a freshly flashed (raw) maps partition is formatted
+  // and immediately usable for ESPConnect tile uploads.
+  if (LittleFS.begin(true, "/maps", 10, "maps")) {
+    Serial.printf("maps: LittleFS mounted (%u KB total, %u KB used)\n",
+                  (unsigned)(LittleFS.totalBytes() / 1024),
+                  (unsigned)(LittleFS.usedBytes() / 1024));
+  } else {
+    Serial.println("maps: LittleFS mount FAILED");
+  }
+#endif
 
   // ---------------------------------------------------------------------------
   // Early SD card init -- needed BEFORE the_mesh.begin() so we can restore
@@ -2969,6 +3011,42 @@ void loop() {
   }
   #endif
   #endif
+
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  // Watch map screen: on open, centre on GPS and populate contact markers; then
+  // refresh own position + markers periodically while it stays open.
+  {
+    static bool mapWasOpen = false;
+    static unsigned long lastMapUpdate = 0;
+    if (ui_task.isOnMapScreen()) {
+      WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
+      if (wms) {
+        bool justOpened = !mapWasOpen;
+        mapWasOpen = true;
+        if (justOpened || (millis() - lastMapUpdate > 30000)) {
+          lastMapUpdate = millis();
+          if (justOpened) {
+            wms->setGPSPosition(sensors.node_lat, sensors.node_lon);
+          } else {
+            wms->updateGPSPosition(sensors.node_lat, sensors.node_lon);
+          }
+          wms->clearMarkers();
+          ContactsIterator it = the_mesh.startContactsIterator();
+          ContactInfo ci;
+          while (it.hasNext(&the_mesh, ci)) {
+            if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+              double lat = ((double)ci.gps_lat) / 1000000.0;
+              double lon = ((double)ci.gps_lon) / 1000000.0;
+              wms->addMarker(lat, lon, ci.name, ci.type);
+            }
+          }
+        }
+      }
+    } else {
+      mapWasOpen = false;
+    }
+  }
+#endif
 
   // CPU frequency auto-timeout back to idle
   cpuPower.loop();

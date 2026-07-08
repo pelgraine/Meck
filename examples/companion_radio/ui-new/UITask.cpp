@@ -16,7 +16,9 @@
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  #include "WatchMapScreen.h"
+#elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
   #include "MapScreen.h"
 #endif
 #include "target.h"
@@ -1706,7 +1708,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  map_screen = new WatchMapScreen(this);
+#elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
   map_screen = new MapScreen(this);
 #else
   map_screen = nullptr;
@@ -3731,8 +3735,19 @@ void UITask::gotoWebReader() {
 
 #if HAS_GPS
 void UITask::gotoMapScreen() {
-  if (!map_screen) return;  // Not available on this platform (T-Echo Card, T-Watch)
-#if !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
+  if (!map_screen) return;  // Not available on this platform (T-Echo Card)
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  WatchMapScreen* map = (WatchMapScreen*)map_screen;
+  if (_display != NULL) {
+    map->enter(*_display);
+  }
+  setCurrScreen(map_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+#elif !defined(LILYGO_TECHO_CARD)
   MapScreen* map = (MapScreen*)map_screen;
   if (_display != NULL) {
     map->enter(*_display);

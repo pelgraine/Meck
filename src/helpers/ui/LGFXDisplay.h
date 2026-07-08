@@ -35,6 +35,10 @@ public:
   // Rounded-rect helpers for the P4-style tile grid (LovyanGFX buffer).
   void fillRoundRect(int x, int y, int w, int h, int r) { buffer.fillRoundRect(x, y, w, h, r, _color); }
   void drawRoundRect(int x, int y, int w, int h, int r) { buffer.drawRoundRect(x, y, w, h, r, _color); }
+  // Plot a single pixel at an exact RGB565 colour directly into the sprite
+  // buffer. Used by WatchMapScreen to draw decoded map tiles, markers and the
+  // crosshair (parallels GxEPDDisplay::drawPixelRaw on the e-ink boards).
+  void drawPixelRaw(int x, int y, uint16_t c) { buffer.drawPixel(x, y, c); }
   // Render a string in a very small font at (x,y) so long node names fit
   // beside the centred clock, then restore the default GLCD font + size so
   // later text is unaffected. Uses the colour set via setColor()/setRawColor().
