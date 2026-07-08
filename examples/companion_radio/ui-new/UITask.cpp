@@ -1441,6 +1441,16 @@ public:
     char buf[24];
     display.setColor(DisplayDriver::LIGHT);
 
+    // tiny daily step count, above the clock
+    {
+      char sbuf[20];
+      snprintf(sbuf, sizeof(sbuf), "%u steps", (unsigned)_task->getTodaySteps());
+      display.setColor(DisplayDriver::GREEN);   // muted grey on the watch palette
+      display.setTextSize(1);
+      display.drawTextCentered(display.width() / 2, 6, sbuf);
+      display.setColor(DisplayDriver::LIGHT);   // restore for the clock
+    }
+
     // big clock
     if (now > 1700000000) {  // valid timestamp (after ~Nov 2023)
       int32_t local = (int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600);
