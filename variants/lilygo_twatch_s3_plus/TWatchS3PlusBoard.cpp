@@ -8,6 +8,56 @@ volatile uint32_t TWatchS3PlusBoard::_tilt_isr_count = 0;   // TEMP diagnostic
 
 void IRAM_ATTR TWatchS3PlusBoard::onTiltISR() { _tilt_flag = true; _tilt_isr_count++; }
 
+// ---- Wrapper-free BMA423 step counter (raw I2C) ----------------------------
+// SensorLib's SensorBMA423 step-counter methods do not compile in this build,
+// so the step counter is driven directly over I2C. Register/offset/mask values
+// are from the Bosch BMA423 driver.
+#define BMA423_REG_STEP_CNT_OUT    0x1E   // 4-byte little-endian step count output
+#define BMA423_REG_FEATURE_CONFIG  0x5E   // 64-byte feature config stream
+#define BMA423_FEATURE_LEN         64
+#define BMA423_STEP_EN_BYTE        0x37   // BMA423_STEP_CNTR_OFFSET(0x36) + 1
+#define BMA423_STEP_EN_BIT         0x10   // BMA423_STEP_CNTR_EN_MSK
+
+#define BMA423_REG_POWER_CONF      0x7C   // BMA4_POWER_CONF_ADDR
+#define BMA423_ADV_PWR_SAVE_BIT    0x01   // BMA4_ADVANCE_POWER_SAVE_MSK
+
+static bool bma423ReadRegs(uint8_t reg, uint8_t* buf, uint8_t len) {
+  Wire.beginTransmission(I2C_ADDR_ACCEL);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)I2C_ADDR_ACCEL, (int)len) != len) return false;
+  for (uint8_t i = 0; i < len; i++) buf[i] = Wire.read();
+  return true;
+}
+
+static bool bma423WriteRegs(uint8_t reg, const uint8_t* buf, uint8_t len) {
+  Wire.beginTransmission(I2C_ADDR_ACCEL);
+  Wire.write(reg);
+  for (uint8_t i = 0; i < len; i++) Wire.write(buf[i]);
+  return Wire.endTransmission() == 0;
+}
+
+// Enable the step counter by setting its enable bit in the feature config,
+// preserving every other byte (tilt lives at a different offset, 0x3A, so it is
+// untouched). The feature config can only be written with advanced-power-save
+// disabled, so we bracket the write and restore the prior power state after.
+static void bma423EnableStepCounter() {
+  uint8_t pc;
+  if (!bma423ReadRegs(BMA423_REG_POWER_CONF, &pc, 1)) return;   // save power state
+  uint8_t off = pc & ~BMA423_ADV_PWR_SAVE_BIT;                  // disable adv power save
+  bma423WriteRegs(BMA423_REG_POWER_CONF, &off, 1);
+  delay(2);                                                     // wake from low-power (>=450us)
+
+  uint8_t cfg[BMA423_FEATURE_LEN];
+  if (bma423ReadRegs(BMA423_REG_FEATURE_CONFIG, cfg, BMA423_FEATURE_LEN)) {
+    cfg[BMA423_STEP_EN_BYTE] |= BMA423_STEP_EN_BIT;
+    bma423WriteRegs(BMA423_REG_FEATURE_CONFIG, cfg, BMA423_FEATURE_LEN);
+    delay(1);                                                   // write settle
+  }
+
+  bma423WriteRegs(BMA423_REG_POWER_CONF, &pc, 1);              // restore power state
+}
+
 void TWatchS3PlusBoard::begin() {
   ESP32Board::begin();
   power_init();
@@ -29,6 +79,10 @@ void TWatchS3PlusBoard::begin() {
     // on a self-clearing line otherwise locks tilt-wake out permanently).
     attachInterrupt(digitalPinToInterrupt(PIN_ACCEL_IRQ), onTiltISR, RISING);
     _accel->enableTiltDetector(true, true);
+    // Enable the hardware step counter via raw I2C (SensorLib's wrapper method
+    // does not compile in this build). It then counts in the BMA423 feature
+    // engine with no CPU cost, even while the display is off.
+    bma423EnableStepCounter();
   }
 
   esp_reset_reason_t reason = esp_reset_reason();
@@ -140,4 +194,11 @@ bool TWatchS3PlusBoard::tiltFired() {
                   digitalRead(PIN_ACCEL_IRQ), (unsigned)_tilt_isr_count);
   }
   return false;
+}
+
+uint32_t TWatchS3PlusBoard::getStepCount() {
+  uint8_t d[4];
+  if (!bma423ReadRegs(BMA423_REG_STEP_CNT_OUT, d, 4)) return 0;
+  return (uint32_t)d[0] | ((uint32_t)d[1] << 8) |
+         ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
 }

@@ -119,6 +119,11 @@ class UITask : public AbstractUITask {
   int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  UIScreen* steps_screen;    // Steps screen (big daily step count)
+  int32_t _lastStepDay = 0;  // local day-of-epoch, for the midnight step reset
+  uint32_t _stepBaseline = 0; // raw step count at the start of the local day
+#endif
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
@@ -220,6 +225,10 @@ public:
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  void gotoStepsScreen();                  // Navigate to the step counter screen
+  uint32_t getTodaySteps();                // Daily step count (raw - baseline)
+#endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -281,6 +290,9 @@ public:
   bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  bool isOnStepsScreen() const { return curr == steps_screen; }
+#endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
@@ -370,6 +382,9 @@ public:
   UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
+#if defined(LILYGO_TWATCH_S3_PLUS)
+  UIScreen* getStepsScreen() const { return steps_screen; }
+#endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER

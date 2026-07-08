@@ -1787,7 +1787,7 @@ static void lastHeardToggleContact() {
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
         // row 2 col 1 = Maps -- TODO subscreen not yet built; no-op for now.
         if (row == 3 && col == 0) { ui_task.gotoNotesScreen();         return 0; }
-        // row 3 col 1 = Games -- placeholder, no target yet; no-op for now.
+        if (row == 3 && col == 1) { ui_task.gotoStepsScreen();         return 0; }
       }
       return 0;  // consume long-press on the tile page
     }

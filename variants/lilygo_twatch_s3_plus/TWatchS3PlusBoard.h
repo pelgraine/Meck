@@ -57,6 +57,9 @@ public:
     return PMU ? PMU->getBatteryPercent() : 0;
   }
 
+  // Wrapper-free BMA423 step count (raw I2C; defined in the .cpp).
+  uint32_t getStepCount();
+
   // GPS power is the AXP2101 BLDO1 rail. Off at boot; toggled at runtime via
   // the gps_enabled pref (boot) and the "gps on/off" CLI command (live).
   void gpsPowerOn();

@@ -34,7 +34,7 @@
 #endif
 
 #ifndef AUTO_OFF_MILLIS
-  #define AUTO_OFF_MILLIS     45000   // 45 seconds
+  #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
 // Right-aligned values on the dense home pages compensate for the e-ink X
 // origin offset so they are not clipped at the right edge. Default 0 for
@@ -686,7 +686,7 @@ public:
           { {icon_envelope, "Messages", 0x0CB1}, {icon_people,  "Contacts", 0xCAA0} },
           { {icon_gear,     "Settings", 0x0560}, {icon_search,  "Discover", 0xF81F} },
           { {icon_trace,    "Trace",    0xF800}, {icon_map,     "Maps",     0x231D} },
-          { {icon_notepad,  "Notes",    0x07FF}, {icon_gamepad, "Games",    0xFFE0} },
+          { {icon_notepad,  "Notes",    0x07FF}, {icon_star,    "Steps",    0xFFE0} },
         };
         const uint16_t TILE_FILL = 0x18C5;   // dark navy
 
@@ -1485,6 +1485,27 @@ public:
     return true;
   }
 };
+
+// Steps screen: big daily step count in the clock font. Opened by long-pressing
+// the Steps home tile; any tap dismisses back to the tiles.
+class StepsScreen : public UIScreen {
+  UITask* _task;
+public:
+  StepsScreen(UITask* task) : _task(task) { }
+
+  int render(DisplayDriver& display) override {
+    display.setColor(DisplayDriver::LIGHT);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u", (unsigned)_task->getTodaySteps());
+    ((LGFXDisplay*)&display)->printClockFont(display.width() / 2, display.height() / 2 - 18, buf);
+    return 1000;
+  }
+
+  bool handleInput(char c) override {
+    _task->gotoHomeScreen();
+    return true;
+  }
+};
 #endif
 
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
@@ -1658,6 +1679,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 #if defined(LILYGO_TWATCH_S3_PLUS)
   lock_screen = new ClockScreen(this, &rtc_clock, node_prefs);
+  steps_screen = new StepsScreen(this);
 #endif
 #ifdef TWATCH_COMPOSE_ENABLED
   tw_picker   = new TWatchChannelPicker(_display);
@@ -2223,20 +2245,6 @@ void UITask::loop() {
     } else {
       c = checkDisplayOn(KEY_NEXT);
     }
-#elif defined(LILYGO_TWATCH_S3_PLUS)
-    // Watch: on the contacts screen a button click opens the path editor for
-    // the selected contact; elsewhere it wakes the display / emits KEY_NEXT.
-    if (isOnContactsScreen()) {
-      int idx = ((ContactsScreen*)contacts_screen)->getSelectedContactIdx();
-      if (idx >= 0) {
-        gotoPathEditor(idx);
-        c = 0;
-      } else {
-        c = checkDisplayOn(KEY_NEXT);
-      }
-    } else {
-      c = checkDisplayOn(KEY_NEXT);
-    }
 #else
     c = checkDisplayOn(KEY_NEXT);
 #endif
@@ -2634,6 +2642,17 @@ if (curr) curr->poll();
     _display->turnOn();
     setCurrScreen(lock_screen);
     _auto_off = millis() + AUTO_OFF_MILLIS;
+  }
+
+  // Roll the daily step baseline over at local midnight (12am-to-12am total).
+  // No hardware reset -- the displayed count is raw_count - baseline.
+  {
+    uint32_t now = rtc_clock.getCurrentTime();
+    if (now > 1700000000) {   // valid timestamp
+      int32_t localDay = ((int32_t)now + ((int32_t)the_mesh.getNodePrefs()->utc_offset_hours * 3600)) / 86400;
+      if (_lastStepDay == 0) _lastStepDay = localDay;       // seed on first valid read
+      else if (localDay != _lastStepDay) { _stepBaseline = board.getStepCount(); _lastStepDay = localDay; }
+    }
   }
 #endif
 
@@ -3616,6 +3635,22 @@ void UITask::gotoTraceScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
 }
+
+#if defined(LILYGO_TWATCH_S3_PLUS)
+uint32_t UITask::getTodaySteps() {
+  uint32_t raw = board.getStepCount();
+  return (raw >= _stepBaseline) ? (raw - _stepBaseline) : raw;
+}
+
+void UITask::gotoStepsScreen() {
+  setCurrScreen(steps_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
 
 void UITask::gotoGamesMenu() {
   GamesMenuScreen* gm = (GamesMenuScreen*)games_menu_screen;
