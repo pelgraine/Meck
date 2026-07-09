@@ -3183,6 +3183,9 @@ void UITask::toggleGPS() {
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
         #endif
+        #if defined(LILYGO_TWATCH_S3_PLUS)
+          board.gpsPowerOff();  // Watch: GPS power is the AXP2101 BLDO1 rail
+        #endif
         notify(UIEventType::ack);
       } else {
         // Enable GPS — power on hardware
@@ -3193,6 +3196,9 @@ void UITask::toggleGPS() {
         #endif
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOn();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+        #endif
+        #if defined(LILYGO_TWATCH_S3_PLUS)
+          board.gpsPowerOn();  // Watch: GPS power is the AXP2101 BLDO1 rail
         #endif
         notify(UIEventType::ack);
       }
