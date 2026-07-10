@@ -2259,6 +2259,12 @@ void UITask::loop() {
     } else {
       c = checkDisplayOn(KEY_NEXT);
     }
+#elif defined(MECK_PMU_BUTTON)
+    // T-Watch S3: the only key is the AXP2101 PWRON, so a short press is the
+    // sole button gesture available. It acts as enter/select/confirm (in the
+    // contacts screen, that opens the path editor). A >=6s hold is a hardware
+    // power-off and never reaches here.
+    c = checkDisplayOn(KEY_ENTER);
 #else
     c = checkDisplayOn(KEY_NEXT);
 #endif
