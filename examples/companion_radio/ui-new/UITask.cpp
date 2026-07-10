@@ -2476,15 +2476,17 @@ void UITask::loop() {
   // with the display off or another screen showing.
   if (watch_alarm_screen) {
     WatchAlarmScreen* wa = (WatchAlarmScreen*)watch_alarm_screen;
-    if (wa->tick()) {
-      setCurrScreen(watch_alarm_screen);
+    bool fired = wa->tick();
+    if (fired || wa->isRinging()) {
+      // Hold the screen and the display for the whole ring. Without this the
+      // display auto-offs after AUTO_OFF_MILLIS, the buzzing trips the BMA423
+      // tilt detector, and raise-to-wake below swaps in the clock screen. It
+      // also guarantees the PWR key reaches handleInput() as KEY_ENTER rather
+      // than being consumed by checkDisplayOn() as a wake.
+      if (curr != watch_alarm_screen) setCurrScreen(watch_alarm_screen);
       if (_display != NULL && !_display->isOn()) _display->turnOn();
       _auto_off = millis() + AUTO_OFF_MILLIS;
-      _next_refresh = 0;
-    } else if (wa->isRinging() && curr != watch_alarm_screen) {
-      // Navigating away (e.g. the status-bar tap that goes home) counts as a
-      // dismiss, otherwise the motor would keep buzzing off-screen.
-      wa->dismiss();
+      if (fired) _next_refresh = 0;
     }
   }
 #endif

@@ -12,6 +12,11 @@
 // Alarm is the DRV2605L on I2C 0x5A driving the 0827 coin motor. Its BLDO2 rail
 // is already up from power_init(), so no motorEnable() call is needed.
 //
+// A ringing alarm is dismissed ONLY by the PWR key (which arrives as KEY_ENTER),
+// or by the WATCH_ALARM_RINGING_MS timeout. Taps are swallowed, and UITask::loop
+// holds this screen current and the display awake for the duration -- otherwise
+// the buzzing trips the BMA423 tilt detector and raise-to-wake steals the screen.
+//
 // Config lives on the LittleFS partition mounted at /maps in main.cpp -- the
 // same one the Plus uses for map tiles. The watch has no SD card.
 //
@@ -334,7 +339,7 @@ private:
     display.setColor(DisplayDriver::LIGHT);
     display.setTextSize(1);
     display.drawTextCentered(display.width() / 2, display.height() - 24, "ALARM");
-    ((LGFXDisplay*)&display)->printSmallFont(24, display.height() - 10, "Tap to dismiss");
+    ((LGFXDisplay*)&display)->printSmallFont(14, display.height() - 10, "Press PWR to dismiss");
   }
 
 public:
@@ -350,7 +355,8 @@ public:
   // Physical tap in logical (display.width()) coordinates. Returns true if the
   // tap was consumed. The status-bar strip is handled by main.cpp before this.
   bool handleTap(int lx, int ly) {
-    if (_mode == RINGING) { dismiss(); return true; }
+    // Ringing: swallow taps. Only the PWR key dismisses (see handleInput).
+    if (_mode == RINGING) return true;
 
     if (_mode == LIST) {
       for (int i = 0; i < WATCH_ALARM_SLOT_COUNT; i++) {
@@ -395,7 +401,10 @@ public:
 
   bool handleInput(char c) override {
     // The PMU short press arrives as KEY_ENTER.
-    if (_mode == RINGING) { dismiss(); return true; }
+    if (_mode == RINGING) {
+      if (c == KEY_ENTER) dismiss();   // PWR key only
+      return true;                     // swallow everything else
+    }
     if (_mode == EDIT && c == KEY_ENTER) { commitEdit(); return true; }
     if (_mode == LIST && c == KEY_ENTER) {
       _edit = _cfg.slots[_sel];
