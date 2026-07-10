@@ -76,6 +76,9 @@
 #include "AudiobookPlayerScreen.h"
 #include "VoiceMessageScreen.h"
 #endif
+#if defined(MECK_TWATCH)
+#include <LittleFS.h>          // step history persistence (the "maps" partition)
+#endif
 #if defined(LILYGO_TWATCH_S3)
 #include "WatchAlarmScreen.h"
 #endif
@@ -1521,7 +1524,77 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (c == KEY_ENTER) {              // touch long-press, or the S3's PWR key
+      _task->gotoStepsHistoryScreen();
+      return true;
+    }
     _task->gotoHomeScreen();
+    return true;
+  }
+};
+
+// Steps history: today plus the previous six days, as labelled bars. Reached by
+// long-pressing the steps screen. Any input returns to the steps screen.
+class StepsHistoryScreen : public UIScreen {
+  UITask* _task;
+  mesh::RTCClock* _rtc;
+  NodePrefs* _node_prefs;
+
+  static const char* dowShort(int dow) {
+    static const char* names[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    return (dow >= 0 && dow < 7) ? names[dow] : "??";
+  }
+
+public:
+  StepsHistoryScreen(UITask* task, mesh::RTCClock* rtc, NodePrefs* node_prefs)
+    : _task(task), _rtc(rtc), _node_prefs(node_prefs) {}
+
+  int render(DisplayDriver& display) override {
+    LGFXDisplay* d = (LGFXDisplay*)&display;
+    const int W = display.width();
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.setTextSize(1);
+    display.drawTextCentered(W / 2, 3, "Last 7 days");
+
+    uint32_t vals[7];
+    uint32_t maxv = 1;
+    for (int i = 0; i < 7; i++) {
+      vals[i] = _task->getStepHistory(i);
+      if (vals[i] > maxv) maxv = vals[i];
+    }
+
+    // Weekday of today, from the local day-of-epoch (1970-01-01 was a Thursday).
+    int todayDow = -1;
+    uint32_t now = _rtc->getCurrentTime();
+    if (now > 1700000000) {
+      int32_t localDay = ((int32_t)now + ((int32_t)_node_prefs->utc_offset_hours * 3600)) / 86400;
+      todayDow = (int)((localDay + 4) % 7);
+    }
+
+    char buf[12];
+    for (int i = 0; i < 7; i++) {
+      int y = 16 + i * 14;
+      int barW = (int)(((uint64_t)(W - 6) * vals[i]) / maxv);
+      if (barW < 2) barW = 2;
+
+      d->setRawColor(i == 0 ? 0x231D : 0x18C5);   // today in the tile blue
+      d->fillRoundRect(3, y, barW, 12, 2);
+
+      const char* label = "-";
+      if (i == 0) label = "Today";
+      else if (todayDow >= 0) label = dowShort((todayDow - i + 14) % 7);
+
+      d->setRawColor(0xFFFF);
+      d->printSmallFont(6, y + 8, label);
+      snprintf(buf, sizeof(buf), "%lu", (unsigned long)vals[i]);
+      d->printSmallFont(W - 4 - d->smallTextWidth(buf), y + 8, buf);
+    }
+    return 1000;
+  }
+
+  bool handleInput(char c) override {
+    _task->gotoStepsScreen();
     return true;
   }
 };
@@ -1699,6 +1772,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(MECK_TWATCH)
   lock_screen = new ClockScreen(this, &rtc_clock, node_prefs);
   steps_screen = new StepsScreen(this);
+  steps_history_screen = new StepsHistoryScreen(this, &rtc_clock, node_prefs);
+  // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
+  loadSteps();
 #endif
 #if defined(LILYGO_TWATCH_S3)
   // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
@@ -2694,16 +2770,8 @@ if (curr) curr->poll();
     _auto_off = millis() + AUTO_OFF_MILLIS;
   }
 
-  // Roll the daily step baseline over at local midnight (12am-to-12am total).
-  // No hardware reset -- the displayed count is raw_count - baseline.
-  {
-    uint32_t now = rtc_clock.getCurrentTime();
-    if (now > 1700000000) {   // valid timestamp
-      int32_t localDay = ((int32_t)now + ((int32_t)the_mesh.getNodePrefs()->utc_offset_hours * 3600)) / 86400;
-      if (_lastStepDay == 0) _lastStepDay = localDay;       // seed on first valid read
-      else if (localDay != _lastStepDay) { _stepBaseline = board.getStepCount(); _lastStepDay = localDay; }
-    }
-  }
+  // Accumulate steps, roll the day over at local midnight, persist periodically.
+  updateSteps();
 #endif
 
   // Auto-lock idle timer — runs regardless of display on/off state
@@ -3693,13 +3761,127 @@ void UITask::gotoTraceScreen() {
 }
 
 #if defined(MECK_TWATCH)
-uint32_t UITask::getTodaySteps() {
+
+// Persisted step state. Lives on the LittleFS "maps" partition; the watches have
+// no SD card. There is no clean-shutdown hook to save from -- a >=6s hold on the
+// PWR key is a hardware power cut by the AXP2101 -- so saving is periodic.
+#define STEPS_FILE           "/steps.dat"
+#define STEPS_MAGIC          0x31505453UL   // "STP1"
+#define STEPS_VERSION        1
+#define STEPS_SAVE_INTERVAL_MS  300000UL    // flush at most every 5 minutes
+
+struct StepStoreV1 {
+  uint32_t magic;
+  uint8_t  version;
+  uint8_t  _pad[3];
+  int32_t  lastStepDay;
+  uint32_t todaySteps;
+  uint32_t history[6];
+};
+
+void UITask::loadSteps() {
+  File f = LittleFS.open(STEPS_FILE, "r");
+  if (!f) return;
+  StepStoreV1 st;
+  size_t n = f.read((uint8_t*)&st, sizeof(st));
+  f.close();
+  if (n != sizeof(st) || st.magic != STEPS_MAGIC || st.version != STEPS_VERSION) return;
+
+  _lastStepDay = st.lastStepDay;
+  _todaySteps  = st.todaySteps;
+  memcpy(_stepHistory, st.history, sizeof(_stepHistory));
+}
+
+void UITask::saveSteps() {
+  StepStoreV1 st;
+  memset(&st, 0, sizeof(st));
+  st.magic       = STEPS_MAGIC;
+  st.version     = STEPS_VERSION;
+  st.lastStepDay = _lastStepDay;
+  st.todaySteps  = _todaySteps;
+  memcpy(st.history, _stepHistory, sizeof(_stepHistory));
+
+  File f = LittleFS.open(STEPS_FILE, "w");
+  if (!f) {
+    Serial.println("steps: save FAILED (LittleFS)");
+    return;
+  }
+  f.write((const uint8_t*)&st, sizeof(st));
+  f.close();
+  _stepsDirtySince = 0;
+}
+
+void UITask::shiftStepHistory(uint32_t completedDay) {
+  for (int i = 5; i > 0; i--) _stepHistory[i] = _stepHistory[i - 1];
+  _stepHistory[0] = completedDay;
+}
+
+void UITask::rollStepDays(int32_t newDay) {
+  int32_t gap = newDay - _lastStepDay;
+  if (gap <= 0) {          // clock corrected backwards: re-anchor, keep history
+    _lastStepDay = newDay;
+    return;
+  }
+  shiftStepHistory(_todaySteps);                    // the day that just ended
+  for (int32_t d = 1; d < gap && d < 6; d++) {
+    shiftStepHistory(0);                            // days the watch was switched off
+  }
+  _todaySteps  = 0;
+  _lastStepDay = newDay;
+  saveSteps();
+}
+
+void UITask::updateSteps() {
   uint32_t raw = board.getStepCount();
-  return (raw >= _stepBaseline) ? (raw - _stepBaseline) : raw;
+
+  // Seed from the chip, not from the file: SensorBMA423::begin() re-flashes the
+  // feature engine (bma423_write_config_file) on every boot, zeroing the step
+  // register. Seeding here is correct whether or not the count survived.
+  if (!_stepsSeeded) { _lastRaw = raw; _stepsSeeded = true; }
+
+  uint32_t delta = (raw >= _lastRaw) ? (raw - _lastRaw) : raw;   // raw < last => counter reset
+  _lastRaw = raw;
+
+  uint32_t now = rtc_clock.getCurrentTime();
+  if (now <= 1700000000) return;   // clock not set: nothing to attribute steps to
+
+  int32_t localDay = ((int32_t)now + ((int32_t)the_mesh.getNodePrefs()->utc_offset_hours * 3600)) / 86400;
+  if (_lastStepDay == 0) {
+    _lastStepDay = localDay;       // first valid read on a fresh install
+  } else if (localDay != _lastStepDay) {
+    rollStepDays(localDay);
+  }
+
+  if (delta) {
+    _todaySteps += delta;
+    if (_stepsDirtySince == 0) _stepsDirtySince = millis();
+  }
+  if (_stepsDirtySince && millis() - _stepsDirtySince >= STEPS_SAVE_INTERVAL_MS) {
+    saveSteps();
+  }
+}
+
+uint32_t UITask::getTodaySteps() {
+  return _todaySteps;
+}
+
+uint32_t UITask::getStepHistory(int daysAgo) {
+  if (daysAgo <= 0) return _todaySteps;
+  if (daysAgo > 6)  return 0;
+  return _stepHistory[daysAgo - 1];
 }
 
 void UITask::gotoStepsScreen() {
   setCurrScreen(steps_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoStepsHistoryScreen() {
+  setCurrScreen(steps_history_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }

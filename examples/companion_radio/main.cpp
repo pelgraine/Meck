@@ -1840,6 +1840,14 @@ static void lastHeardToggleContact() {
       return 0;  // consume long-press on the tile page
     }
 #endif
+#if defined(MECK_TWATCH)
+    // Steps screen: long press opens the 7-day history subscreen.
+    // (On the S3 the PWR key's short press also delivers KEY_ENTER here.)
+    if (ui_task.isOnStepsScreen()) {
+      return (char)KEY_ENTER;
+    }
+#endif
+
     // Home screen: long press = activate current page action
     // (BLE toggle, send advert, hibernate, GPS toggle, etc.)
     if (ui_task.isOnHomeScreen()) {

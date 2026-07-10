@@ -120,9 +120,24 @@ class UITask : public AbstractUITask {
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
 #if defined(MECK_TWATCH)
-  UIScreen* steps_screen;    // Steps screen (big daily step count)
-  int32_t _lastStepDay = 0;  // local day-of-epoch, for the midnight step reset
-  uint32_t _stepBaseline = 0; // raw step count at the start of the local day
+  UIScreen* steps_screen;         // Steps screen (big daily step count)
+  UIScreen* steps_history_screen; // Steps subscreen: today + the previous 6 days
+  // Step state. The BMA423 feature engine is re-flashed by bma423_write_config_file()
+  // inside SensorBMA423::begin() on every boot, which zeroes the step register. So
+  // the raw count cannot be used as an absolute; deltas are accumulated instead and
+  // the totals are persisted. _lastRaw is seeded from the chip on the first read
+  // rather than from the file, which is correct whether or not the count survived.
+  int32_t  _lastStepDay = 0;      // local day-of-epoch that _todaySteps belongs to
+  uint32_t _todaySteps = 0;       // accumulated steps for _lastStepDay
+  uint32_t _stepHistory[6] = {0}; // [0] = yesterday ... [5] = six days ago
+  uint32_t _lastRaw = 0;          // last raw BMA423 count seen (runtime only)
+  bool     _stepsSeeded = false;  // _lastRaw has been seeded from the chip
+  unsigned long _stepsDirtySince = 0;  // millis of oldest unsaved change; 0 = clean
+  void loadSteps();
+  void saveSteps();
+  void updateSteps();             // called every loop()
+  void rollStepDays(int32_t newDay);
+  void shiftStepHistory(uint32_t completedDay);
 #endif
 #if defined(LILYGO_TWATCH_S3)
   UIScreen* watch_alarm_screen;  // Vibrate-only alarm clock (no audio hardware)
@@ -230,7 +245,9 @@ public:
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
 #if defined(MECK_TWATCH)
   void gotoStepsScreen();                  // Navigate to the step counter screen
-  uint32_t getTodaySteps();                // Daily step count (raw - baseline)
+  void gotoStepsHistoryScreen();           // Navigate to the 7-day step history
+  uint32_t getTodaySteps();                // Steps accumulated today
+  uint32_t getStepHistory(int daysAgo);    // 0 = today, 1..6 = previous days
 #endif
 #if defined(LILYGO_TWATCH_S3)
   void gotoWatchAlarmScreen();             // Navigate to the vibrate alarm clock
@@ -298,6 +315,7 @@ public:
   bool isOnSnakeScreen() const { return curr == snake_screen; }
 #if defined(MECK_TWATCH)
   bool isOnStepsScreen() const { return curr == steps_screen; }
+  bool isOnStepsHistoryScreen() const { return curr == steps_history_screen; }
 #endif
 #if defined(LILYGO_TWATCH_S3)
   bool isOnWatchAlarmScreen() const { return curr == watch_alarm_screen; }
@@ -393,6 +411,7 @@ public:
   UIScreen* getSnakeScreen() const { return snake_screen; }
 #if defined(MECK_TWATCH)
   UIScreen* getStepsScreen() const { return steps_screen; }
+  UIScreen* getStepsHistoryScreen() const { return steps_history_screen; }
 #endif
 #if defined(LILYGO_TWATCH_S3)
   UIScreen* getWatchAlarmScreen() const { return watch_alarm_screen; }
