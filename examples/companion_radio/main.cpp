@@ -709,14 +709,14 @@
 // =============================================================================
 
 // Define MECK_TOUCH_ENABLED for any platform with touch support
-#if defined(LilyGo_T5S3_EPaper_Pro) || (defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || (defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)) || defined(MECK_TWATCH)
   #define MECK_TOUCH_ENABLED 1
 #endif
 
 // --- T-Watch S3 Plus: screen headers for the touch UI ---
 // The watch needs the same concrete screen types as the gesture machine casts
 // to, but none of the T5S3/T-Deck hardware baggage (GT911, SD, TCA8418 keyboard).
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   #include "TextReaderScreen.h"
   #include "NotesScreen.h"
   #include "ContactsScreen.h"
@@ -901,7 +901,7 @@
   #define TOUCH_LONG_PRESS_MS  750
   #if defined(LilyGo_T5S3_EPaper_Pro)
     #define TOUCH_SWIPE_THRESHOLD 60   // T5S3: 960×540 — 60px ≈ 6% of width
-  #elif defined(LILYGO_TWATCH_S3_PLUS)
+  #elif defined(MECK_TWATCH)
     #define TOUCH_SWIPE_THRESHOLD 16   // Watch: getTouch() returns 0..119 (240px/UI_ZOOM); 16 is ~13% of width
   #else
     #define TOUCH_SWIPE_THRESHOLD 30   // T-Deck Pro: 240×320 — 30px ≈ 12.5% of width
@@ -939,7 +939,7 @@
     }
   #elif defined(LilyGo_TDeck_Pro)
     return touchInput.getPoint(*outX, *outY);
-  #elif defined(LILYGO_TWATCH_S3_PLUS)
+  #elif defined(MECK_TWATCH)
     {
       // FT6336U is read through the LovyanGFX panel backing the display.
       // display.getTouch() returns coordinates already divided by UI_ZOOM.
@@ -964,7 +964,7 @@
   #elif defined(LilyGo_TDeck_Pro)
     float sx = (float)EINK_WIDTH / 128.0f;   // 240/128 = 1.875
     float sy = (float)EINK_HEIGHT / 128.0f;   // 320/128 = 2.5
-  #elif defined(LILYGO_TWATCH_S3_PLUS)
+  #elif defined(MECK_TWATCH)
     // display.getTouch() already divides by UI_ZOOM, so px/py span the
     // 240/UI_ZOOM logical canvas (0..119 at UI_ZOOM=2). Scale to 128 virtual.
     float sx = (240.0f / UI_ZOOM) / 128.0f;
@@ -1058,7 +1058,7 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(LILYGO_TWATCH_S3_PLUS)
+  #if defined(MECK_TWATCH)
     #include <LittleFS.h>   // watch: dedicated 'maps' tiles partition
   #endif
   DataStore store(SPIFFS, rtc_clock);
@@ -1125,7 +1125,7 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #if defined(LILYGO_TWATCH_S3_PLUS)
+  #if defined(MECK_TWATCH) && HAS_GPS
     #include "WatchMapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
     #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
@@ -1352,7 +1352,7 @@ static void lastHeardToggleContact() {
       return '\r';
     }
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH) && HAS_GPS
     // Map screen: footer +/- buttons zoom; a tap in the map area recenters on
     // GPS. (A top-strip tap is already handled above -> home.)
     if (ui_task.isOnMapScreen()) {
@@ -1601,7 +1601,7 @@ static void lastHeardToggleContact() {
     // Settings screen: tap to select row, tap same row to activate
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       // Watch: while editing the UTC offset, tap the upper half to increment
       // and the lower half to decrement. Long-press saves.
       if (ss && ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
@@ -1625,7 +1625,7 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Repeater admin (watch): tap selects a menu row (tap again = activate);
     // param entry opens the keyboard for the value.
     if (ui_task.isOnRepeaterAdmin()) {
@@ -1660,7 +1660,7 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH) && HAS_GPS
     // Map screen: swipe pans the viewport (logical-pixel delta)
     if (ui_task.isOnMapScreen()) {
       WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
@@ -1782,7 +1782,7 @@ static void lastHeardToggleContact() {
       return 'q';
     }
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch FIRST page: long-press on a coloured tile opens its screen.
     // The grid renders in the logical (display.width()) space; touchToVirtual
     // yields 128-space coords, so scale them back to render space to hit-test.
@@ -1806,6 +1806,7 @@ static void lastHeardToggleContact() {
         if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
+#if HAS_GPS
         if (row == 2 && col == 1) {
           // Maps: mark the tile FS ready (detectZoomRange in enter() needs it)
           // before opening; GPS centre + markers are populated in the main loop.
@@ -1814,6 +1815,7 @@ static void lastHeardToggleContact() {
           ui_task.gotoMapScreen();
           return 0;
         }
+#endif
         if (row == 3 && col == 0) { ui_task.gotoNotesScreen();         return 0; }
         if (row == 3 && col == 1) { ui_task.gotoStepsScreen();         return 0; }
       }
@@ -1954,7 +1956,7 @@ static void lastHeardToggleContact() {
           }
         }
         return 0;
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
         // Watch: long press = DM (tw-keyboard) / admin / room action.
         // purpose ints match TWatchKeyboardScreen::Purpose: DM=1.
         {
@@ -2030,14 +2032,14 @@ static void lastHeardToggleContact() {
 #if defined(LilyGo_T5S3_EPaper_Pro)
           ui_task.showVirtualKeyboard(VKB_ADMIN_PASSWORD, "Admin Password", "", 32);
           return 0;
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
           ui_task.openTWatchKeyboard(2, 0);   // TWKB_ADMIN_PASSWORD
           return 0;
 #else
           return KEY_ENTER;  // T-Deck Pro: keyboard handles password entry
 #endif
         }
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
         // Watch: keyboard only for param entry; menu/other states activate the
         // highlighted item (no raw CLI keyboard).
         if (astate == RepeaterAdminScreen::STATE_PARAM_ENTRY) {
@@ -2062,7 +2064,7 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
       if (ss) {
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
         // Watch: long-press while editing the UTC offset saves the value.
         if (ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
           return '\r';
@@ -2302,7 +2304,7 @@ void setup() {
   }
   MESH_DEBUG_PRINTLN("setup() - SPIFFS.begin() done");
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   // Mount the dedicated 'maps' partition as LittleFS (map tiles live here,
   // kept separate from the SPIFFS DataStore that holds identity/contacts).
   // formatOnFail=true so a freshly flashed (raw) maps partition is formatted
@@ -2787,7 +2789,7 @@ void setup() {
       #ifdef PIN_GPS_EN
         digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
       #endif
-      #if defined(LILYGO_TWATCH_S3_PLUS)
+      #if defined(MECK_TWATCH)
         board.gpsPowerOn();   // GPS power is the AXP2101 BLDO1 rail
       #endif
 #if defined(LilyGo_TDeck_Pro_Max)
@@ -2807,7 +2809,7 @@ void setup() {
       #if defined(LilyGo_TDeck_Pro_Max)
         board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
       #endif
-      #if defined(LILYGO_TWATCH_S3_PLUS)
+      #if defined(MECK_TWATCH)
         board.gpsPowerOff();  // GPS power is the AXP2101 BLDO1 rail
       #endif
       sensors.setSettingValue("gps", "0");
@@ -2985,7 +2987,7 @@ void loop() {
 
   // Map screen: periodically update own GPS position and contact markers
   #ifdef DISPLAY_CLASS
-  #if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(LILYGO_TWATCH_S3_PLUS)
+  #if HAS_GPS && !defined(LILYGO_TECHO_CARD) && !defined(MECK_TWATCH)
   if (ui_task.isOnMapScreen()) {
     static unsigned long lastMapUpdate = 0;
     if (millis() - lastMapUpdate > 30000) {  // Every 30 seconds
@@ -3012,7 +3014,7 @@ void loop() {
   #endif
   #endif
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH) && HAS_GPS
   // Watch map screen: on open, centre on GPS and populate contact markers; then
   // refresh own position + markers periodically while it stays open.
   {

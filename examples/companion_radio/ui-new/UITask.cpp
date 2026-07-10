@@ -16,7 +16,7 @@
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH) && HAS_GPS
   #include "WatchMapScreen.h"
 #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
   #include "MapScreen.h"
@@ -25,7 +25,7 @@
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(MECK_TWATCH)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -136,7 +136,7 @@ public:
 
     // version info
     display.setColor(DisplayDriver::LIGHT);
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     display.setTextSize(1);  // 240x240: size 2 overflows the 120px virtual width and wraps
 #else
     display.setTextSize(2);
@@ -377,7 +377,7 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
 
@@ -412,13 +412,13 @@ public:
     #define HOME_HDR_Y 1
 #elif defined(LILYGO_TECHO_LITE)
     #define HOME_HDR_Y 0
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
     #define HOME_HDR_Y 1
 #else
     #define HOME_HDR_Y -3
 #endif
     display.setCursor(0, HOME_HDR_Y);
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch: render the name in a very small font so long names fit beside the
     // centred clock instead of overrunning it. Colour was set above (GREEN).
     ((LGFXDisplay*)&display)->printSmallFont(0, HOME_HDR_Y, filtered_name);
@@ -435,12 +435,12 @@ public:
 
     // alarm enabled indicator (AL icon, left of audio or battery)
     renderAlarmIndicator(display, battLeftX);
-#elif !defined(LILYGO_TWATCH_S3_PLUS)
+#elif !defined(MECK_TWATCH)
     renderBatteryIndicator(display, _task->getBattMilliVolts());
 #endif
 
     // centered clock — only show when time is valid
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch: right-aligned header cluster, right to left -- battery %, unread
     // count, then clock, all in the tiny node-name font. Battery % is
     // colour-coded by charge level.
@@ -522,7 +522,7 @@ public:
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
     int y = (_page == HomePage::FIRST) ? 9 : 18;  // first page: tuck up under the header
 #else
     int y = 14;
@@ -537,7 +537,7 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
       _task->setHomeShowingTiles(true);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -548,12 +548,12 @@ public:
   #endif
 #elif defined(LILYGO_TECHO_LITE)
       int y = 18;  // Below page dots
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       int y = 12;  // 4-row grid starts just below the dots
 #else
       int y = 20;
 #endif
-#if !defined(LILYGO_TWATCH_S3_PLUS)
+#if !defined(MECK_TWATCH)
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
@@ -563,7 +563,7 @@ public:
       y += 12;  // Compact
 #elif defined(LilyGo_TDeck_Pro_Max)
       y += 10;  // MAX: pull < Connected > up under MSG to make room for [T] Phone
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       // watch: no MSG banner gap -- the 4-row grid sits just under the dots
 #else
       y += 14;  // Reduced from 18
@@ -677,7 +677,7 @@ public:
       }
       display.setTextSize(1);
 
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       // ----- T-Watch S3 Plus: P4-style coloured tile grid (3x2) -----
       // Border colours approximate the Meck P4 home palette (RGB565): a white
       // icon + label on a dark navy fill, each tile a distinct bright border.
@@ -905,7 +905,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, display.height() - 24,
                                "Tap here for full Last Heard list");
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       display.drawTextCentered(display.width() / 2, display.height() - 24,
                                "Long Press: Full Last Heard List");
 #else
@@ -966,7 +966,7 @@ public:
       display.setTextSize(1);
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 80, "toggle: " PRESS_LABEL);
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
 #else
       display.drawTextCentered(display.width() / 2, 68, "toggle: " PRESS_LABEL);
@@ -1021,7 +1021,7 @@ public:
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, 64, "advert: " PRESS_LABEL);
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
       display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
 #else
       display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
@@ -1427,7 +1427,7 @@ public:
 // T5S3: Long press boot button to lock/unlock. Touch disabled while locked.
 // T-Deck Pro: Double-press boot button to lock/unlock. Touch+keyboard disabled.
 // ==========================================================================
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
 // Watch lock/clock screen: big HH:MM plus a day+date line, shown when the
 // display is woken (by raise-to-wake or a tap) after the idle timeout.
 class ClockScreen : public UIScreen {
@@ -1599,7 +1599,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors = sensors;
   _auto_off = millis() + AUTO_OFF_MILLIS;
 
-#if defined(PIN_USER_BTN)
+#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
   user_btn.begin();
 #endif
 #if defined(PIN_USER_BTN_ANA)
@@ -1689,7 +1689,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   lock_screen = new ClockScreen(this, &rtc_clock, node_prefs);
   steps_screen = new StepsScreen(this);
 #endif
@@ -1708,7 +1708,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
 #endif
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH) && HAS_GPS
   map_screen = new WatchMapScreen(this);
 #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
   map_screen = new MapScreen(this);
@@ -2006,7 +2006,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   }
 
   if (_display != NULL && !suppressNotif) {
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch: a new message must not wake the screen. The unread counter has
     // already been incremented above; leave the display asleep so the count
     // is only seen on the next tilt-wake to the clock screen. Only refresh
@@ -2183,7 +2183,7 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
-#ifdef PIN_USER_BTN
+#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
   return user_btn.isPressed();
 #else
   return false;
@@ -2192,7 +2192,7 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   // TEMP power-debug probe: every 60s, log display state + board power stats.
   {
     static unsigned long _pwr_dbg_next = 0;
@@ -2206,7 +2206,7 @@ void UITask::loop() {
     }
   }
 #endif
-#if defined(PIN_USER_BTN)
+#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2649,7 +2649,7 @@ if (curr) curr->poll();
     }
 #endif
   }
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   // Raise-to-wake: a wrist-raise (BMA423 tilt) while the display is off turns
   // it back on showing the clock screen and restarts the idle timer.
   if (_display != NULL && !_display->isOn() && board.tiltFired()) {
@@ -3183,7 +3183,7 @@ void UITask::toggleGPS() {
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
         #endif
-        #if defined(LILYGO_TWATCH_S3_PLUS)
+        #if defined(MECK_TWATCH)
           board.gpsPowerOff();  // Watch: GPS power is the AXP2101 BLDO1 rail
         #endif
         notify(UIEventType::ack);
@@ -3197,7 +3197,7 @@ void UITask::toggleGPS() {
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOn();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
         #endif
-        #if defined(LILYGO_TWATCH_S3_PLUS)
+        #if defined(MECK_TWATCH)
           board.gpsPowerOn();  // Watch: GPS power is the AXP2101 BLDO1 rail
         #endif
         notify(UIEventType::ack);
@@ -3656,7 +3656,7 @@ void UITask::gotoTraceScreen() {
   _next_refresh = 100;
 }
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
 uint32_t UITask::getTodaySteps() {
   uint32_t raw = board.getStepCount();
   return (raw >= _stepBaseline) ? (raw - _stepBaseline) : raw;
@@ -3742,7 +3742,7 @@ void UITask::gotoWebReader() {
 #if HAS_GPS
 void UITask::gotoMapScreen() {
   if (!map_screen) return;  // Not available on this platform (T-Echo Card)
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   WatchMapScreen* map = (WatchMapScreen*)map_screen;
   if (_display != NULL) {
     map->enter(*_display);

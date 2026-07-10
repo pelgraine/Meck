@@ -2426,7 +2426,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (strcmp(sp, "gps") == 0) {
           _prefs.gps_enabled = (np[0] == '1') ? 1 : 0;
           savePrefs();
-          #if defined(LILYGO_TWATCH_S3_PLUS)
+          #if defined(MECK_TWATCH)
             // Apply the BLDO1 GPS rail live so the toggle takes effect now, no reboot
             if (_prefs.gps_enabled) board.gpsPowerOn(); else board.gpsPowerOff();
           #endif

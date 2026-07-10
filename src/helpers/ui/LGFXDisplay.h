@@ -28,7 +28,7 @@ public:
   void startFrame(Color bkg = DARK) override;
   void setTextSize(int sz) override;
   void setColor(Color c) override;
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   // Set an exact RGB565 colour, bypassing the Color enum + watch grey remap.
   // Used by the watch P4-style tile grid for per-tile border/fill colours.
   void setRawColor(uint16_t c) { _color = c; buffer.setTextColor(c); }

@@ -281,7 +281,7 @@ public:
 
       if (selected) {
         display.setColor(DisplayDriver::LIGHT);
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
         display.fillRect(0, y, display.width(), lineH);
 #else
         display.fillRect(0, y + 5, display.width(), lineH);
@@ -383,7 +383,7 @@ public:
     const char* right = "Hold:Select";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
     display.setCursor(0, footerY);
     display.print("Tap:Slct");
     const char* right = "Hold:Entr";

@@ -103,7 +103,7 @@ public:
       display.setColor(DisplayDriver::LIGHT);
       display.setCursor(4, 28);
       display.print(active ? "Listening for adverts..." : "No nodes found");
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       display.setCursor(4, 38);
       display.print("Hold: Rescan");
       display.setCursor(4, 48);
@@ -211,7 +211,7 @@ public:
     const char* right = "Hold:Rescan";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
     display.print("Tap:Slct");
 
     const char* right = "Hold:Rescan";

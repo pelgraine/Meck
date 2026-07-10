@@ -301,7 +301,7 @@ public:
       int selCount = getSelectedCount();
       snprintf(tmp, sizeof(tmp), "%d Selected [%s]", selCount, filterLabel(_filter));
     } else {
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       snprintf(tmp, sizeof(tmp), "Contacts[%s]", filterLabel(_filter));
 #else
       snprintf(tmp, sizeof(tmp), "Contacts [%s]", filterLabel(_filter));
@@ -470,7 +470,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
     }
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
     display.setCursor(0, footerY);
     if (!_selectMode) {
       display.print("Long Press: Enter");

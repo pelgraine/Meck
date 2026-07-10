@@ -56,14 +56,14 @@ void LGFXDisplay::setColor(Color c) {
       _color = TFT_WHITE;
       break;
     case RED:
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       _color = 0x7BEF;   // dark grey -- the watch UI uses a grey/white/black palette
 #else
       _color = TFT_RED;
 #endif
       break;
     case GREEN:
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       _color = 0xC618;   // light grey
 #else
       _color = TFT_GREEN;
@@ -73,7 +73,7 @@ void LGFXDisplay::setColor(Color c) {
       _color = TFT_BLUE;
       break;
     case YELLOW:
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       _color = TFT_WHITE;
 #else
       _color = TFT_YELLOW;

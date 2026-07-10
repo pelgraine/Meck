@@ -499,7 +499,7 @@ private:
       addRow(ROW_BACKLIGHT_BRIGHTNESS);
       addRow(ROW_KB_BACKLIGHT);
 #endif
-#if !defined(LILYGO_TWATCH_S3_PLUS)
+#if !defined(MECK_TWATCH)
       addRow(ROW_MSG_NOTIFY);
 #endif
 #if HAS_GPS
@@ -507,10 +507,10 @@ private:
 #endif
       addRow(ROW_PATH_HASH_SIZE);
       addRow(ROW_DEFAULT_SCOPE);
-#if !defined(LILYGO_TWATCH_S3_PLUS)
+#if !defined(MECK_TWATCH)
       addRow(ROW_DARK_MODE);
 #endif
-#if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TWATCH_S3_PLUS)
+#if !defined(LILYGO_TECHO_LITE) && !defined(MECK_TWATCH)
       addRow(ROW_LARGE_FONT);
       addRow(ROW_FONT_STYLE);
 #endif
@@ -2940,13 +2940,13 @@ public:
       } else if (_subScreen != SUB_NONE) {
         display.print("Sh+Del:Back");
       } else {
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
         display.print("Hold:Edit");
 #else
         display.print("Sh+Del:Bk");
 #endif
       }
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
       const char* r = (_subScreen == SUB_NONE) ? "Tap:Cycle" : "Tap/Ent:Edit";
 #else
       const char* r = "Tap/Ent:Edit";

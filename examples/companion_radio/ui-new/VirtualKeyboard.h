@@ -12,7 +12,7 @@
 //   if (keyboard.status() == VKB_SUBMITTED) { ... keyboard.getText() ... }
 // =============================================================================
 
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
 #ifndef VIRTUAL_KEYBOARD_H
 #define VIRTUAL_KEYBOARD_H
 
@@ -536,4 +536,4 @@ private:
 };
 
 #endif // VIRTUAL_KEYBOARD_H
-#endif // LilyGo_T5S3_EPaper_Pro || LILYGO_TWATCH_S3_PLUS
+#endif // LilyGo_T5S3_EPaper_Pro || MECK_TWATCH

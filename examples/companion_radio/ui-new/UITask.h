@@ -34,7 +34,7 @@
   #include "AlarmScreen.h"
 #endif
 
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
   #include "VirtualKeyboard.h"
 #endif
 
@@ -117,9 +117,9 @@ class UITask : public AbstractUITask {
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
   int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   UIScreen* steps_screen;    // Steps screen (big daily step count)
   int32_t _lastStepDay = 0;  // local day-of-epoch, for the midnight step reset
   uint32_t _stepBaseline = 0; // raw step count at the start of the local day
@@ -225,7 +225,7 @@ public:
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   void gotoStepsScreen();                  // Navigate to the step counter screen
   uint32_t getTodaySteps();                // Daily step count (raw - baseline)
 #endif
@@ -290,17 +290,17 @@ public:
   bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   bool isOnStepsScreen() const { return curr == steps_screen; }
 #endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
   bool isVKBActive() const { return _vkbActive; }
   unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }
@@ -382,7 +382,7 @@ public:
   UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
   UIScreen* getStepsScreen() const { return steps_screen; }
 #endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }

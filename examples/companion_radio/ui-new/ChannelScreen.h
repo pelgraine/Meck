@@ -182,7 +182,7 @@ public:
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
     // The text already contains "Sender: message" format
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch build: drop emoji entirely instead of storing sprite escape bytes.
     // The watch UI has no sprite rendering and no room for emoji at 120x120
     // virtual. Non-emoji UTF-8 (accented letters etc.) passes through

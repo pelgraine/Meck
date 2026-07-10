@@ -595,7 +595,7 @@ public:
 
     // --- Header ---
     display.setTextSize(1);
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Clip long lines at the screen edge instead of wrapping them onto the row
     // below (restored before returning so other screens are unaffected).
     ((LGFXDisplay*)&display)->setTextWrap(false);
@@ -644,7 +644,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Exit");
         renderFooterRight(display, footerY, "Hold:Type");
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
         display.print("Long Press: login");
 #else
         display.print("Sh+Del:Exit");
@@ -665,7 +665,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Exit");
         renderFooterMidRight(display, footerY, "Back:Exit", "Tap:Open", "Swipe:Sel");
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
         display.print("Long Press: Select");
 #else
         display.print("Sh+Del:Exit");
@@ -677,7 +677,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Back");
         renderFooterMidRight(display, footerY, "Back:Back", "Tap:Run", "Swipe:Sel");
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
         display.print("Long Press: Run");
 #else
         display.print("Sh+Del:Back");
@@ -689,7 +689,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Cancel");
         renderFooterRight(display, footerY, "Tap:Send");
-#elif defined(LILYGO_TWATCH_S3_PLUS)
+#elif defined(MECK_TWATCH)
         display.print("Tap: Enter value");
 #else
         display.print("Sh+Del:Cancel");
@@ -723,7 +723,7 @@ public:
         break;
     }
 
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     ((LGFXDisplay*)&display)->setTextWrap(true);   // restore default before returning
 #endif
 
@@ -1125,7 +1125,7 @@ private:
   void renderResponse(DisplayDriver& display, int y, int bodyHeight) {
     display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
     int lineHeight = the_mesh.getNodePrefs()->smallLineH();
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     // Watch: clip long response lines at the screen edge instead of wrapping
     // them onto the row below.
     ((LGFXDisplay*)&display)->setTextWrap(false);
@@ -1167,7 +1167,7 @@ private:
     }
 
     display.setTextSize(1);
-#if defined(LILYGO_TWATCH_S3_PLUS)
+#if defined(MECK_TWATCH)
     ((LGFXDisplay*)&display)->setTextWrap(true);   // restore default
 #endif
   }
