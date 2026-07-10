@@ -16,6 +16,16 @@ void IRAM_ATTR TWatchS3Board::onTiltISR() { _tilt_flag = true; }
 #define BMA423_FEATURE_LEN         64
 #define BMA423_STEP_EN_BYTE        0x37   // BMA423_STEP_CNTR_OFFSET(0x36) + 1
 #define BMA423_STEP_EN_BIT         0x10   // BMA423_STEP_CNTR_EN_MSK
+// Step counter watermark: a 10-bit field (BMA423_STEP_CNTR_WM_MSK = 0x03FF)
+// spanning feature_config[0x36] as LSB and the low two bits of [0x37] as MSB.
+// It does not collide with the enable bit, which is bit 4 of [0x37] (bit 12 of
+// the 16-bit word). Bosch's bma423_step_counter_set_watermark() writes exactly
+// these bits; SensorLib's enableStepCounter() calls it with 1, and LilyGo's own
+// firmware calls setStepCounterWatermark(1). Meck never set it, which is the
+// prime suspect for the undercounting.
+#define BMA423_STEP_WM_LSB_BYTE    0x36   // BMA423_STEP_CNTR_OFFSET
+#define BMA423_STEP_WM_MSK         0x03FF // BMA423_STEP_CNTR_WM_MSK
+#define BMA423_STEP_WM_LEVEL       1      // matches LilyGoLib and the SensorLib example
 
 #define BMA423_REG_POWER_CONF      0x7C   // BMA4_POWER_CONF_ADDR
 #define BMA423_ADV_PWR_SAVE_BIT    0x01   // BMA4_ADVANCE_POWER_SAVE_MSK
@@ -49,6 +59,11 @@ static void bma423EnableStepCounter() {
 
   uint8_t cfg[BMA423_FEATURE_LEN];
   if (bma423ReadRegs(BMA423_REG_FEATURE_CONFIG, cfg, BMA423_FEATURE_LEN)) {
+    // Watermark first, then the enable bit, in a single read-modify-write.
+    uint16_t wm = ((uint16_t)cfg[BMA423_STEP_EN_BYTE] << 8) | cfg[BMA423_STEP_WM_LSB_BYTE];
+    wm = (wm & ~BMA423_STEP_WM_MSK) | (BMA423_STEP_WM_LEVEL & BMA423_STEP_WM_MSK);
+    cfg[BMA423_STEP_WM_LSB_BYTE] = (uint8_t)(wm & 0xFF);
+    cfg[BMA423_STEP_EN_BYTE]     = (uint8_t)((wm >> 8) & 0xFF);
     cfg[BMA423_STEP_EN_BYTE] |= BMA423_STEP_EN_BIT;
     bma423WriteRegs(BMA423_REG_FEATURE_CONFIG, cfg, BMA423_FEATURE_LEN);
     delay(1);                                                   // write settle
@@ -66,8 +81,12 @@ void TWatchS3Board::begin() {
   _accel = new SensorBMA423();
   if (_accel->begin(Wire, I2C_ADDR_ACCEL, PIN_BOARD_SDA, PIN_BOARD_SCL)) {
     _accel->setRemapAxes(SensorRemap::BOTTOM_LAYER_TOP_RIGHT_CORNER);
+    // 100 Hz ODR: SensorLib's BMA423_StepDetector example runs the pedometer at
+    // 100 Hz, not the 50 Hz used here previously. Everything else already matched
+    // (NORMAL, FS_2G, OSR2_AVG2, CIC_AVG_MODE). Revert this one literal to 50.0f
+    // to A/B it against the watermark change above.
     _accel->configAccelerometer(OperationMode::NORMAL, AccelFullScaleRange::FS_2G,
-                                50.0f, AccelBandwidth::OSR2_AVG2, AccelPerfMode::CIC_AVG_MODE);
+                                100.0f, AccelBandwidth::OSR2_AVG2, AccelPerfMode::CIC_AVG_MODE);
     // INT1 pin electrical config: level trigger, active high, push-pull,
     // output enabled. INT1_IO_CTRL resets to output-disabled, so without
     // this the pin never drives and INPUT_PULLDOWN reads low forever.
