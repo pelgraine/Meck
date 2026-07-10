@@ -80,8 +80,18 @@
 #define SDCARD_CS -1
 
 // -----------------------------------------------------------------------------
-// GPS: none. HAS_GPS and ENV_INCLUDE_GPS are left undefined in platformio.ini,
-// which drops the map screen, the GPS home page and the BLDO1 rail control.
-// The optional external GPS shield lands on GPIO41 (RX) / GPIO42 (TX) if it is
-// ever wired up.
+// GPS: none. HAS_GPS and ENV_INCLUDE_GPS are left undefined / zeroed in
+// platformio.ini, which drops the map screen, the GPS home page and the BLDO1
+// rail control. The optional external GPS shield lands on GPIO41 (RX) /
+// GPIO42 (TX) if it is ever wired up.
 // -----------------------------------------------------------------------------
+// #define HAS_GPS 1
+// #define GPS_BAUDRATE 38400
+// #define GPS_RX_PIN   41
+// #define GPS_TX_PIN   42
+
+// Fallback for code that references GPS_BAUDRATE without a HAS_GPS guard
+// (e.g. MyMesh.cpp "gps.baud" CLI command)
+#ifndef GPS_BAUDRATE
+#define GPS_BAUDRATE 9600
+#endif

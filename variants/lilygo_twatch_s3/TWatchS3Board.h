@@ -10,14 +10,20 @@
 
 // LilyGo T-Watch S3 board (non-GPS, 470 mAh).
 //
-// Power is managed by an AXP2101 PMU on the main I2C bus. The PMU is held as the
-// concrete XPowersAXP2101 rather than XPowersLibInterface because PMUButton
-// needs isPekeyNegativeIrq()/isPekeyPositiveIrq(), which the interface does not
-// declare.
+// Power is managed by an AXP2101 PMU on the main I2C bus. Two pointers to the
+// same object are kept, because XPowersLib splits its API by access specifier:
+//   PMU  (XPowersLibInterface*) -- the power-channel ops (setPowerChannelVoltage,
+//        enable/disablePowerOutput, isPowerChannelEnable) are PROTECTED on
+//        XPowersAXP2101 and only reachable through the interface.
+//   _axp (XPowersAXP2101*)      -- setIrqLevelTime() and the PWRON press/release
+//        edges isPekeyNegativeIrq()/isPekeyPositiveIrq() are AXP2101-only and
+//        absent from the interface.
+// Everything else is public on both.
 class SensorBMA423;  // full include kept in the .cpp to avoid a BLE-build header clash
 
 class TWatchS3Board : public ESP32Board {
-  XPowersAXP2101* PMU = NULL;
+  XPowersLibInterface* PMU = NULL;
+  XPowersAXP2101* _axp = NULL;   // same object as PMU, concrete type
   SensorBMA423* _accel = nullptr;
   static volatile bool _tilt_flag;
   static void IRAM_ATTR onTiltISR();   // defined in the .cpp (IRAM relocation)
@@ -31,7 +37,7 @@ public:
   bool tiltFired();
 
   // The AXP2101 handle, for PMUButton. NULL if the PMU failed to init.
-  XPowersAXP2101* getPMU() { return PMU; }
+  XPowersAXP2101* getPMU() { return _axp; }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);

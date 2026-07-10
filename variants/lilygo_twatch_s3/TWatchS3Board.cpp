@@ -96,10 +96,12 @@ void TWatchS3Board::begin() {
 }
 
 bool TWatchS3Board::power_init() {
-  PMU = new XPowersAXP2101(Wire, PIN_BOARD_SDA, PIN_BOARD_SCL, I2C_ADDR_PMU);
+  _axp = new XPowersAXP2101(Wire, PIN_BOARD_SDA, PIN_BOARD_SCL, I2C_ADDR_PMU);
+  PMU = _axp;   // same object; see the note in TWatchS3Board.h
   if (!PMU->init()) {
     MESH_DEBUG_PRINTLN("Warning: Failed to find AXP2101 power management");
-    delete PMU;
+    delete _axp;
+    _axp = NULL;
     PMU = NULL;
     return false;
   }
@@ -152,7 +154,7 @@ bool TWatchS3Board::power_init() {
   // Matches the 2S ON / 6S OFF behaviour printed on LilyGo's own pin diagram.
   PMU->setPowerKeyPressOnTime(XPOWERS_POWERON_2S);
   PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_6S);
-  PMU->setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_1S);
+  _axp->setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_1S);   // not on XPowersLibInterface
 
   PMU->disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
   PMU->clearIrqStatus();
