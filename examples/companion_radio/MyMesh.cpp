@@ -12,8 +12,8 @@
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
 
-#if defined(LilyGo_TDeck_Pro_Max)
-  #include "DRV2605Haptic.h"     // TEMP: inline haptic driver for the 'buzz' CLI test command
+#if defined(LilyGo_TDeck_Pro_Max) || defined(LILYGO_TWATCH_S3)
+  #include "DRV2605Haptic.h"     // inline haptic driver for the 'buzz' CLI test command
 #endif
 
 #define CMD_APP_START                 1
@@ -3613,20 +3613,29 @@ void MyMesh::checkCLIRescueCmd() {
       }
 
     }
-#if defined(LilyGo_TDeck_Pro_Max)
-    else if (strcmp(cli_command, "buzz") == 0) {
-      // TEMP: fire the DRV2605 haptic motor once to confirm it works.
-      // Lazy-inits the driver (and motor power rail) on first invocation.
+#if defined(LilyGo_TDeck_Pro_Max) || defined(LILYGO_TWATCH_S3)
+    else if (strncmp(cli_command, "buzz", 4) == 0 &&
+             (cli_command[4] == '\0' || cli_command[4] == ' ')) {
+      // Fire a DRV2605 library-1 effect to confirm the motor works.
+      // "buzz" uses effect 1 (strong click); "buzz <n>" fires effect n.
+      // Lazy-inits the driver (and, on the MAX, its motor power rail).
       static DRV2605Haptic haptic;
       static bool haptic_ready = false;
       if (!haptic_ready) {
-        board.motorEnable();
+#if defined(LilyGo_TDeck_Pro_Max)
+        board.motorEnable();       // MAX: motor rail is behind an XL9555 pin
         delay(10);                 // let the motor rail settle before I2C
+#endif
         haptic_ready = haptic.begin();
       }
       if (haptic_ready) {
-        haptic.buzz(1);
-        Serial.println("  > buzz");
+        int effect = 1;
+        const char* arg = cli_command + 4;
+        while (*arg == ' ') arg++;
+        if (*arg) effect = atoi(arg);
+        if (effect < 1 || effect > 123) effect = 1;
+        haptic.buzz((uint8_t)effect);
+        Serial.printf("  > buzz: effect %d\n", effect);
       } else {
         Serial.println("  > buzz: DRV2605 not found");
       }

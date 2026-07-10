@@ -1125,6 +1125,9 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
+  #if defined(LILYGO_TWATCH_S3)
+    #include "WatchAlarmScreen.h"  // After UITask.h -- needs NodePrefs
+  #endif
   #if defined(MECK_TWATCH) && HAS_GPS
     #include "WatchMapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
@@ -1360,6 +1363,18 @@ static void lastHeardToggleContact() {
       if (wms) wms->handleTap(x, y);
       return 0;
     }
+#endif
+#if defined(LILYGO_TWATCH_S3)
+    // Alarm screen: rows, +/- steppers and the footer are all tap targets.
+    // readTouch() already returns logical (UI_ZOOM-divided) coords on the watch,
+    // which is the space WatchAlarmScreen lays out in. No further scaling.
+    if (ui_task.isOnWatchAlarmScreen()) {
+      WatchAlarmScreen* wa = (WatchAlarmScreen*)ui_task.getWatchAlarmScreen();
+      if (wa) wa->handleTap(x, y);
+      return 0;
+    }
+#endif
+#if defined(MECK_TWATCH)
     // Watch: tiles open on long-press and pages change on swipe, so a plain tap
     // on any home page does nothing -- skip the T5S3 tile hit-test below (wrong
     // geometry for the 2-column watch grid) and the left/right page cycling.
@@ -1806,7 +1821,10 @@ static void lastHeardToggleContact() {
         if (row == 1 && col == 0) { ui_task.gotoSettingsScreen();      return 0; }
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
-#if HAS_GPS
+#if defined(LILYGO_TWATCH_S3)
+        // No GNSS on the plain S3, so this slot is the vibrate alarm clock.
+        if (row == 2 && col == 1) { ui_task.gotoWatchAlarmScreen(); return 0; }
+#elif HAS_GPS
         if (row == 2 && col == 1) {
           // Maps: mark the tile FS ready (detectZoomRange in enter() needs it)
           // before opening; GPS centre + markers are populated in the main loop.

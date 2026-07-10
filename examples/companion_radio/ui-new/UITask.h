@@ -124,6 +124,9 @@ class UITask : public AbstractUITask {
   int32_t _lastStepDay = 0;  // local day-of-epoch, for the midnight step reset
   uint32_t _stepBaseline = 0; // raw step count at the start of the local day
 #endif
+#if defined(LILYGO_TWATCH_S3)
+  UIScreen* watch_alarm_screen;  // Vibrate-only alarm clock (no audio hardware)
+#endif
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
@@ -229,6 +232,9 @@ public:
   void gotoStepsScreen();                  // Navigate to the step counter screen
   uint32_t getTodaySteps();                // Daily step count (raw - baseline)
 #endif
+#if defined(LILYGO_TWATCH_S3)
+  void gotoWatchAlarmScreen();             // Navigate to the vibrate alarm clock
+#endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -292,6 +298,9 @@ public:
   bool isOnSnakeScreen() const { return curr == snake_screen; }
 #if defined(MECK_TWATCH)
   bool isOnStepsScreen() const { return curr == steps_screen; }
+#endif
+#if defined(LILYGO_TWATCH_S3)
+  bool isOnWatchAlarmScreen() const { return curr == watch_alarm_screen; }
 #endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
@@ -384,6 +393,9 @@ public:
   UIScreen* getSnakeScreen() const { return snake_screen; }
 #if defined(MECK_TWATCH)
   UIScreen* getStepsScreen() const { return steps_screen; }
+#endif
+#if defined(LILYGO_TWATCH_S3)
+  UIScreen* getWatchAlarmScreen() const { return watch_alarm_screen; }
 #endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }

@@ -76,6 +76,9 @@
 #include "AudiobookPlayerScreen.h"
 #include "VoiceMessageScreen.h"
 #endif
+#if defined(LILYGO_TWATCH_S3)
+#include "WatchAlarmScreen.h"
+#endif
 #ifdef TWATCH_COMPOSE_ENABLED
 #include "TWatchComposeScreens.h"
 #endif
@@ -687,7 +690,11 @@ public:
         const Tile tiles[4][2] = {
           { {icon_envelope, "Messages", 0x0CB1}, {icon_people,  "Contacts", 0xCAA0} },
           { {icon_gear,     "Settings", 0x0560}, {icon_search,  "Discover", 0xF81F} },
+#if defined(LILYGO_TWATCH_S3)
+          { {icon_trace,    "Trace",    0xF800}, {icon_alarm,   "Alarms",   0x231D} },
+#else
           { {icon_trace,    "Trace",    0xF800}, {icon_map,     "Maps",     0x231D} },
+#endif
           { {icon_notepad,  "Notes",    0x07FF}, {icon_star,    "Steps",    0xFFE0} },
         };
         const uint16_t TILE_FILL = 0x18C5;   // dark navy
@@ -1693,6 +1700,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   lock_screen = new ClockScreen(this, &rtc_clock, node_prefs);
   steps_screen = new StepsScreen(this);
 #endif
+#if defined(LILYGO_TWATCH_S3)
+  // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
+  watch_alarm_screen = new WatchAlarmScreen(this, &rtc_clock, node_prefs);
+  ((WatchAlarmScreen*)watch_alarm_screen)->load();
+#endif
 #ifdef TWATCH_COMPOSE_ENABLED
   tw_picker   = new TWatchChannelPicker(_display);
   tw_channel  = new TWatchChannelScreen(_display);
@@ -2381,6 +2393,24 @@ void UITask::loop() {
 
 #ifdef PIN_BUZZER
   if (buzzer.isPlaying())  buzzer.loop();
+#endif
+
+#if defined(LILYGO_TWATCH_S3)
+  // Alarms are checked every loop, not from the screen's poll(), so one fires
+  // with the display off or another screen showing.
+  if (watch_alarm_screen) {
+    WatchAlarmScreen* wa = (WatchAlarmScreen*)watch_alarm_screen;
+    if (wa->tick()) {
+      setCurrScreen(watch_alarm_screen);
+      if (_display != NULL && !_display->isOn()) _display->turnOn();
+      _auto_off = millis() + AUTO_OFF_MILLIS;
+      _next_refresh = 0;
+    } else if (wa->isRinging() && curr != watch_alarm_screen) {
+      // Navigating away (e.g. the status-bar tap that goes home) counts as a
+      // dismiss, otherwise the motor would keep buzzing off-screen.
+      wa->dismiss();
+    }
+  }
 #endif
 
 if (curr) curr->poll();
@@ -3670,6 +3700,19 @@ uint32_t UITask::getTodaySteps() {
 
 void UITask::gotoStepsScreen() {
   setCurrScreen(steps_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
+
+#if defined(LILYGO_TWATCH_S3)
+void UITask::gotoWatchAlarmScreen() {
+  WatchAlarmScreen* wa = (WatchAlarmScreen*)watch_alarm_screen;
+  if (wa) wa->enter();
+  setCurrScreen(watch_alarm_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
   }
