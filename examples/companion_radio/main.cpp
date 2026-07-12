@@ -3083,7 +3083,7 @@ void loop() {
   // is active.  The mesh radio has its own FIFO so packets are buffered;
   // 50 ms yield means the loop still runs 20×/sec which is more than enough
   // to drain the radio FIFO before overflow.
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)
   {
     static bool wasLocked = false;
     bool nowLocked = ui_task.isLocked();
@@ -4516,7 +4516,7 @@ void loop() {
   // The RTOS idle task executes WFI (wait-for-interrupt) during delay(),
   // dramatically reducing CPU power draw.  50 ms gives 20 loop cycles/sec
   // which is ample for LoRa packet reception (radio has hardware FIFO).
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)
   if (ui_task.isLocked()) {
     delay(50);
   }

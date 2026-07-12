@@ -20,7 +20,7 @@
 #endif
 
 #ifndef CPU_FREQ_BOOST
-#define CPU_FREQ_BOOST  240    // MHz — heavy processing
+#define CPU_FREQ_BOOST  80     // MHz -- S3: no map screen, so cap boost to idle to save power
 #endif
 
 #ifndef CPU_FREQ_LOW_POWER
