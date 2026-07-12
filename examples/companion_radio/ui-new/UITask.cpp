@@ -2364,6 +2364,26 @@ void UITask::loop() {
     // contacts screen, that opens the path editor). A >=6s hold is a hardware
     // power-off and never reaches here.
     c = checkDisplayOn(KEY_ENTER);
+    if (c && isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)getContactsScreen();
+      if (cs) {
+        int idx = cs->getSelectedContactIdx();
+        if (idx >= 0) gotoPathEditor(idx);
+      }
+      c = 0;   // handled here; do not also pass Enter through
+    }
+#elif defined(LILYGO_TWATCH_S3_PLUS)
+    // T-Watch S3 Plus: on the contacts screen the boot button opens the path
+    // editor for the selected contact; elsewhere it wakes the display / KEY_NEXT.
+    c = checkDisplayOn(KEY_NEXT);
+    if (c && isOnContactsScreen()) {
+      ContactsScreen* cs = (ContactsScreen*)getContactsScreen();
+      if (cs) {
+        int idx = cs->getSelectedContactIdx();
+        if (idx >= 0) gotoPathEditor(idx);
+      }
+      c = 0;
+    }
 #else
     c = checkDisplayOn(KEY_NEXT);
 #endif
