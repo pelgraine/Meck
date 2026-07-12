@@ -1617,9 +1617,12 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnSettingsScreen()) {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
 #if defined(MECK_TWATCH)
-      // Watch: while editing the UTC offset, tap the upper half to increment
-      // and the lower half to decrement. Long-press saves.
-      if (ss && ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
+      // Watch: while editing UTC offset, path hash size, or TX power, tap the
+      // upper half to increment and the lower half to decrement. Long-press saves.
+      if (ss && ss->isEditing() &&
+          (ss->getCurrentRowType() == ROW_UTC_OFFSET ||
+           ss->getCurrentRowType() == ROW_PATH_HASH_SIZE ||
+           ss->getCurrentRowType() == ROW_TX_POWER)) {
         return (vy < 64) ? 'w' : 's';
       }
 #endif
@@ -2091,8 +2094,12 @@ static void lastHeardToggleContact() {
       SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
       if (ss) {
 #if defined(MECK_TWATCH)
-        // Watch: long-press while editing the UTC offset saves the value.
-        if (ss->isEditing() && ss->getCurrentRowType() == ROW_UTC_OFFSET) {
+        // Watch: long-press while editing UTC offset, path hash size, or TX
+        // power saves the value.
+        if (ss->isEditing() &&
+            (ss->getCurrentRowType() == ROW_UTC_OFFSET ||
+             ss->getCurrentRowType() == ROW_PATH_HASH_SIZE ||
+             ss->getCurrentRowType() == ROW_TX_POWER)) {
           return '\r';
         }
 #endif
