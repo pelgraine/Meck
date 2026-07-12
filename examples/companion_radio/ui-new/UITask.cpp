@@ -183,7 +183,9 @@ class HomeScreen : public UIScreen {
 #if HAS_BQ27220
     BATTERY,
 #endif
+#if !defined(MECK_TWATCH)
     SHUTDOWN,
+#endif
     Count    // keep as last
   };
 
@@ -366,7 +368,11 @@ public:
   bool isEditingUTC() const { return _editing_utc; }
   bool isFirstPage() const { return _page == HomePage::FIRST; }
   bool isOnRecentPage() const { return _page == HomePage::RECENT; }
+#if defined(MECK_TWATCH)
+  bool isOnShutdownPage() const { return false; }
+#else
   bool isOnShutdownPage() const { return _page == HomePage::SHUTDOWN; }
+#endif
   void cancelEditing() { 
     if (_editing_utc) {
       _node_prefs->utc_offset_hours = _saved_utc_offset;
@@ -1260,7 +1266,9 @@ public:
       sprintf(buf, "%d.%d C", battTemp / 10, abs(battTemp % 10));
       display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
 #endif
-    } else if (_page == HomePage::SHUTDOWN) {
+    }
+#if !defined(MECK_TWATCH)
+    else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
       if (_shutdown_init) {
@@ -1304,6 +1312,7 @@ public:
         display.drawTextCentered(display.width() / 2, y2, line2);
       }
     }
+#endif
     return _editing_utc ? 700 : 5000;
   }
 
@@ -1342,6 +1351,7 @@ public:
       return true;  // Consume all other keys while editing
     }
 
+#if !defined(MECK_TWATCH)
     // SHUTDOWN page -- intercept up/down and Enter before page cycling
     if (_page == HomePage::SHUTDOWN) {
       if (_poweroff_confirm) {
@@ -1376,6 +1386,7 @@ public:
       }
       // Left/right fall through to page cycling below
     }
+#endif
 
     if (c == KEY_LEFT || c == KEY_PREV || c == 'a') {
       _page = (_page + HomePage::Count - 1) % HomePage::Count;
@@ -2893,6 +2904,10 @@ if (curr) curr->poll();
         _display->endFrame();
       }
       #endif
+
+      // Flush contacts before the battery dies -- the chunked lazy save may not
+      // have run for hours. Blocking save (tmp-then-rename, brownout-safe).
+      the_mesh.saveContacts();
 
       shutdown();
       }

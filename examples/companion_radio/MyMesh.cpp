@@ -119,6 +119,7 @@
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
 #define USER_IDLE_SAVE_THRESHOLD       15000  // Defer saves until 15s after last keypress
+#define CONTACTS_SAVE_INTERVAL       43200000  // 12h: cap chunked contact flush to twice a day
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -1495,6 +1496,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   next_ack_idx = 0;
   sign_data = NULL;
   dirty_contacts_expiry = 0;
+  _nextContactSaveDue = 0;
   advert_paths = nullptr;  // PSRAM-allocated in begin()
   _rxlog = nullptr;        // PSRAM-allocated in begin()
   _rxlog_head = 0;
@@ -3714,8 +3716,15 @@ void MyMesh::loop() {
       // Voice session or active keyboard use -- push save forward
       dirty_contacts_expiry = futureMillis(2000);
     } else if (!_store->isSaveInProgress()) {
-      _store->beginSaveContacts(this);
-      dirty_contacts_expiry = 0;
+      // Cap the chunked flush to CONTACTS_SAVE_INTERVAL (twice a day): anchor
+      // the next-due time on the first dirty pass, then only write once it is
+      // reached. Cleared after a save so the next dirty event re-anchors.
+      if (_nextContactSaveDue == 0) _nextContactSaveDue = futureMillis(CONTACTS_SAVE_INTERVAL);
+      if (millisHasNowPassed(_nextContactSaveDue)) {
+        _store->beginSaveContacts(this);
+        dirty_contacts_expiry = 0;
+        _nextContactSaveDue = 0;
+      }
     }
 #endif
   }

@@ -346,6 +346,7 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  unsigned long _nextContactSaveDue;   // ESP32 chunked save: next scheduled flush (0 = unscheduled)
 
   TransportKey send_scope;
 
