@@ -1307,8 +1307,20 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
   // auto-discovery overwrite it.  Skip the base class call entirely — ACKs
   // embedded in path responses will still be delivered via separate ACK packets.
   if (contact.flags & CONTACT_FLAG_CUSTOM_PATH) {
+#if defined(MECK_TWATCH)
+    // Watch: keep the manually set path (don't let discovery overwrite it), but
+    // STILL deliver an embedded login/response reply riding on this path packet
+    // -- otherwise logins to custom-path contacts silently time out. Gated to
+    // the watch so other builds' admin flow is unchanged.
+    MESH_DEBUG_PRINTLN("onContactPathRecv: custom-path %s, keeping path, delivering response (type=%d len=%d)", contact.name, extra_type, extra_len);
+    if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
+      onContactResponse(contact, extra, extra_len);
+    }
+    return false;
+#else
     MESH_DEBUG_PRINTLN("onContactPathRecv: skipping path update for custom-path contact %s", contact.name);
     return false;
+#endif
   }
   return BaseChatMesh::onContactPathRecv(contact, in_path, in_path_len, out_path, out_path_len, extra_type, extra, extra_len);
 }

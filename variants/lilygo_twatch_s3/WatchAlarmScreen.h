@@ -227,6 +227,10 @@ public:
   }
 
   void dismiss() {
+    if (_hapticReady) {
+      _haptic.standby();      // drop DRV2605 back to ~1.8uA once the alarm ends
+      _hapticReady = false;   // force begin() (exit standby) on the next alarm
+    }
     _mode     = LIST;
     _ringSlot = -1;
   }

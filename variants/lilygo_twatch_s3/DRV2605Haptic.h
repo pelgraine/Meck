@@ -51,6 +51,12 @@ public:
     writeReg(REG_GO, 1);
   }
 
+  // Return the DRV2605 to standby (~1.8uA). begin() must be run again before the
+  // next buzz -- a GO in standby is ignored -- so callers reset their ready flag.
+  void standby() {
+    writeReg(REG_MODE, 0x40);        // STANDBY = 1, internal trigger
+  }
+
 private:
   static const uint8_t REG_MODE       = 0x01;
   static const uint8_t REG_RTPIN      = 0x02;

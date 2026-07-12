@@ -2592,6 +2592,13 @@ if (curr) curr->poll();
           gotoHomeScreen();
         }
         showAlert(dmSuccess ? "DM sent!" : "DM failed!", 1500);
+      } else if (purpose == TWatchKeyboardScreen::TWKB_PATH) {
+        PathEditorScreen* pe = (PathEditorScreen*)getPathEditorScreen();
+        const char* perr = pe ? pe->applyComposedPath(sendText) : "No editor";
+        kb->clearOutBuf();
+        if (path_editor) setCurrScreen(path_editor);
+        else gotoHomeScreen();
+        if (perr) showAlert(perr, 1500);
       } else {  // TWKB_ADMIN_PASSWORD or TWKB_ADMIN_CLI
         RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
         if (admin) {
@@ -2602,6 +2609,13 @@ if (curr) curr->poll();
         if (repeater_admin) setCurrScreen(repeater_admin);
         else gotoHomeScreen();
       }
+    }
+  }
+  else if (curr == path_editor && path_editor != nullptr) {
+    PathEditorScreen* pe = (PathEditorScreen*)path_editor;
+    if (pe->wantsKeyboard()) {
+      pe->clearWantKeyboard();
+      openTWatchKeyboard(TWatchKeyboardScreen::TWKB_PATH, pe->getContactIdx());
     }
   }
 #endif
