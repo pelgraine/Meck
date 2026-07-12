@@ -91,6 +91,17 @@ class TWatchChannelPicker : public UIScreen {
     _highlighted = (uint8_t)((_highlighted + 1) % _numChannels);
     ensureVisible();
   }
+  // Map a draw-space y coordinate to a channel index, or -1 if the tap is
+  // above the list or on an empty row. getTouch() returns coords already
+  // divided by UI_ZOOM, so _downY is directly comparable to the row layout.
+  int rowAtY(int y) const {
+    if (y < HEADER_H) return -1;
+    int i = (y - HEADER_H) / ROW_H;
+    if (i < 0 || i >= visibleRows()) return -1;
+    int ci = _scrollTop + i;
+    if (ci >= _numChannels) return -1;
+    return ci;
+  }
 
 public:
   TWatchChannelPicker(DisplayDriver* display)
@@ -137,11 +148,11 @@ public:
       _touchDown = false;
       unsigned long held = millis() - _downAt;
       if (_downX < 20 && _downY < HEADER_H) { _wantsExit = true; return; }   // back arrow
-      if (held >= TW_LONG_PRESS_MS) {
-        if (_numChannels > 0) _confirmed = true;                             // select highlighted
-      } else {
-        if (_downY < _display->height() / 2) moveUp(); else moveDown();      // tap zones
-      }
+      int row = rowAtY(_downY);
+      if (row < 0) return;                          // tap outside the channel list
+      _highlighted = (uint8_t)row;                  // single tap selects the tapped row
+      ensureVisible();
+      if (held >= TW_LONG_PRESS_MS) _confirmed = true;   // long press opens it
     }
   }
 
