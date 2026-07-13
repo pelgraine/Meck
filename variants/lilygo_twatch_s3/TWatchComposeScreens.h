@@ -9,10 +9,10 @@
 // (240px panel / UI_ZOOM=2). getTouch() returns coords already divided by
 // UI_ZOOM, so a tap coordinate is directly comparable to draw coordinates.
 //
-//   TWatchChannelPicker  — long-press on the home screen opens this. Tap the
-//                          top half to move the highlight up, the bottom half
-//                          to move it down; long-press selects the highlighted
-//                          channel; the back arrow (top-left) returns home.
+//   TWatchChannelPicker  -- long-press on the home screen opens this. A single
+//                          tap selects the channel row under the finger; a
+//                          long-press on a row opens it; the back arrow
+//                          (top-left) returns home.
 //   TWatchChannelScreen  -- shows the most recent messages (sent + received)
 //                          for the selected channel, read live from the shared
 //                          ChannelScreen history store. Tap a line to ticker-
