@@ -18,7 +18,6 @@ class TWatchS3PlusBoard : public ESP32Board {
   XPowersLibInterface* PMU = NULL;
   SensorBMA423* _accel = nullptr;
   static volatile bool _tilt_flag;
-  static volatile uint32_t _tilt_isr_count;   // TEMP diagnostic
   static void IRAM_ATTR onTiltISR();   // defined in the .cpp (IRAM relocation)
 
   bool power_init();

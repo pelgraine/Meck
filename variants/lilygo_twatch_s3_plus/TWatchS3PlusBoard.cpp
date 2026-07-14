@@ -4,9 +4,8 @@
 #include <esp_bt.h>   // TEMP power-debug: esp_bt_controller_get_status()
 
 volatile bool TWatchS3PlusBoard::_tilt_flag = false;
-volatile uint32_t TWatchS3PlusBoard::_tilt_isr_count = 0;   // TEMP diagnostic
 
-void IRAM_ATTR TWatchS3PlusBoard::onTiltISR() { _tilt_flag = true; _tilt_isr_count++; }
+void IRAM_ATTR TWatchS3PlusBoard::onTiltISR() { _tilt_flag = true; }
 
 // ---- Wrapper-free BMA423 step counter (raw I2C) ----------------------------
 // SensorLib's SensorBMA423 step-counter methods do not compile in this build,
@@ -203,14 +202,6 @@ bool TWatchS3PlusBoard::tiltFired() {
     _tilt_flag = false;
     _accel->update();                 // reading the status clears the sensor INT
     return true;
-  }
-  // TEMP diagnostic: periodically report the raw INT pin level and ISR count,
-  // to distinguish "pin stuck high / never re-arms" from "never asserts".
-  static unsigned long _tilt_dbg_next = 0;
-  if (millis() >= _tilt_dbg_next) {
-    _tilt_dbg_next = millis() + 5000;
-    Serial.printf("[TILT] pin=%d isr_count=%u\n",
-                  digitalRead(PIN_ACCEL_IRQ), (unsigned)_tilt_isr_count);
   }
   return false;
 }
