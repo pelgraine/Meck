@@ -184,7 +184,10 @@ bool TWatchS3Board::power_init() {
                  XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
 
   PMU->setChargerConstantCurr(XPOWERS_AXP2101_CHG_CUR_125MA);
-  PMU->setChargeTargetVoltage(XPOWERS_AXP2101_CHG_VOL_4V2);
+  // The fitted cell (Tewaycell 552530, label verified) is 3.8V nominal LiHV,
+  // i.e. 4.35V max charge. LilyGoLib's init for this board sets 4V35 for the
+  // same reason. Charging to 4V2 forfeits the top ~12-15% of capacity.
+  PMU->setChargeTargetVoltage(XPOWERS_AXP2101_CHG_VOL_4V35);
 
   PMU->disableTSPinMeasure();
   PMU->enableSystemVoltageMeasure();

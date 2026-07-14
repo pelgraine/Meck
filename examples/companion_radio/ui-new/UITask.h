@@ -142,6 +142,9 @@ class UITask : public AbstractUITask {
 #if defined(LILYGO_TWATCH_S3)
   UIScreen* watch_alarm_screen;  // Vibrate-only alarm clock (no audio hardware)
 #endif
+#if defined(MECK_TWATCH)
+  UIScreen* watch_notes_screen;  // LittleFS note pad (shared NotesScreen needs SD)
+#endif
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
@@ -320,6 +323,9 @@ public:
 #if defined(LILYGO_TWATCH_S3)
   bool isOnWatchAlarmScreen() const { return curr == watch_alarm_screen; }
 #endif
+#if defined(MECK_TWATCH)
+  bool isOnWatchNotesScreen() const { return curr == watch_notes_screen; }
+#endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)
@@ -415,6 +421,9 @@ public:
 #endif
 #if defined(LILYGO_TWATCH_S3)
   UIScreen* getWatchAlarmScreen() const { return watch_alarm_screen; }
+#endif
+#if defined(MECK_TWATCH)
+  UIScreen* getWatchNotesScreen() const { return watch_notes_screen; }
 #endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }

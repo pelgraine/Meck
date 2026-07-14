@@ -406,7 +406,7 @@ class TWatchKeyboardScreen : public UIScreen {
   uint8_t  _channelIdx;
 
 public:
-  enum Purpose { TWKB_CHANNEL, TWKB_DM, TWKB_ADMIN_PASSWORD, TWKB_ADMIN_CLI, TWKB_PATH };
+  enum Purpose { TWKB_CHANNEL, TWKB_DM, TWKB_ADMIN_PASSWORD, TWKB_ADMIN_CLI, TWKB_PATH, TWKB_NOTE };
 
 private:
   Purpose  _purpose;
@@ -507,6 +507,15 @@ public:
     return true;
   }
   void clearOutBuf() { _outLen = 0; _outBuf[0] = 0; }
+  // Pre-fill the compose buffer (e.g. editing an existing note). Call after
+  // activateFor(), which clears the buffer; input is clamped at MAXLEN.
+  void setInitialText(const char* s) {
+    _outLen = 0;
+    if (s) {
+      while (s[_outLen] && _outLen < MAXLEN) { _outBuf[_outLen] = s[_outLen]; _outLen++; }
+    }
+    _outBuf[_outLen] = 0;
+  }
   bool wantsExit() const { return _wantsExit; }
   void acknowledgeExit() { _wantsExit = false; }
 

@@ -1128,6 +1128,9 @@ static uint32_t _atoi(const char* sp) {
   #if defined(LILYGO_TWATCH_S3)
     #include "WatchAlarmScreen.h"  // After UITask.h -- needs NodePrefs
   #endif
+  #if defined(MECK_TWATCH)
+    #include "WatchNotesScreen.h"  // After UITask.h -- needs NodePrefs
+  #endif
   #if defined(MECK_TWATCH) && HAS_GPS
     #include "WatchMapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #elif HAS_GPS && !defined(LILYGO_TECHO_CARD)
@@ -1371,6 +1374,15 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnWatchAlarmScreen()) {
       WatchAlarmScreen* wa = (WatchAlarmScreen*)ui_task.getWatchAlarmScreen();
       if (wa) wa->handleTap(x, y);
+      return 0;
+    }
+#endif
+#if defined(MECK_TWATCH)
+    // Notes screen: list rows, view scroll zones and the footer are all tap
+    // targets, in the same logical coords as the alarm screen.
+    if (ui_task.isOnWatchNotesScreen()) {
+      WatchNotesScreen* wn = (WatchNotesScreen*)ui_task.getWatchNotesScreen();
+      if (wn) wn->handleTap(x, y);
       return 0;
     }
 #endif

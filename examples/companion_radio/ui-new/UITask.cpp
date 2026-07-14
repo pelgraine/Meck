@@ -82,6 +82,9 @@
 #if defined(LILYGO_TWATCH_S3)
 #include "WatchAlarmScreen.h"
 #endif
+#if defined(MECK_TWATCH)
+#include "WatchNotesScreen.h"   // After UITask.h -- needs NodePrefs
+#endif
 #ifdef TWATCH_COMPOSE_ENABLED
 #include "TWatchComposeScreens.h"
 #endif
@@ -1792,6 +1795,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   watch_alarm_screen = new WatchAlarmScreen(this, &rtc_clock, node_prefs);
   ((WatchAlarmScreen*)watch_alarm_screen)->load();
 #endif
+#if defined(MECK_TWATCH)
+  // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
+  watch_notes_screen = new WatchNotesScreen(this, &rtc_clock, node_prefs);
+#endif
 #ifdef TWATCH_COMPOSE_ENABLED
   tw_picker   = new TWatchChannelPicker(_display);
   tw_channel  = new TWatchChannelScreen(_display);
@@ -2599,6 +2606,13 @@ if (curr) curr->poll();
         if (path_editor) setCurrScreen(path_editor);
         else gotoHomeScreen();
         if (perr) showAlert(perr, 1500);
+      } else if (purpose == TWatchKeyboardScreen::TWKB_NOTE) {
+        WatchNotesScreen* wn = (WatchNotesScreen*)watch_notes_screen;
+        const char* nerr = wn ? wn->applyComposedNote(sendText) : "No notes";
+        kb->clearOutBuf();
+        if (watch_notes_screen) setCurrScreen(watch_notes_screen);
+        else gotoHomeScreen();
+        if (nerr) showAlert(nerr, 1200);
       } else {  // TWKB_ADMIN_PASSWORD or TWKB_ADMIN_CLI
         RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
         if (admin) {
@@ -2616,6 +2630,16 @@ if (curr) curr->poll();
     if (pe->wantsKeyboard()) {
       pe->clearWantKeyboard();
       openTWatchKeyboard(TWatchKeyboardScreen::TWKB_PATH, pe->getContactIdx());
+    }
+  }
+  else if (curr == watch_notes_screen && watch_notes_screen != nullptr) {
+    WatchNotesScreen* wn = (WatchNotesScreen*)watch_notes_screen;
+    if (wn->wantsKeyboard()) {
+      wn->clearWantKeyboard();
+      openTWatchKeyboard(TWatchKeyboardScreen::TWKB_NOTE, 0);
+      if (wn->editPending()) {
+        ((TWatchKeyboardScreen*)tw_keyboard)->setInitialText(wn->getEditText());
+      }
     }
   }
 #endif
@@ -3556,6 +3580,17 @@ void UITask::gotoTextReader() {
 }
 
 void UITask::gotoNotesScreen() {
+#if defined(MECK_TWATCH)
+  // Watch: the shared NotesScreen is SD-bound; use the LittleFS note pad.
+  if (watch_notes_screen) {
+    ((WatchNotesScreen*)watch_notes_screen)->enter();
+    setCurrScreen(watch_notes_screen);
+    if (_display != NULL && !_display->isOn()) _display->turnOn();
+    _auto_off = millis() + AUTO_OFF_MILLIS;
+    _next_refresh = 100;
+    return;
+  }
+#endif
   if (!notes_screen) return;  // Not available on this platform
 #if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
   NotesScreen* notes = (NotesScreen*)notes_screen;
