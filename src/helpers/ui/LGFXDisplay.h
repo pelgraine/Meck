@@ -63,6 +63,9 @@ public:
   // ticker turns wrap off so a long scrolling line is clipped at the screen
   // edge instead of wrapping onto the rows below.
   void setTextWrap(bool en) { buffer.setTextWrap(en, false); }
+  // Current print-cursor X on the sprite buffer -- lets a caller measure how
+  // wide a just-printed row was (used by the settings row ticker).
+  int getCursorX() { return buffer.getCursorX(); }
   // Draw a string centred horizontally at mid_x with its top at y, in
   // FreeSansBold 24pt (used for the clock HH:MM), then restore the default
   // GLCD font + size so later text is unaffected.

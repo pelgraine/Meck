@@ -2,6 +2,11 @@
 
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
+#if defined(MECK_TWATCH)
+#include <helpers/ui/LGFXDisplay.h>   // setTextWrap/getCursorX for the row ticker
+// Row ticker scroll speed -- matches TW_TICKER_MS_PER_PX in TWatchComposeScreens.h.
+#define SETTINGS_TICKER_MS_PER_PX 20
+#endif
 #include <helpers/ChannelDetails.h>
 #include <helpers/TransportKeyStore.h>
 #include <MeshCore.h>
@@ -342,6 +347,14 @@ private:
   // T5S3: signal UITask to open VKB when entering text edit mode
   bool _needsTextVKB;
   bool _wantsWatchChannels;   // Watch: hand off to WatchChannelConfigScreen (polled by UITask)
+#if defined(MECK_TWATCH)
+  // Selected-row ticker (marquee for rows wider than the screen), mirroring
+  // TWatchChannelScreen: 20 ms/px, 24 px gap between the looping copies.
+  int           _tickerRow = -1;      // row index currently anchored
+  unsigned long _tickerStartMs = 0;   // animation anchor
+  int           _tickerTextW = 0;     // measured on pass 0 of the previous frame
+  bool          _tickerActive = false;
+#endif
 
   // 4G modem state (runtime cache of config)
   #ifdef HAS_4G_MODEM
@@ -441,6 +454,9 @@ private:
 
   void rebuildRows() {
     _numRows = 0;
+#if defined(MECK_TWATCH)
+    _tickerRow = -1;   // row indices are about to change; re-anchor the ticker
+#endif
 
     if (_subScreen == SUB_CONTACTS) {
       // --- Contacts sub-screen: only contact-related rows ---
@@ -1814,6 +1830,14 @@ public:
 
     int y = headerH;
 
+#if defined(MECK_TWATCH)
+    // Watch: rows longer than the 120px line (e.g. "GPS Baud: Default (9600)")
+    // must clip at the screen edge, not wrap onto the row below and overprint
+    // it. Restored after the loop -- other screens rely on wrap being on.
+    ((LGFXDisplay*)&display)->setTextWrap(false);
+    _tickerActive = false;
+#endif
+
     for (int i = _scrollTop; i < endIdx && y + lineHeight <= maxY; i++) {
       bool selected = (i == _cursor);
       bool editing = selected && (_editMode != EDIT_NONE);
@@ -1833,7 +1857,31 @@ public:
         display.setColor(DisplayDriver::LIGHT);
       }
 
+#if defined(MECK_TWATCH)
+      // Selected-row ticker, mirroring TWatchChannelScreen::drawTicker. The
+      // row text is only known inside the switch below, so the marquee's
+      // seamless second copy is drawn by running the row's case twice, one
+      // period apart. Width is measured on pass 0 via getCursorX, so a newly
+      // selected row shows its first frame unscrolled and scrolls from the
+      // next frame on.
+      int rowStartX = 0;
+      int passes = 1;
+      if (selected) {
+        if (_tickerRow != i) { _tickerRow = i; _tickerStartMs = millis(); _tickerTextW = 0; }
+        if (_tickerTextW > display.width() - sbW - 4) {
+          int period = _tickerTextW + 24;
+          int off = (int)(((millis() - _tickerStartMs) / SETTINGS_TICKER_MS_PER_PX) % (unsigned long)period);
+          rowStartX = 2 - off;
+          passes = 2;
+          _tickerActive = true;
+        }
+      }
+      int rowTextW = 0;
+      for (int tickerPass = 0; tickerPass < passes; tickerPass++) {
+      display.setCursor(rowStartX + tickerPass * (_tickerTextW + 24), y);
+#else
       display.setCursor(0, y);
+#endif
 
       switch (_rows[i].type) {
         case ROW_NAME:
@@ -2321,8 +2369,20 @@ public:
         #endif
       }
 
+#if defined(MECK_TWATCH)
+      if (selected && tickerPass == 0) {
+        rowTextW = ((LGFXDisplay*)&display)->getCursorX() - rowStartX;
+      }
+      }  // ticker pass loop
+      if (selected) _tickerTextW = rowTextW;
+#endif
+
       y += lineHeight;
     }
+
+#if defined(MECK_TWATCH)
+    ((LGFXDisplay*)&display)->setTextWrap(true);
+#endif
 
     // Scrollbar (track + proportional thumb), mirroring the notif-sound picker.
     if (showScrollbar) {
@@ -2967,6 +3027,9 @@ public:
       return 200;  // 200ms — fast enough for web server responsiveness
     }
     #endif
+#if defined(MECK_TWATCH)
+    if (_tickerActive) return 60;   // marquee running -- match the channel screen
+#endif
     return _editMode != EDIT_NONE ? 700 : 1000;
   }
 
