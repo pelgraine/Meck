@@ -768,7 +768,7 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 
 Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts). The SMS Inbox entry shows the number of unread received messages in brackets (e.g. **SMS Inbox [3]**); the badge disappears once everything is read.
 
-# Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.
+**Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.**
 
 For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
