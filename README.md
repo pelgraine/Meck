@@ -764,9 +764,11 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 | Enter | Insert selected emoji |
 | $ / Q / Backspace | Cancel and return to compose |
 
-### SMS & Phone App (4G only)
+### SMS & Phone App (Pro 4G * Max only)
 
 Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts). The SMS Inbox entry shows the number of unread received messages in brackets (e.g. **SMS Inbox [3]**); the badge disappears once everything is read.
+
+# Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.
 
 For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
@@ -780,7 +782,7 @@ The browser is a text-centric reader best suited to text-heavy websites. It also
 
 For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web_App_Guide.md).
 
-### Alarm Clock (Audio only)
+### Alarm Clock (Pro Audio & Max only)
 
 Press **K** from the home screen to open the alarm clock. This is available on the T-Deck Pro Audio variant (PCM5102A DAC) and on the T-Deck Max (ES8311 codec). Set up to five daily alarms that play custom MP3 files through the headphone jack.
 
@@ -829,7 +831,7 @@ SD Card
 └── ...
 ```
 
-### Voice Notes Over LoRa (Audio only)
+### Voice Notes Over LoRa (Pro Audio & Max only)
 
 Press the **Microphone key** (the zero key on the keyboard) to open the Voice Messages screen. This is available on the T-Deck Pro Audio variant (PCM5102A DAC) and on the T-Deck Max (ES8311 codec).
 
