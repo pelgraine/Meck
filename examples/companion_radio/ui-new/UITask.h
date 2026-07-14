@@ -144,6 +144,7 @@ class UITask : public AbstractUITask {
 #endif
 #if defined(MECK_TWATCH)
   UIScreen* watch_notes_screen;  // LittleFS note pad (shared NotesScreen needs SD)
+  UIScreen* watch_channel_cfg_screen;  // Per-channel region/notif/delete (touch UI)
 #endif
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
@@ -325,6 +326,7 @@ public:
 #endif
 #if defined(MECK_TWATCH)
   bool isOnWatchNotesScreen() const { return curr == watch_notes_screen; }
+  bool isOnWatchChannelConfigScreen() const { return curr == watch_channel_cfg_screen; }
 #endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
@@ -424,6 +426,7 @@ public:
 #endif
 #if defined(MECK_TWATCH)
   UIScreen* getWatchNotesScreen() const { return watch_notes_screen; }
+  UIScreen* getWatchChannelConfigScreen() const { return watch_channel_cfg_screen; }
 #endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }

@@ -417,7 +417,7 @@ class TWatchKeyboardScreen : public UIScreen {
   uint8_t  _channelIdx;
 
 public:
-  enum Purpose { TWKB_CHANNEL, TWKB_DM, TWKB_ADMIN_PASSWORD, TWKB_ADMIN_CLI, TWKB_PATH, TWKB_NOTE };
+  enum Purpose { TWKB_CHANNEL, TWKB_DM, TWKB_ADMIN_PASSWORD, TWKB_ADMIN_CLI, TWKB_PATH, TWKB_NOTE, TWKB_SCOPE };
 
 private:
   Purpose  _purpose;

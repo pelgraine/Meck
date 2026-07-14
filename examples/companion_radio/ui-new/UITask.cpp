@@ -84,6 +84,7 @@
 #endif
 #if defined(MECK_TWATCH)
 #include "WatchNotesScreen.h"   // After UITask.h -- needs NodePrefs
+#include "WatchChannelConfigScreen.h"   // After UITask.h -- needs NodePrefs, the_mesh
 #endif
 #ifdef TWATCH_COMPOSE_ENABLED
 #include "TWatchComposeScreens.h"
@@ -1798,6 +1799,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(MECK_TWATCH)
   // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
   watch_notes_screen = new WatchNotesScreen(this, &rtc_clock, node_prefs);
+  watch_channel_cfg_screen = new WatchChannelConfigScreen(this, node_prefs);
 #endif
 #ifdef TWATCH_COMPOSE_ENABLED
   tw_picker   = new TWatchChannelPicker(_display);
@@ -2613,6 +2615,13 @@ if (curr) curr->poll();
         if (watch_notes_screen) setCurrScreen(watch_notes_screen);
         else gotoHomeScreen();
         if (nerr) showAlert(nerr, 1200);
+      } else if (purpose == TWatchKeyboardScreen::TWKB_SCOPE) {
+        WatchChannelConfigScreen* wc = (WatchChannelConfigScreen*)watch_channel_cfg_screen;
+        const char* serr = wc ? wc->applyComposedScope(sendText) : "No channel cfg";
+        kb->clearOutBuf();
+        if (watch_channel_cfg_screen) setCurrScreen(watch_channel_cfg_screen);
+        else gotoHomeScreen();
+        if (serr) showAlert(serr, 1200);
       } else {  // TWKB_ADMIN_PASSWORD or TWKB_ADMIN_CLI
         RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
         if (admin) {
@@ -2639,6 +2648,27 @@ if (curr) curr->poll();
       openTWatchKeyboard(TWatchKeyboardScreen::TWKB_NOTE, 0);
       if (wn->editPending()) {
         ((TWatchKeyboardScreen*)tw_keyboard)->setInitialText(wn->getEditText());
+      }
+    }
+  }
+  else if (curr == watch_channel_cfg_screen && watch_channel_cfg_screen != nullptr) {
+    WatchChannelConfigScreen* wc = (WatchChannelConfigScreen*)watch_channel_cfg_screen;
+    if (wc->wantsKeyboard()) {
+      wc->clearWantKeyboard();
+      openTWatchKeyboard(TWatchKeyboardScreen::TWKB_SCOPE, 0);
+      ((TWatchKeyboardScreen*)tw_keyboard)->setInitialText(wc->getEditText());
+    } else if (wc->wantsExit()) {
+      wc->clearWantExit();
+      gotoSettingsScreen();
+    }
+  }
+  else if (curr == settings_screen && settings_screen != nullptr) {
+    SettingsScreen* ss = (SettingsScreen*)settings_screen;
+    if (ss->wantsWatchChannels()) {
+      ss->clearWantsWatchChannels();
+      if (watch_channel_cfg_screen) {
+        ((WatchChannelConfigScreen*)watch_channel_cfg_screen)->enter();
+        setCurrScreen(watch_channel_cfg_screen);
       }
     }
   }

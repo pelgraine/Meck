@@ -1130,6 +1130,7 @@ static uint32_t _atoi(const char* sp) {
   #endif
   #if defined(MECK_TWATCH)
     #include "WatchNotesScreen.h"  // After UITask.h -- needs NodePrefs
+    #include "WatchChannelConfigScreen.h"  // After UITask.h -- needs NodePrefs, the_mesh
   #endif
   #if defined(MECK_TWATCH) && HAS_GPS
     #include "WatchMapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
@@ -1383,6 +1384,13 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnWatchNotesScreen()) {
       WatchNotesScreen* wn = (WatchNotesScreen*)ui_task.getWatchNotesScreen();
       if (wn) wn->handleTap(x, y);
+      return 0;
+    }
+    // Channel config screen: list rows, detail action rows and the footer are
+    // all tap targets, in the same logical coords as the alarm/notes screens.
+    if (ui_task.isOnWatchChannelConfigScreen()) {
+      WatchChannelConfigScreen* wc = (WatchChannelConfigScreen*)ui_task.getWatchChannelConfigScreen();
+      if (wc) wc->handleTap(x, y);
       return 0;
     }
 #endif

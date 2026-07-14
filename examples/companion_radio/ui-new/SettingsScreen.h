@@ -341,6 +341,7 @@ private:
 
   // T5S3: signal UITask to open VKB when entering text edit mode
   bool _needsTextVKB;
+  bool _wantsWatchChannels;   // Watch: hand off to WatchChannelConfigScreen (polled by UITask)
 
   // 4G modem state (runtime cache of config)
   #ifdef HAS_4G_MODEM
@@ -698,7 +699,7 @@ public:
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
       _editFloat(0), _editInt(0), _fontPickerOriginal(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
-      _radioChanged(false), _needsTextVKB(false) {
+      _radioChanged(false), _needsTextVKB(false), _wantsWatchChannels(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
     #ifdef HAS_SDCARD
     _savedExportCursor = 0;
@@ -939,6 +940,8 @@ public:
   // T5S3 VKB integration for text editing (channel name, device name, freq, APN)
   bool needsTextVKB() const { return _needsTextVKB; }
   void clearTextNeedsVKB() { _needsTextVKB = false; }
+  bool wantsWatchChannels() const { return _wantsWatchChannels; }
+  void clearWantsWatchChannels() { _wantsWatchChannels = false; }
   const char* getEditBuf() const { return _editBuf; }
   SettingsRowType getCurrentRowType() const { return _rows[_cursor].type; }
   void submitEditText(const char* text) {
@@ -3798,12 +3801,18 @@ public:
           Serial.println("Settings: entered Contacts sub-screen");
           break;
         case ROW_CHANNELS_SUBMENU:
+#if defined(MECK_TWATCH)
+          // Watch: the desktop sub-screen's per-channel actions are keyboard
+          // hotkeys; hand off to the standalone WatchChannelConfigScreen.
+          _wantsWatchChannels = true;   // UITask::loop() polls and opens it
+#else
           _savedTopCursor = _cursor;
           _subScreen = SUB_CHANNELS;
           _cursor = 0;
           _scrollTop = 0;
           rebuildRows();
           Serial.println("Settings: entered Channels sub-screen");
+#endif
           break;
 
         case ROW_RXLOG:
