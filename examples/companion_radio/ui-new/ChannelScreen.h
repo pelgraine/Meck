@@ -12,6 +12,15 @@
   #include <SD.h>
 #endif
 
+// DM send status codes (session only). Guarded so AbstractUITask.h can carry
+// the same definitions without a clash.
+#ifndef DM_SEND_NONE
+#define DM_SEND_NONE       0
+#define DM_SEND_SENDING    1
+#define DM_SEND_DELIVERED  2
+#define DM_SEND_FAILED     3
+#endif
+
 // Maximum messages to store in history
 #ifndef CHANNEL_MSG_HISTORY_SIZE
 #define CHANNEL_MSG_HISTORY_SIZE 300
@@ -69,6 +78,11 @@ public:
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
     uint8_t scope_idx;  // Region scope index for display (session only, 0xFF = unscoped). Not persisted.
+    // --- DM send status (session only). Not persisted to SD. ---
+    uint32_t send_ref;   // Tracked-send handle from MyMesh (0 = untracked)
+    uint8_t dm_status;   // DM_SEND_NONE / SENDING / DELIVERED / FAILED
+    uint8_t dm_attempt;  // attempts sent so far (for "Sending x/N")
+    uint8_t dm_total;    // planned attempts (3 or 5)
   };
 
   // Simple hash for DM peer matching
@@ -76,6 +90,23 @@ public:
     uint32_t h = 5381;
     while (*s) { h = ((h << 5) + h) ^ (uint8_t)*s++; }
     return h;
+  }
+
+  // Draw a small tick (check mark) for delivered DMs using fillRect steps.
+  // DisplayDriver has no line primitive and the GFX fonts carry no tick
+  // glyph (they cover ASCII 0x20-0x7E only), so the glyph is drawn by hand.
+  // Inherits the current draw colour. Sized from the line height so it
+  // matches both the 6x8 built-in font and the 9pt faces.
+  static void drawDeliveredTick(DisplayDriver& display, int x, int y, int lineH) {
+    int s = (lineH >= 11) ? 2 : 1;   // stroke thickness by font size
+    int baseY = y + lineH - 2 * s;   // near the text baseline
+    // short down-stroke
+    display.fillRect(x,         baseY - s,     s, s);
+    display.fillRect(x + s,     baseY,         s, s);
+    // long up-stroke
+    display.fillRect(x + 2 * s, baseY - s,     s, s);
+    display.fillRect(x + 3 * s, baseY - 2 * s, s, s);
+    display.fillRect(x + 4 * s, baseY - 3 * s, s, s);
   }
 
 private:
@@ -141,6 +172,10 @@ public:
       _messages[i].dm_peer_hash = 0;
       memset(_messages[i].path, 0, MSG_PATH_MAX);
       _messages[i].scope_idx = 0xFF;
+      _messages[i].send_ref = 0;
+      _messages[i].dm_status = DM_SEND_NONE;
+      _messages[i].dm_attempt = 0;
+      _messages[i].dm_total = 0;
     }
     // Initialize unread counts
     memset(_unread, 0, sizeof(_unread));
@@ -153,7 +188,8 @@ public:
   // suppressUnread: if true, do not increment the unread counter for this message
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
                   const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr,
-                  bool suppressUnread = false, uint8_t scope_idx = 0xFF) {
+                  bool suppressUnread = false, uint8_t scope_idx = 0xFF,
+                  uint32_t send_ref = 0, uint8_t send_total = 0) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -164,6 +200,12 @@ public:
     msg->snr = snr;
     msg->valid = true;
     msg->scope_idx = scope_idx;
+    // Tracked send: attempt 1 has already been transmitted by the time the
+    // local echo is added, so the initial state is "Sending 1/N"
+    msg->send_ref = send_ref;
+    msg->dm_status = send_ref ? DM_SEND_SENDING : DM_SEND_NONE;
+    msg->dm_attempt = send_ref ? 1 : 0;
+    msg->dm_total = send_total;
     
     // Set DM peer hash for conversation filtering
     if (channel_idx == 0xFF) {
@@ -472,6 +514,21 @@ public:
   }
 
   // -----------------------------------------------------------------------
+  // Update the send status of a tracked sent DM (from MyMesh via UITask).
+  // Returns true if a message with this send_ref was found and updated.
+  bool setSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) {
+    if (send_ref == 0) return false;
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      ChannelMessage* m = &_messages[i];
+      if (!m->valid || m->send_ref != send_ref) continue;
+      m->dm_status = status;
+      m->dm_attempt = attempt;
+      m->dm_total = total;
+      return true;
+    }
+    return false;
+  }
+
   // Per-channel history deletion
   // -----------------------------------------------------------------------
 
@@ -617,6 +674,11 @@ public:
       memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
       _messages[i].scope_idx = 0xFF;  // region scope is session-only, not stored on SD
+      // DM send status is session-only, not stored on SD
+      _messages[i].send_ref = 0;
+      _messages[i].dm_status = DM_SEND_NONE;
+      _messages[i].dm_attempt = 0;
+      _messages[i].dm_total = 0;
       if (_messages[i].valid) loaded++;
     }
 
@@ -1326,6 +1388,12 @@ public:
           } else {
             sprintf(tmp, ">%dd ", age / 86400);
           }
+        } else if (msg->dm_status == DM_SEND_SENDING) {
+          // Tracked sent DM still in flight -- show the attempt counter
+          sprintf(tmp, "Sending %d/%d ", msg->dm_attempt, msg->dm_total);
+        } else if (msg->dm_status == DM_SEND_FAILED) {
+          // All attempts exhausted without an ack from the recipient
+          sprintf(tmp, "Failed ");
         } else {
           int hopsDisp = (msg->path_len == 0xFF) ? 0 : (msg->path_len & 63);
           // Byte mode: flood packets encode it in the upper bits of path_len.
@@ -1344,7 +1412,17 @@ public:
             sprintf(tmp, "(%dh)(%db) %dd ", hopsDisp, bphDisp, age / 86400);
           }
         }
+        // Delivered: keep the standard prefix and draw a tick in a reserved
+        // gap straight after it (before the message text)
+        int statusTickX = -1;
+        if (!isSelected && msg->dm_status == DM_SEND_DELIVERED) {
+          statusTickX = display.getTextWidth(tmp);
+          strcat(tmp, "  ");
+        }
         display.print(tmp);
+        if (statusTickX >= 0) {
+          drawDeliveredTick(display, statusTickX + 1, y, lineHeight);
+        }
         // DO NOT advance y - message text continues on the same line
         
         // Message text with character wrapping and inline emoji support

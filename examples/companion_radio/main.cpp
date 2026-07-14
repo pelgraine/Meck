@@ -5139,11 +5139,14 @@ void handleKeyboardInput() {
         snprintf(shareMsg, sizeof(shareMsg), "%s%s|%s",
                  MECK_CH_PREFIX, ch.name, hexSecret);
 
-        if (the_mesh.uiSendDirectMessage((uint32_t)contactIdx, shareMsg)) {
+        uint32_t sendRef = 0;
+        uint8_t sendTotal = 0;
+        if (the_mesh.uiSendDirectMessage((uint32_t)contactIdx, shareMsg, &sendRef, &sendTotal)) {
           // Add sanitised version to DM conversation view
           char displayMsg[64];
           snprintf(displayMsg, sizeof(displayMsg), "Shared channel: %s", ch.name);
-          ui_task.addSentDM(contact.name, the_mesh.getNodePrefs()->node_name, displayMsg);
+          ui_task.addSentDM(contact.name, the_mesh.getNodePrefs()->node_name, displayMsg,
+                            sendRef, sendTotal);
 
           char alertBuf[48];
           snprintf(alertBuf, sizeof(alertBuf), "Shared with %s", contact.name);
@@ -6355,9 +6358,12 @@ void sendComposedMessage() {
   if (composeDM) {
     // Direct message to a specific contact
     if (composeDMContactIdx >= 0) {
-      if (the_mesh.uiSendDirectMessage((uint32_t)composeDMContactIdx, utf8Buf)) {
+      uint32_t sendRef = 0;
+      uint8_t sendTotal = 0;
+      if (the_mesh.uiSendDirectMessage((uint32_t)composeDMContactIdx, utf8Buf, &sendRef, &sendTotal)) {
         // Add to channel screen so sent DM appears in conversation view
-        ui_task.addSentDM(composeDMName, the_mesh.getNodePrefs()->node_name, utf8Buf);
+        ui_task.addSentDM(composeDMName, the_mesh.getNodePrefs()->node_name, utf8Buf,
+                          sendRef, sendTotal);
         ui_task.showAlert("DM sent!", 1500);
       } else {
         ui_task.showAlert("DM failed!", 1500);
@@ -6539,8 +6545,11 @@ void sendCardKBMessage() {
   if (ckbComposeDM) {
     // Direct message
     if (ckbComposeDMIdx >= 0) {
-      if (the_mesh.uiSendDirectMessage((uint32_t)ckbComposeDMIdx, ckbComposeBuf)) {
-        ui_task.addSentDM(ckbComposeDMName, the_mesh.getNodePrefs()->node_name, ckbComposeBuf);
+      uint32_t sendRef = 0;
+      uint8_t sendTotal = 0;
+      if (the_mesh.uiSendDirectMessage((uint32_t)ckbComposeDMIdx, ckbComposeBuf, &sendRef, &sendTotal)) {
+        ui_task.addSentDM(ckbComposeDMName, the_mesh.getNodePrefs()->node_name, ckbComposeBuf,
+                          sendRef, sendTotal);
         ui_task.showAlert("DM sent!", 1500);
       } else {
         ui_task.showAlert("DM failed!", 1500);

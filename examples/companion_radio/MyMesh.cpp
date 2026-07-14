@@ -510,7 +510,31 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+// Resolve a device-side tracked DM send when any of its attempts' acks
+// arrives. Checked independently of expected_ack_table so a circular-table
+// overwrite under load cannot strand a pending send.
+void MyMesh::resolvePendingDMSend(uint32_t ack) {
+  if (ack == 0) return;
+  for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+    PendingDMSend& p = pending_dm[i];
+    if (!p.active) continue;
+    for (int a = 0; a < p.attempt && a < 5; a++) {
+      if (p.acks[a] != ack) continue;
+      p.active = false;
+      MESH_DEBUG_PRINTLN("UI: DM delivered (attempt %d/%d), ref=0x%08X",
+                         p.attempt, p.total, p.send_ref);
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_DELIVERED, p.attempt, p.total);
+      break;
+    }
+  }
+}
+
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
+  {
+    uint32_t ack;
+    memcpy(&ack, data, 4);
+    resolvePendingDMSend(ack);
+  }
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
@@ -946,12 +970,20 @@ void MyMesh::queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, co
   }
 }
 
-bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
+bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text,
+                                 uint32_t* out_send_ref, uint8_t* out_total) {
+  if (out_send_ref) *out_send_ref = 0;
+  if (out_total) *out_total = 0;
+
   ContactInfo contact;
   if (!getContactByIdx(contact_idx, contact)) return false;
 
   ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
   if (!recipient) return false;
+
+  // Plan the attempt count from the path state at first transmit:
+  // no path -> 3 flood attempts, path set -> 4 direct then 1 flood after reset
+  uint8_t total = (recipient->out_path_len == OUT_PATH_UNKNOWN) ? 3 : 5;
 
   uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
   uint32_t expected_ack, est_timeout;
@@ -968,6 +1000,29 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
     expected_ack_table[next_ack_idx].ack = expected_ack;
     expected_ack_table[next_ack_idx].contact = recipient;
     next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+  }
+
+  // Tracked send: allocate a retry slot so the message gets app-style
+  // retries and DM_SEND_* status pushes. If the table is full the send
+  // stays single-shot and the caller shows no status (send_ref stays 0).
+  if (out_send_ref) {
+    for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+      if (pending_dm[i].active) continue;
+      PendingDMSend& p = pending_dm[i];
+      memset(&p, 0, sizeof(p));
+      p.active = true;
+      p.attempt = 1;
+      p.total = total;
+      memcpy(p.contact_pub, recipient->id.pub_key, PUB_KEY_SIZE);
+      p.timestamp = timestamp;
+      p.send_ref = expected_ack ? expected_ack : 1;
+      p.acks[0] = expected_ack;
+      p.deadline = futureMillis(est_timeout);
+      StrHelper::strncpy(p.text, text, sizeof(p.text));
+      *out_send_ref = p.send_ref;
+      if (out_total) *out_total = p.total;
+      break;
+    }
   }
 
   MESH_DEBUG_PRINTLN("UI: DM sent to %s (%s), ack=0x%08X timeout=%dms",
@@ -1506,6 +1561,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
+  memset(pending_dm, 0, sizeof(pending_dm));
   sign_data = NULL;
   dirty_contacts_expiry = 0;
   _nextContactSaveDue = 0;
@@ -3701,8 +3757,74 @@ void MyMesh::checkSerialInterface() {
   }
 }
 
+// Retry engine for device-side tracked DM sends. Each pass: any pending send
+// whose current attempt window (per-attempt est_timeout, hop-aware for direct)
+// has elapsed either resends with the attempt counter bumped, or is marked
+// failed once its planned attempts are exhausted. Before the final attempt of
+// a 5-attempt (path set) plan, the path is reset so the last try goes flood.
+void MyMesh::sweepPendingDMSends() {
+  for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+    PendingDMSend& p = pending_dm[i];
+    if (!p.active) continue;
+    if (!millisHasNowPassed(p.deadline)) continue;
+
+    if (p.attempt >= p.total) {
+      // All attempts exhausted without an ack
+      p.active = false;
+      MESH_DEBUG_PRINTLN("UI: DM failed after %d attempts, ref=0x%08X", p.attempt, p.send_ref);
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      continue;
+    }
+
+    ContactInfo* recipient = lookupContactByPubKey(p.contact_pub, PUB_KEY_SIZE);
+    if (recipient == NULL) {
+      // Contact removed mid-flight -- nothing left to send to
+      p.active = false;
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      continue;
+    }
+
+    uint8_t next_attempt = p.attempt + 1;
+    if (p.total == 5 && next_attempt == p.total) {
+      resetPathTo(*recipient);   // final attempt: drop the set path, go flood
+    }
+
+    uint32_t expected_ack, est_timeout;
+    int result = sendMessage(*recipient, p.timestamp, next_attempt - 1, p.text,
+                             expected_ack, est_timeout);
+    if (result == MSG_SEND_FAILED) {
+      if (next_attempt >= p.total) {
+        // Final attempt never left the radio -- give up now
+        p.active = false;
+        if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      } else {
+        p.deadline = futureMillis(2000);  // packet pool busy -- retry this attempt shortly
+      }
+      continue;
+    }
+
+    p.attempt = next_attempt;
+    p.acks[next_attempt - 1] = expected_ack;
+    p.deadline = futureMillis(est_timeout);
+
+    if (expected_ack) {
+      expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis();
+      expected_ack_table[next_ack_idx].ack = expected_ack;
+      expected_ack_table[next_ack_idx].contact = recipient;
+      next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+    }
+
+    MESH_DEBUG_PRINTLN("UI: DM retry %d/%d to %s (%s)", p.attempt, p.total, recipient->name,
+                       result == MSG_SEND_SENT_FLOOD ? "flood" : "direct");
+    if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_SENDING, p.attempt, p.total);
+  }
+}
+
 void MyMesh::loop() {
   BaseChatMesh::loop();
+
+  // Device-side DM retry engine
+  sweepPendingDMSends();
 
   // Always check USB serial for text CLI commands (independent of BLE)
   checkCLIRescueCmd();

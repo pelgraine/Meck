@@ -374,7 +374,10 @@ public:
   
   // Add a sent message to the channel screen history
   void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) override;
-  void addSentDM(const char* recipientName, const char* sender, const char* text);
+  void addSentDM(const char* recipientName, const char* sender, const char* text,
+                 uint32_t send_ref = 0, uint8_t send_total = 0);
+  // DM send status push from the MyMesh retry engine
+  void dmSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) override;
 
   // Mark channel as read when BLE companion app syncs messages
   void markChannelReadFromBLE(uint8_t channel_idx) override;

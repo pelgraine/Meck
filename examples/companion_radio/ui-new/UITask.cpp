@@ -2586,10 +2586,14 @@ if (curr) curr->poll();
         setCurrScreen(tw_channel);
       } else if (purpose == TWatchKeyboardScreen::TWKB_DM) {
         bool dmSuccess = false;
-        if (strlen(sendText) > 0 && the_mesh.uiSendDirectMessage((uint32_t)ctxIdx, sendText)) {
+        uint32_t sendRef = 0;
+        uint8_t sendTotal = 0;
+        if (strlen(sendText) > 0 &&
+            the_mesh.uiSendDirectMessage((uint32_t)ctxIdx, sendText, &sendRef, &sendTotal)) {
           ContactInfo dmRecipient;
           if (the_mesh.getContactByIdx(ctxIdx, dmRecipient)) {
-            addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, sendText);
+            addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, sendText,
+                      sendRef, sendTotal);
           }
           dmSuccess = true;
         }
@@ -3172,11 +3176,14 @@ void UITask::onVKBSubmit() {
       if (strlen(text) == 0) break;
 
       bool dmSuccess = false;
-      if (the_mesh.uiSendDirectMessage((uint32_t)idx, text)) {
+      uint32_t sendRef = 0;
+      uint8_t sendTotal = 0;
+      if (the_mesh.uiSendDirectMessage((uint32_t)idx, text, &sendRef, &sendTotal)) {
         // Add to channel screen so sent DM appears in conversation view
         ContactInfo dmRecipient;
         if (the_mesh.getContactByIdx(idx, dmRecipient)) {
-          addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, text);
+          addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, text,
+                    sendRef, sendTotal);
         }
         dmSuccess = true;
       }
@@ -3736,12 +3743,21 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
 }
 
-void UITask::addSentDM(const char* recipientName, const char* sender, const char* text) {
+void UITask::addSentDM(const char* recipientName, const char* sender, const char* text,
+                       uint32_t send_ref, uint8_t send_total) {
   // Format as "Sender: message" and tag with recipient's peer hash
   char formattedMsg[CHANNEL_MSG_TEXT_LEN];
   snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
   ((ChannelScreen *) channel_screen)->addMessage(0xFF, 0, sender, formattedMsg,
-                                                  nullptr, 0, recipientName);
+                                                  nullptr, 0, recipientName,
+                                                  false, 0xFF, send_ref, send_total);
+}
+
+void UITask::dmSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) {
+  if (((ChannelScreen *) channel_screen)->setSendStatus(send_ref, status, attempt, total)) {
+    // Repaint promptly if the user is looking at the conversation
+    if (isOnChannelScreen()) forceRefresh();
+  }
 }
 
 void UITask::markChannelReadFromBLE(uint8_t channel_idx) {

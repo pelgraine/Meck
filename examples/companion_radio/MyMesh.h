@@ -178,7 +178,11 @@ public:
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
 
   // Send a direct message from the UI (no BLE dependency)
-  bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
+  // Pass out_send_ref to opt into a tracked send with app-style retries and
+  // dmSendStatus() pushes; out_total receives the planned attempt count.
+  // Callers that leave both NULL get the original single-transmit behaviour.
+  bool uiSendDirectMessage(uint32_t contact_idx, const char* text,
+                           uint32_t* out_send_ref = NULL, uint8_t* out_total = NULL);
 
   // Send raw binary data to a contact (PAYLOAD_TYPE_RAW_CUSTOM, direct route only)
   // Used for dz0ny VE3 voice protocol: voice packets (0x56) and fetch requests (0x72)
@@ -383,6 +387,29 @@ private:
   #define EXPECTED_ACK_TABLE_SIZE 8
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
+
+  // Device-side tracked DM sends with app-style retries:
+  //   no path set  -> 3 attempts, all flood
+  //   path set     -> 5 attempts: 4 direct on the set path, then path reset
+  //                   and a final flood attempt
+  // Each attempt is a real transmit with the attempt counter bumped, so each
+  // has its own expected ack (the attempt bits are inside the ack hash).
+  // Session only -- a reboot abandons any in-flight sequence.
+  #define MAX_PENDING_DM_SENDS 4
+  struct PendingDMSend {
+    bool active;
+    uint8_t attempt;                    // attempts sent so far (1-based)
+    uint8_t total;                      // planned attempts (3 or 5)
+    uint8_t contact_pub[PUB_KEY_SIZE];  // recipient (idx can shift, pub key cannot)
+    uint32_t timestamp;                 // original msg timestamp, reused per attempt
+    uint32_t send_ref;                  // UI handle (= attempt-1 expected ack)
+    uint32_t acks[5];                   // expected ack per attempt
+    unsigned long deadline;             // futureMillis() for the current attempt
+    char text[MAX_TEXT_LEN + 1];        // raw text kept for resends
+  };
+  PendingDMSend pending_dm[MAX_PENDING_DM_SENDS];
+  void sweepPendingDMSends();
+  void resolvePendingDMSend(uint32_t ack);
 
   #ifndef ADVERT_PATH_TABLE_SIZE
     #define ADVERT_PATH_TABLE_SIZE   1000
