@@ -177,11 +177,17 @@ bool TWatchS3Board::power_init() {
 
   PMU->disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
   PMU->clearIrqStatus();
+#if !defined(MECK_DIAG_NO_PMU)
   // SHORT gives the click; NEGATIVE/POSITIVE are the press/release edges that
   // back PMUButton::isPressed().
   PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ |
                  XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ |
                  XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
+#endif
+  // TEMP DIAGNOSTIC (MECK_DIAG_NO_PMU, power bisect): with the PKEY IRQs left
+  // disabled above and PMUButton::check() skipped in UITask, the PMU-button
+  // subsystem is fully inert -- no IRQ config, no 30 ms polling, no dangling
+  // latch. disableIRQ(ALL)+clearIrqStatus above already left the PMU quiet.
 
   // 150 mA = 0.32C on the 470 mAh cell -- a modest bump over the 125 mA
   // vendor default (LilyGoWatchS3.cpp uses 125), well under the 0.5C rule.

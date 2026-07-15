@@ -1694,7 +1694,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors = sensors;
   _auto_off = millis() + AUTO_OFF_MILLIS;
 
-#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
   user_btn.begin();
 #endif
 #if defined(PIN_USER_BTN_ANA)
@@ -2291,7 +2291,7 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
-#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
   return user_btn.isPressed();
 #else
   return false;
@@ -2314,7 +2314,7 @@ void UITask::loop() {
     }
   }
 #endif
-#if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
