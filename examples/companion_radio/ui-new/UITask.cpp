@@ -2314,11 +2314,6 @@ void UITask::loop() {
     }
   }
 #endif
-#if defined(MECK_DIAG_PMU_BTN)
-  // TEMP DIAGNOSTIC (power bisect): drive the PMU-key poll replica every loop
-  // (it rate-limits itself to 30 ms, matching PMUButton). Remove with the env.
-  board.diagPollPmuKey();
-#endif
 #if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
