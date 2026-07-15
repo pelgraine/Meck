@@ -67,6 +67,12 @@ public:
   // TEMP power-debug probe: battery, VBUS, CPU clock, BT controller state and
   // live rail states (incl. GPS/BLDO1). Called periodically from UITask::loop.
   void printPowerDebug();
+#if defined(MECK_DIAG_PMU_BTN)
+  // TEMP DIAGNOSTIC (power bisect): reproduce the S3 PMUButton's 30 ms PMU
+  // register polling on this build. Called from UITask::loop; remove together
+  // with the meck_twatch_s3_plus_diag_pmubtn env.
+  void diagPollPmuKey();
+#endif
 
   const char* getManufacturerName() const override {
     return "LilyGo T-Watch S3 Plus";

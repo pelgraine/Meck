@@ -2314,6 +2314,11 @@ void UITask::loop() {
     }
   }
 #endif
+#if defined(MECK_DIAG_PMU_BTN)
+  // TEMP DIAGNOSTIC (power bisect): drive the PMU-key poll replica every loop
+  // (it rate-limits itself to 30 ms, matching PMUButton). Remove with the env.
+  board.diagPollPmuKey();
+#endif
 #if defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -2858,6 +2863,16 @@ if (curr) curr->poll();
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif
       if (_next_refresh < minNext) _next_refresh = minNext;
+
+      // Toast dismissal must not be starved by the e-ink render throttle:
+      // any render inside the alert window (e.g. a DM status push) re-draws
+      // the overlay and the floor above can push the scheduled clearing
+      // render well past _alert_expiry, leaving the toast on screen. If an
+      // alert is still active and due to lapse before the next scheduled
+      // render, wake at expiry so the clearing frame lands on time.
+      if (_alert_expiry != 0 && millis() < _alert_expiry && _next_refresh > _alert_expiry) {
+        _next_refresh = _alert_expiry;
+      }
       }  // end else (not bulk syncing)
     }
 #if AUTO_OFF_MILLIS > 0

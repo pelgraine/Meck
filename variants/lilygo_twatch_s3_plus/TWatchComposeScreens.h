@@ -224,6 +224,8 @@ class TWatchChannelScreen : public UIScreen {
   unsigned long _tickerStartMs;
   const void*   _lastNewest;      // newest store entry seen last render
   uint32_t      _lastNewestTs;    //   (a change dismisses the ticker)
+  bool          _showPath;        // hop-path overlay visible
+  int           _pathMsgN;        // recency index the overlay describes
 
   static const int HEADER_H      = 14;
   static const int COMPOSE_BAR_H = 18;
@@ -295,13 +297,69 @@ class TWatchChannelScreen : public UIScreen {
     ((LGFXDisplay*)_display)->setTextWrap(true);
   }
 
+  // Hop-path overlay for the message at recency _pathMsgN. Drawn last so it
+  // sits above the message list; toggled by the button (see handleInput),
+  // dismissed by any tap (see poll).
+  void drawPathOverlay(DisplayDriver& display) {
+    const ChannelScreen::ChannelMessage* m =
+        _store ? _store->getChannelMsgByRecency(_channelIdx, _pathMsgN) : nullptr;
+    if (!m) { _showPath = false; return; }
+
+    LGFXDisplay* d = (LGFXDisplay*)&display;
+    const int bx = 3, bw = display.width() - 6, by = 18, bh = 76;
+    d->setRawColor(0x0000);
+    d->fillRoundRect(bx, by, bw, bh, 4);
+    d->setRawColor(0x231D);
+    d->drawRoundRect(bx, by, bw, bh, 4);
+
+    char head[28];
+    if (m->path_len == 0) {
+      snprintf(head, sizeof(head), "%s", isSent(m) ? "Sent (no path)" : "Direct (0 hops)");
+    } else if (m->path_len == 0xFF) {
+      snprintf(head, sizeof(head), "%s", "Flood (no path)");
+    } else {
+      snprintf(head, sizeof(head), "%d hops, %d-byte",
+               m->path_len & 63, (m->path_len >> 6) + 1);
+    }
+    d->setRawColor(0x7BEF);
+    d->printSmallFont(bx + 5, by + 8, head);
+
+    if (m->path_len == 0 || m->path_len == 0xFF) return;
+
+    int byteLen = (int)mesh::Packet::getPathByteLenFor(m->path_len);
+    if (byteLen > MSG_PATH_MAX) byteLen = MSG_PATH_MAX;
+    int bph = (m->path_len >> 6) + 1;
+
+    // Hex hops in the path-editor format ("3601,2198,..."), wrapped
+    // token-wise across small-font lines.
+    char line[36];
+    int ll = 0, y = by + 19;
+    d->setRawColor(0xFFFF);
+    for (int b = 0; b < byteLen; b += bph) {
+      char tok[9];
+      int tl = 0;
+      for (int k = 0; k < bph && b + k < byteLen; k++)
+        tl += snprintf(tok + tl, sizeof(tok) - tl, "%02x", m->path[b + k]);
+      if (b + bph < byteLen) { tok[tl++] = ','; tok[tl] = 0; }
+      if (ll + tl > 26) {
+        line[ll] = 0;
+        d->printSmallFont(bx + 5, y, line);
+        y += 9; ll = 0;
+        if (y > by + bh - 8) { d->printSmallFont(bx + 5, y, "..."); return; }
+      }
+      memcpy(line + ll, tok, tl); ll += tl;
+    }
+    if (ll > 0) { line[ll] = 0; d->printSmallFont(bx + 5, y, line); }
+  }
+
 public:
   TWatchChannelScreen(DisplayDriver* display)
     : _display(display), _store(nullptr), _channelIdx(0),
       _touchDown(false), _downX(0), _downY(0),
       _wantsCompose(false), _wantsExit(false),
       _selectedN(-1), _tickerStartMs(0),
-      _lastNewest(nullptr), _lastNewestTs(0) {
+      _lastNewest(nullptr), _lastNewestTs(0),
+      _showPath(false), _pathMsgN(0) {
     _channelName[0] = 0;
     _selfPrefix[0] = 0;
   }
@@ -323,6 +381,7 @@ public:
     _channelName[TW_CH_NAME_LEN - 1] = 0;
     _touchDown = false; _wantsCompose = false; _wantsExit = false;
     _selectedN = -1;
+    _showPath = false;
     _lastNewest = nullptr; _lastNewestTs = 0;
     if (_store) _store->markChannelRead(_channelIdx);
   }
@@ -335,7 +394,21 @@ public:
   bool wantsExit() const { return _wantsExit; }
   void acknowledgeExit() { _wantsExit = false; }
 
-  bool handleInput(char c) override { return false; }
+  // Short press of the PWR key (S3, KEY_ENTER) or the boot button (S3 Plus,
+  // KEY_NEXT): toggle the hop-path overlay for the ticker-selected message
+  // (the newest one if none is selected). Touch is handled in poll().
+  bool handleInput(char c) override {
+    if (c == KEY_ENTER || c == KEY_NEXT) {
+      if (_showPath) { _showPath = false; return true; }
+      int n = (_selectedN >= 0) ? _selectedN : 0;
+      if (_store && _store->getChannelMsgByRecency(_channelIdx, n)) {
+        _pathMsgN = n;
+        _showPath = true;
+      }
+      return true;
+    }
+    return false;
+  }
 
   void poll() override {
     if (!_display) return;
@@ -346,6 +419,7 @@ public:
     } else if (!now && _touchDown) {
       _touchDown = false;
       int H = _display->height();
+      if (_showPath) { _showPath = false; return; }   // any tap dismisses the path overlay
       if (_downX < 20 && _downY < HEADER_H) { _selectedN = -1; _wantsExit = true; return; }   // back arrow
       if (_downY >= H - COMPOSE_BAR_H) { _selectedN = -1; _wantsCompose = true; return; }      // compose bar
       // message area -> tap to open/close ticker
@@ -405,7 +479,8 @@ public:
     display.setColor(DisplayDriver::LIGHT);
     display.drawRect(0, H - COMPOSE_BAR_H, W, COMPOSE_BAR_H - 1);
     display.drawTextEllipsized(3, H - COMPOSE_BAR_H + 4, W - 6, "Tap to compose");
-    return (_selectedN >= 0) ? 60 : 500;
+    if (_showPath) drawPathOverlay(display);
+    return (_selectedN >= 0 || _showPath) ? 60 : 500;
   }
 };
 

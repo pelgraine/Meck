@@ -60,5 +60,8 @@ mesh::LocalIdentity radio_new_identity() {
 }
 
 void radio_reset_agc() {
-  radio.setRxBoostedGainMode(true);
+  // Power-saving RX gain on the watch (deliberate): boosted gain costs
+  // ~0.6-0.7 mA continuously for ~+2 dB sensitivity. The SetRxGain write
+  // itself is what resets the AGC; false selects the power-saving value.
+  radio.setRxBoostedGainMode(false);
 }

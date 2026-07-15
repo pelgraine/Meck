@@ -1394,6 +1394,16 @@ static void lastHeardToggleContact() {
       return 0;
     }
 #endif
+#ifdef TWATCH_COMPOSE_ENABLED
+    // TWatch channel screen: touch is handled entirely in the screen's own
+    // poll() (ticker select, hop-overlay dismiss, compose bar). Do not
+    // synthesise keys here -- the hop-path overlay must open only on the
+    // physical button (PWR on the S3 / boot on the Plus), whose KEY_ENTER /
+    // KEY_NEXT arrive via a separate inject path.
+    if (ui_task.isOnTWatchChannelScreen()) {
+      return 0;
+    }
+#endif
 #if defined(MECK_TWATCH)
     // Watch: tiles open on long-press and pages change on swipe, so a plain tap
     // on any home page does nothing -- skip the T5S3 tile hit-test below (wrong
@@ -1804,6 +1814,12 @@ static void lastHeardToggleContact() {
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
     #endif
+
+#ifdef TWATCH_COMPOSE_ENABLED
+    // TWatch channel screen: no synthesised keys (see mapTouchTap) -- a long
+    // press on the header/messages must not open the hop-path overlay.
+    if (ui_task.isOnTWatchChannelScreen()) return 0;
+#endif
 
     // Snake screen: long press exits to games menu
     if (ui_task.isOnSnakeScreen()) {

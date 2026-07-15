@@ -328,6 +328,9 @@ public:
   bool isOnWatchNotesScreen() const { return curr == watch_notes_screen; }
   bool isOnWatchChannelConfigScreen() const { return curr == watch_channel_cfg_screen; }
 #endif
+#ifdef TWATCH_COMPOSE_ENABLED
+  bool isOnTWatchChannelScreen() const { return curr == tw_channel; }
+#endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)

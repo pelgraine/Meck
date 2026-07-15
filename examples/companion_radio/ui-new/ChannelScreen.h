@@ -92,23 +92,6 @@ public:
     return h;
   }
 
-  // Draw a small tick (check mark) for delivered DMs using fillRect steps.
-  // DisplayDriver has no line primitive and the GFX fonts carry no tick
-  // glyph (they cover ASCII 0x20-0x7E only), so the glyph is drawn by hand.
-  // Inherits the current draw colour. Sized from the line height so it
-  // matches both the 6x8 built-in font and the 9pt faces.
-  static void drawDeliveredTick(DisplayDriver& display, int x, int y, int lineH) {
-    int s = (lineH >= 11) ? 2 : 1;   // stroke thickness by font size
-    int baseY = y + lineH - 2 * s;   // near the text baseline
-    // short down-stroke
-    display.fillRect(x,         baseY - s,     s, s);
-    display.fillRect(x + s,     baseY,         s, s);
-    // long up-stroke
-    display.fillRect(x + 2 * s, baseY - s,     s, s);
-    display.fillRect(x + 3 * s, baseY - 2 * s, s, s);
-    display.fillRect(x + 4 * s, baseY - 3 * s, s, s);
-  }
-
 private:
   UITask* _task;
   mesh::RTCClock* _rtc;
@@ -1391,6 +1374,9 @@ public:
         } else if (msg->dm_status == DM_SEND_SENDING) {
           // Tracked sent DM still in flight -- show the attempt counter
           sprintf(tmp, "Sending %d/%d ", msg->dm_attempt, msg->dm_total);
+        } else if (msg->dm_status == DM_SEND_DELIVERED) {
+          // Recipient's ack received
+          sprintf(tmp, "Delivered ");
         } else if (msg->dm_status == DM_SEND_FAILED) {
           // All attempts exhausted without an ack from the recipient
           sprintf(tmp, "Failed ");
@@ -1412,17 +1398,7 @@ public:
             sprintf(tmp, "(%dh)(%db) %dd ", hopsDisp, bphDisp, age / 86400);
           }
         }
-        // Delivered: keep the standard prefix and draw a tick in a reserved
-        // gap straight after it (before the message text)
-        int statusTickX = -1;
-        if (!isSelected && msg->dm_status == DM_SEND_DELIVERED) {
-          statusTickX = display.getTextWidth(tmp);
-          strcat(tmp, "  ");
-        }
         display.print(tmp);
-        if (statusTickX >= 0) {
-          drawDeliveredTick(display, statusTickX + 1, y, lineHeight);
-        }
         // DO NOT advance y - message text continues on the same line
         
         // Message text with character wrapping and inline emoji support

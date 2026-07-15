@@ -183,7 +183,9 @@ bool TWatchS3Board::power_init() {
                  XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ |
                  XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
 
-  PMU->setChargerConstantCurr(XPOWERS_AXP2101_CHG_CUR_125MA);
+  // 150 mA = 0.32C on the 470 mAh cell -- a modest bump over the 125 mA
+  // vendor default (LilyGoWatchS3.cpp uses 125), well under the 0.5C rule.
+  PMU->setChargerConstantCurr(XPOWERS_AXP2101_CHG_CUR_150MA);
   // The fitted cell (Tewaycell 552530, label verified) is 3.8V nominal LiHV,
   // i.e. 4.35V max charge. LilyGoLib's init for this board sets 4V35 for the
   // same reason. Charging to 4V2 forfeits the top ~12-15% of capacity.

@@ -162,6 +162,17 @@ bool TWatchS3PlusBoard::power_init() {
   PMU->enableBattVoltageMeasure();
 
   PMU->setPowerKeyPressOffTime(XPOWERS_POWEROFF_4S);
+#if defined(MECK_DIAG_PMU_BTN)
+  // TEMP DIAGNOSTIC (power bisect): replicate the S3 build's PWR-key config
+  // exactly -- press-on time, IRQ level time, and the PKEY IRQ trio -- so the
+  // PMU is in the same state as under PMUButton. disableIRQ(ALL) and
+  // clearIrqStatus have already run above, matching the S3's ordering.
+  PMU->setPowerKeyPressOnTime(XPOWERS_POWERON_2S);
+  ((XPowersAXP2101*)PMU)->setIrqLevelTime(XPOWERS_AXP2101_IRQ_TIME_1S);
+  PMU->enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ |
+                 XPOWERS_AXP2101_PKEY_NEGATIVE_IRQ |
+                 XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
+#endif
 
   // TEMP power-debug: one-shot rail dump at boot. Rail OFF means the attached
   // chip has no power at all (not merely sleeping).
@@ -212,3 +223,22 @@ uint32_t TWatchS3PlusBoard::getStepCount() {
   return (uint32_t)d[0] | ((uint32_t)d[1] << 8) |
          ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
 }
+
+#if defined(MECK_DIAG_PMU_BTN)
+// TEMP DIAGNOSTIC (power bisect): reproduce PMUButton::check()'s I2C traffic
+// -- same registers, same 30 ms cadence -- with the events discarded. If this
+// build drains like the S3 firmware on the same watch, the PMU-button
+// machinery is the culprit; if not, the excess lies elsewhere in the S3 set.
+void TWatchS3PlusBoard::diagPollPmuKey() {
+  static unsigned long last_poll = 0;
+  if (millis() - last_poll < 30) return;
+  last_poll = millis();
+  if (PMU == NULL) return;
+  XPowersAXP2101* axp = (XPowersAXP2101*)PMU;
+  axp->getIrqStatus();   // latch INTSTS1..3 into the driver's buffer
+  (void)axp->isPekeyNegativeIrq();
+  (void)axp->isPekeyPositiveIrq();
+  (void)axp->isPekeyShortPressIrq();
+  axp->clearIrqStatus();
+}
+#endif
