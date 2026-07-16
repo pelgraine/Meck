@@ -5,7 +5,10 @@
 
 volatile bool TWatchS3Board::_tilt_flag = false;
 
-void IRAM_ATTR TWatchS3Board::onTiltISR() { _tilt_flag = true; }
+// memw forces the _tilt_flag store to retire to SRAM before this ISR
+// returns. Without it, tiltFired() in the main loop can read a stale
+// value and raise-to-wake is missed. Do not remove.
+void IRAM_ATTR TWatchS3Board::onTiltISR() { _tilt_flag = true; asm volatile("memw" ::: "memory"); }
 
 // ---- Wrapper-free BMA423 step counter (raw I2C) ----------------------------
 // SensorLib's SensorBMA423 step-counter methods do not compile in this build,
