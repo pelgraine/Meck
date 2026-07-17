@@ -1694,7 +1694,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors = sensors;
   _auto_off = millis() + AUTO_OFF_MILLIS;
 
-#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON))
   user_btn.begin();
 #endif
 #if defined(PIN_USER_BTN_ANA)
@@ -2291,7 +2291,7 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
-#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON))
   return user_btn.isPressed();
 #else
   return false;
@@ -2314,7 +2314,7 @@ void UITask::loop() {
     }
   }
 #endif
-#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON)) && !defined(MECK_DIAG_NO_PMU)
+#if (defined(PIN_USER_BTN) || defined(MECK_PMU_BUTTON))
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2511,7 +2511,7 @@ void UITask::loop() {
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
 
-#if defined(LILYGO_TWATCH_S3)
+#if defined(LILYGO_TWATCH_S3) && !defined(MECK_DIAG_NO_ALARM)
   // Alarms are checked every loop, not from the screen's poll(), so one fires
   // with the display off or another screen showing.
   if (watch_alarm_screen) {
@@ -2626,6 +2626,12 @@ if (curr) curr->poll();
         if (watch_channel_cfg_screen) setCurrScreen(watch_channel_cfg_screen);
         else gotoHomeScreen();
         if (serr) showAlert(serr, 1200);
+      } else if (purpose == TWatchKeyboardScreen::TWKB_TRACE_PATH) {
+        TraceScreen* ts = (TraceScreen*)getTraceScreen();
+        if (ts) ts->setTypedPath(sendText);
+        kb->clearOutBuf();
+        if (trace_screen) setCurrScreen(trace_screen);
+        else gotoHomeScreen();
       } else {  // TWKB_ADMIN_PASSWORD or TWKB_ADMIN_CLI
         RepeaterAdminScreen* admin = (RepeaterAdminScreen*)getRepeaterAdminScreen();
         if (admin) {
@@ -2664,6 +2670,14 @@ if (curr) curr->poll();
     } else if (wc->wantsExit()) {
       wc->clearWantExit();
       gotoSettingsScreen();
+    }
+  }
+  else if (curr == trace_screen && trace_screen != nullptr) {
+    TraceScreen* ts = (TraceScreen*)trace_screen;
+    if (ts->wantsKeyboard()) {
+      ts->clearWantKeyboard();
+      openTWatchKeyboard(TWatchKeyboardScreen::TWKB_TRACE_PATH, 0);
+      ((TWatchKeyboardScreen*)tw_keyboard)->setInitialText(ts->getCurrentPathAsText());
     }
   }
   else if (curr == settings_screen && settings_screen != nullptr) {

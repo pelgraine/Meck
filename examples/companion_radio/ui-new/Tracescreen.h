@@ -91,6 +91,9 @@ private:
   int _resultScroll;
 
   bool _wantExit;
+#if defined(MECK_TWATCH)
+  bool _wantKeyboard;   // Watch: Type Path tapped -> UITask opens the on-screen keyboard
+#endif
 
   // --- Menu helpers (STATE_BUILD) ---
   // Menu layout:
@@ -313,6 +316,56 @@ public:
     return _state == STATE_BUILD && menuItemAt(_menuSel) == MENU_TYPE_PATH;
   }
 
+  // True if the highlighted menu row is the Mode selector (STATE_BUILD only).
+  bool isOnModeRow() const {
+    return _state == STATE_BUILD && menuItemAt(_menuSel) == MENU_PATH_SIZE;
+  }
+
+#if defined(MECK_TWATCH)
+  bool wantsKeyboard() const { return _wantKeyboard; }
+  void clearWantKeyboard() { _wantKeyboard = false; }
+
+  // Tap-to-select row mapping for the watch (mirrors PathEditor/Discovery).
+  // vy is in the 128-tall virtual touch space. Returns:
+  //   0 = miss, 1 = moved the cursor, 2 = tapped the already-selected row.
+  int selectRowAtVY(int vy) {
+    if (_state == STATE_BUILD)    return selectBuildRowAtVY(vy);
+    if (_state == STATE_PICK_HOP) return selectPickerRowAtVY(vy);
+    return 0;
+  }
+
+  int selectBuildRowAtVY(int vy) {
+    int menuCount = buildMenuCount();
+    if (menuCount == 0) return 0;
+    const int headerH = 14, footerH = 14, lineH = 11;
+    const int bodyTop = headerH;   // renderBuild draws row 0 at y=14
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+    int maxVisible = (128 - headerH - footerH) / lineH;
+    if (maxVisible < 1) maxVisible = 1;
+    // Replicate renderBuild's scroll window so a tap maps to the drawn row.
+    int scrollTop = 0;
+    if (_menuSel >= scrollTop + maxVisible) scrollTop = _menuSel - maxVisible + 1;
+    if (_menuSel < scrollTop) scrollTop = _menuSel;
+    int tappedRow = scrollTop + (vy - bodyTop) / lineH;
+    if (tappedRow < 0 || tappedRow >= menuCount) return 0;
+    if (tappedRow == _menuSel) return 2;
+    _menuSel = tappedRow;
+    return 1;
+  }
+
+  int selectPickerRowAtVY(int vy) {
+    if (_repCount == 0) return 0;
+    const int headerH = 14, footerH = 14, lineH = 11;
+    const int bodyTop = headerH;   // renderPicker draws row 0 at y=14
+    if (vy < bodyTop || vy >= 128 - footerH) return 0;
+    int tappedRow = _repScroll + (vy - bodyTop) / lineH;
+    if (tappedRow < 0 || tappedRow >= _repCount) return 0;
+    if (tappedRow == _repSel) return 2;
+    _repSel = tappedRow;
+    return 1;
+  }
+#endif
+
   // Returns the current path formatted as a comma-separated string, suitable
   // for pre-populating an external text editor (e.g. the T5S3 virtual keyboard).
   // The returned pointer references an internal buffer and is valid until the
@@ -343,6 +396,9 @@ public:
     _repSel = 0;
     _repScroll = 0;
     _wantExit = false;
+#if defined(MECK_TWATCH)
+    _wantKeyboard = false;
+#endif
     _resultScroll = 0;
     memset(_pathBuf, 0, sizeof(_pathBuf));
     memset(&_result, 0, sizeof(_result));
@@ -462,6 +518,8 @@ private:
           } else {
 #if defined(LilyGo_T5S3_EPaper_Pro)
             snprintf(tmp, sizeof(tmp), "%c Type Path: [Long press]", prefix);
+#elif defined(MECK_TWATCH)
+            snprintf(tmp, sizeof(tmp), "%c Type Path: [Tap]", prefix);
 #else
             snprintf(tmp, sizeof(tmp), "%c Type Path: [Press Enter]", prefix);
 #endif
@@ -533,6 +591,8 @@ private:
     } else {
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Boot:Exit  Tap:Sel");
+#elif defined(MECK_TWATCH)
+      display.print("Tap:Sel  Hold:Go");
 #else
       display.print("Sh+Del:Exit W/S:Nav Ent:Sel");
 #endif
@@ -596,6 +656,8 @@ private:
     display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Back  Tap:Add");
+#elif defined(MECK_TWATCH)
+    display.print("Tap:Sel  Hold:Add");
 #else
     display.print("Sh+Del:Back W/S:Scroll Ent:Add");
 #endif
@@ -748,6 +810,8 @@ private:
     display.setCursor(0, footerY);
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Back  Tap:New Trace");
+#elif defined(MECK_TWATCH)
+    display.print("Hold: New Trace");
 #else
     display.print("Sh+Del:Back  Ent:New Trace");
 #endif
@@ -843,9 +907,15 @@ private:
       MenuItem item = menuItemAt(_menuSel);
       switch (item) {
         case MENU_TYPE_PATH:
-          // Enter edit mode -- pre-fill with current path if any
           pathToEditBuf();
+#if defined(MECK_TWATCH)
+          // Watch: no physical keys -- request the on-screen keyboard. The main
+          // loop polls wantsKeyboard() and opens it, pre-filled with the path.
+          _wantKeyboard = true;
+#else
+          // Enter inline edit mode -- pre-fill with current path if any
           _editing = true;
+#endif
           return true;
 
         case MENU_ADD_HOP:

@@ -104,11 +104,11 @@ public:
       display.setCursor(4, 28);
       display.print(active ? "Listening for adverts..." : "No nodes found");
 #if defined(MECK_TWATCH)
-      display.setCursor(4, 38);
-      display.print("Hold: Rescan");
       display.setCursor(4, 48);
-      display.print("Tap: Select");
+      display.print("Hold: Rescan");
       display.setCursor(4, 58);
+      display.print("Tap: Select");
+      display.setCursor(4, 68);
       display.print("Tap Again: Add");
 #else
       if (!active) {

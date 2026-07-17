@@ -1612,6 +1612,28 @@ static void lastHeardToggleContact() {
       return 0;
     }
 
+#if defined(MECK_TWATCH)
+    // Trace screen (watch): tap to select row, tap same to activate. Mode row
+    // toggles 1/2-byte; Type Path opens the keyboard (handleInput -> wantsKeyboard).
+    // Guarded to the watch: selectRowAtVY uses the watch's 128-space coords, and
+    // T5S3/T-Deck keep their existing boot-button/keyboard trace handling.
+    if (ui_task.isOnTraceScreen()) {
+      TraceScreen* ts = (TraceScreen*)ui_task.getTraceScreen();
+      if (ts) {
+        int result = ts->selectRowAtVY(vy);
+        if (result == 1) {
+          ui_task.forceRefresh();
+          return 0;
+        }
+        if (result == 2) {
+          if (ts->isOnModeRow()) return 'd';   // toggle 1-byte / 2-byte
+          return KEY_ENTER;                     // Type Path / Add / Remove / Run / Exit / hop
+        }
+      }
+      return 0;
+    }
+#endif
+
     // Discovery screen: tap to select, tap same to add
     if (ui_task.isOnDiscoveryScreen()) {
       DiscoveryScreen* ds = (DiscoveryScreen*)ui_task.getDiscoveryScreen();
