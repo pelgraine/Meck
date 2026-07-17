@@ -3028,7 +3028,11 @@ public:
     }
     #endif
 #if defined(MECK_TWATCH)
-    if (_tickerActive) return 60;   // marquee running -- match the channel screen
+    // Marquee running, or a wide row was just selected (its width was measured
+    // this frame): refresh fast so scrolling starts promptly instead of after
+    // the 1s idle interval.
+    if (_tickerActive ||
+        (_tickerRow == _cursor && _tickerTextW > display.width() - 10)) return 60;
 #endif
     return _editMode != EDIT_NONE ? 700 : 1000;
   }

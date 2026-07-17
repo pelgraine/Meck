@@ -2164,6 +2164,11 @@ static void lastHeardToggleContact() {
         if (ss->isEditing()) {
           return 0;  // Consume — don't interfere with active edit mode
         }
+#if defined(MECK_TWATCH)
+        // Aim activation at the row under the finger, not just the current
+        // cursor, so a single long-press opens/edits the pressed row.
+        { int vx, vy; touchToVirtual(x, y, vx, vy); ss->selectRowAtVY(vy); }
+#endif
         if (ss->isOnDeletableChannel()) {
           return 'x';  // Long press on channel row → delete
         }
@@ -2853,6 +2858,15 @@ void setup() {
     Serial.println("setup() - SD features initialized");
   }
   #endif
+#if defined(MECK_TWATCH)
+  // Watch: load persisted channel-message history from LittleFS (no SD).
+  {
+    ChannelScreen* chanScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (chanScr && chanScr->loadFromLittleFS()) {
+      MESH_DEBUG_PRINTLN("setup() - Message history loaded from LittleFS");
+    }
+  }
+#endif
   // Check if node name is still the default hex prefix (first 4 bytes of pub key)
   // If so, launch onboarding wizard to set name and radio preset
   // ---------------------------------------------------------------------------
@@ -2974,6 +2988,14 @@ void otaResumeRadio() {
 #endif
 
 void loop() {
+#if defined(MECK_TWATCH)
+  // Watch: flush pending channel-message history to LittleFS on a 30s debounce
+  // (saveToSD marks it dirty on each message; at most one ~57 KB write / 30s).
+  {
+    ChannelScreen* chanScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (chanScr) chanScr->flushMessagesIfDue(30000UL);
+  }
+#endif
   // T-Echo Card: lazy Codec2 init from shallow stack context.
   // codec2_create needs ~3KB stack for FFT/trig init. The loop task
   // has only 4KB total. Calling from render() (deep call chain) overflows.
@@ -3963,6 +3985,12 @@ void loop() {
             // Channel screen: horizontal swipe opens picker instead of cycling
             if (ui_task.isOnChannelScreen() && (c == 'a' || c == 'd')) {
               ui_task.gotoChannelPickerScreen();
+#if defined(MECK_TWATCH)
+            } else if (ui_task.isOnChannelScreen() && (c == 'w' || c == 's')) {
+              // Watch: a vertical swipe pages the message view (one page/swipe).
+              ChannelScreen* cs = (ChannelScreen*)ui_task.getChannelScreen();
+              if (cs) { cs->pageScroll(c == 'w'); ui_task.forceRefresh(); }
+#endif
             } else {
               ui_task.injectKey(c);
             }

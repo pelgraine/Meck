@@ -11,6 +11,9 @@
 #if defined(HAS_SDCARD) && defined(ESP32)
   #include <SD.h>
 #endif
+#if defined(MECK_TWATCH)
+  #include <LittleFS.h>   // watch has no SD -- message history persists to LittleFS
+#endif
 
 // DM send status codes (session only). Guarded so AbstractUITask.h can carry
 // the same definitions without a clash.
@@ -103,6 +106,9 @@ private:
   int _msgsPerPage;   // Messages that fit on screen
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
   bool _sdReady;      // SD card is available for persistence
+#if defined(MECK_TWATCH)
+  unsigned long _msgDirtySince = 0;  // watch: pending LittleFS write (0 = clean)
+#endif
   bool _showPathOverlay;  // Show path detail overlay for last received msg
   int _pathScrollPos;     // Scroll offset within path overlay hop list
   int _pathHopsVisible;   // Hops that fit on screen (set during render)
@@ -554,6 +560,13 @@ public:
   // Save the entire message buffer to SD card.
   // File: /meshcore/messages.bin  (~50 KB for 300 messages)
   void saveToSD() {
+#if defined(MECK_TWATCH)
+    // Watch: defer to the LittleFS flush cadence -- a ~57 KB write on every
+    // message would wear the flash. Timestamp the pending write; the main loop
+    // flushes it (see flushMessagesIfDue), and shutdown flushes directly.
+    if (_msgDirtySince == 0) _msgDirtySince = millis();
+    return;
+#endif
 #if defined(HAS_SDCARD) && defined(ESP32)
     if (!_sdReady) return;
 
@@ -595,6 +608,94 @@ public:
     digitalWrite(SDCARD_CS, HIGH);  // Release SD CS
 #endif
   }
+
+#if defined(MECK_TWATCH)
+  // --- Watch message-history persistence (LittleFS; the watch has no SD) ------
+  // Flush the ring to LittleFS. Called on an interval from the main loop and
+  // directly on shutdown, so traffic produces at most one write per interval.
+  void flushMessagesNow() {
+    if (!LittleFS.exists("/meshcore")) {
+      LittleFS.mkdir("/meshcore");
+    }
+    File f = LittleFS.open(MSG_FILE_PATH, "w", true);
+    if (!f) {
+      Serial.println("ChannelScreen: LittleFS save failed - can't open file");
+      return;
+    }
+    MsgFileHeader hdr;
+    hdr.magic    = MSG_FILE_MAGIC;
+    hdr.version  = MSG_FILE_VERSION;
+    hdr.capacity = CHANNEL_MSG_HISTORY_SIZE;
+    hdr.count    = (uint16_t)_msgCount;
+    hdr.newestIdx = (int16_t)_newestIdx;
+    f.write((uint8_t*)&hdr, sizeof(hdr));
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      MsgFileRecord rec;
+      rec.timestamp    = _messages[i].timestamp;
+      rec.path_len     = _messages[i].path_len;
+      rec.channel_idx  = _messages[i].channel_idx;
+      rec.valid        = _messages[i].valid ? 1 : 0;
+      rec.snr          = _messages[i].snr;
+      rec.dm_peer_hash = _messages[i].dm_peer_hash;
+      memcpy(rec.path, _messages[i].path, MSG_PATH_MAX);
+      memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
+      f.write((uint8_t*)&rec, sizeof(rec));
+    }
+    f.close();
+    _msgDirtySince = 0;
+  }
+
+  // Flush only if a write is pending and the debounce interval has elapsed.
+  void flushMessagesIfDue(unsigned long intervalMs) {
+    if (_msgDirtySince && millis() - _msgDirtySince >= intervalMs) flushMessagesNow();
+  }
+
+  // Load the ring from LittleFS at boot. Returns true if any messages loaded.
+  bool loadFromLittleFS() {
+    if (!LittleFS.exists(MSG_FILE_PATH)) {
+      Serial.println("ChannelScreen: no saved messages on LittleFS");
+      return false;
+    }
+    File f = LittleFS.open(MSG_FILE_PATH, "r");
+    if (!f) {
+      Serial.println("ChannelScreen: LittleFS load failed - can't open file");
+      return false;
+    }
+    MsgFileHeader hdr;
+    if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) { f.close(); return false; }
+    if (hdr.magic != MSG_FILE_MAGIC)              { f.close(); return false; }
+    if (hdr.version != MSG_FILE_VERSION)          { f.close(); return false; }
+    if (hdr.capacity != CHANNEL_MSG_HISTORY_SIZE) { f.close(); return false; }
+    int loaded = 0;
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      MsgFileRecord rec;
+      if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
+      _messages[i].timestamp    = rec.timestamp;
+      _messages[i].path_len     = rec.path_len;
+      _messages[i].channel_idx  = rec.channel_idx;
+      _messages[i].valid        = (rec.valid != 0);
+      _messages[i].snr          = rec.snr;
+      _messages[i].dm_peer_hash = rec.dm_peer_hash;
+      memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
+      memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
+      _messages[i].scope_idx  = 0xFF;
+      _messages[i].send_ref   = 0;
+      _messages[i].dm_status  = DM_SEND_NONE;
+      _messages[i].dm_attempt = 0;
+      _messages[i].dm_total   = 0;
+      if (_messages[i].valid) loaded++;
+    }
+    _msgCount  = (int)hdr.count;
+    _newestIdx = (int)hdr.newestIdx;
+    _scrollPos = 0;
+    if (_newestIdx < -1 || _newestIdx >= CHANNEL_MSG_HISTORY_SIZE) _newestIdx = -1;
+    if (_msgCount < 0 || _msgCount > CHANNEL_MSG_HISTORY_SIZE) _msgCount = loaded;
+    f.close();
+    Serial.printf("ChannelScreen: Loaded %d messages from LittleFS (count=%d, newest=%d)\n",
+                  loaded, _msgCount, _newestIdx);
+    return loaded > 0;
+  }
+#endif
 
   // Load message buffer from SD card.  Returns true if messages were loaded.
   bool loadFromSD() {
@@ -1683,6 +1784,16 @@ public:
 #else
     return 1000;
 #endif
+  }
+
+  // Vertical-swipe scroll (watch). Pages the normal message view a screenful at
+  // a time; keeps single-step in reply-select / path-overlay / DM-inbox so
+  // precise selection isn't lost. Bounds clamping is handled by handleInput.
+  void pageScroll(bool older) {
+    char k = older ? 'w' : 's';
+    bool normalView = !_replySelectMode && !_showPathOverlay && !_dmInboxMode;
+    int steps = (normalView && _msgsPerPage > 1) ? _msgsPerPage : 1;
+    for (int i = 0; i < steps; i++) handleInput(k);
   }
 
   bool handleInput(char c) override {
