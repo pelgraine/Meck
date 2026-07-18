@@ -4,6 +4,10 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <MeshCore.h>
 
+#if defined(MECK_TWATCH)
+#include <helpers/ui/LGFXDisplay.h>   // blue rounded-rect overlay primitives (watch LCD)
+#endif
+
 // Timestamps before this (Jan 1 2026 UTC) are treated as invalid/unsynced
 #define EPOCH_2026  1735689600UL
 
@@ -52,6 +56,18 @@ private:
   // --- Select mode state ---
   bool _selectMode;
   uint8_t* _selectedBits;   // Bitfield: 1 bit per MAX_CONTACTS raw index
+
+#if defined(MECK_TWATCH)
+  // --- Action overlay state (watch) ---
+  // Long-press raises a small [Open] [Favourite] [Delete] overlay. Buttons are
+  // three full-width bands defined in the 128-space touch grid; render() maps
+  // them to the 120-space display via display.height().
+  bool _actionOverlay = false;
+  static const int OVL_BTN_H    = 26;
+  static const int OVL_BTN0_TOP = 21;   // (128 - (3*26 + 2*4)) / 2
+  static const int OVL_BTN1_TOP = 51;   // 21 + 26 + 4
+  static const int OVL_BTN2_TOP = 81;   // 51 + 26 + 4
+#endif
 
   // --- helpers ---
 
@@ -180,6 +196,9 @@ public:
   void resetScroll() {
     _scrollPos = 0;
     _cacheValid = false;
+#if defined(MECK_TWATCH)
+    _actionOverlay = false;   // never carry a stale overlay across screen entry
+#endif
   }
 
   FilterMode getFilter() const { return _filter; }
@@ -287,6 +306,22 @@ public:
     buf[bufLen - 1] = '\0';
     return true;
   }
+
+#if defined(MECK_TWATCH)
+  // --- Action overlay (watch) ---
+  void openActionOverlay()  { _actionOverlay = true; }
+  void closeActionOverlay() { _actionOverlay = false; }
+  bool isActionOverlayOpen() const { return _actionOverlay; }
+
+  // Hit-test a 128-space touch Y against the overlay buttons.
+  // Returns 0=Open, 1=Favourite, 2=Delete, -1=miss (tap outside dismisses).
+  int actionOverlayButtonAtVY(int vy) const {
+    if (vy >= OVL_BTN0_TOP && vy < OVL_BTN0_TOP + OVL_BTN_H) return 0;
+    if (vy >= OVL_BTN1_TOP && vy < OVL_BTN1_TOP + OVL_BTN_H) return 1;
+    if (vy >= OVL_BTN2_TOP && vy < OVL_BTN2_TOP + OVL_BTN_H) return 2;
+    return -1;
+  }
+#endif
 
   int render(DisplayDriver& display) override {
     if (!_cacheValid) rebuildCache();
@@ -497,6 +532,37 @@ public:
       const char* right = "P:Path Ent:Sel";
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
+    }
+#endif
+
+#if defined(MECK_TWATCH)
+    // Action overlay -- drawn last so it sits on top of the contact list.
+    if (_actionOverlay) {
+      const int H = display.height();   // 120 on the watch
+      const int W = display.width();    // 120
+      int y0 = OVL_BTN0_TOP * H / 128;
+      int y1 = OVL_BTN1_TOP * H / 128;
+      int y2 = OVL_BTN2_TOP * H / 128;
+      int bh = OVL_BTN_H    * H / 128;
+      int bx = 6;
+      int bw = W - 12;
+
+      // Dark backdrop to hide the contact list behind the overlay
+      display.setColor(DisplayDriver::DARK);
+      display.fillRect(bx - 2, y0 - 4, bw + 4, (y2 + bh) - y0 + 8);
+
+      // Blue rounded buttons with white centred labels, matching the watch's
+      // Notes/config style (0x231D = the home-tile blue, 0xFFFF = white).
+      LGFXDisplay* d = (LGFXDisplay*)&display;
+      d->setRawColor(0x231D);
+      d->drawRoundRect(bx, y0, bw, bh, 3);
+      d->drawRoundRect(bx, y1, bw, bh, 3);
+      d->drawRoundRect(bx, y2, bw, bh, 3);
+
+      d->setRawColor(0xFFFF);
+      display.drawTextCentered(W / 2, y0 + (bh - 8) / 2, "Open");
+      display.drawTextCentered(W / 2, y1 + (bh - 8) / 2, "Favourite");
+      display.drawTextCentered(W / 2, y2 + (bh - 8) / 2, "Delete");
     }
 #endif
 

@@ -1581,6 +1581,81 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnContactsScreen()) {
       ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
       if (cs) {
+#if defined(MECK_TWATCH)
+        if (cs->isActionOverlayOpen()) {
+          int btn = cs->actionOverlayButtonAtVY(vy);
+          if (btn == 0) {
+            // Open -- route by contact type (mirrors the pre-overlay long-press open)
+            cs->closeActionOverlay();
+            int idx = cs->getSelectedContactIdx();
+            uint8_t ctype = cs->getSelectedContactType();
+            if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
+              if (ui_task.hasDMUnread(idx)) {
+                char cname[32];
+                cs->getSelectedContactName(cname, sizeof(cname));
+                ui_task.clearDMUnread(idx);
+                ui_task.gotoDMConversation(cname);
+                return 0;
+              }
+              ui_task.openTWatchKeyboard(1, idx);   // TWKB_DM
+              return 0;
+            } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
+              ui_task.gotoRepeaterAdmin(idx);
+              return 0;
+            } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
+              ui_task.gotoRepeaterAdmin(idx);
+              return 0;
+            } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
+              char cname[32];
+              cs->getSelectedContactName(cname, sizeof(cname));
+              ui_task.clearDMUnread(idx);
+              ui_task.gotoDMConversation(cname);
+              return 0;
+            }
+            ui_task.forceRefresh();
+            return 0;
+          } else if (btn == 1) {
+            // Favourite -- flip flags bit 0 on the selected contact and persist
+            int idx = cs->getSelectedContactIdx();
+            if (idx >= 0) {
+              ContactInfo tmp;
+              if (the_mesh.getContactByIdx(idx, tmp)) {
+                ContactInfo* cp = the_mesh.lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+                if (cp) {
+                  cp->flags ^= 0x01;
+                  the_mesh.saveContacts();
+                  ui_task.showAlert((cp->flags & 0x01) ? "Favourited" : "Unfavourited", 1500);
+                }
+              }
+            }
+            cs->closeActionOverlay();
+            cs->invalidateCache();
+            ui_task.forceRefresh();
+            return 0;
+          } else if (btn == 2) {
+            // Delete -- remove the selected contact and persist
+            int idx = cs->getSelectedContactIdx();
+            if (idx >= 0) {
+              ContactInfo c;
+              if (the_mesh.getContactByIdx(idx, c)) {
+                if (the_mesh.removeContact(c)) {
+                  the_mesh.saveContacts();
+                  ui_task.showAlert("Contact deleted", 1500);
+                }
+              }
+            }
+            cs->closeActionOverlay();
+            cs->invalidateCache();
+            ui_task.forceRefresh();
+            return 0;
+          } else {
+            // Tap outside the buttons -- dismiss
+            cs->closeActionOverlay();
+            ui_task.forceRefresh();
+            return 0;
+          }
+        }
+#endif
         int result = cs->selectRowAtVY(vy);
         if (result == 1) {
           ui_task.forceRefresh();
@@ -2044,35 +2119,11 @@ static void lastHeardToggleContact() {
         }
         return 0;
 #elif defined(MECK_TWATCH)
-        // Watch: long press = DM (tw-keyboard) / admin / room action.
-        // purpose ints match TWatchKeyboardScreen::Purpose: DM=1.
-        {
-          int idx = cs->getSelectedContactIdx();
-          uint8_t ctype = cs->getSelectedContactType();
-          if (idx >= 0 && ctype == ADV_TYPE_CHAT) {
-            if (ui_task.hasDMUnread(idx)) {
-              char cname[32];
-              cs->getSelectedContactName(cname, sizeof(cname));
-              ui_task.clearDMUnread(idx);
-              ui_task.gotoDMConversation(cname);
-              return 0;
-            }
-            ui_task.openTWatchKeyboard(1, idx);   // TWKB_DM
-            return 0;
-          } else if (idx >= 0 && ctype == ADV_TYPE_REPEATER) {
-            ui_task.gotoRepeaterAdmin(idx);
-            return 0;
-          } else if (idx >= 0 && ctype == ADV_TYPE_ROOM) {
-            ui_task.gotoRepeaterAdmin(idx);
-            return 0;
-          } else if (idx >= 0 && ui_task.hasDMUnread(idx)) {
-            char cname[32];
-            cs->getSelectedContactName(cname, sizeof(cname));
-            ui_task.clearDMUnread(idx);
-            ui_task.gotoDMConversation(cname);
-            return 0;
-          }
-        }
+        // Watch: long press raises the contact action overlay
+        // ([Open] [Favourite] [Delete]). The tap handler dispatches the choice;
+        // "Open" reproduces the type-aware DM/admin routing this branch used to do.
+        cs->openActionOverlay();
+        ui_task.forceRefresh();
         return 0;
 #else
         // T-Deck Pro: long press enters select mode
