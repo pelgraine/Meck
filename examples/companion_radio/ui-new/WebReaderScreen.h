@@ -3164,11 +3164,11 @@ private:
       if (onBookmark && hasData)
         snprintf(footerBuf, sizeof(footerBuf), "Ent:Go Del:Del Bkmk X:Clr Ckies");
       else if (onBookmark)
-        snprintf(footerBuf, sizeof(footerBuf), "Sh+Del:Bk Ent:Go Del:Del Bkmk");
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk Ent:Go Del:Del Bkmk");
       else if (hasData)
-        snprintf(footerBuf, sizeof(footerBuf), "Sh+Del:Bk W/S Ent:Go X:Clr Ckies");
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S Ent:Go X:Clr Ckies");
       else
-        snprintf(footerBuf, sizeof(footerBuf), "Sh+Del:Bk W/S:Nav Ent:Go");
+        snprintf(footerBuf, sizeof(footerBuf), "Q:Bk W/S:Nav Ent:Go");
 #endif
       display.print(footerBuf);
     }
@@ -3273,7 +3273,7 @@ private:
 #else
       display.print("Ent: Open in Reader");
       display.setCursor(0, y + 16);
-      display.print("Sh+Del:   Back to browser");
+      display.print("Q:   Back to browser");
 #endif
     } else {
       display.setColor(DisplayDriver::YELLOW);
@@ -3292,7 +3292,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap: Back to browser");
 #else
-      display.print("Sh+Del: Back to browser");
+      display.print("Q: Back to browser");
 #endif
     }
 
@@ -3305,7 +3305,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print(_downloadOk ? "Tap: Open in Reader" : "Tap: Back");
 #else
-    display.print(_downloadOk ? "Ent:Read  Sh+Del:Back" : "Sh+Del:Back");
+    display.print(_downloadOk ? "Ent:Read  Q:Back" : "Q:Back");
 #endif
   }
 
@@ -3442,13 +3442,13 @@ private:
     }
 #else
     } else if (_formCount > 0 && _linkCount > 0) {
-      hint = "L:Lnk F:Frm B:Bk Sh+Del:X";
+      hint = "L:Lnk F:Frm B:Bk Q:X";
     } else if (_formCount > 0) {
-      hint = "F:Frm B:Bk Sh+Del:X";
+      hint = "F:Frm B:Bk Q:X";
     } else if (_linkCount > 0) {
-      hint = "L:Lnk B:Bk Sh+Del:X";
+      hint = "L:Lnk B:Bk Q:X";
     } else {
-      hint = "B:Bk Sh+Del:X";
+      hint = "B:Bk Q:X";
     }
 #endif
     display.setCursor(display.width() - display.getTextWidth(hint) - 2, footerY);
@@ -3892,7 +3892,7 @@ private:
     }
 
     // Shift+Del - exit to home
-    if (c == KEY_CANCEL) {
+    if (c == KEY_CANCEL || c == 'q') {
       _mode = HOME;
       _homeSelected = 0;
       return true;
@@ -5412,7 +5412,7 @@ public:
       case FETCHING:
         // Shift+Del to cancel fetch (can't actually cancel HTTP mid-stream, but
         // go back to home)
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           _mode = HOME;
           return true;
         }
@@ -5424,7 +5424,7 @@ public:
           _requestTextReader = true;
           return true;
         }
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           _mode = HOME;
           _homeSelected = 0;
           return true;

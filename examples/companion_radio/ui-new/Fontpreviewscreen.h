@@ -136,7 +136,7 @@ public:
     display.print("Swipe:Pick");
     const char* rt = "Boot:Back Tap:Apply";
 #else
-    display.print("W/S:Pick Sh+Del:Back");
+    display.print("W/S:Pick Q:Back");
     const char* rt = "Enter:Apply";
 #endif
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
@@ -183,7 +183,7 @@ public:
     }
 
     // Shift+Del - cancel, restore original style
-    if (c == KEY_CANCEL) {
+    if (c == KEY_CANCEL || c == 'q') {
       _prefs->ui_font_style = _originalStyle;
       _wantExit = true;
       return true;

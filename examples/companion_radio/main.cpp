@@ -4953,7 +4953,7 @@ void handleKeyboardInput() {
     //   - Playing: navigate home, audio continues in background
     //   - Paused/stopped: close book, return to file list
     //   - File list: exit player entirely
-    if (key == KEY_CANCEL) {
+    if (key == KEY_CANCEL || key == 'q') {
       if (abPlayer->isBookOpen()) {
         if (abPlayer->isAudioActive()) {
           // Audio is playing -- leave screen, audio continues via audioTick()
@@ -4997,6 +4997,8 @@ void handleKeyboardInput() {
         ui_task.forceRefresh();
         return;
       }
+      // 'q' = back/cancel in every voice mode (no text entry here); treat as Shift+Del.
+      if (key == 'q') key = KEY_CANCEL;
       // Shift+Del from message list exits voice screen
       if (key == KEY_CANCEL && voiceScr->getMode() == VoiceMessageScreen::MESSAGE_LIST) {
         Serial.println("Exiting voice message screen");
@@ -5017,7 +5019,7 @@ void handleKeyboardInput() {
     
     // Shift+Del: if reading, reader handles it (close book -> file list)
     //         if on file list, exit reader entirely
-    if (key == KEY_CANCEL) {
+    if (key == KEY_CANCEL || key == 'q') {
       if (reader->isReading()) {
         // Let the reader handle Shift+Del (close book, go to file list)
         ui_task.injectKey(KEY_CANCEL);
@@ -5167,7 +5169,7 @@ void handleKeyboardInput() {
     SettingsScreen* settings = (SettingsScreen*)ui_task.getSettingsScreen();
 
     // Shift+Del: exit settings (when not editing)
-    if (!settings->isEditing() && (key == KEY_CANCEL)) {
+    if (!settings->isEditing() && (key == KEY_CANCEL || key == 'q')) {
       if (settings->hasRadioChanges()) {
         // Let settings show "apply changes?" confirm dialog
         ui_task.injectKey(key);
@@ -5308,7 +5310,7 @@ void handleKeyboardInput() {
 
     // In category menu (top level): Shift+Del exits, C opens compose
     if (astate == RepeaterAdminScreen::STATE_CATEGORY_MENU) {
-      if (shiftDel) {
+      if (shiftDel || key == 'q') {
         exitAdmin();
         return;
       }
@@ -5331,7 +5333,7 @@ void handleKeyboardInput() {
     // All other states (command menu, param entry, confirm, waiting,
     // response, error): convert Shift+Del to exit signal and let the
     // screen handle back-navigation internally
-    if (shiftDel) {
+    if (shiftDel || (key == 'q' && astate != RepeaterAdminScreen::STATE_PARAM_ENTRY)) {
       ui_task.injectKey(KEY_ADMIN_EXIT);
     } else {
       ui_task.injectKey(key);
@@ -5360,7 +5362,7 @@ void handleKeyboardInput() {
       }
 
       // Shift+Del from app menu -> go home; Shift+Del from inner views is handled by SMSScreen
-      if ((key == KEY_CANCEL) && smsScr->getSubView() == SMSScreen::APP_MENU) {
+      if ((key == KEY_CANCEL || key == 'q') && smsScr->getSubView() == SMSScreen::APP_MENU) {
         Serial.println("Nav: SMS -> Home");
         ui_task.gotoHomeScreen();
         return;
@@ -5439,7 +5441,7 @@ void handleKeyboardInput() {
       webReaderTextEntry = false;
 
       // Shift+Del from HOME mode exits the web reader entirely (like text reader)
-      if ((key == KEY_CANCEL) && wr && wr->isHome() && !wr->isUrlEditing() && !wr->isSearchEditing()) {
+      if ((key == KEY_CANCEL || key == 'q') && wr && wr->isHome() && !wr->isUrlEditing() && !wr->isSearchEditing()) {
         Serial.println("Exiting web reader");
         ui_task.gotoHomeScreen();
         return;
@@ -6146,6 +6148,7 @@ void handleKeyboardInput() {
       }
       break;
 
+    case 'q':
     case KEY_CANCEL:
       // If channel screen reply select or path overlay is showing, dismiss it
       if (ui_task.isOnChannelScreen()) {

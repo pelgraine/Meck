@@ -657,7 +657,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Cancel");
 #else
-        display.print("Sh+Del:Cancel");
+        display.print("Q:Cancel");
 #endif
         break;
 
@@ -668,8 +668,8 @@ public:
 #elif defined(MECK_TWATCH)
         display.print("Long Press: Select");
 #else
-        display.print("Sh+Del:Exit");
-        renderFooterMidRight(display, footerY, "Sh+Del:Exit", "Ent:Open", "W/S:Sel");
+        display.print("Q:Exit");
+        renderFooterMidRight(display, footerY, "Q:Exit", "Ent:Open", "W/S:Sel");
 #endif
         break;
 
@@ -680,8 +680,8 @@ public:
 #elif defined(MECK_TWATCH)
         display.print("Long Press: Run");
 #else
-        display.print("Sh+Del:Back");
-        renderFooterMidRight(display, footerY, "Sh+Del:Back", "Ent:Run", "W/S:Sel");
+        display.print("Q:Back");
+        renderFooterMidRight(display, footerY, "Q:Back", "Ent:Run", "W/S:Sel");
 #endif
         break;
 
@@ -702,7 +702,7 @@ public:
         display.print("Boot:No");
         renderFooterRight(display, footerY, "Tap:Yes");
 #else
-        display.print("Sh+Del:No");
+        display.print("Q:No");
         renderFooterRight(display, footerY, "Ent:Yes");
 #endif
         break;
@@ -715,7 +715,7 @@ public:
           renderFooterRight(display, footerY, "Swipe:Scroll");
         }
 #else
-        display.print("Sh+Del:Back");
+        display.print("Q:Back");
         if (_responseTotalLines > bodyHeight / 9) {
           renderFooterRight(display, footerY, "W/S:Scrll");
         }
@@ -1095,7 +1095,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap=Yes  Back=No");
 #else
-      display.print("Enter=Yes  Sh+Del=No");
+      display.print("Enter=Yes  Q=No");
 #endif
     }
 

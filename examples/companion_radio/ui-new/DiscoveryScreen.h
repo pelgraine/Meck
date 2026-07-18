@@ -116,7 +116,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Long press: Rescan");
 #else
-        display.print("F: Scan again  Sh+Del: Back");
+        display.print("F: Scan again  Q: Back");
 #endif
       }
 #endif
@@ -218,7 +218,7 @@ public:
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #else
-    display.print("Sh+Del:X F:Scan");
+    display.print("Q:X F:Scan");
 
     const char* right = "Tap/Ent:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);

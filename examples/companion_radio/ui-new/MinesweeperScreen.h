@@ -431,7 +431,7 @@ public:
       int fy = display.height() - 12;
       display.drawRect(0, fy - 2, display.width(), 1);
       display.setCursor(2, fy);
-      display.print("Enter:Start  Sh+Del:Back");
+      display.print("Enter:Start  Q:Back");
 #endif
       return 5000;
 
@@ -487,7 +487,7 @@ public:
       }
       ty += 16;
       display.setColor(DisplayDriver::GREEN);
-      display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
+      display.drawTextCentered(cx, ty, "Enter:Retry  Q:Back");
 
       return 5000;
     }

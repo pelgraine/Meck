@@ -397,7 +397,7 @@ public:
     display.print(right);
 #else
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Bk W/S:Nav");
+    display.print("Q:Bk W/S:Nav");
     const char* right = "Enter:Sel";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
@@ -486,7 +486,7 @@ public:
     display.print(right);
 #else
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Cancel W/S:Scroll");
+    display.print("Q:Cancel W/S:Scroll");
     const char* right = "Enter:Add";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);

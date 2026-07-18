@@ -385,7 +385,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Back");
+    display.print("Q:Back");
     const char* rt = "Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -620,7 +620,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Back");
+    display.print("Q:Back");
     const char* mid = "D:Contacts";
     display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
     display.print(mid);
@@ -734,7 +734,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Bk A:Add Contact");
+    display.print("Q:Bk A:Add Contact");
     const char* rt = "C:Reply";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -887,7 +887,7 @@ public:
     display.drawRect(0, footerY - 2, display.width(), 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Back");
+    display.print("Q:Back");
     const char* rt = "Ent:SMS F:Call";
     display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -1343,6 +1343,7 @@ public:
         _view = CONTACTS;
         return true;
 
+      case 'q':
       case KEY_CANCEL:  // Back to app menu
         _view = APP_MENU;
         _menuCursor = 0;
@@ -1399,6 +1400,7 @@ public:
         return true;
       }
 
+      case 'q':
       case KEY_CANCEL:  // Back to inbox
         refreshInbox();
         _view = INBOX;
@@ -1527,6 +1529,7 @@ public:
         }
         return true;
 
+      case 'q':
       case KEY_CANCEL:  // Back to inbox
         refreshInbox();
         _view = INBOX;

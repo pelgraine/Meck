@@ -145,7 +145,7 @@ public:
     int fy = display.height() - 12;
     display.drawRect(0, fy - 2, display.width(), 1);
     display.setCursor(2, fy);
-    display.print("Enter:Play  Sh+Del:Back");
+    display.print("Enter:Play  Q:Back");
 #endif
 
     return 5000;  // Static menu -- slow refresh

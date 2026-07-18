@@ -520,7 +520,7 @@ private:
       display.print(line2);
     }
 
-    drawFooter(display, "O:On/Off Enter:Edit", "Sh+Del:X");
+    drawFooter(display, "O:On/Off Enter:Edit", "Q:X");
   }
 
   // ---- Render: Edit alarm ----
@@ -649,7 +649,7 @@ private:
 
       drawFooter(display, "Type digits", "Enter:OK Sh+Del:Cancel");
     } else {
-      drawFooter(display, "A/D:Adjust Enter:Type", "Sh+Del:Save");
+      drawFooter(display, "A/D:Adjust Enter:Type", "Q:Save");
     }
   }
 
@@ -671,7 +671,7 @@ private:
       display.print("Place 44kHz .mp3 in");
       display.setCursor(0, 38);
       display.print("/alarms/ on SD card");
-      drawFooter(display, "0 files", "Sh+Del:Back");
+      drawFooter(display, "0 files", "Q:Back");
       return;
     }
 
@@ -715,7 +715,7 @@ private:
 
     char countBuf[12];
     snprintf(countBuf, sizeof(countBuf), "%d files", (int)_soundFiles.size());
-    drawFooter(display, countBuf, "Enter:Pick Sh+Del:X");
+    drawFooter(display, countBuf, "Enter:Pick Q:X");
   }
 
   // ---- Render: Ringing ----
@@ -945,7 +945,7 @@ private:
     }
 
     // Shift+Del - save and exit edit
-    if (c == KEY_CANCEL) {
+    if (c == KEY_CANCEL || c == 'q') {
       memcpy(&_config.slots[_editSlot], &_editCopy, sizeof(AlarmSlot));
       saveConfig();
       _mode = ALARM_LIST;
@@ -988,7 +988,7 @@ private:
     }
 
     // Shift+Del - cancel
-    if (c == KEY_CANCEL) {
+    if (c == KEY_CANCEL || c == 'q') {
       _mode = EDIT_ALARM;
       return true;
     }

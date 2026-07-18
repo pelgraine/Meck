@@ -1175,7 +1175,7 @@ private:
     display.drawTextCentered(display.width() / 2, footerY, "Swipe: Scroll   Tap: Open   Boot: home");
 #else
     display.setCursor(0, footerY);
-    display.print("Sh+Del:Bk");
+    display.print("Q:Bk");
 
     const char* right = "Tap/Ent:Open";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
@@ -1299,7 +1299,7 @@ private:
     display.setCursor(0, footerY);
     display.print(status);
 
-    const char* right = _gotoMode ? "Ent:Go Sh+Del:Cancel" : "Entr:Pg# Sh+Del:Bk";
+    const char* right = _gotoMode ? "Ent:Go Sh+Del:Cancel" : "Entr:Pg# Q:Bk";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif

@@ -2427,7 +2427,7 @@ public:
     #if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, by + bh - 14, "Tap:Yes  Boot:No");
     #else
-      display.drawTextCentered(display.width() / 2, by + bh - 14, "Enter:Yes  Sh+Del:No");
+      display.drawTextCentered(display.width() / 2, by + bh - 14, "Enter:Yes  Q:No");
     #endif
       display.setTextSize(1);
     }
@@ -2509,7 +2509,7 @@ public:
       display.print("Tap:Pick  Boot:Back");
     #else
       display.setCursor(bx + 4, fy);
-      display.print("Enter:Pick  Sh+Del:Back");
+      display.print("Enter:Pick  Q:Back");
     #endif
 
       // Scroll indicator
@@ -2848,7 +2848,7 @@ public:
     #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap:Send  Boot:Cancel");
     #else
-      display.print("Enter:Send  Sh+Del:Cancel");
+      display.print("Enter:Send  Q:Cancel");
     #endif
       display.setTextSize(1);
     }
@@ -2949,7 +2949,7 @@ public:
     } else if (_editMode == EDIT_CONFIRM) {
       // overlay handles it
     } else {
-      display.print("Sh+Del:Bk");
+      display.print("Q:Bk");
       const char* r = "Ent:Edit";
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
       display.print(r);
@@ -2961,7 +2961,7 @@ public:
     } else if (_editMode == EDIT_WIFI) {
       if (_wifiPhase == WIFI_PHASE_SELECT) {
         if (_wifiSSIDCount == 0) {
-          display.print("R/Enter:Rescan Sh+Del:Back");
+          display.print("R/Enter:Rescan Q:Back");
         } else {
           display.print("W/S:Pick Enter:Sel R:Rescan");
         }
@@ -2974,21 +2974,21 @@ public:
     #ifdef MECK_OTA_UPDATE
     } else if (_editMode == EDIT_OTA) {
       if (_otaPhase == OTA_PHASE_CONFIRM) {
-        display.print("Enter:Start  Sh+Del:Cancel");
+        display.print("Enter:Start  Q:Cancel");
       } else if (_otaPhase == OTA_PHASE_WAITING) {
-        display.print("Sh+Del:Cancel");
+        display.print("Q:Cancel");
       } else if (_otaPhase == OTA_PHASE_ERROR) {
-        display.print("Sh+Del:Back");
+        display.print("Q:Back");
       } else {
         display.print("Please wait...");
       }
     } else if (_editMode == EDIT_FILEMGR) {
       if (_fmPhase == FM_PHASE_CONFIRM) {
-        display.print("Enter:Start  Sh+Del:Cancel");
+        display.print("Enter:Start  Q:Cancel");
       } else if (_fmPhase == FM_PHASE_WAITING) {
-        display.print("Sh+Del:Stop");
+        display.print("Q:Stop");
       } else if (_fmPhase == FM_PHASE_ERROR) {
-        display.print("Sh+Del:Back");
+        display.print("Q:Back");
       } else {
         display.print("Please wait...");
       }
@@ -2996,19 +2996,19 @@ public:
     } else if (_editMode == EDIT_PICKER) {
       display.print("A/D:Choose Enter:Ok");
     } else if (_editMode == EDIT_NUMBER) {
-      display.print("W/S:Adj Enter:Ok Sh+Del:Cancel");
+      display.print("W/S:Adj Enter:Ok Q:Cancel");
     } else if (_editMode == EDIT_CONFIRM) {
       // Footer already covered by overlay
     } else {
       if (_subScreen == SUB_CHANNELS) {
-        display.print("Sh+Del:Bk C:Share");
+        display.print("Q:Bk C:Share");
       } else if (_subScreen != SUB_NONE) {
-        display.print("Sh+Del:Back");
+        display.print("Q:Back");
       } else {
 #if defined(MECK_TWATCH)
         display.print("Hold:Edit");
 #else
-        display.print("Sh+Del:Bk");
+        display.print("Q:Bk");
 #endif
       }
 #if defined(MECK_TWATCH)
@@ -3066,7 +3066,7 @@ public:
         _confirmAction = 0;
         return true;
       }
-      if (c == KEY_CANCEL) {
+      if (c == KEY_CANCEL || c == 'q') {
         if (_confirmAction == 3) {
           // Region nudge cancelled — scroll to Default Region row
           _editMode = EDIT_NONE;
@@ -3120,7 +3120,7 @@ public:
         _editMode = EDIT_NONE;
         return true;
       }
-      if (c == KEY_CANCEL) {
+      if (c == KEY_CANCEL || c == 'q') {
         _editMode = EDIT_NONE;
         return true;
       }
@@ -3148,7 +3148,7 @@ public:
         _editMode = EDIT_NONE;
         return true;
       }
-      if (c == KEY_CANCEL) {
+      if (c == KEY_CANCEL || c == 'q') {
         _editMode = EDIT_NONE;
         return true;
       }
@@ -3164,7 +3164,7 @@ public:
           startOTAServer();
           return true;
         }
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           _editMode = EDIT_NONE;
           return true;
         }
@@ -3173,12 +3173,12 @@ public:
         if (_otaUploadOk) {
           return true;
         }
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           stopOTA();
           return true;
         }
       } else if (_otaPhase == OTA_PHASE_ERROR) {
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           stopOTA();
           return true;
         }
@@ -3194,17 +3194,17 @@ public:
           startFileMgrServer();
           return true;
         }
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           _editMode = EDIT_NONE;
           return true;
         }
       } else if (_fmPhase == FM_PHASE_WAITING) {
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           stopFileMgr();
           return true;
         }
       } else if (_fmPhase == FM_PHASE_ERROR) {
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           stopFileMgr();
           return true;
         }
@@ -3247,7 +3247,7 @@ public:
 #endif
           return true;
         }
-        if (c == KEY_CANCEL) {
+        if (c == KEY_CANCEL || c == 'q') {
           _editMode = EDIT_NONE;
           _wifiPhase = WIFI_PHASE_IDLE;
           if (_onboarding) _onboarding = false;  // Skip WiFi, finish onboarding
@@ -3524,7 +3524,7 @@ public:
         }
         return true;
       }
-      if (c == KEY_CANCEL) {
+      if (c == KEY_CANCEL || c == 'q') {
         // Revert live preview if font style picker was active
         if (type == ROW_FONT_STYLE) {
           _prefs->ui_font_style = _fontPickerOriginal;
@@ -3619,7 +3619,7 @@ public:
         _editMode = EDIT_NONE;
         return true;
       }
-      if (c == KEY_CANCEL) {
+      if (c == KEY_CANCEL || c == 'q') {
         _editMode = EDIT_NONE;
         return true;
       }
@@ -4091,7 +4091,7 @@ public:
     #endif
 
     // Shift+Del: back -- if in sub-screen, return to top level; else exit settings
-    if (c == KEY_CANCEL) {
+    if (c == KEY_CANCEL || c == 'q') {
       #ifdef HAS_SDCARD
       if (_subScreen == SUB_EXPORT_FLAGS) {
         // Return to Export/Import sub-screen

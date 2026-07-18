@@ -39,7 +39,7 @@
 #define BQ27220_I2C_ADDR 0x55
 
 #ifndef BQ27220_DESIGN_CAPACITY_MAH
-#define BQ27220_DESIGN_CAPACITY_MAH  1400
+#define BQ27220_DESIGN_CAPACITY_MAH  2500
 #endif
 
 class TDeckProMaxBoard : public ESP32Board {

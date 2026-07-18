@@ -1043,7 +1043,7 @@ private:
     int footerY = display.height() - 12;
     display.setTextSize(1);
     display.setCursor(0, footerY);
-    display.print("Ent:Send Sh+Del:Cancel");
+    display.print("Ent:Send Q:Cancel");
 
     // No-direct-path popup. RAW_CUSTOM voice packets are direct-route only,
     // so a contact with no path set cannot receive one. Drawn last so it
@@ -1172,11 +1172,11 @@ private:
     display.setTextSize(1);
     display.setCursor(0, footerY);
     if (_listPlaying) {
-      display.print("Playing... Sh+Del:Stop");
+      display.print("Playing... Q:Stop");
     } else if (!_fileList.empty()) {
       display.print("Mic:Rec Ent:Ply F:Snd D:Del");
     } else {
-      display.print("Mic:Record Sh+Del:Exit");
+      display.print("Mic:Record Q:Exit");
     }
 
     // "Loading" popup while a forward-send file is read off SD and encoded.
@@ -1321,11 +1321,11 @@ private:
     display.setTextSize(1);
     display.setCursor(0, footerY);
     if (_reviewPlaying) {
-      display.print("Sh+Del:Stop");
+      display.print("Q:Stop");
     } else if (_c2Valid) {
-      display.print("S:Send Ent:Play Mic:Redo Sh+Del:List");
+      display.print("S:Send Ent:Play Mic:Redo Q:List");
     } else {
-      display.print("Ent:Play Mic:Redo D:Del Sh+Del:List");
+      display.print("Ent:Play Mic:Redo D:Del Q:List");
     }
   }
 

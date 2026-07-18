@@ -196,7 +196,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Swipe:Scroll");
 #else
-    display.print("Sh+Del:Bk  W/S:Scroll");
+    display.print("Q:Bk  W/S:Scroll");
 #endif
 #endif
 

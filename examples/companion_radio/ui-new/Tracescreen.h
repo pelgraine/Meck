@@ -586,7 +586,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Boot:Cancel  Tap:Apply");
 #else
-      display.print("Sh+Del:Cancel Enter:Apply");
+      display.print("Q:Cancel Enter:Apply");
 #endif
     } else {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -594,7 +594,7 @@ private:
 #elif defined(MECK_TWATCH)
       display.print("Tap:Sel  Hold:Go");
 #else
-      display.print("Sh+Del:Exit W/S:Nav Ent:Sel");
+      display.print("Q:Exit W/S:Nav Ent:Sel");
 #endif
     }
 
@@ -659,7 +659,7 @@ private:
 #elif defined(MECK_TWATCH)
     display.print("Tap:Sel  Hold:Add");
 #else
-    display.print("Sh+Del:Back W/S:Scroll Ent:Add");
+    display.print("Q:Back W/S:Scroll Ent:Add");
 #endif
 
     return 5000;
@@ -715,7 +715,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Boot:Cancel");
 #else
-    display.print("Sh+Del:Cancel");
+    display.print("Q:Cancel");
 #endif
 
     return 500;  // Fast refresh for elapsed timer
@@ -813,7 +813,7 @@ private:
 #elif defined(MECK_TWATCH)
     display.print("Hold: New Trace");
 #else
-    display.print("Sh+Del:Back  Ent:New Trace");
+    display.print("Q:Back  Ent:New Trace");
 #endif
 
     return 5000;

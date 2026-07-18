@@ -1005,7 +1005,7 @@ public:
       display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
-      display.print("Sh+Del:Bck");
+      display.print("Q:Bck");
       const char* rtInbox = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
       display.print(rtInbox);
@@ -1206,7 +1206,7 @@ public:
       display.print("Back");
       const char* copyHint = "Tap:Dismiss";
 #else
-      display.print("Sh+Del:Back");
+      display.print("Q:Back");
       // Show scroll hint if path is scrollable
       if (msg && (msg->path_len & 63) > _pathHopsVisible && msg->path_len != 0xFF) {
         const char* scrollHint = "W/S:Scrl";
@@ -1238,7 +1238,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Hold: Compose reply");
 #else
-        display.print("Sh+Del: Back to inbox");
+        display.print("Q: Back to inbox");
         display.setCursor(0, 40);
         display.print("Ent: Compose reply");
 #endif
@@ -1758,21 +1758,21 @@ public:
 #else
     // Left side: abbreviated controls
     if (_replySelectMode) {
-      display.print("W/S:Sel V:Pth Sh+Del:X");
+      display.print("W/S:Sel V:Pth Q:X");
       const char* rightText = "Ent:Reply";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else if (_viewChannelIdx == 0xFF) {
       if (_dmContactPerms > 0) {
-        display.print("Sh+Del:Exit L:Admin");
+        display.print("Q:Exit L:Admin");
       } else {
-        display.print("Sh+Del:Exit");
+        display.print("Q:Exit");
       }
       const char* rightText = "Ent:Reply";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Sh+Del:Bck R:Rply");
+      display.print("Q:Bck R:Rply");
       const char* rightText = "Ent:New";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);

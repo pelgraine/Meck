@@ -379,7 +379,7 @@ public:
     #if defined(LilyGo_T5S3_EPaper_Pro)
       const char* hints = "Tap:Yes  Boot:Cancel";
     #else
-      const char* hints = "Enter:Yes  Sh+Del:Cancel";
+      const char* hints = "Enter:Yes  Q:Cancel";
     #endif
       display.setCursor(boxX + 4, boxY + 29);
       display.print(hints);
@@ -411,9 +411,9 @@ public:
     display.print(rt);
 #else
     if (_confirmDelete) {
-      display.print("Enter:Yes Sh+Del:Cancel");
+      display.print("Enter:Yes Q:Cancel");
     } else {
-      display.print("W/S:Nav Sh+Del:X");
+      display.print("W/S:Nav Q:X");
       const char* rt = "Ent:Open";
       display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
       display.print(rt);

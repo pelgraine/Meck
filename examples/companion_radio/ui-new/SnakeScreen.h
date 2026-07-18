@@ -459,7 +459,7 @@ public:
           ty += 12;
         }
         display.setColor(DisplayDriver::GREEN);
-        display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
+        display.drawTextCentered(cx, ty, "Enter:Retry  Q:Back");
       }
     }
 
@@ -476,10 +476,10 @@ public:
     display.drawRect(0, fy - 2, display.width(), 1);
     if (_state == PLAYING) {
       display.setCursor(2, fy);
-      display.print("Sh+Del:Back");
+      display.print("Q:Back");
     } else if (_state == READY) {
       display.setCursor(2, fy);
-      display.print("Enter:Start  Sh+Del:Back");
+      display.print("Enter:Start  Q:Back");
     }
 #endif
 
