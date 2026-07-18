@@ -502,6 +502,16 @@ void MyMesh::scheduleLazyContactSave() {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+// A contact add/update/import arrived from the BLE companion app (not passive
+// advert learning). Schedule the normal 5s lazy write AND clear the 12h flush
+// cap so the change is persisted promptly -- otherwise a BLE import can be lost
+// on reboot for up to CONTACTS_SAVE_INTERVAL. The 5s dirty debounce still
+// coalesces a bulk sync into a single chunked save once the burst ends.
+void MyMesh::scheduleAppContactSave() {
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  _nextContactSaveDue   = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+}
+
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   out_frame[0] = PUSH_CODE_PATH_UPDATED;
   memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
@@ -1948,7 +1958,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (recipient) {
       recipient->out_path_len = OUT_PATH_UNKNOWN;
       // recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // unknown contact
@@ -1960,7 +1970,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (recipient) {
       updateContactFromFrame(*recipient, last_mod, cmd_frame, len);
       recipient->lastmod = last_mod;
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       ContactInfo contact;
@@ -1968,7 +1978,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       contact.lastmod = last_mod;
       contact.sync_since = 0;
       if (addContact(contact)) {
-        dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+        scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
         writeOKFrame();
       } else {
         writeErrFrame(ERR_CODE_TABLE_FULL);
@@ -1978,7 +1988,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient && removeContact(*recipient)) {
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // not found, or unable to remove
@@ -2035,7 +2045,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
   } else if (cmd_frame[0] == CMD_IMPORT_CONTACT && len > 2 + 32 + 64) {
     if (importContact(&cmd_frame[1], len - 1)) {
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app import: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);

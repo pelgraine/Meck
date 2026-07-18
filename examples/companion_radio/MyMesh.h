@@ -167,6 +167,7 @@ public:
 
   // Last Heard — public wrappers for contact add/remove from UI
   void scheduleLazyContactSave();
+  void scheduleAppContactSave();   // BLE app add/update/import: bypass the 12h flush cap
   int getContactBlob(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
     return getBlobByKey(key, key_len, dest_buf);
   }
