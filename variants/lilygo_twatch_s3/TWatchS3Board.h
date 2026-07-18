@@ -26,6 +26,7 @@ class TWatchS3Board : public ESP32Board {
   XPowersAXP2101* _axp = NULL;   // same object as PMU, concrete type
   SensorBMA423* _accel = nullptr;
   static volatile bool _tilt_flag;
+  static volatile uint32_t _tilt_isr_count;   // TEMP diagnostic
   static void IRAM_ATTR onTiltISR();   // defined in the .cpp (IRAM relocation)
 
   bool power_init();
