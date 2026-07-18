@@ -1125,9 +1125,6 @@ static uint32_t _atoi(const char* sp) {
 /* GLOBAL OBJECTS */
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
-  #if defined(LILYGO_TWATCH_S3)
-    #include "WatchAlarmScreen.h"  // After UITask.h -- needs NodePrefs
-  #endif
   #if defined(MECK_TWATCH)
     #include "WatchNotesScreen.h"  // After UITask.h -- needs NodePrefs
     #include "WatchChannelConfigScreen.h"  // After UITask.h -- needs NodePrefs, the_mesh
@@ -1365,16 +1362,6 @@ static void lastHeardToggleContact() {
     if (ui_task.isOnMapScreen()) {
       WatchMapScreen* wms = (WatchMapScreen*)ui_task.getMapScreen();
       if (wms) wms->handleTap(x, y);
-      return 0;
-    }
-#endif
-#if defined(LILYGO_TWATCH_S3)
-    // Alarm screen: rows, +/- steppers and the footer are all tap targets.
-    // readTouch() already returns logical (UI_ZOOM-divided) coords on the watch,
-    // which is the space WatchAlarmScreen lays out in. No further scaling.
-    if (ui_task.isOnWatchAlarmScreen()) {
-      WatchAlarmScreen* wa = (WatchAlarmScreen*)ui_task.getWatchAlarmScreen();
-      if (wa) wa->handleTap(x, y);
       return 0;
     }
 #endif
@@ -1958,8 +1945,8 @@ static void lastHeardToggleContact() {
         if (row == 1 && col == 1) { ui_task.gotoDiscoveryScreen();     return 0; }
         if (row == 2 && col == 0) { ui_task.gotoTraceScreen();         return 0; }
 #if defined(LILYGO_TWATCH_S3)
-        // No GNSS on the plain S3, so this slot is the vibrate alarm clock.
-        if (row == 2 && col == 1) { ui_task.gotoWatchAlarmScreen(); return 0; }
+        // No GNSS on the plain S3, so this slot is the games launcher.
+        if (row == 2 && col == 1) { ui_task.gotoGamesMenu(); return 0; }
 #elif HAS_GPS
         if (row == 2 && col == 1) {
           // Maps: mark the tile FS ready (detectZoomRange in enter() needs it)

@@ -79,9 +79,6 @@
 #if defined(MECK_TWATCH)
 #include <LittleFS.h>          // step history persistence (the "maps" partition)
 #endif
-#if defined(LILYGO_TWATCH_S3)
-#include "WatchAlarmScreen.h"
-#endif
 #if defined(MECK_TWATCH)
 #include "WatchNotesScreen.h"   // After UITask.h -- needs NodePrefs
 #include "WatchChannelConfigScreen.h"   // After UITask.h -- needs NodePrefs, the_mesh
@@ -704,7 +701,7 @@ public:
           { {icon_envelope, "Messages", 0x0CB1}, {icon_people,  "Contacts", 0xCAA0} },
           { {icon_gear,     "Settings", 0x0560}, {icon_search,  "Discover", 0xF81F} },
 #if defined(LILYGO_TWATCH_S3)
-          { {icon_trace,    "Trace",    0xF800}, {icon_alarm,   "Alarms",   0x231D} },
+          { {icon_trace,    "Trace",    0xF800}, {icon_gamepad, "Games",    0x231D} },
 #else
           { {icon_trace,    "Trace",    0xF800}, {icon_map,     "Maps",     0x231D} },
 #endif
@@ -1791,11 +1788,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
   loadSteps();
 #endif
-#if defined(LILYGO_TWATCH_S3)
-  // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
-  watch_alarm_screen = new WatchAlarmScreen(this, &rtc_clock, node_prefs);
-  ((WatchAlarmScreen*)watch_alarm_screen)->load();
-#endif
 #if defined(MECK_TWATCH)
   // LittleFS ("/maps" partition) is mounted in setup() before UITask::begin().
   watch_notes_screen = new WatchNotesScreen(this, &rtc_clock, node_prefs);
@@ -2511,25 +2503,6 @@ void UITask::loop() {
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
 
-#if defined(LILYGO_TWATCH_S3) && !defined(MECK_DIAG_NO_ALARM)
-  // Alarms are checked every loop, not from the screen's poll(), so one fires
-  // with the display off or another screen showing.
-  if (watch_alarm_screen) {
-    WatchAlarmScreen* wa = (WatchAlarmScreen*)watch_alarm_screen;
-    bool fired = wa->tick();
-    if (fired || wa->isRinging()) {
-      // Hold the screen and the display for the whole ring. Without this the
-      // display auto-offs after AUTO_OFF_MILLIS, the buzzing trips the BMA423
-      // tilt detector, and raise-to-wake below swaps in the clock screen. It
-      // also guarantees the PWR key reaches handleInput() as KEY_ENTER rather
-      // than being consumed by checkDisplayOn() as a wake.
-      if (curr != watch_alarm_screen) setCurrScreen(watch_alarm_screen);
-      if (_display != NULL && !_display->isOn()) _display->turnOn();
-      _auto_off = millis() + AUTO_OFF_MILLIS;
-      if (fired) _next_refresh = 0;
-    }
-  }
-#endif
 
 if (curr) curr->poll();
 
@@ -4053,18 +4026,6 @@ void UITask::gotoStepsHistoryScreen() {
 }
 #endif
 
-#if defined(LILYGO_TWATCH_S3)
-void UITask::gotoWatchAlarmScreen() {
-  WatchAlarmScreen* wa = (WatchAlarmScreen*)watch_alarm_screen;
-  if (wa) wa->enter();
-  setCurrScreen(watch_alarm_screen);
-  if (_display != NULL && !_display->isOn()) {
-    _display->turnOn();
-  }
-  _auto_off = millis() + AUTO_OFF_MILLIS;
-  _next_refresh = 100;
-}
-#endif
 
 void UITask::gotoGamesMenu() {
   GamesMenuScreen* gm = (GamesMenuScreen*)games_menu_screen;

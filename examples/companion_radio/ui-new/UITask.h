@@ -139,9 +139,6 @@ class UITask : public AbstractUITask {
   void rollStepDays(int32_t newDay);
   void shiftStepHistory(uint32_t completedDay);
 #endif
-#if defined(LILYGO_TWATCH_S3)
-  UIScreen* watch_alarm_screen;  // Vibrate-only alarm clock (no audio hardware)
-#endif
 #if defined(MECK_TWATCH)
   UIScreen* watch_notes_screen;  // LittleFS note pad (shared NotesScreen needs SD)
   UIScreen* watch_channel_cfg_screen;  // Per-channel region/notif/delete (touch UI)
@@ -253,9 +250,6 @@ public:
   uint32_t getTodaySteps();                // Steps accumulated today
   uint32_t getStepHistory(int daysAgo);    // 0 = today, 1..6 = previous days
 #endif
-#if defined(LILYGO_TWATCH_S3)
-  void gotoWatchAlarmScreen();             // Navigate to the vibrate alarm clock
-#endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -320,9 +314,6 @@ public:
 #if defined(MECK_TWATCH)
   bool isOnStepsScreen() const { return curr == steps_screen; }
   bool isOnStepsHistoryScreen() const { return curr == steps_history_screen; }
-#endif
-#if defined(LILYGO_TWATCH_S3)
-  bool isOnWatchAlarmScreen() const { return curr == watch_alarm_screen; }
 #endif
 #if defined(MECK_TWATCH)
   bool isOnWatchNotesScreen() const { return curr == watch_notes_screen; }
@@ -426,9 +417,6 @@ public:
 #if defined(MECK_TWATCH)
   UIScreen* getStepsScreen() const { return steps_screen; }
   UIScreen* getStepsHistoryScreen() const { return steps_history_screen; }
-#endif
-#if defined(LILYGO_TWATCH_S3)
-  UIScreen* getWatchAlarmScreen() const { return watch_alarm_screen; }
 #endif
 #if defined(MECK_TWATCH)
   UIScreen* getWatchNotesScreen() const { return watch_notes_screen; }
