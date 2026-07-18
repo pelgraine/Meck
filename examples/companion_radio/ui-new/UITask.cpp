@@ -2689,6 +2689,13 @@ if (curr) curr->poll();
         setCurrScreen(watch_channel_cfg_screen);
       }
     }
+    // Touch activates rows via injectKey->handleInput, which bypasses the
+    // main.cpp key handler that consumes this flag. Consume it here too so a
+    // watch long-press opens the Rx Log (mirrors wantsWatchChannels above).
+    if (ss->isRxLogRequested()) {
+      ss->clearRxLogRequest();
+      gotoRxLogScreen();
+    }
   }
 #endif
 

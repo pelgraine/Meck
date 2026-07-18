@@ -2371,7 +2371,9 @@ public:
 
 #if defined(MECK_TWATCH)
       if (selected && tickerPass == 0) {
-        rowTextW = ((LGFXDisplay*)&display)->getCursorX() - rowStartX;
+        // getCursorX() is unusable here: LGFXDisplay::print() calls buffer.println(),
+        // whose newline resets the cursor X to 0. Measure the string directly.
+        rowTextW = display.getTextWidth(tmp);
       }
       }  // ticker pass loop
       if (selected) _tickerTextW = rowTextW;
