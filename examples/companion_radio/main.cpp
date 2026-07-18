@@ -1348,7 +1348,15 @@ static void lastHeardToggleContact() {
 
     // Snake screen: tap = Enter (start / restart)
     if (ui_task.isOnSnakeScreen()) {
+#if defined(MECK_TWATCH)
+      // Watch: tap starts/restarts, or steers by tapping the up/down/left/right
+      // zone relative to the board centre while playing.
+      SnakeScreen* sk = (SnakeScreen*)ui_task.getSnakeScreen();
+      if (sk) sk->handleTap(x, y);
+      return 0;
+#else
       return '\r';
+#endif
     }
 
     // Minesweeper screen: tap = Enter (reveal cell / start / restart)

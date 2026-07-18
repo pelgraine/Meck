@@ -136,7 +136,7 @@ public:
 
     // --- Footer ---
     display.setColor(DisplayDriver::LIGHT);
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
     display.setTextSize(0);
     display.drawTextCentered(display.width() / 2, display.height() - 8, "Tap to select");
     display.setTextSize(1);
@@ -145,7 +145,7 @@ public:
     int fy = display.height() - 12;
     display.drawRect(0, fy - 2, display.width(), 1);
     display.setCursor(2, fy);
-    display.print("Enter:Play  Q:Back");
+    display.print("Enter:Play  Sh+Del:Back");
 #endif
 
     return 5000;  // Static menu -- slow refresh
