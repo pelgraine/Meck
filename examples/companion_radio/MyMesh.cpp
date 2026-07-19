@@ -643,6 +643,27 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
       if (memcmp(packet->payload, t->fingerprint, SENT_FINGERPRINT_SIZE) == 0) {
         t->repeat_count++;
         MESH_DEBUG_PRINTLN("SentTrack: heard repeat #%d (SNR=%.1f)", t->repeat_count, packet->getSNR());
+
+        // Record only the FIRST hop of each echo -- the repeater that heard our
+        // transmission directly and re-flooded it. Later hops in the path are
+        // downstream relays we did NOT hear directly, so they don't belong in
+        // "Heard by". Dedup so each direct repeater is listed once.
+        {
+          uint8_t hops = packet->path_len & 63;
+          uint8_t bph  = (packet->path_len >> 6) + 1;
+          if (hops > 0 && bph >= 1 && bph <= 2) {
+            bool seen = false;
+            for (int e = 0; e < t->echo_count; e++) {
+              if (memcmp(&t->echo_hash[e * bph], packet->path, bph) == 0) { seen = true; break; }
+            }
+            if (!seen && t->echo_count < SENT_ECHO_MAX) {
+              t->echo_bph = bph;
+              memcpy(&t->echo_hash[t->echo_count * bph], packet->path, bph);
+              t->echo_snr[t->echo_count] = packet->_snr;
+              t->echo_count++;
+            }
+          }
+        }
         
 #ifdef DISPLAY_CLASS
         if (_ui) {
@@ -657,6 +678,38 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   }
 
   return false;  // never filter Ã¢â‚¬â€ let normal processing continue
+}
+
+uint8_t MyMesh::getHeardBy(const uint8_t* payload, uint16_t payload_len,
+                           uint8_t& out_bph, uint8_t& out_count,
+                           uint8_t* out_hash, int8_t* out_snr, uint8_t max_src) const {
+  out_bph = 0;
+  out_count = 0;
+  if (payload_len < SENT_FINGERPRINT_SIZE) return 0;
+  unsigned long now = millis();
+  for (int i = 0; i < SENT_TRACK_SIZE; i++) {
+    const SentMsgTrack* t = &_sent_track[i];
+    if (!t->active) continue;
+    if ((now - t->sent_millis) > SENT_TRACK_EXPIRY_MS) continue;
+    if (memcmp(payload, t->fingerprint, SENT_FINGERPRINT_SIZE) != 0) continue;
+    out_bph = t->echo_bph;
+    uint8_t n = (t->echo_count > max_src) ? max_src : t->echo_count;
+    for (uint8_t e = 0; e < n; e++) {
+      if (t->echo_bph) memcpy(&out_hash[e * t->echo_bph], &t->echo_hash[e * t->echo_bph], t->echo_bph);
+      out_snr[e] = t->echo_snr[e];
+    }
+    out_count = n;
+    return t->repeat_count;
+  }
+  return 0;
+}
+
+bool MyMesh::getLastSentFingerprint(uint8_t* out) const {
+  int last = (_sent_track_idx - 1 + SENT_TRACK_SIZE) % SENT_TRACK_SIZE;
+  const SentMsgTrack* t = &_sent_track[last];
+  if (!t->active) return false;
+  memcpy(out, t->fingerprint, SENT_FINGERPRINT_SIZE);
+  return true;
 }
 
 void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -684,6 +737,8 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     SentMsgTrack* t = &_sent_track[_sent_track_idx];
     memcpy(t->fingerprint, pkt->payload, SENT_FINGERPRINT_SIZE);
     t->repeat_count = 0;
+    t->echo_count = 0;
+    t->echo_bph = 0;
     t->sent_millis = millis();
     t->active = true;
     _sent_track_idx = (_sent_track_idx + 1) % SENT_TRACK_SIZE;

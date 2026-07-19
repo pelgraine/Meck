@@ -80,6 +80,7 @@ public:
     uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
+    bool has_fp;        // sent bubble carries a 12-byte send fingerprint in path[] ("Heard by")
     uint8_t scope_idx;  // Region scope index for display (session only, 0xFF = unscoped). Not persisted.
     // --- DM send status (session only). Not persisted to SD. ---
     uint32_t send_ref;   // Tracked-send handle from MyMesh (0 = untracked)
@@ -178,7 +179,8 @@ public:
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
                   const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr,
                   bool suppressUnread = false, uint8_t scope_idx = 0xFF,
-                  uint32_t send_ref = 0, uint8_t send_total = 0) {
+                  uint32_t send_ref = 0, uint8_t send_total = 0,
+                  const uint8_t* sent_fp = nullptr) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -209,6 +211,14 @@ public:
       int n = mesh::Packet::getPathByteLenFor(path_len);
       if (n > MSG_PATH_MAX) n = MSG_PATH_MAX;
       memcpy(msg->path, path_bytes, n);
+    }
+
+    // Sent bubble: stash the 12-byte send fingerprint in the otherwise-unused
+    // path buffer so the "Heard by" overlay can match it to the repeat track.
+    msg->has_fp = false;
+    if (sent_fp && path_len == 0) {
+      memcpy(msg->path, sent_fp, 12);  // SENT_FINGERPRINT_SIZE
+      msg->has_fp = true;
     }
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes

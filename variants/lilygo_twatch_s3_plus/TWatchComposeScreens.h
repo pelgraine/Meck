@@ -297,6 +297,67 @@ class TWatchChannelScreen : public UIScreen {
     ((LGFXDisplay*)_display)->setTextWrap(true);
   }
 
+  // Renders the "Heard by" list (repeaters that echoed our sent message + the
+  // SNR we heard each at) into the already-drawn overlay box. Data comes from
+  // MyMesh::getHeardBy, keyed by the fingerprint stashed in the sent bubble's
+  // path[]. Same blue box as the hop-path overlay.
+  void drawHeardBy(LGFXDisplay* d, const ChannelScreen::ChannelMessage* m,
+                   int bx, int by, int bh) {
+    uint8_t bph = 0, count = 0;
+    uint8_t hashes[16];
+    int8_t  snrs[8];
+    (void)bh;
+    the_mesh.getHeardBy(m->path, 12, bph, count, hashes, snrs, 8);
+
+    char head[28];
+    snprintf(head, sizeof(head), "Heard by: %d", count);   // distinct repeaters
+    d->setRawColor(0x7BEF);
+    d->printSmallFont(bx + 5, by + 8, head);
+
+    if (count == 0 || bph == 0) {
+      d->setRawColor(0xFFFF);
+      d->printSmallFont(bx + 5, by + 19, "No repeater echoes yet");
+      return;
+    }
+
+    const int maxLines = 5;                       // 5 repeaters, then a "+N more" 6th line
+    int shown = (count > maxLines) ? maxLines : count;
+    int y = by + 19;
+    for (int i = 0; i < shown; i++) {
+      const int off = i * bph;
+      char hex[6];
+      if (bph == 1) snprintf(hex, sizeof(hex), "%02x", hashes[off]);
+      else          snprintf(hex, sizeof(hex), "%02x%02x", hashes[off], hashes[off + 1]);
+
+      char nm[16]; nm[0] = 0;
+      uint32_t numC = the_mesh.getNumContacts();
+      ContactInfo c;
+      for (int pass = 0; pass < 2 && nm[0] == 0; pass++) {
+        for (uint32_t ci = 0; ci < numC; ci++) {
+          if (!the_mesh.getContactByIdx(ci, c)) continue;
+          if (memcmp(c.id.pub_key, &hashes[off], bph) != 0) continue;
+          if (pass == 0 && c.type != ADV_TYPE_REPEATER) continue;
+          strncpy(nm, c.name, sizeof(nm) - 1); nm[sizeof(nm) - 1] = 0;
+          break;
+        }
+      }
+
+      int8_t s = snrs[i];
+      char line[40];
+      snprintf(line, sizeof(line), "(%s) %s %d.%ddB",
+               hex, nm[0] ? nm : "?", s / 4, ((abs((int)s) % 4) * 10) / 4);
+      d->setRawColor(0xFFFF);
+      d->printSmallFont(bx + 5, y, line);
+      y += 9;
+    }
+    if (count > shown) {
+      d->setRawColor(0xFFFF);
+      char more[16];
+      snprintf(more, sizeof(more), "+%d more", count - shown);
+      d->printSmallFont(bx + 5, y, more);
+    }
+  }
+
   // Hop-path overlay for the message at recency _pathMsgN. Drawn last so it
   // sits above the message list; toggled by the button (see handleInput),
   // dismissed by any tap (see poll).
@@ -311,6 +372,13 @@ class TWatchChannelScreen : public UIScreen {
     d->fillRoundRect(bx, by, bw, bh, 4);
     d->setRawColor(0x231D);
     d->drawRoundRect(bx, by, bw, bh, 4);
+
+    // Sent message with a captured fingerprint: show which repeaters echoed it
+    // ("Heard by") instead of a hop path, which a sent bubble doesn't have.
+    if (m->path_len == 0 && m->has_fp) {
+      drawHeardBy(d, m, bx, by, bh);
+      return;
+    }
 
     char head[28];
     if (m->path_len == 0) {

@@ -307,6 +307,19 @@ public:
     _store->saveMainIdentity(self_id);
   }
 
+  // "Heard by" repeat data for a sent message (for the repeat overlay). Finds the
+  // sent-track matching 'payload' and copies up to 'max_src' echo sources into the
+  // caller's buffers. Returns total repeat_count (0 if not/no longer tracked).
+  // out_hash receives out_count * out_bph bytes; out_snr receives out_count values.
+  uint8_t getHeardBy(const uint8_t* payload, uint16_t payload_len,
+                     uint8_t& out_bph, uint8_t& out_count,
+                     uint8_t* out_hash, int8_t* out_snr, uint8_t max_src) const;
+
+  // Fingerprint of the most-recently tracked send (channel message). The UI calls
+  // this right after a send to tag the displayed bubble, so getHeardBy can later
+  // match it. Returns false if there is no active recent send.
+  bool getLastSentFingerprint(uint8_t* out) const;
+
 private:
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
@@ -425,12 +438,19 @@ private:
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4
   #define SENT_FINGERPRINT_SIZE    12
-  #define SENT_TRACK_EXPIRY_MS     30000  // stop tracking after 30 seconds
+  #define SENT_TRACK_EXPIRY_MS     600000  // keep heard-by viewable for 10 minutes
+  #define SENT_ECHO_MAX            8       // distinct "heard by" repeaters stored per send
   struct SentMsgTrack {
     uint8_t fingerprint[SENT_FINGERPRINT_SIZE];
     uint8_t repeat_count;
     unsigned long sent_millis;
     bool active;
+    // "Heard by": which repeaters re-flooded this message and how well we heard
+    // each. Captured from the first hop of each echo packet in filterRecvFloodPacket.
+    uint8_t echo_bph;                       // bytes-per-hop of stored hashes (1 or 2)
+    uint8_t echo_count;                     // distinct repeaters recorded (<= SENT_ECHO_MAX)
+    uint8_t echo_hash[SENT_ECHO_MAX * 2];   // first-hop hash of each source
+    int8_t  echo_snr[SENT_ECHO_MAX];        // SNR (quarter-dB) heard from each source
   };
   SentMsgTrack _sent_track[SENT_TRACK_SIZE];
   int _sent_track_idx;  // next slot in circular buffer

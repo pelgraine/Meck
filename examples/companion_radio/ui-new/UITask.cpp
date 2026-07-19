@@ -3742,9 +3742,16 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   // Format the message as "Sender: message"
   char formattedMsg[CHANNEL_MSG_TEXT_LEN];
   snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
-  
+
+  // Tag the bubble with this send's fingerprint so the "Heard by" overlay can
+  // later match it to the repeat track (MyMesh::getHeardBy).
+  uint8_t fp[12];  // SENT_FINGERPRINT_SIZE
+  bool haveFp = the_mesh.getLastSentFingerprint(fp);
+
   // Add to channel history with path_len=0 (local message)
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg,
+                                                  nullptr, 0, nullptr, false, 0xFF, 0, 0,
+                                                  haveFp ? fp : nullptr);
 }
 
 void UITask::addSentDM(const char* recipientName, const char* sender, const char* text,
