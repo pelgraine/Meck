@@ -37,11 +37,7 @@ class UITask;
 #define SNAKE_HI_VERSION 1
 
 // Tick cadence: the watch LCD has no e-ink refresh limit, so run a touch faster.
-#if defined(MECK_TWATCH)
-  #define SNAKE_TICK_MS  250
-#else
   #define SNAKE_TICK_MS  500
-#endif
 
 class SnakeScreen : public UIScreen {
 public:
@@ -403,9 +399,7 @@ public:
       display.drawTextCentered(cx, y, "Classic Snake");
       y += 14;
       display.setColor(DisplayDriver::GREEN);
-#if defined(MECK_TWATCH)
-      display.drawTextCentered(cx, y, "Tap to steer");
-#elif defined(LilyGo_T5S3_EPaper_Pro)
+#if   defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(cx, y, "Swipe to steer");
 #else
       display.drawTextCentered(cx, y, "W/S/A/D to steer");
@@ -440,7 +434,7 @@ public:
       }
 
       display.setColor(DisplayDriver::LIGHT);
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(cx, y, "Tap to start");
 #else
       display.drawTextCentered(cx, y, "Press Enter to start");
@@ -493,16 +487,12 @@ public:
           ty += 12;
         }
         display.setColor(DisplayDriver::GREEN);
-#if defined(MECK_TWATCH)
-        display.drawTextCentered(cx, ty, "Tap to retry");
-#else
         display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
-#endif
       }
     }
 
     display.setColor(DisplayDriver::LIGHT);
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
     char footBuf[32];
     snprintf(footBuf, sizeof(footBuf), "Score: %d", _score);
     display.setTextSize(0);

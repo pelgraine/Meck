@@ -12,7 +12,7 @@
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
 
-#if defined(LilyGo_TDeck_Pro_Max) || defined(LILYGO_TWATCH_S3)
+#if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"     // inline haptic driver for the 'buzz' CLI test command
 #endif
 
@@ -1427,20 +1427,8 @@ bool MyMesh::onContactPathRecv(ContactInfo& contact, uint8_t* in_path, uint8_t i
   // auto-discovery overwrite it.  Skip the base class call entirely — ACKs
   // embedded in path responses will still be delivered via separate ACK packets.
   if (contact.flags & CONTACT_FLAG_CUSTOM_PATH) {
-#if defined(MECK_TWATCH)
-    // Watch: keep the manually set path (don't let discovery overwrite it), but
-    // STILL deliver an embedded login/response reply riding on this path packet
-    // -- otherwise logins to custom-path contacts silently time out. Gated to
-    // the watch so other builds' admin flow is unchanged.
-    MESH_DEBUG_PRINTLN("onContactPathRecv: custom-path %s, keeping path, delivering response (type=%d len=%d)", contact.name, extra_type, extra_len);
-    if (extra_type == PAYLOAD_TYPE_RESPONSE && extra_len > 0) {
-      onContactResponse(contact, extra, extra_len);
-    }
-    return false;
-#else
     MESH_DEBUG_PRINTLN("onContactPathRecv: skipping path update for custom-path contact %s", contact.name);
     return false;
-#endif
   }
   return BaseChatMesh::onContactPathRecv(contact, in_path, in_path_len, out_path, out_path_len, extra_type, extra, extra_len);
 }
@@ -2561,10 +2549,6 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (strcmp(sp, "gps") == 0) {
           _prefs.gps_enabled = (np[0] == '1') ? 1 : 0;
           savePrefs();
-          #if defined(MECK_TWATCH)
-            // Apply the BLDO1 GPS rail live so the toggle takes effect now, no reboot
-            if (_prefs.gps_enabled) board.gpsPowerOn(); else board.gpsPowerOff();
-          #endif
         } else if (strcmp(sp, "gps_interval") == 0) {
           uint32_t interval_seconds = atoi(np);
           _prefs.gps_interval = constrain(interval_seconds, 0, 86400);
@@ -3748,7 +3732,7 @@ void MyMesh::checkCLIRescueCmd() {
       }
 
     }
-#if defined(LilyGo_TDeck_Pro_Max) || defined(LILYGO_TWATCH_S3)
+#if defined(LilyGo_TDeck_Pro_Max)
     else if (strncmp(cli_command, "buzz", 4) == 0 &&
              (cli_command[4] == '\0' || cli_command[4] == ' ')) {
       // Fire a DRV2605 library-1 effect to confirm the motor works.

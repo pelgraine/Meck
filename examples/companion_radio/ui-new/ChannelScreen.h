@@ -11,9 +11,6 @@
 #if defined(HAS_SDCARD) && defined(ESP32)
   #include <SD.h>
 #endif
-#if defined(MECK_TWATCH)
-  #include <LittleFS.h>   // watch has no SD -- message history persists to LittleFS
-#endif
 
 // DM send status codes (session only). Guarded so AbstractUITask.h can carry
 // the same definitions without a clash.
@@ -107,9 +104,6 @@ private:
   int _msgsPerPage;   // Messages that fit on screen
   uint8_t _viewChannelIdx;  // Which channel we're currently viewing
   bool _sdReady;      // SD card is available for persistence
-#if defined(MECK_TWATCH)
-  unsigned long _msgDirtySince = 0;  // watch: pending LittleFS write (0 = clean)
-#endif
   bool _showPathOverlay;  // Show path detail overlay for last received msg
   int _pathScrollPos;     // Scroll offset within path overlay hop list
   int _pathHopsVisible;   // Hops that fit on screen (set during render)
@@ -223,58 +217,7 @@ public:
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
     // The text already contains "Sender: message" format
-#if defined(MECK_TWATCH)
-    // Watch build: drop emoji entirely instead of storing sprite escape bytes.
-    // The watch UI has no sprite rendering and no room for emoji at 120x120
-    // virtual. Non-emoji UTF-8 (accented letters etc.) passes through
-    // unchanged, the same as emojiSanitize does.
-    {
-      const uint8_t* s = (const uint8_t*)text;
-      int srcLen = (int)strlen(text);
-      int si = 0, di = 0;
-      while (si < srcLen && di < CHANNEL_MSG_TEXT_LEN - 1) {
-        uint8_t b = s[si];
-        if (b < 0x80) { msg->text[di++] = (char)b; si++; continue; }
-        int consumed;
-        uint32_t cp = emojiDecodeUtf8(s + si, srcLen - si, &consumed);
-        if (cp == 0xFE0F) { si += consumed; continue; }   // variation selector
-        if (cp == 0xFFFD) { si += consumed; continue; }   // invalid UTF-8 -- skip
-        bool isEmoji = false;
-        for (int e = 0; e < EMOJI_COUNT; e++) {
-          if (EMOJI_CODEPOINTS[e].cp == cp) {
-            if (EMOJI_CODEPOINTS[e].cp2 != 0) {
-              // two-codepoint emoji: only a match when the pair matches
-              int consumed2;
-              if (si + consumed < srcLen) {
-                uint32_t cp2 = emojiDecodeUtf8(s + si + consumed, srcLen - si - consumed, &consumed2);
-                if (cp2 == EMOJI_CODEPOINTS[e].cp2) {
-                  si += consumed + consumed2;
-                  isEmoji = true;
-                  break;
-                }
-              }
-              continue;
-            }
-            si += consumed;
-            isEmoji = true;
-            break;
-          }
-        }
-        if (!isEmoji) {
-          for (int a = 0; a < EMOJI_ALIAS_COUNT; a++) {
-            if (EMOJI_ALIASES[a].cp == cp) { si += consumed; isEmoji = true; break; }
-          }
-        }
-        if (isEmoji) continue;   // dropped
-        if (di + consumed >= CHANNEL_MSG_TEXT_LEN) break;
-        for (int k = 0; k < consumed; k++) msg->text[di++] = (char)s[si + k];
-        si += consumed;
-      }
-      msg->text[di] = 0;
-    }
-#else
     emojiSanitize(text, msg->text, CHANNEL_MSG_TEXT_LEN);
-#endif
     
     if (_msgCount < CHANNEL_MSG_HISTORY_SIZE) {
       _msgCount++;
@@ -570,13 +513,6 @@ public:
   // Save the entire message buffer to SD card.
   // File: /meshcore/messages.bin  (~50 KB for 300 messages)
   void saveToSD() {
-#if defined(MECK_TWATCH)
-    // Watch: defer to the LittleFS flush cadence -- a ~57 KB write on every
-    // message would wear the flash. Timestamp the pending write; the main loop
-    // flushes it (see flushMessagesIfDue), and shutdown flushes directly.
-    if (_msgDirtySince == 0) _msgDirtySince = millis();
-    return;
-#endif
 #if defined(HAS_SDCARD) && defined(ESP32)
     if (!_sdReady) return;
 
@@ -619,93 +555,6 @@ public:
 #endif
   }
 
-#if defined(MECK_TWATCH)
-  // --- Watch message-history persistence (LittleFS; the watch has no SD) ------
-  // Flush the ring to LittleFS. Called on an interval from the main loop and
-  // directly on shutdown, so traffic produces at most one write per interval.
-  void flushMessagesNow() {
-    if (!LittleFS.exists("/meshcore")) {
-      LittleFS.mkdir("/meshcore");
-    }
-    File f = LittleFS.open(MSG_FILE_PATH, "w", true);
-    if (!f) {
-      Serial.println("ChannelScreen: LittleFS save failed - can't open file");
-      return;
-    }
-    MsgFileHeader hdr;
-    hdr.magic    = MSG_FILE_MAGIC;
-    hdr.version  = MSG_FILE_VERSION;
-    hdr.capacity = CHANNEL_MSG_HISTORY_SIZE;
-    hdr.count    = (uint16_t)_msgCount;
-    hdr.newestIdx = (int16_t)_newestIdx;
-    f.write((uint8_t*)&hdr, sizeof(hdr));
-    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
-      MsgFileRecord rec;
-      rec.timestamp    = _messages[i].timestamp;
-      rec.path_len     = _messages[i].path_len;
-      rec.channel_idx  = _messages[i].channel_idx;
-      rec.valid        = _messages[i].valid ? 1 : 0;
-      rec.snr          = _messages[i].snr;
-      rec.dm_peer_hash = _messages[i].dm_peer_hash;
-      memcpy(rec.path, _messages[i].path, MSG_PATH_MAX);
-      memcpy(rec.text, _messages[i].text, CHANNEL_MSG_TEXT_LEN);
-      f.write((uint8_t*)&rec, sizeof(rec));
-    }
-    f.close();
-    _msgDirtySince = 0;
-  }
-
-  // Flush only if a write is pending and the debounce interval has elapsed.
-  void flushMessagesIfDue(unsigned long intervalMs) {
-    if (_msgDirtySince && millis() - _msgDirtySince >= intervalMs) flushMessagesNow();
-  }
-
-  // Load the ring from LittleFS at boot. Returns true if any messages loaded.
-  bool loadFromLittleFS() {
-    if (!LittleFS.exists(MSG_FILE_PATH)) {
-      Serial.println("ChannelScreen: no saved messages on LittleFS");
-      return false;
-    }
-    File f = LittleFS.open(MSG_FILE_PATH, "r");
-    if (!f) {
-      Serial.println("ChannelScreen: LittleFS load failed - can't open file");
-      return false;
-    }
-    MsgFileHeader hdr;
-    if (f.read((uint8_t*)&hdr, sizeof(hdr)) != sizeof(hdr)) { f.close(); return false; }
-    if (hdr.magic != MSG_FILE_MAGIC)              { f.close(); return false; }
-    if (hdr.version != MSG_FILE_VERSION)          { f.close(); return false; }
-    if (hdr.capacity != CHANNEL_MSG_HISTORY_SIZE) { f.close(); return false; }
-    int loaded = 0;
-    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
-      MsgFileRecord rec;
-      if (f.read((uint8_t*)&rec, sizeof(rec)) != sizeof(rec)) break;
-      _messages[i].timestamp    = rec.timestamp;
-      _messages[i].path_len     = rec.path_len;
-      _messages[i].channel_idx  = rec.channel_idx;
-      _messages[i].valid        = (rec.valid != 0);
-      _messages[i].snr          = rec.snr;
-      _messages[i].dm_peer_hash = rec.dm_peer_hash;
-      memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
-      memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
-      _messages[i].scope_idx  = 0xFF;
-      _messages[i].send_ref   = 0;
-      _messages[i].dm_status  = DM_SEND_NONE;
-      _messages[i].dm_attempt = 0;
-      _messages[i].dm_total   = 0;
-      if (_messages[i].valid) loaded++;
-    }
-    _msgCount  = (int)hdr.count;
-    _newestIdx = (int)hdr.newestIdx;
-    _scrollPos = 0;
-    if (_newestIdx < -1 || _newestIdx >= CHANNEL_MSG_HISTORY_SIZE) _newestIdx = -1;
-    if (_msgCount < 0 || _msgCount > CHANNEL_MSG_HISTORY_SIZE) _msgCount = loaded;
-    f.close();
-    Serial.printf("ChannelScreen: Loaded %d messages from LittleFS (count=%d, newest=%d)\n",
-                  loaded, _msgCount, _newestIdx);
-    return loaded > 0;
-  }
-#endif
 
   // Load message buffer from SD card.  Returns true if messages were loaded.
   bool loadFromSD() {

@@ -34,7 +34,7 @@
   #include "AlarmScreen.h"
 #endif
 
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
   #include "VirtualKeyboard.h"
 #endif
 
@@ -109,40 +109,11 @@ class UITask : public AbstractUITask {
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
   UIScreen* map_screen;       // Map tile screen (GPS + SD card tiles)
-#ifdef TWATCH_COMPOSE_ENABLED
-  UIScreen* tw_picker;
-  UIScreen* tw_channel;
-  UIScreen* tw_keyboard;
-#endif
   UIScreen* curr;
   bool _homeShowingTiles = false;  // Set by HomeScreen render when tile grid is visible
   int _tileGridVY = 44;           // Virtual Y of tile grid top (updated each render)
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
   UIScreen* lock_screen;     // Lock screen (big clock + battery + unread)
-#if defined(MECK_TWATCH)
-  UIScreen* steps_screen;         // Steps screen (big daily step count)
-  UIScreen* steps_history_screen; // Steps subscreen: today + the previous 6 days
-  // Step state. The BMA423 feature engine is re-flashed by bma423_write_config_file()
-  // inside SensorBMA423::begin() on every boot, which zeroes the step register. So
-  // the raw count cannot be used as an absolute; deltas are accumulated instead and
-  // the totals are persisted. _lastRaw is seeded from the chip on the first read
-  // rather than from the file, which is correct whether or not the count survived.
-  int32_t  _lastStepDay = 0;      // local day-of-epoch that _todaySteps belongs to
-  uint32_t _todaySteps = 0;       // accumulated steps for _lastStepDay
-  uint32_t _stepHistory[6] = {0}; // [0] = yesterday ... [5] = six days ago
-  uint32_t _lastRaw = 0;          // last raw BMA423 count seen (runtime only)
-  bool     _stepsSeeded = false;  // _lastRaw has been seeded from the chip
-  unsigned long _stepsDirtySince = 0;  // millis of oldest unsaved change; 0 = clean
-  void loadSteps();
-  void saveSteps();
-  void updateSteps();             // called every loop()
-  void rollStepDays(int32_t newDay);
-  void shiftStepHistory(uint32_t completedDay);
-#endif
-#if defined(MECK_TWATCH)
-  UIScreen* watch_notes_screen;  // LittleFS note pad (shared NotesScreen needs SD)
-  UIScreen* watch_channel_cfg_screen;  // Per-channel region/notif/delete (touch UI)
-#endif
   UIScreen* _screenBeforeLock = nullptr;
   bool _locked = false;
   unsigned long _lastInputMillis = 0;  // Auto-lock idle tracking
@@ -218,10 +189,6 @@ public:
   void gotoHomeScreen();
   void gotoChannelScreen(bool resetDmView = true);  // Navigate to channel message screen
   void gotoChannelPickerScreen();  // Navigate to channel picker (bubble/list)
-#ifdef TWATCH_COMPOSE_ENABLED
-  void openTWatchPicker();
-  void openTWatchKeyboard(int purpose, int contextIdx);
-#endif
   void gotoDMTab();          // Navigate directly to DM tab on channel screen
   void gotoDMConversation(const char* contactName, int contactIdx = -1, uint8_t perms = 0);
   void gotoContactsScreen(); // Navigate to contacts list
@@ -244,12 +211,6 @@ public:
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
-#if defined(MECK_TWATCH)
-  void gotoStepsScreen();                  // Navigate to the step counter screen
-  void gotoStepsHistoryScreen();           // Navigate to the 7-day step history
-  uint32_t getTodaySteps();                // Steps accumulated today
-  uint32_t getStepHistory(int daysAgo);    // 0 = today, 1..6 = previous days
-#endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -311,25 +272,14 @@ public:
   bool isOnTraceScreen() const { return curr == trace_screen; }
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
-#if defined(MECK_TWATCH)
-  bool isOnStepsScreen() const { return curr == steps_screen; }
-  bool isOnStepsHistoryScreen() const { return curr == steps_history_screen; }
-#endif
-#if defined(MECK_TWATCH)
-  bool isOnWatchNotesScreen() const { return curr == watch_notes_screen; }
-  bool isOnWatchChannelConfigScreen() const { return curr == watch_channel_cfg_screen; }
-#endif
-#ifdef TWATCH_COMPOSE_ENABLED
-  bool isOnTWatchChannelScreen() const { return curr == tw_channel; }
-#endif
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
   bool isOnMapScreen() const { return curr == map_screen; }
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
   void lockScreen();
   void unlockScreen();
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
   bool isVKBActive() const { return _vkbActive; }
   unsigned long vkbOpenedAt() const { return _vkbOpenedAt; }
   VirtualKeyboard& getVKB() { return _vkb; }
@@ -414,14 +364,6 @@ public:
   UIScreen* getTraceScreen() const { return trace_screen; }
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
-#if defined(MECK_TWATCH)
-  UIScreen* getStepsScreen() const { return steps_screen; }
-  UIScreen* getStepsHistoryScreen() const { return steps_history_screen; }
-#endif
-#if defined(MECK_TWATCH)
-  UIScreen* getWatchNotesScreen() const { return watch_notes_screen; }
-  UIScreen* getWatchChannelConfigScreen() const { return watch_channel_cfg_screen; }
-#endif
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER

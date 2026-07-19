@@ -109,7 +109,7 @@ struct NodePrefs {  // persisted to file
   //   upward → fillRect must start above baseline to cover ascenders.
   // T5S3: always 0 (both sizes use baseline fonts with highlight at y).
   inline int smallHighlightOff() const {
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
     return 0;
 #else
     // Custom 7pt fonts at textSize 0 use GFXfont (baseline rendering), not built-in.

@@ -136,7 +136,7 @@ public:
 
     // --- Footer ---
     display.setColor(DisplayDriver::LIGHT);
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(0);
     display.drawTextCentered(display.width() / 2, display.height() - 8, "Tap to select");
     display.setTextSize(1);

@@ -56,28 +56,16 @@ void LGFXDisplay::setColor(Color c) {
       _color = TFT_WHITE;
       break;
     case RED:
-#if defined(MECK_TWATCH)
-      _color = 0x7BEF;   // dark grey -- the watch UI uses a grey/white/black palette
-#else
       _color = TFT_RED;
-#endif
       break;
     case GREEN:
-#if defined(MECK_TWATCH)
-      _color = 0xC618;   // light grey
-#else
       _color = TFT_GREEN;
-#endif
       break;
     case BLUE:
       _color = TFT_BLUE;
       break;
     case YELLOW:
-#if defined(MECK_TWATCH)
-      _color = TFT_WHITE;
-#else
       _color = TFT_YELLOW;
-#endif
       break;
     case ORANGE:
       _color = TFT_ORANGE;

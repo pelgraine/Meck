@@ -42,16 +42,6 @@ class UITask;
   #define MINE_FTR      14
   #define MINE_OFFX_ADJ  2
   #define MINE_OFFY_ADJ  5
-#elif defined(MECK_TWATCH)
-  // Watch LCD (120x120): denser grid than the 9x9 default, 8px cells so the
-  // numbers render like the T5S3 (size-0 font). 14*8=112 wide, 11*8=88 tall.
-  #define MINE_GRID_W   14
-  #define MINE_GRID_H   11
-  #define MINE_COUNT    22
-  #define MINE_CELL_W    8
-  #define MINE_CELL_H    8
-  #define MINE_HDR      14
-  #define MINE_FTR      14
 #else
   #define MINE_GRID_W    9
   #define MINE_GRID_H    9
@@ -75,9 +65,6 @@ class UITask;
   #define MINE_TEXT_SIZE  0
   #define MINE_TEXT_DY   (-3)
 #elif defined(LilyGo_T5S3_EPaper_Pro)
-  #define MINE_TEXT_SIZE  0
-  #define MINE_TEXT_DY    1
-#elif defined(MECK_TWATCH)
   #define MINE_TEXT_SIZE  0
   #define MINE_TEXT_DY    1
 #else
@@ -413,7 +400,7 @@ public:
       display.drawTextCentered(cx, y, "Minesweeper");
       y += 16;
       display.setColor(DisplayDriver::GREEN);
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(cx, y, "Swipe to move cursor");
       y += 11;
       display.drawTextCentered(cx, y, "Tap to reveal");
@@ -432,7 +419,7 @@ public:
       snprintf(info, sizeof(info), "%dx%d grid, %d mines", MINE_GRID_W, MINE_GRID_H, MINE_COUNT);
       display.drawTextCentered(cx, y, info);
       y += 16;
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_TWATCH)
+#if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(cx, y, "Tap to start");
 #else
       display.drawTextCentered(cx, y, "Press Enter to start");
@@ -440,7 +427,7 @@ public:
 
       // Footer
       display.setColor(DisplayDriver::LIGHT);
-#if !defined(LilyGo_T5S3_EPaper_Pro) && !defined(MECK_TWATCH)
+#if !defined(LilyGo_T5S3_EPaper_Pro)
       int fy = display.height() - 12;
       display.drawRect(0, fy - 2, display.width(), 1);
       display.setCursor(2, fy);
