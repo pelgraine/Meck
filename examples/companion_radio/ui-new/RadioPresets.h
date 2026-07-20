@@ -15,7 +15,8 @@ struct RadioPreset {
 
 static const RadioPreset RADIO_PRESETS[] = {
   { "Australia",              915.800f, 250.0f,  10, 5, 22 },
-  { "Australia (Narrow)",     916.575f,  62.5f,   7, 8, 22 },
+  { "Australia (Mid)",        915.075f,  125.0f,  9, 5, 22 },
+  { "Australia (Wide)",       915.800f, 250.0f,  10, 5, 22 },
   { "Australia: SA, WA",      923.125f,  62.5f,   8, 8, 22 },
   { "Australia: QLD",         923.125f,  62.5f,   8, 5, 22 },
   { "EU/UK (Narrow)",         869.618f,  62.5f,   8, 8, 14 },
