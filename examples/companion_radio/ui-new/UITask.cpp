@@ -23,7 +23,7 @@
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LilyGo_TDeck_Pro_Max)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -368,7 +368,7 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro_Max)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
 
@@ -453,6 +453,8 @@ public:
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
+#elif defined(LilyGo_TDeck_Pro_Max)
+    int y = 8;   // Tighter under header; frees room for the MSG strip above the tile grid
 #else
     int y = 14;
 #endif
@@ -466,9 +468,100 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro_Max)
       _task->setHomeShowingTiles(true);
 #endif
+#if defined(LilyGo_TDeck_Pro_Max)
+      // ----- MAX: Touch tile grid home screen (T-Watch / P4 style) -----
+      // Rendered in RAW PHYSICAL pixels (240x320) via GxEPDDisplay raw
+      // helpers, bypassing the 128x128 virtual scaling so icons stay 1:1
+      // and the dithered grey borders read as continuous bands.
+      // Border shades approximate greys with 1-bit dither (0 = solid,
+      // 1 = dark grey, 2 = light grey), cycling so no row pairs two
+      // identical shades and no column stacks the same shade.
+      // Layout must stay in sync with the touch hit-test in main.cpp
+      // mapTouchTap().
+      {
+        GxEPDDisplay* eink = static_cast<GxEPDDisplay*>(&display);
+        const uint16_t fg = eink->rawFgColor();
+        struct MaxTile { const uint8_t* icon; const char* label; uint8_t shade; };
+        static const MaxTile tiles[12] = {
+          { icon_envelope,   "Messages",   0 }, { icon_people, "Contacts", 1 },
+          { icon_gear,       "Settings",   2 }, { icon_search, "Discover", 0 },
+          { icon_trace,      "Trace",      1 }, { icon_map,    "Maps",     2 },
+          { icon_notepad,    "Notes",      0 }, { icon_book,   "Reader",   1 },
+          { icon_headphones, "Audiobooks", 2 }, { icon_bell,   "Alarm",    0 },
+          { icon_globe,      "Browser",    1 }, { icon_gamepad, "Games",   2 },
+        };
+        // Physical layout matching the approved mockup: 2 cols x 6 rows
+        // plus a full-width Phone tile, icon stacked above the label.
+        // Labels honour the user font style (Classic 5x7 / Noto 7pt /
+        // Montserrat 7pt) via drawTextRawStyled.
+        const int tileW = 111, tileH = 32, gapX = 5, gapY = 3;
+        const int gridX = 6;
+        const int gridY = 68;   // below the status strip at y=46 (page dots render at physical ~30-38 with the Max dot row at virtual y=8)
+        const int radius = 6;
+        const int borderT = 3;  // 3px band so the dither reads as grey
+
+        for (int i = 0; i < 12; i++) {
+          int row = i / 2, col = i % 2;
+          int tx = gridX + col * (tileW + gapX);
+          int ty = gridY + row * (tileH + gapY);
+          eink->drawRoundRectShadedRaw(tx, ty, tileW, tileH, radius, borderT, tiles[i].shade, fg);
+          eink->drawXbmRaw(tx + (tileW - HOME_ICON_W) / 2, ty + 5, tiles[i].icon, HOME_ICON_W, HOME_ICON_H, fg);
+          int lw = eink->measureTextRawStyled(tiles[i].label);
+          eink->drawTextRawStyled(tx + (tileW - lw) / 2, ty + 17, tiles[i].label, fg);
+        }
+
+        // Full-width Phone tile (row 6)
+        {
+          int ty = gridY + 6 * (tileH + gapY);
+          int tw = tileW * 2 + gapX;
+          eink->drawRoundRectShadedRaw(gridX, ty, tw, tileH, radius, borderT, 0, fg);
+          eink->drawXbmRaw(gridX + (tw - HOME_ICON_W) / 2, ty + 5, icon_phone, HOME_ICON_W, HOME_ICON_H, fg);
+          int lw = eink->measureTextRawStyled("Phone");
+          eink->drawTextRawStyled(gridX + (tw - lw) / 2, ty + 17, "Phone", fg);
+        }
+
+        // Top status strip (physical, between page dots and grid): unread
+        // count plus connection state / WiFi IP / BLE pin
+        {
+          sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
+          char rightBuf[40];
+          rightBuf[0] = 0;
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
+          if (_task->hasConnection()) {
+            strcpy(rightBuf, "< Connected >");
+          }
+      #endif
+      #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
+          if (rightBuf[0] == 0) {
+            IPAddress ip = WiFi.localIP();
+            if (ip != IPAddress(0,0,0,0)) {
+              snprintf(rightBuf, sizeof(rightBuf), "IP: %d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
+            }
+          }
+      #endif
+      #ifdef BLE_PIN_CODE
+          if (rightBuf[0] == 0 && _task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
+            sprintf(rightBuf, "Pin:%d", the_mesh.getBLEPin());
+          }
+      #endif
+          int stripY = 46;
+          int mw = eink->measureTextRawStyled(tmp);
+          if (rightBuf[0]) {
+            int rw = eink->measureTextRawStyled(rightBuf);
+            int startX = (eink->rawWidth() - (mw + 12 + rw)) / 2;
+            if (startX < 0) startX = 0;
+            eink->drawTextRawStyled(startX, stripY, tmp, fg);
+            eink->drawTextRawStyled(startX + mw + 12, stripY, rightBuf, fg);
+          } else {
+            eink->drawTextRawStyled((eink->rawWidth() - mw) / 2, stripY, tmp, fg);
+          }
+        }
+        display.setTextSize(1);  // restore driver font state after raw text
+      }
+#else // not LilyGo_TDeck_Pro_Max
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       int y = 18;  // Tighter spacing — connectivity info fills gap below dots
@@ -755,6 +848,7 @@ public:
       display.setTextSize(1);  // restore
 #endif // LILYGO_TECHO_LITE
 #endif
+#endif // not LilyGo_TDeck_Pro_Max
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);

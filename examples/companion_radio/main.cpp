@@ -1312,6 +1312,78 @@ static void lastHeardToggleContact() {
 
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
+#if defined(LilyGo_TDeck_Pro_Max)
+      // MAX: 2-column tile grid, 6 paired rows + full-width Phone row.
+      // Hit-tested in RAW PHYSICAL pixels (240x320) using the untranslated
+      // touch coords -- geometry must stay in sync with the render block in
+      // UITask.cpp.
+      const int tileW = 111, tileH = 32, gapX = 5, gapY = 3;
+      const int gridX = 6;
+      const int gridY = 68;
+      const int pitch = tileH + gapY;
+
+      if (y >= gridY && y < gridY + 6 * pitch + tileH) {
+        int row = (y - gridY) / pitch;
+        if (row > 6) row = 6;
+        if (row == 6) {
+  #ifdef HAS_4G_MODEM
+          ui_task.gotoSMSScreen();
+  #endif
+          return 0;
+        }
+        int col = (x - gridX) / (tileW + gapX);
+        if (col < 0) col = 0;
+        if (col > 1) col = 1;
+        switch (row * 2 + col) {
+          case 0: ui_task.gotoChannelPickerScreen(); return 0;
+          case 1: ui_task.gotoContactsScreen(); return 0;
+          case 2: ui_task.gotoSettingsScreen(); return 0;
+          case 3: ui_task.gotoDiscoveryScreen(); return 0;
+          case 4: ui_task.gotoTraceScreen(); return 0;
+          case 5:
+  #if HAS_GPS
+            ui_task.gotoMapScreen();
+  #endif
+            return 0;
+          case 6: ui_task.gotoNotesScreen(); return 0;
+          case 7: ui_task.gotoTextReader(); return 0;
+          case 8:
+  #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
+            // Audiobooks: lazy-init Audio + screen on first use (mirrors 'p' key handler)
+            if (!ui_task.getAudiobookScreen()) {
+              audio = new Audio();
+              AudiobookPlayerScreen* abScreen = new AudiobookPlayerScreen(&ui_task, audio, the_mesh.getNodePrefs());
+              abScreen->setSDReady(sdCardReady);
+              ui_task.setAudiobookScreen(abScreen);
+            }
+            ui_task.gotoAudiobookPlayer();
+  #endif
+            return 0;
+          case 9:
+  #ifdef MECK_AUDIO_VARIANT
+            // Alarm: ensure Audio* exists (mirrors 'k' key handler)
+            if (!audio) {
+              audio = new Audio();
+            }
+            {
+              AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
+              if (alarmScr) alarmScr->setAudio(audio);
+            }
+            ui_task.gotoAlarmScreen();
+  #endif
+            return 0;
+          case 10:
+  #ifdef MECK_WEB_READER
+            ui_task.gotoWebReader();
+  #endif
+            return 0;
+          case 11: ui_task.gotoGamesMenu(); return 0;
+        }
+        return 0;
+      }
+      // Tap outside tiles -- left half backward, right half forward (physical)
+      return (x < 120) ? (char)KEY_PREV : (char)KEY_NEXT;
+#else
       const int tileW = 40, tileH = 22, gapX = 1, gapY = 1;
       const int gridW = tileW * 3 + gapX * 2;
       const int gridX = (128 - gridW) / 2;  // =3
@@ -1341,6 +1413,7 @@ static void lastHeardToggleContact() {
       }
       // Tap outside tiles — left half backward, right half forward
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
+#endif // LilyGo_TDeck_Pro_Max
     }
 
     // Home screen (non-tile pages): left half taps backward, right half forward

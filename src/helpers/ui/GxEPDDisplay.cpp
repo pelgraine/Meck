@@ -383,6 +383,138 @@ void GxEPDDisplay::drawRect(int x, int y, int w, int h) {
   display.drawRect((x+offset_x)*scale_x, (y+offset_y)*scale_y, w*scale_x, h*scale_y, _curr_color);
 }
 
+// --- Rounded tile borders with 1-bit dither shading (greyscale approximation) ---
+// shade: 0 = solid, 1 = dark grey (~75% dither), 2 = light grey (50% checker)
+static inline bool meckDitherKeep(int px, int py, uint8_t shade) {
+  if (shade == 0) return true;
+  if (shade == 1) return ((px + py) & 3) != 3;
+  return ((px + py) & 1) == 0;
+}
+
+void GxEPDDisplay::plotShadedPixel(int px, int py, uint8_t shade, uint16_t color) {
+  if (meckDitherKeep(px, py, shade)) display.drawPixel(px, py, color);
+}
+
+// Rasterise a 1-physical-pixel rounded-rect outline: straight edges plus
+// midpoint-circle quarter arcs, every pixel passed through the dither mask
+void GxEPDDisplay::plotRoundOutline(int px, int py, int pw, int ph, int pr, uint8_t shade, uint16_t color) {
+  if (pw <= 0 || ph <= 0) return;
+  int maxr = ((pw < ph ? pw : ph) / 2) - 1;
+  if (pr > maxr) pr = maxr;
+  if (pr < 0) pr = 0;
+  int x0 = px, y0 = py, x1 = px + pw - 1, y1 = py + ph - 1;
+
+  // Straight edges
+  for (int i = x0 + pr; i <= x1 - pr; i++) {
+    plotShadedPixel(i, y0, shade, color);
+    plotShadedPixel(i, y1, shade, color);
+  }
+  for (int j = y0 + pr; j <= y1 - pr; j++) {
+    plotShadedPixel(x0, j, shade, color);
+    plotShadedPixel(x1, j, shade, color);
+  }
+  if (pr <= 0) return;
+
+  // Corner arcs: midpoint circle, one octant mirrored into four corners
+  int cx0 = x0 + pr, cy0 = y0 + pr;   // top-left corner centre
+  int cx1 = x1 - pr, cy1 = y1 - pr;   // bottom-right corner centre
+  int f = 1 - pr;
+  int ddF_x = 1;
+  int ddF_y = -2 * pr;
+  int xx = 0;
+  int yy = pr;
+  while (xx < yy) {
+    if (f >= 0) { yy--; ddF_y += 2; f += ddF_y; }
+    xx++; ddF_x += 2; f += ddF_x;
+    plotShadedPixel(cx0 - xx, cy0 - yy, shade, color);  // top-left
+    plotShadedPixel(cx0 - yy, cy0 - xx, shade, color);
+    plotShadedPixel(cx1 + xx, cy0 - yy, shade, color);  // top-right
+    plotShadedPixel(cx1 + yy, cy0 - xx, shade, color);
+    plotShadedPixel(cx0 - xx, cy1 + yy, shade, color);  // bottom-left
+    plotShadedPixel(cx0 - yy, cy1 + xx, shade, color);
+    plotShadedPixel(cx1 + xx, cy1 + yy, shade, color);  // bottom-right
+    plotShadedPixel(cx1 + yy, cy1 + xx, shade, color);
+  }
+}
+
+void GxEPDDisplay::drawRoundRectShadedRaw(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint8_t thickness, uint8_t shade, uint16_t color) {
+  display_crc.update<int16_t>(x);
+  display_crc.update<int16_t>(y);
+  display_crc.update<int16_t>(w);
+  display_crc.update<int16_t>(h);
+  display_crc.update<int16_t>(r);
+  display_crc.update<uint8_t>(thickness);
+  display_crc.update<uint8_t>(shade);
+
+  // Border band: concentric 1px outlines, `thickness` px deep
+  for (int t = 0; t < (int)thickness; t++) {
+    plotRoundOutline(x + t, y + t, w - 2 * t, h - 2 * t, r - t, shade, color);
+  }
+}
+
+void GxEPDDisplay::drawXbmRaw(int16_t x, int16_t y, const uint8_t* bits, int w, int h, uint16_t color) {
+  display_crc.update<int16_t>(x);
+  display_crc.update<int16_t>(y);
+  display_crc.update<uint8_t>(bits, ((w + 7) / 8) * h);
+
+  uint16_t widthInBytes = (w + 7) / 8;
+  for (int by = 0; by < h; by++) {
+    for (int bx = 0; bx < w; bx++) {
+      uint16_t byteOffset = (by * widthInBytes) + (bx / 8);
+      uint8_t bitMask = 0x80 >> (bx & 7);
+      if (pgm_read_byte(bits + byteOffset) & bitMask) {
+        display.drawPixel(x + bx, y + by, color);
+      }
+    }
+  }
+}
+
+void GxEPDDisplay::drawTextRawTracked(int16_t x, int16_t y, const char* text, uint16_t color) {
+  display_crc.update<int16_t>(x);
+  display_crc.update<int16_t>(y);
+  display_crc.update<uint8_t>((const uint8_t*)text, strlen(text));
+  drawTextRaw(x, y, text, color);
+}
+
+int16_t GxEPDDisplay::measureTextRawStyled(const char* text) {
+#ifdef HAS_MECK_FONTS
+  const GFXfont* f = meckGetFont(_fontStyle, 0);
+  if (f) {
+    display.setFont(f);
+    display.setTextSize(1);
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+    return (int16_t)(w + 1);
+  }
+#endif
+  return (int16_t)(6 * strlen(text));  // built-in 5x7, 6px advance
+}
+
+void GxEPDDisplay::drawTextRawStyled(int16_t x, int16_t yTop, const char* text, uint16_t color) {
+#ifdef HAS_MECK_FONTS
+  const GFXfont* f = meckGetFont(_fontStyle, 0);
+  if (f) {
+    display_crc.update<int16_t>(x);
+    display_crc.update<int16_t>(yTop);
+    display_crc.update<uint8_t>((const uint8_t*)text, strlen(text));
+    display_crc.update<uint8_t>(_fontStyle);
+    display.setFont(f);
+    display.setTextSize(1);
+    display.setTextColor(color);
+    // Custom GFX fonts position by baseline: getTextBounds at (0,0) returns
+    // a negative y1 (box top relative to baseline), so baseline = yTop - y1
+    int16_t x1, y1;
+    uint16_t w, h;
+    display.getTextBounds(text, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor(x, yTop - y1);
+    display.print(text);
+    return;
+  }
+#endif
+  drawTextRawTracked(x, yTop, text, color);
+}
+
 void GxEPDDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) {
   display_crc.update<int>(x);
   display_crc.update<int>(y);
