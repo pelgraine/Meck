@@ -1312,8 +1312,8 @@ static void lastHeardToggleContact() {
 
     // Home screen FIRST page: tile taps (virtual coordinate hit test)
     if (ui_task.isOnHomeScreen() && ui_task.isHomeShowingTiles()) {
-#if defined(LilyGo_TDeck_Pro_Max)
-      // MAX: 2-column tile grid, 6 paired rows + full-width Phone row.
+#if defined(LilyGo_TDeck_Pro)
+      // T-Deck Pro: 2-column tile grid, 6 paired rows + full-width Phone row.
       // Hit-tested in RAW PHYSICAL pixels (240x320) using the untranslated
       // touch coords -- geometry must stay in sync with the render block in
       // UITask.cpp.
@@ -1413,7 +1413,7 @@ static void lastHeardToggleContact() {
       }
       // Tap outside tiles — left half backward, right half forward
       return (vx < 64) ? (char)KEY_PREV : (char)KEY_NEXT;
-#endif // LilyGo_TDeck_Pro_Max
+#endif // LilyGo_TDeck_Pro
     }
 
     // Home screen (non-tile pages): left half taps backward, right half forward
@@ -3358,6 +3358,13 @@ void loop() {
         ui_task.showAlert(alertBuf, 3000);
         ui_task.notify(UIEventType::contactMessage);
 
+        // An incoming call drops the lock screen so the call can be answered.
+        // Keyboard and touch input are both blocked while locked, which would
+        // otherwise leave the ringing screen unable to answer or reject.
+        // The device stays unlocked after the call ends.
+        if (ui_task.isLocked()) {
+          ui_task.unlockScreen();
+        }
         if (!smsMode) {
           ui_task.gotoSMSScreen();
         }

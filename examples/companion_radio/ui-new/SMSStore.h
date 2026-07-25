@@ -24,6 +24,26 @@
 #define SMS_DIR          "/sms"
 #define SMS_READ_MIGRATED "/sms/rdmig.dat"  // one-time read-state migration marker
 
+// Call log: fixed-size records appended to a single file, oldest first
+#define SMS_CALLLOG_FILE "/sms/calllog.dat"
+#define SMS_CALLLOG_TMP  "/sms/calllog.tmp"
+#define SMS_CALLLOG_MAX  32
+
+// Call log entry types
+#define CALL_LOG_MISSED    0
+#define CALL_LOG_INCOMING  1
+#define CALL_LOG_OUTGOING  2
+
+// On-SD call log record (fixed size for random access)
+struct CallLogRecord {
+  uint32_t timestamp;           // epoch seconds when the event was logged
+  uint32_t duration;            // call duration in seconds (0 = never connected)
+  uint8_t  type;                // CALL_LOG_MISSED / _INCOMING / _OUTGOING
+  uint8_t  seen;                // 1 = missed call has been viewed in the log
+  uint8_t  reserved[2];
+  char     phone[SMS_PHONE_LEN];
+};
+
 // Fixed-size on-disk record (256 bytes, easy alignment)
 struct SMSRecord {
   uint32_t timestamp;           // epoch seconds
@@ -78,8 +98,21 @@ public:
   // Mark all received messages in a conversation as read (persisted to SD)
   void markConversationRead(const char* phone);
 
+  // --- Call log (fixed-size records in /sms/calllog.dat) ---
+  // Append one entry; trims oldest once past SMS_CALLLOG_MAX
+  bool appendCallLog(uint8_t type, const char* phone, uint32_t duration, uint32_t timestamp);
+  // Load entries newest-first; returns count loaded
+  int  loadCallLog(CallLogRecord* out, int maxCount);
+  // Delete one entry by newest-first index (as returned by loadCallLog)
+  bool deleteCallLogEntry(int newestFirstIdx);
+  // Mark every missed-call entry as seen (called when the log is opened)
+  void markMissedSeen();
+
 private:
   bool _ready = false;
+
+  // Rewrite the call log keeping only the newest SMS_CALLLOG_MAX records
+  void trimCallLog();
 
   // Convert phone number to safe filename
   void phoneToFilename(const char* phone, char* out, size_t outLen);

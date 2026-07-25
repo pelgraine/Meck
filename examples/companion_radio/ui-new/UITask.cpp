@@ -23,7 +23,7 @@
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LilyGo_TDeck_Pro)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -368,7 +368,7 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
 
@@ -453,7 +453,7 @@ public:
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
-#elif defined(LilyGo_TDeck_Pro_Max)
+#elif defined(LilyGo_TDeck_Pro)
     int y = 8;   // Tighter under header; frees room for the MSG strip above the tile grid
 #else
     int y = 14;
@@ -468,11 +468,11 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
       _task->setHomeShowingTiles(true);
 #endif
-#if defined(LilyGo_TDeck_Pro_Max)
-      // ----- MAX: Touch tile grid home screen (T-Watch / P4 style) -----
+#if defined(LilyGo_TDeck_Pro)
+      // ----- T-Deck Pro: Touch tile grid home screen (T-Watch / P4 style) -----
       // Rendered in RAW PHYSICAL pixels (240x320) via GxEPDDisplay raw
       // helpers, bypassing the 128x128 virtual scaling so icons stay 1:1
       // and the dithered grey borders read as continuous bands.
@@ -561,7 +561,7 @@ public:
         }
         display.setTextSize(1);  // restore driver font state after raw text
       }
-#else // not LilyGo_TDeck_Pro_Max
+#else // not LilyGo_TDeck_Pro
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       int y = 18;  // Tighter spacing — connectivity info fills gap below dots
@@ -848,7 +848,7 @@ public:
       display.setTextSize(1);  // restore
 #endif // LILYGO_TECHO_LITE
 #endif
-#endif // not LilyGo_TDeck_Pro_Max
+#endif // not LilyGo_TDeck_Pro
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);
@@ -1454,6 +1454,31 @@ public:
       display.setColor(DisplayDriver::GREEN);
       display.drawTextCentered(display.width() / 2, 108, infoBuf);
     }
+
+#ifdef HAS_4G_MODEM
+    // ---- Unread SMS / missed-call notification ----
+    // Sourced from the SMS screen's own unread and unseen state, so it
+    // persists across re-locks and reboots until the conversation or the
+    // call log is actually opened.
+    {
+      SMSScreen* smsScr = _task->getSMSScreen();
+      int sms = smsScr ? smsScr->getUnreadSmsCount() : 0;
+      int missed = smsScr ? smsScr->getUnseenMissedCount() : 0;
+      if (sms > 0 || missed > 0) {
+        char notifBuf[32];
+        if (sms > 0 && missed > 0) {
+          sprintf(notifBuf, "SMS: %d  Missed: %d", sms, missed);
+        } else if (sms > 0) {
+          sprintf(notifBuf, "SMS: %d", sms);
+        } else {
+          sprintf(notifBuf, "Missed: %d", missed);
+        }
+        display.setTextSize(1);
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, display.height() - 12, notifBuf);
+      }
+    }
+#endif
 
     // ---- Unlock hint ----
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -3206,7 +3231,11 @@ void UITask::gotoVoiceScreen() {
 #ifdef HAS_4G_MODEM
 void UITask::gotoSMSScreen() {
   SMSScreen* smsScr = (SMSScreen*)sms_screen;
-  smsScr->activate();
+  // activate() resets the view to the app menu, which would wipe the ringing
+  // or in-call screen that onCallEvent() has just put up. Skip it mid-call.
+  if (!smsScr->isInCallView()) {
+    smsScr->activate();
+  }
   setCurrScreen(sms_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
