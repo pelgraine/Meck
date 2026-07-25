@@ -2656,6 +2656,10 @@ void UITask::lockScreen() {
   }
 #if defined(LilyGo_T5S3_EPaper_Pro)
   board.setBacklight(false);  // Save power (T5S3 backlight)
+#elif defined(LilyGo_TDeck_Pro_Max)
+  // MAX: IO41 frontlight stays lit otherwise, burning power behind the
+  // lock screen. Plain Pro V1.1 has no working frontlight to switch off.
+  if (board.isBacklightOn()) board.backlightOff();
 #endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
