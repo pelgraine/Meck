@@ -16,14 +16,14 @@
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+#if   HAS_GPS && !defined(LILYGO_TECHO_CARD)
   #include "MapScreen.h"
 #endif
 #include "target.h"
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
-#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(MECK_AUDIO_VARIANT) || defined(LilyGo_TDeck_Pro)
   #include "HomeIcons.h"
 #endif
 #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
@@ -349,6 +349,7 @@ public:
        _poweroff_msg_shown(false), _editing_utc(false), _saved_utc_offset(0), sensors_lpp(200) {  }
 
   bool isEditingUTC() const { return _editing_utc; }
+  bool isFirstPage() const { return _page == HomePage::FIRST; }
   bool isOnRecentPage() const { return _page == HomePage::RECENT; }
   bool isOnShutdownPage() const { return _page == HomePage::SHUTDOWN; }
   void cancelEditing() { 
@@ -367,7 +368,7 @@ public:
 
   int render(DisplayDriver& display) override {
     char tmp[80];
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
     _task->setHomeShowingTiles(false);  // Reset — only set true on FIRST page
 #endif
 
@@ -407,7 +408,6 @@ public:
 #endif
     display.setCursor(0, HOME_HDR_Y);
     display.print(filtered_name);
-
     // battery voltage + status icons
 #ifdef MECK_AUDIO_VARIANT
     int battLeftX = display.width(); // default if battery doesn't render
@@ -453,6 +453,8 @@ public:
     int y = 13;   // Below header
 #elif defined(LilyGo_T5S3_EPaper_Pro)
     int y = 14;  // Closer to header
+#elif defined(LilyGo_TDeck_Pro)
+    int y = 8;   // Tighter under header; frees room for the MSG strip above the tile grid
 #else
     int y = 14;
 #endif
@@ -466,9 +468,100 @@ public:
     }
 
     if (_page == HomePage::FIRST) {
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
       _task->setHomeShowingTiles(true);
 #endif
+#if defined(LilyGo_TDeck_Pro)
+      // ----- T-Deck Pro: Touch tile grid home screen (T-Watch / P4 style) -----
+      // Rendered in RAW PHYSICAL pixels (240x320) via GxEPDDisplay raw
+      // helpers, bypassing the 128x128 virtual scaling so icons stay 1:1
+      // and the dithered grey borders read as continuous bands.
+      // Border shades approximate greys with 1-bit dither (0 = solid,
+      // 1 = dark grey, 2 = light grey), cycling so no row pairs two
+      // identical shades and no column stacks the same shade.
+      // Layout must stay in sync with the touch hit-test in main.cpp
+      // mapTouchTap().
+      {
+        GxEPDDisplay* eink = static_cast<GxEPDDisplay*>(&display);
+        const uint16_t fg = eink->rawFgColor();
+        struct MaxTile { const uint8_t* icon; const char* label; uint8_t shade; };
+        static const MaxTile tiles[12] = {
+          { icon_envelope,   "Messages",   0 }, { icon_people, "Contacts", 1 },
+          { icon_gear,       "Settings",   2 }, { icon_search, "Discover", 0 },
+          { icon_trace,      "Trace",      1 }, { icon_map,    "Maps",     2 },
+          { icon_notepad,    "Notes",      0 }, { icon_book,   "Reader",   1 },
+          { icon_headphones, "Audiobooks", 2 }, { icon_bell,   "Alarm",    0 },
+          { icon_globe,      "Browser",    1 }, { icon_gamepad, "Games",   2 },
+        };
+        // Physical layout matching the approved mockup: 2 cols x 6 rows
+        // plus a full-width Phone tile, icon stacked above the label.
+        // Labels honour the user font style (Classic 5x7 / Noto 7pt /
+        // Montserrat 7pt) via drawTextRawStyled.
+        const int tileW = 111, tileH = 32, gapX = 5, gapY = 3;
+        const int gridX = 6;
+        const int gridY = 68;   // below the status strip at y=46 (page dots render at physical ~30-38 with the Max dot row at virtual y=8)
+        const int radius = 6;
+        const int borderT = 3;  // 3px band so the dither reads as grey
+
+        for (int i = 0; i < 12; i++) {
+          int row = i / 2, col = i % 2;
+          int tx = gridX + col * (tileW + gapX);
+          int ty = gridY + row * (tileH + gapY);
+          eink->drawRoundRectShadedRaw(tx, ty, tileW, tileH, radius, borderT, tiles[i].shade, fg);
+          eink->drawXbmRaw(tx + (tileW - HOME_ICON_W) / 2, ty + 5, tiles[i].icon, HOME_ICON_W, HOME_ICON_H, fg);
+          int lw = eink->measureTextRawStyled(tiles[i].label);
+          eink->drawTextRawStyled(tx + (tileW - lw) / 2, ty + 17, tiles[i].label, fg);
+        }
+
+        // Full-width Phone tile (row 6)
+        {
+          int ty = gridY + 6 * (tileH + gapY);
+          int tw = tileW * 2 + gapX;
+          eink->drawRoundRectShadedRaw(gridX, ty, tw, tileH, radius, borderT, 0, fg);
+          eink->drawXbmRaw(gridX + (tw - HOME_ICON_W) / 2, ty + 5, icon_phone, HOME_ICON_W, HOME_ICON_H, fg);
+          int lw = eink->measureTextRawStyled("Phone");
+          eink->drawTextRawStyled(gridX + (tw - lw) / 2, ty + 17, "Phone", fg);
+        }
+
+        // Top status strip (physical, between page dots and grid): unread
+        // count plus connection state / WiFi IP / BLE pin
+        {
+          sprintf(tmp, "MSG: %d", _task->getUnreadMsgCount());
+          char rightBuf[40];
+          rightBuf[0] = 0;
+      #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
+          if (_task->hasConnection()) {
+            strcpy(rightBuf, "< Connected >");
+          }
+      #endif
+      #if defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
+          if (rightBuf[0] == 0) {
+            IPAddress ip = WiFi.localIP();
+            if (ip != IPAddress(0,0,0,0)) {
+              snprintf(rightBuf, sizeof(rightBuf), "IP: %d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
+            }
+          }
+      #endif
+      #ifdef BLE_PIN_CODE
+          if (rightBuf[0] == 0 && _task->isSerialEnabled() && the_mesh.getBLEPin() != 0) {
+            sprintf(rightBuf, "Pin:%d", the_mesh.getBLEPin());
+          }
+      #endif
+          int stripY = 46;
+          int mw = eink->measureTextRawStyled(tmp);
+          if (rightBuf[0]) {
+            int rw = eink->measureTextRawStyled(rightBuf);
+            int startX = (eink->rawWidth() - (mw + 12 + rw)) / 2;
+            if (startX < 0) startX = 0;
+            eink->drawTextRawStyled(startX, stripY, tmp, fg);
+            eink->drawTextRawStyled(startX + mw + 12, stripY, rightBuf, fg);
+          } else {
+            eink->drawTextRawStyled((eink->rawWidth() - mw) / 2, stripY, tmp, fg);
+          }
+        }
+        display.setTextSize(1);  // restore driver font state after raw text
+      }
+#else // not LilyGo_TDeck_Pro
 #if defined(LilyGo_T5S3_EPaper_Pro)
   #if defined(BLE_PIN_CODE) || defined(WIFI_SSID) || defined(MECK_WIFI_COMPANION)
       int y = 18;  // Tighter spacing — connectivity info fills gap below dots
@@ -755,6 +848,7 @@ public:
       display.setTextSize(1);  // restore
 #endif // LILYGO_TECHO_LITE
 #endif
+#endif // not LilyGo_TDeck_Pro
     } else if (_page == HomePage::RECENT) {
       the_mesh.getRecentlyHeard(recent, UI_RECENT_LIST_SIZE);
       display.setColor(DisplayDriver::GREEN);
@@ -1124,7 +1218,8 @@ public:
       sprintf(buf, "%d.%d C", battTemp / 10, abs(battTemp % 10));
       display.drawTextRightAlign(display.width()-1-EINK_X_OFFSET, y, buf);
 #endif
-    } else if (_page == HomePage::SHUTDOWN) {
+    }
+    else if (_page == HomePage::SHUTDOWN) {
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
       if (_shutdown_init) {
@@ -1301,6 +1396,7 @@ public:
 // T5S3: Long press boot button to lock/unlock. Touch disabled while locked.
 // T-Deck Pro: Double-press boot button to lock/unlock. Touch+keyboard disabled.
 // ==========================================================================
+
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
 class LockScreen : public UIScreen {
   UITask* _task;
@@ -1359,6 +1455,31 @@ public:
       display.drawTextCentered(display.width() / 2, 108, infoBuf);
     }
 
+#ifdef HAS_4G_MODEM
+    // ---- Unread SMS / missed-call notification ----
+    // Sourced from the SMS screen's own unread and unseen state, so it
+    // persists across re-locks and reboots until the conversation or the
+    // call log is actually opened.
+    {
+      SMSScreen* smsScr = _task->getSMSScreen();
+      int sms = smsScr ? smsScr->getUnreadSmsCount() : 0;
+      int missed = smsScr ? smsScr->getUnseenMissedCount() : 0;
+      if (sms > 0 || missed > 0) {
+        char notifBuf[32];
+        if (sms > 0 && missed > 0) {
+          sprintf(notifBuf, "SMS: %d  Missed: %d", sms, missed);
+        } else if (sms > 0) {
+          sprintf(notifBuf, "SMS: %d", sms);
+        } else {
+          sprintf(notifBuf, "Missed: %d", missed);
+        }
+        display.setTextSize(1);
+        display.setColor(DisplayDriver::GREEN);
+        display.drawTextCentered(display.width() / 2, display.height() - 12, notifBuf);
+      }
+    }
+#endif
+
     // ---- Unlock hint ----
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.setTextSize(_node_prefs->smallTextSize());
@@ -1380,7 +1501,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _sensors = sensors;
   _auto_off = millis() + AUTO_OFF_MILLIS;
 
-#if defined(PIN_USER_BTN)
+#if (defined(PIN_USER_BTN))
   user_btn.begin();
 #endif
 #if defined(PIN_USER_BTN_ANA)
@@ -1478,7 +1599,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #ifdef HAS_4G_MODEM
   sms_screen = new SMSScreen(this, node_prefs);
 #endif
-#if HAS_GPS && !defined(LILYGO_TECHO_CARD)
+#if   HAS_GPS && !defined(LILYGO_TECHO_CARD)
   map_screen = new MapScreen(this);
 #else
   map_screen = nullptr;
@@ -1931,7 +2052,7 @@ void UITask::shutdown(bool restart){
 }
 
 bool UITask::isButtonPressed() const {
-#ifdef PIN_USER_BTN
+#if (defined(PIN_USER_BTN))
   return user_btn.isPressed();
 #else
   return false;
@@ -1940,7 +2061,7 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
-#if defined(PIN_USER_BTN)
+#if (defined(PIN_USER_BTN))
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
 #if defined(LilyGo_T5S3_EPaper_Pro)
@@ -2111,7 +2232,9 @@ void UITask::loop() {
   if (buzzer.isPlaying())  buzzer.loop();
 #endif
 
+
 if (curr) curr->poll();
+
 
   if (_display != NULL && _display->isOn()) {
     if (millis() >= _next_refresh && curr) {
@@ -2293,6 +2416,16 @@ if (curr) curr->poll();
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif
       if (_next_refresh < minNext) _next_refresh = minNext;
+
+      // Toast dismissal must not be starved by the e-ink render throttle:
+      // any render inside the alert window (e.g. a DM status push) re-draws
+      // the overlay and the floor above can push the scheduled clearing
+      // render well past _alert_expiry, leaving the toast on screen. If an
+      // alert is still active and due to lapse before the next scheduled
+      // render, wake at expiry so the clearing frame lands on time.
+      if (_alert_expiry != 0 && millis() < _alert_expiry && _next_refresh > _alert_expiry) {
+        _next_refresh = _alert_expiry;
+      }
       }  // end else (not bulk syncing)
     }
 #if AUTO_OFF_MILLIS > 0
@@ -2420,6 +2553,10 @@ if (curr) curr->poll();
       }
       #endif
 
+      // Flush contacts before the battery dies -- the chunked lazy save may not
+      // have run for hours. Blocking save (tmp-then-rename, brownout-safe).
+      the_mesh.saveContacts();
+
       shutdown();
       }
     } else {
@@ -2519,6 +2656,10 @@ void UITask::lockScreen() {
   }
 #if defined(LilyGo_T5S3_EPaper_Pro)
   board.setBacklight(false);  // Save power (T5S3 backlight)
+#elif defined(LilyGo_TDeck_Pro_Max)
+  // MAX: IO41 frontlight stays lit otherwise, burning power behind the
+  // lock screen. Plain Pro V1.1 has no working frontlight to switch off.
+  if (board.isBacklightOn()) board.backlightOff();
 #endif
   _next_refresh = 0;  // Draw lock screen immediately
   _auto_off = millis() + 60000;  // 60s before display off while locked
@@ -2595,11 +2736,14 @@ void UITask::onVKBSubmit() {
       if (strlen(text) == 0) break;
 
       bool dmSuccess = false;
-      if (the_mesh.uiSendDirectMessage((uint32_t)idx, text)) {
+      uint32_t sendRef = 0;
+      uint8_t sendTotal = 0;
+      if (the_mesh.uiSendDirectMessage((uint32_t)idx, text, &sendRef, &sendTotal)) {
         // Add to channel screen so sent DM appears in conversation view
         ContactInfo dmRecipient;
         if (the_mesh.getContactByIdx(idx, dmRecipient)) {
-          addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, text);
+          addSentDM(dmRecipient.name, the_mesh.getNodePrefs()->node_name, text,
+                    sendRef, sendTotal);
         }
         dmSuccess = true;
       }
@@ -2951,6 +3095,7 @@ void UITask::gotoChannelPickerScreen() {
   _next_refresh = 100;
 }
 
+
 void UITask::gotoDMTab() {
   ((ChannelScreen *) channel_screen)->setViewChannelIdx(0xFF);  // switches + marks read
   ((ChannelScreen *) channel_screen)->resetScroll();
@@ -3090,7 +3235,11 @@ void UITask::gotoVoiceScreen() {
 #ifdef HAS_4G_MODEM
 void UITask::gotoSMSScreen() {
   SMSScreen* smsScr = (SMSScreen*)sms_screen;
-  smsScr->activate();
+  // activate() resets the view to the app menu, which would wipe the ringing
+  // or in-call screen that onCallEvent() has just put up. Skip it mid-call.
+  if (!smsScr->isInCallView()) {
+    smsScr->activate();
+  }
   setCurrScreen(sms_screen);
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();
@@ -3112,17 +3261,33 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   // Format the message as "Sender: message"
   char formattedMsg[CHANNEL_MSG_TEXT_LEN];
   snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
-  
+
+  // Tag the bubble with this send's fingerprint so the "Heard by" overlay can
+  // later match it to the repeat track (MyMesh::getHeardBy).
+  uint8_t fp[12];  // SENT_FINGERPRINT_SIZE
+  bool haveFp = the_mesh.getLastSentFingerprint(fp);
+
   // Add to channel history with path_len=0 (local message)
-  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg);
+  ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg,
+                                                  nullptr, 0, nullptr, false, 0xFF, 0, 0,
+                                                  haveFp ? fp : nullptr);
 }
 
-void UITask::addSentDM(const char* recipientName, const char* sender, const char* text) {
+void UITask::addSentDM(const char* recipientName, const char* sender, const char* text,
+                       uint32_t send_ref, uint8_t send_total) {
   // Format as "Sender: message" and tag with recipient's peer hash
   char formattedMsg[CHANNEL_MSG_TEXT_LEN];
   snprintf(formattedMsg, sizeof(formattedMsg), "%s: %s", sender, text);
   ((ChannelScreen *) channel_screen)->addMessage(0xFF, 0, sender, formattedMsg,
-                                                  nullptr, 0, recipientName);
+                                                  nullptr, 0, recipientName,
+                                                  false, 0xFF, send_ref, send_total);
+}
+
+void UITask::dmSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) {
+  if (((ChannelScreen *) channel_screen)->setSendStatus(send_ref, status, attempt, total)) {
+    // Repaint promptly if the user is looking at the conversation
+    if (isOnChannelScreen()) forceRefresh();
+  }
 }
 
 void UITask::markChannelReadFromBLE(uint8_t channel_idx) {
@@ -3257,6 +3422,8 @@ void UITask::gotoTraceScreen() {
   _next_refresh = 100;
 }
 
+
+
 void UITask::gotoGamesMenu() {
   GamesMenuScreen* gm = (GamesMenuScreen*)games_menu_screen;
   gm->enter();
@@ -3327,7 +3494,7 @@ void UITask::gotoWebReader() {
 #if HAS_GPS
 void UITask::gotoMapScreen() {
   if (!map_screen) return;  // Not available on this platform (T-Echo Card)
-#if !defined(LILYGO_TECHO_CARD)
+#if   !defined(LILYGO_TECHO_CARD)
   MapScreen* map = (MapScreen*)map_screen;
   if (_display != NULL) {
     map->enter(*_display);

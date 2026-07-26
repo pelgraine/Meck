@@ -2746,7 +2746,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap: Retry");
 #else
-      display.print("Enter: Retry  Q: Back");
+      display.print("Enter: Retry  Sh+Del: Back");
 #endif
     }
 
@@ -2762,7 +2762,7 @@ private:
     else
       display.print("Swipe: Navigate  Tap: Select");
 #else
-    display.print("Q:Back W/S:Nav Ent:Select");
+    display.print("Sh+Del:Back W/S:Nav Ent:Select");
 #endif
   }
 
@@ -3573,8 +3573,8 @@ private:
       return true;
     }
 
-    // Q - back to home (if possible) or exit
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - back to home (if possible) or exit
+    if (c == KEY_CANCEL) {
       if (_wifiState == WIFI_ENTERING_PASS) {
         _wifiState = WIFI_SCAN_DONE;
       } else {
@@ -3622,11 +3622,6 @@ private:
         if (_urlLen > 0) {
           _urlBuffer[--_urlLen] = '\0';
         }
-        return true;
-      }
-      if (c == 'q' && _urlLen == 0) {
-        // Q exits URL editing when empty
-        _urlEditing = false;
         return true;
       }
       // Escape URL editing mode
@@ -3685,10 +3680,6 @@ private:
         if (_searchLen > 0) {
           _searchBuffer[--_searchLen] = '\0';
         }
-        return true;
-      }
-      if (c == 'q' && _searchLen == 0) {
-        _searchEditing = false;
         return true;
       }
       if (c == 0x1B) { // ESC
@@ -3900,8 +3891,8 @@ private:
       return true;
     }
 
-    // Q - exit to home
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - exit to home
+    if (c == KEY_CANCEL || c == 'q') {
       _mode = HOME;
       _homeSelected = 0;
       return true;
@@ -4068,16 +4059,16 @@ private:
     display.setCursor(0, footerY);
 
     if (_formFieldEditing) {
-      display.print("Type text  Ent:Next Q:Undo");
+      display.print("Type text  Ent:Next Sh+Del:Undo");
     } else {
       const char* hint;
 #if defined(LilyGo_T5S3_EPaper_Pro)
       hint = "Swipe: Navigate  Tap: Edit  Hold: Back";
 #else
       if (_formCount > 1)
-        hint = "W/S:Nav Ent:Edit </>:Form Q:Back";
+        hint = "W/S:Nav Ent:Edit </>:Form Sh+Del:Back";
       else
-        hint = "W/S:Nav Ent:Edit/Go Q:Back";
+        hint = "W/S:Nav Ent:Edit/Go Sh+Del:Back";
 #endif
       display.print(hint);
     }
@@ -4120,8 +4111,8 @@ private:
         return true;
       }
 
-      // Q as cancel — discard edits, restore original value
-      if ((c == 'q' || c == 'Q') && _formEditLen == 0) {
+      // Shift+Del as cancel -- discard edits, restore original value
+      if (c == KEY_CANCEL) {
         _formFieldEditing = false;
         _formLastCharAt = 0;
         return true;
@@ -4196,8 +4187,8 @@ private:
       return true;
     }
 
-    // Q - back to reading
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - back to reading
+    if (c == KEY_CANCEL) {
       _mode = READING;
       _formFieldEditing = false;
       return true;
@@ -4754,7 +4745,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
     display.print("Swipe: Navigate  Tap: Edit  Hold: Back");
 #else
-    display.print("W/S:Nav Ent:Edit/Go Q:Back");
+    display.print("W/S:Nav Ent:Edit/Go Sh+Del:Back");
 #endif
   }
 
@@ -4824,7 +4815,7 @@ private:
       _ircSetupBufLen = strlen(_ircSetupBuf);
       return true;
     }
-    if (c == 'q' || c == 'Q') {
+    if (c == KEY_CANCEL) {
       _mode = HOME;
       _homeSelected = 0;
       return true;
@@ -4896,7 +4887,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap: Compose  Swipe: Scroll  Hold: Back");
 #else
-      display.print("Ent:Msg W/S:Scrl Q:Bk");
+      display.print("Ent:Msg W/S:Scrl Sh+Del:Bk");
 #endif
     }
 
@@ -5061,8 +5052,8 @@ private:
       return true;
     }
 
-    // Q - back to home (keep connection alive)
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - back to home (keep connection alive)
+    if (c == KEY_CANCEL) {
       _mode = HOME;
       _homeSelected = 0;
       return true;
@@ -5419,9 +5410,9 @@ public:
       case IRC_CHAT:
         return handleIRCChatInput(c);
       case FETCHING:
-        // Q to cancel fetch (can't actually cancel HTTP mid-stream, but
+        // Shift+Del to cancel fetch (can't actually cancel HTTP mid-stream, but
         // go back to home)
-        if (c == 'q' || c == 'Q') {
+        if (c == KEY_CANCEL || c == 'q') {
           _mode = HOME;
           return true;
         }
@@ -5433,7 +5424,7 @@ public:
           _requestTextReader = true;
           return true;
         }
-        if (c == 'q' || c == 'Q') {
+        if (c == KEY_CANCEL || c == 'q') {
           _mode = HOME;
           _homeSelected = 0;
           return true;

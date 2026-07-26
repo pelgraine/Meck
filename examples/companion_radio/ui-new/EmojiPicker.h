@@ -2,7 +2,7 @@
 
 // Emoji Picker with scrolling grid and scroll bar
 // 5 columns, 4 visible rows, scrollable through all 79 emoji
-// WASD navigation, Enter to select, $/Q/Backspace to cancel
+// WASD navigation, Enter to select, $/Shift+Del to cancel
 
 #include <helpers/ui/DisplayDriver.h>
 #include "EmojiSprites.h"
@@ -149,7 +149,7 @@ struct EmojiPicker {
       case '\r':
         ensureVisible();
         return (uint8_t)(EMOJI_ESCAPE_START + cursor);
-      case '\b': case 'q': case 'Q': case KB_KEY_EMOJI:
+      case KEY_CANCEL: case KB_KEY_EMOJI:
         return 0xFF;
       default:
         return 0;

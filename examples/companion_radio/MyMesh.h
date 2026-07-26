@@ -8,11 +8,11 @@
 #define FIRMWARE_VER_CODE 11
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "22 June 2026"
+#define FIRMWARE_BUILD_DATE "26 July 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "Meck v1.12.3"
+#define FIRMWARE_VERSION "Meck v1.12.6"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -167,6 +167,7 @@ public:
 
   // Last Heard — public wrappers for contact add/remove from UI
   void scheduleLazyContactSave();
+  void scheduleAppContactSave();   // BLE app add/update/import: bypass the 12h flush cap
   int getContactBlob(const uint8_t key[], int key_len, uint8_t dest_buf[]) {
     return getBlobByKey(key, key_len, dest_buf);
   }
@@ -178,7 +179,11 @@ public:
   void queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, const char* sender, const char* text);
 
   // Send a direct message from the UI (no BLE dependency)
-  bool uiSendDirectMessage(uint32_t contact_idx, const char* text);
+  // Pass out_send_ref to opt into a tracked send with app-style retries and
+  // dmSendStatus() pushes; out_total receives the planned attempt count.
+  // Callers that leave both NULL get the original single-transmit behaviour.
+  bool uiSendDirectMessage(uint32_t contact_idx, const char* text,
+                           uint32_t* out_send_ref = NULL, uint8_t* out_total = NULL);
 
   // Send raw binary data to a contact (PAYLOAD_TYPE_RAW_CUSTOM, direct route only)
   // Used for dz0ny VE3 voice protocol: voice packets (0x56) and fetch requests (0x72)
@@ -302,6 +307,19 @@ public:
     _store->saveMainIdentity(self_id);
   }
 
+  // "Heard by" repeat data for a sent message (for the repeat overlay). Finds the
+  // sent-track matching 'payload' and copies up to 'max_src' echo sources into the
+  // caller's buffers. Returns total repeat_count (0 if not/no longer tracked).
+  // out_hash receives out_count * out_bph bytes; out_snr receives out_count values.
+  uint8_t getHeardBy(const uint8_t* payload, uint16_t payload_len,
+                     uint8_t& out_bph, uint8_t& out_count,
+                     uint8_t* out_hash, int8_t* out_snr, uint8_t max_src) const;
+
+  // Fingerprint of the most-recently tracked send (channel message). The UI calls
+  // this right after a send to tag the displayed bubble, so getHeardBy can later
+  // match it. Returns false if there is no active recent send.
+  bool getLastSentFingerprint(uint8_t* out) const;
+
 private:
   void writeOKFrame();
   void writeErrFrame(uint8_t err_code);
@@ -346,6 +364,7 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  unsigned long _nextContactSaveDue;   // ESP32 chunked save: next scheduled flush (0 = unscheduled)
 
   TransportKey send_scope;
 
@@ -383,6 +402,29 @@ private:
   AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
+  // Device-side tracked DM sends with app-style retries:
+  //   no path set  -> 3 attempts, all flood
+  //   path set     -> 5 attempts: 4 direct on the set path, then path reset
+  //                   and a final flood attempt
+  // Each attempt is a real transmit with the attempt counter bumped, so each
+  // has its own expected ack (the attempt bits are inside the ack hash).
+  // Session only -- a reboot abandons any in-flight sequence.
+  #define MAX_PENDING_DM_SENDS 4
+  struct PendingDMSend {
+    bool active;
+    uint8_t attempt;                    // attempts sent so far (1-based)
+    uint8_t total;                      // planned attempts (3 or 5)
+    uint8_t contact_pub[PUB_KEY_SIZE];  // recipient (idx can shift, pub key cannot)
+    uint32_t timestamp;                 // original msg timestamp, reused per attempt
+    uint32_t send_ref;                  // UI handle (= attempt-1 expected ack)
+    uint32_t acks[5];                   // expected ack per attempt
+    unsigned long deadline;             // futureMillis() for the current attempt
+    char text[MAX_TEXT_LEN + 1];        // raw text kept for resends
+  };
+  PendingDMSend pending_dm[MAX_PENDING_DM_SENDS];
+  void sweepPendingDMSends();
+  void resolvePendingDMSend(uint32_t ack);
+
   #ifndef ADVERT_PATH_TABLE_SIZE
     #define ADVERT_PATH_TABLE_SIZE   1000
   #endif
@@ -396,12 +438,19 @@ private:
     // Sent message repeat tracking
   #define SENT_TRACK_SIZE          4
   #define SENT_FINGERPRINT_SIZE    12
-  #define SENT_TRACK_EXPIRY_MS     30000  // stop tracking after 30 seconds
+  #define SENT_TRACK_EXPIRY_MS     600000  // keep heard-by viewable for 10 minutes
+  #define SENT_ECHO_MAX            8       // distinct "heard by" repeaters stored per send
   struct SentMsgTrack {
     uint8_t fingerprint[SENT_FINGERPRINT_SIZE];
     uint8_t repeat_count;
     unsigned long sent_millis;
     bool active;
+    // "Heard by": which repeaters re-flooded this message and how well we heard
+    // each. Captured from the first hop of each echo packet in filterRecvFloodPacket.
+    uint8_t echo_bph;                       // bytes-per-hop of stored hashes (1 or 2)
+    uint8_t echo_count;                     // distinct repeaters recorded (<= SENT_ECHO_MAX)
+    uint8_t echo_hash[SENT_ECHO_MAX * 2];   // first-hop hash of each source
+    int8_t  echo_snr[SENT_ECHO_MAX];        // SNR (quarter-dB) heard from each source
   };
   SentMsgTrack _sent_track[SENT_TRACK_SIZE];
   int _sent_track_idx;  // next slot in circular buffer

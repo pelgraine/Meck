@@ -17,7 +17,7 @@
 //
 // Navigation mirrors ChannelScreen conventions:
 //   W/S: scroll     Enter: select/send    C: compose new/reply
-//   Q: back         Sh+Del: cancel compose
+//   Sh+Del: back      Sh+Del: cancel compose
 //   D: contacts (from inbox)
 //   A: add/edit contact (from conversation)
 //   F: call (from conversation, contacts, or phone dialer)
@@ -48,7 +48,7 @@ class UITask;   // forward declaration
 class SMSScreen : public UIScreen {
 public:
   enum SubView { APP_MENU, INBOX, CONVERSATION, COMPOSE, CONTACTS, EDIT_CONTACT, PHONE_DIALER,
-                 DIALING_OUT, INCOMING_CALL, IN_CALL };
+                 DIALING_OUT, INCOMING_CALL, IN_CALL, CALL_LOG, CONTACT_PAGE };
 
 private:
   UITask* _task;
@@ -56,7 +56,15 @@ private:
   SubView _view;
 
   // App menu state
-  int _menuCursor;  // 0 = Phone, 1 = SMS Inbox
+  int _menuCursor;  // 0 = Dial, 1 = SMS Inbox, 2 = Call Log
+
+  // Call log state
+  CallLogRecord _callLog[SMS_CALLLOG_MAX];
+  int  _callLogCount;
+  int  _callLogCursor;
+  int  _callLogScrollTop;
+  int  _unseenMissed;      // Missed calls not yet viewed in the log (menu badge)
+  bool _callWasIncoming;   // Direction of the active/last call, for log entries
 
   // Inbox state
   SMSConversation _conversations[SMS_MAX_CONVERSATIONS];
@@ -84,6 +92,18 @@ private:
   // Contacts list state
   int _contactsCursor;
   int _contactsScrollTop;
+  SubView _contactsReturnView;  // where Q returns to from the contacts list
+
+  // Contact page (view / add / edit a single contact)
+  char _cpName[SMS_CONTACT_NAME_LEN];
+  char _cpPhone[SMS_PHONE_LEN];
+  char _cpOrigPhone[SMS_PHONE_LEN];  // key before an edit, for rename
+  int  _cpCursor;               // 0 = Name, 1 = Number, 2 = Save
+  bool _cpIsNew;
+  bool _cpEditing;              // true = typing into the selected field
+  char _cpEditBuf[SMS_CONTACT_NAME_LEN];
+  int  _cpEditPos;
+  bool _cpNeedNumber;           // set when Save is pressed with no number
 
   // Edit contact state
   char _editPhone[SMS_PHONE_LEN];
@@ -108,6 +128,14 @@ private:
   bool _sdReady;
 
   // Reload helpers
+  void refreshCallLog() {
+    _callLogCount = smsStore.loadCallLog(_callLog, SMS_CALLLOG_MAX);
+    _unseenMissed = 0;
+    for (int i = 0; i < _callLogCount; i++) {
+      if (_callLog[i].type == CALL_LOG_MISSED && _callLog[i].seen == 0) _unseenMissed++;
+    }
+  }
+
   void refreshInbox() {
     _convCount = smsStore.loadConversations(_conversations, SMS_MAX_CONVERSATIONS);
   }
@@ -126,9 +154,13 @@ public:
     , _msgCount(0), _msgScrollPos(0)
     , _composePos(0), _composeNewConversation(false)
     , _phoneInputPos(0), _enteringPhone(false)
-    , _contactsCursor(0), _contactsScrollTop(0)
+    , _contactsCursor(0), _contactsScrollTop(0), _contactsReturnView(INBOX)
+    , _cpCursor(0), _cpIsNew(false), _cpEditing(false), _cpEditPos(0)
+    , _cpNeedNumber(false)
     , _editNamePos(0), _editIsNew(false), _editReturnView(INBOX)
     , _callReturnView(APP_MENU), _callConnectTime(0), _callVolume(3), _callDotAnim(0)
+    , _callLogCount(0), _callLogCursor(0), _callLogScrollTop(0), _unseenMissed(0)
+    , _callWasIncoming(false)
     , _needsRefresh(false), _lastRefresh(0)
     , _sdReady(false)
   {
@@ -136,17 +168,41 @@ public:
     memset(_composePhone, 0, sizeof(_composePhone));
     memset(_phoneInputBuf, 0, sizeof(_phoneInputBuf));
     memset(_activePhone, 0, sizeof(_activePhone));
+    memset(_cpName, 0, sizeof(_cpName));
+    memset(_cpPhone, 0, sizeof(_cpPhone));
+    memset(_cpOrigPhone, 0, sizeof(_cpOrigPhone));
+    memset(_cpEditBuf, 0, sizeof(_cpEditBuf));
     memset(_editPhone, 0, sizeof(_editPhone));
     memset(_editNameBuf, 0, sizeof(_editNameBuf));
     memset(_callPhone, 0, sizeof(_callPhone));
   }
 
-  void setSDReady(bool ready) { _sdReady = ready; }
+  void setSDReady(bool ready) {
+    _sdReady = ready;
+    if (_sdReady) {
+      // Load unread/unseen state now so the lock screen shows the right
+      // counts before the phone screen has ever been opened
+      refreshInbox();
+      refreshCallLog();
+    }
+  }
+
+  // Live counts for the lock screen badge. Both clear only when the relevant
+  // conversation or the call log is actually opened.
+  int getUnreadSmsCount() const {
+    int n = 0;
+    for (int i = 0; i < _convCount; i++) n += _conversations[i].unreadCount;
+    return n;
+  }
+  int getUnseenMissedCount() const { return _unseenMissed; }
 
   void activate() {
     _view = APP_MENU;
     _menuCursor = 0;
-    if (_sdReady) refreshInbox();
+    if (_sdReady) {
+      refreshInbox();
+      refreshCallLog();
+    }
   }
 
   SubView getSubView() const { return _view; }
@@ -164,6 +220,7 @@ public:
     _callConnectTime = 0;
     _callVolume = 3;
     _callDotAnim = 0;
+    _callWasIncoming = false;
     _view = DIALING_OUT;
     modemManager.dialCall(phone);
   }
@@ -177,6 +234,7 @@ public:
         _callPhone[SMS_PHONE_LEN - 1] = '\0';
         _callConnectTime = 0;
         _callVolume = 3;
+        _callWasIncoming = true;
         if (!isInCallView()) {
           _callReturnView = _view;
         }
@@ -193,6 +251,10 @@ public:
 
       case CallEventType::ENDED:
         Serial.printf("[SMSScreen] Call ended (%lus)\n", (unsigned long)evt.duration);
+        if (_sdReady) {
+          smsStore.appendCallLog(_callWasIncoming ? CALL_LOG_INCOMING : CALL_LOG_OUTGOING,
+                                 evt.phone, evt.duration, (uint32_t)time(nullptr));
+        }
         if (_view == IN_CALL || _view == DIALING_OUT) {
           // Remote hangup or network drop — return to previous view
           // "Call Ended" alert is shown by main.cpp via showAlert()
@@ -200,28 +262,41 @@ public:
         }
         _callPhone[0] = '\0';
         _callConnectTime = 0;
+        if (_view == CALL_LOG && _sdReady) refreshCallLog();
         _needsRefresh = true;
         break;
 
       case CallEventType::MISSED:
         Serial.printf("[SMSScreen] Missed call from %s\n", evt.phone);
+        if (_sdReady) {
+          smsStore.appendCallLog(CALL_LOG_MISSED, evt.phone, 0, (uint32_t)time(nullptr));
+        }
         _view = _callReturnView;
         _callPhone[0] = '\0';
         _callConnectTime = 0;
+        if (_sdReady) refreshCallLog();
         _needsRefresh = true;
         break;
 
       case CallEventType::BUSY:
         Serial.printf("[SMSScreen] Busy: %s\n", evt.phone);
+        if (_sdReady) {
+          smsStore.appendCallLog(CALL_LOG_OUTGOING, evt.phone, 0, (uint32_t)time(nullptr));
+        }
         _view = _callReturnView;
         _callPhone[0] = '\0';
+        if (_view == CALL_LOG && _sdReady) refreshCallLog();
         _needsRefresh = true;
         break;
 
       case CallEventType::NO_ANSWER:
         Serial.printf("[SMSScreen] No answer: %s\n", evt.phone);
+        if (_sdReady) {
+          smsStore.appendCallLog(CALL_LOG_OUTGOING, evt.phone, 0, (uint32_t)time(nullptr));
+        }
         _view = _callReturnView;
         _callPhone[0] = '\0';
+        if (_view == CALL_LOG && _sdReady) refreshCallLog();
         _needsRefresh = true;
         break;
 
@@ -243,9 +318,9 @@ public:
       smsStore.markConversationRead(_activePhone);
       refreshConversation();
     }
-    if (_view == INBOX || _view == APP_MENU) {
-      refreshInbox();
-    }
+    // Refresh regardless of the current view so the unread total stays
+    // correct for the lock screen badge
+    if (_sdReady) refreshInbox();
     _needsRefresh = true;
   }
 
@@ -301,6 +376,8 @@ public:
 
     switch (_view) {
       case APP_MENU:      return renderAppMenu(display);
+      case CALL_LOG:      return renderCallLog(display);
+      case CONTACT_PAGE:  return renderContactPage(display);
       case INBOX:         return renderInbox(display);
       case CONVERSATION:  return renderConversation(display);
       case COMPOSE:       return renderCompose(display);
@@ -338,14 +415,40 @@ public:
     display.setColor(_menuCursor == 0 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
     if (_menuCursor == 0) display.print("> ");
     else display.print("  ");
-    display.print("Phone");
+    display.print("Dial");
 
     y += lineHeight;
 
-    // Item 1: SMS Inbox
+    // Item 1: Call Log
     display.setCursor(4, y);
     display.setColor(_menuCursor == 1 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
     if (_menuCursor == 1) display.print("> ");
+    else display.print("  ");
+    display.print("Call Log");
+
+    // Show unseen missed-call count (hidden when there are none)
+    if (_unseenMissed > 0) {
+      char countHint[12];
+      snprintf(countHint, sizeof(countHint), " [%d]", _unseenMissed);
+      display.setColor(DisplayDriver::LIGHT);
+      display.print(countHint);
+    }
+
+    y += lineHeight;
+
+    // Item 2: Contacts
+    display.setCursor(4, y);
+    display.setColor(_menuCursor == 2 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+    if (_menuCursor == 2) display.print("> ");
+    else display.print("  ");
+    display.print("Contacts");
+
+    y += lineHeight;
+
+    // Item 3: SMS Inbox
+    display.setCursor(4, y);
+    display.setColor(_menuCursor == 3 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+    if (_menuCursor == 3) display.print("> ");
     else display.print("  ");
     display.print("SMS Inbox");
 
@@ -387,7 +490,7 @@ public:
     display.setCursor(0, footerY);
     display.print("Q:Back");
     const char* rt = "Ent:Open";
-    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    display.setCursor(display.width() - display.getTextWidth(rt) - 6, footerY);
     display.print(rt);
 
     if (ms != ModemState::READY && ms != ModemState::SENDING_SMS) {
@@ -516,7 +619,7 @@ public:
     display.drawRect(0, footerY - 1, W, 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Q:Bk");
+    display.print("Sh+Del:Bk");
     if (_phoneInputPos > 0) {
       const char* rt = "Ent:Call";
       display.setCursor(W - display.getTextWidth(rt) - 2, footerY);
@@ -533,6 +636,138 @@ public:
   }
 
   // ---- Inbox ----
+  // ---- Call log ----
+  int renderCallLog(DisplayDriver& display) {
+    // Header
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print("Call Log");
+
+    // Signal strength at top-right
+    renderSignalIndicator(display, display.width() - 2, 0);
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    if (_callLogCount == 0) {
+      display.setTextSize(_prefs->smallTextSize());
+      display.setColor(DisplayDriver::LIGHT);
+      display.setCursor(0, 20);
+      display.print("No calls");
+      display.setTextSize(1);
+    } else {
+      display.setTextSize(_prefs->smallTextSize());
+      int lineHeight = _prefs->smallLineH() + 1;
+      int y = 14;
+
+      int visibleCount = (display.height() - 14 - 14) / (lineHeight * 2 + 2);
+      if (visibleCount < 1) visibleCount = 1;
+
+      // Adjust scroll to keep cursor visible
+      if (_callLogCursor < _callLogScrollTop) _callLogScrollTop = _callLogCursor;
+      if (_callLogCursor >= _callLogScrollTop + visibleCount) {
+        _callLogScrollTop = _callLogCursor - visibleCount + 1;
+      }
+
+      for (int vi = 0; vi < visibleCount && (_callLogScrollTop + vi) < _callLogCount; vi++) {
+        int idx = _callLogScrollTop + vi;
+        CallLogRecord& e = _callLog[idx];
+
+        bool selected = (idx == _callLogCursor);
+
+        // Resolve contact name (shows name if saved, phone otherwise)
+        char dispName[SMS_CONTACT_NAME_LEN];
+        if (e.phone[0]) {
+          smsContacts.displayName(e.phone, dispName, sizeof(dispName));
+        } else {
+          strncpy(dispName, "Unknown", sizeof(dispName) - 1);
+          dispName[sizeof(dispName) - 1] = '\0';
+        }
+
+        display.setCursor(0, y);
+        display.setColor(selected ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+        if (selected) display.print("> ");
+        display.print(dispName);
+        y += lineHeight;
+
+        // Detail line: type, duration for connected calls, local date/time
+        const char* typeStr = (e.type == CALL_LOG_MISSED) ? "Missed"
+                            : (e.type == CALL_LOG_INCOMING) ? "In" : "Out";
+        int32_t local = (int32_t)e.timestamp + ((int32_t)_prefs->utc_offset_hours * 3600);
+        time_t lt = (time_t)local;
+        struct tm tmv;
+        gmtime_r(&lt, &tmv);
+        char detail[36];
+        if (e.type != CALL_LOG_MISSED && e.duration > 0) {
+          snprintf(detail, sizeof(detail), "%s %lu:%02lu  %02d/%02d %02d:%02d",
+                   typeStr, (unsigned long)(e.duration / 60), (unsigned long)(e.duration % 60),
+                   tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_hour, tmv.tm_min);
+        } else {
+          snprintf(detail, sizeof(detail), "%s  %02d/%02d %02d:%02d",
+                   typeStr, tmv.tm_mday, tmv.tm_mon + 1, tmv.tm_hour, tmv.tm_min);
+        }
+        display.setColor(DisplayDriver::LIGHT);
+        display.setCursor(12, y);
+        display.print(detail);
+        y += lineHeight + 2;
+      }
+      display.setTextSize(1);
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    display.print("Q:Back");
+    const char* mid = "D:Del";
+    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
+    display.print(mid);
+    const char* rt = "Ent:Dial";
+    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    display.print(rt);
+
+    return 5000;
+  }
+
+  bool handleCallLogInput(char c) {
+    switch (c) {
+      case 'w': case 'W':
+        if (_callLogCursor > 0) _callLogCursor--;
+        return true;
+
+      case 's': case 'S':
+        if (_callLogCursor < _callLogCount - 1) _callLogCursor++;
+        return true;
+
+      case '\r':  // Enter - dial selected entry
+        if (_callLogCount > 0 && _callLogCursor < _callLogCount
+            && _callLog[_callLogCursor].phone[0]) {
+          startCall(_callLog[_callLogCursor].phone);
+        }
+        return true;
+
+      case 'd': case 'D':  // Delete selected entry
+        if (_callLogCount > 0 && _callLogCursor < _callLogCount && _sdReady) {
+          smsStore.deleteCallLogEntry(_callLogCursor);
+          refreshCallLog();
+          if (_callLogCursor >= _callLogCount && _callLogCursor > 0) _callLogCursor--;
+        }
+        return true;
+
+      case 'q':
+      case KEY_CANCEL:  // Back to app menu
+        _view = APP_MENU;
+        _menuCursor = 2;
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
   int renderInbox(DisplayDriver& display) {
     ModemState ms = modemManager.getState();
 
@@ -821,6 +1056,203 @@ public:
   }
 
   // ---- Contacts list ----
+  // ---- Contact page: view / add / edit one contact ----
+  void openContactPage(const char* name, const char* phone, bool isNew) {
+    strncpy(_cpName, name, SMS_CONTACT_NAME_LEN - 1);
+    _cpName[SMS_CONTACT_NAME_LEN - 1] = '\0';
+    strncpy(_cpPhone, phone, SMS_PHONE_LEN - 1);
+    _cpPhone[SMS_PHONE_LEN - 1] = '\0';
+    strncpy(_cpOrigPhone, phone, SMS_PHONE_LEN - 1);
+    _cpOrigPhone[SMS_PHONE_LEN - 1] = '\0';
+    _cpIsNew = isNew;
+    _cpCursor = 0;
+    _cpEditing = false;
+    _cpEditPos = 0;
+    _cpEditBuf[0] = '\0';
+    _cpNeedNumber = false;
+    _view = CONTACT_PAGE;
+  }
+
+  int renderContactPage(DisplayDriver& display) {
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print(_cpIsNew ? "New Contact" : "Contact");
+
+    display.setColor(DisplayDriver::LIGHT);
+    display.drawRect(0, 11, display.width(), 1);
+
+    display.setTextSize(1);
+    int lineHeight = 16;
+    int y = 24;
+    char rowBuf[SMS_CONTACT_NAME_LEN + 16];
+
+    // Row 0: Name
+    display.setCursor(4, y);
+    display.setColor(_cpCursor == 0 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+    display.print(_cpCursor == 0 ? "> " : "  ");
+    if (_cpEditing && _cpCursor == 0) {
+      snprintf(rowBuf, sizeof(rowBuf), "Name: %s_", _cpEditBuf);
+    } else {
+      snprintf(rowBuf, sizeof(rowBuf), "Name: %s", _cpName);
+    }
+    display.print(rowBuf);
+    y += lineHeight;
+
+    // Row 1: Number
+    display.setCursor(4, y);
+    display.setColor(_cpCursor == 1 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+    display.print(_cpCursor == 1 ? "> " : "  ");
+    if (_cpEditing && _cpCursor == 1) {
+      snprintf(rowBuf, sizeof(rowBuf), "Number: %s_", _cpEditBuf);
+    } else {
+      snprintf(rowBuf, sizeof(rowBuf), "Number: %s", _cpPhone);
+    }
+    display.print(rowBuf);
+    y += lineHeight;
+
+    // Row 2: Save
+    display.setCursor(4, y);
+    display.setColor(_cpCursor == 2 ? DisplayDriver::GREEN : DisplayDriver::LIGHT);
+    display.print(_cpCursor == 2 ? "> " : "  ");
+    display.print("Save");
+    y += lineHeight;
+
+    if (_cpNeedNumber) {
+      display.setTextSize(_prefs->smallTextSize());
+      display.setColor(DisplayDriver::YELLOW);
+      display.setCursor(4, y + 4);
+      display.print("A number is required");
+      display.setTextSize(1);
+    }
+
+    // Footer
+    display.setTextSize(1);
+    int footerY = display.height() - 12;
+    display.drawRect(0, footerY - 2, display.width(), 1);
+    display.setColor(DisplayDriver::YELLOW);
+    display.setCursor(0, footerY);
+    if (_cpEditing) {
+      display.print("Sh+Del:Cancel");
+      const char* rt = "Ent:Done";
+      display.setCursor(display.width() - display.getTextWidth(rt) - 6, footerY);
+      display.print(rt);
+    } else {
+      display.print("Q:Back");
+      if (!_cpIsNew) {
+        const char* mid = "F:Dial D:Del";
+        display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
+        display.print(mid);
+      }
+      const char* rt = "Ent:Sel";
+      display.setCursor(display.width() - display.getTextWidth(rt) - 6, footerY);
+      display.print(rt);
+    }
+
+    return 5000;
+  }
+
+  bool handleContactPageInput(char c) {
+    // --- Field editing ---
+    if (_cpEditing) {
+      if (c == '\r') {
+        _cpEditBuf[_cpEditPos] = '\0';
+        if (_cpCursor == 0) {
+          strncpy(_cpName, _cpEditBuf, SMS_CONTACT_NAME_LEN - 1);
+          _cpName[SMS_CONTACT_NAME_LEN - 1] = '\0';
+        } else {
+          strncpy(_cpPhone, _cpEditBuf, SMS_PHONE_LEN - 1);
+          _cpPhone[SMS_PHONE_LEN - 1] = '\0';
+        }
+        _cpEditing = false;
+        return true;
+      }
+      if (c == 0x18) {  // Shift+Backspace -- abandon this field edit
+        _cpEditing = false;
+        return true;
+      }
+      if (c == '\b') {
+        if (_cpEditPos > 0) {
+          _cpEditPos--;
+          _cpEditBuf[_cpEditPos] = '\0';
+        }
+        return true;
+      }
+      int limit = (_cpCursor == 0) ? SMS_CONTACT_NAME_LEN - 1 : SMS_PHONE_LEN - 1;
+      if (c >= 32 && c < 127 && _cpEditPos < limit) {
+        _cpEditBuf[_cpEditPos++] = c;
+        _cpEditBuf[_cpEditPos] = '\0';
+      }
+      return true;  // consume all keys while editing
+    }
+
+    // --- Navigation ---
+    switch (c) {
+      case 'w': case 'W':
+        if (_cpCursor > 0) _cpCursor--;
+        _cpNeedNumber = false;
+        return true;
+
+      case 's': case 'S':
+        if (_cpCursor < 2) _cpCursor++;
+        _cpNeedNumber = false;
+        return true;
+
+      case '\r':
+        if (_cpCursor == 2) {
+          saveContactPage();
+        } else {
+          const char* src = (_cpCursor == 0) ? _cpName : _cpPhone;
+          strncpy(_cpEditBuf, src, sizeof(_cpEditBuf) - 1);
+          _cpEditBuf[sizeof(_cpEditBuf) - 1] = '\0';
+          _cpEditPos = strlen(_cpEditBuf);
+          _cpEditing = true;
+          _cpNeedNumber = false;
+        }
+        return true;
+
+      case 'f': case 'F':  // Dial this contact
+        if (!_cpIsNew && _cpPhone[0]) startCall(_cpPhone);
+        return true;
+
+      case 'd': case 'D':  // Delete this contact
+        if (!_cpIsNew && _cpOrigPhone[0]) {
+          smsContacts.remove(_cpOrigPhone);
+          Serial.printf("[SMSContacts] Deleted: %s\n", _cpOrigPhone);
+          returnToContacts();
+        }
+        return true;
+
+      case 'q':
+      case KEY_CANCEL:  // Back without saving
+        returnToContacts();
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  void saveContactPage() {
+    if (_cpPhone[0] == '\0') {
+      _cpNeedNumber = true;   // number is the storage key, so it cannot be blank
+      return;
+    }
+    // Renaming the number is a remove-then-add, since contacts are keyed on it
+    if (!_cpIsNew && _cpOrigPhone[0] && strcmp(_cpOrigPhone, _cpPhone) != 0) {
+      smsContacts.remove(_cpOrigPhone);
+    }
+    smsContacts.set(_cpPhone, _cpName);
+    Serial.printf("[SMSContacts] Saved: %s = %s\n", _cpPhone, _cpName);
+    returnToContacts();
+  }
+
+  void returnToContacts() {
+    int cnt = smsContacts.count();
+    if (_contactsCursor >= cnt) _contactsCursor = (cnt > 0) ? cnt - 1 : 0;
+    _view = CONTACTS;
+  }
+
   int renderContacts(DisplayDriver& display) {
     display.setTextSize(1);
     display.setColor(DisplayDriver::GREEN);
@@ -838,9 +1270,7 @@ public:
       display.setCursor(0, 25);
       display.print("No contacts saved");
       display.setCursor(0, 37);
-      display.print("Open a conversation");
-      display.setCursor(0, 49);
-      display.print("and press A to add");
+      display.print("Press A to add one");
       display.setTextSize(1);
     } else {
       display.setTextSize(_prefs->smallTextSize());
@@ -888,8 +1318,11 @@ public:
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
     display.print("Q:Back");
-    const char* rt = "Ent:SMS F:Call";
-    display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+    const char* mid = "A:Add";
+    display.setCursor((display.width() - display.getTextWidth(mid)) / 2, footerY);
+    display.print(mid);
+    const char* rt = "Ent:Open";
+    display.setCursor(display.width() - display.getTextWidth(rt) - 6, footerY);
     display.print(rt);
 
     return 5000;
@@ -986,7 +1419,7 @@ public:
     display.drawRect(0, footerY - 2, W, 1);
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(0, footerY);
-    display.print("Ent/Q:Hang up");
+    display.print("Ent/Sh+Del:Hang up");
 
     return 800;  // Fast refresh for dot animation
   }
@@ -1042,7 +1475,7 @@ public:
     display.setColor(DisplayDriver::GREEN);
     display.setCursor(0, footerY);
     display.print("Ent:Answer");
-    const char* rt = "Q:Reject";
+    const char* rt = "Sh+Del:Reject";
     display.setColor(DisplayDriver::YELLOW);
     display.setCursor(W - display.getTextWidth(rt) - 2, footerY);
     display.print(rt);
@@ -1122,6 +1555,8 @@ public:
   bool handleInput(char c) override {
     switch (_view) {
       case APP_MENU:      return handleAppMenuInput(c);
+      case CALL_LOG:      return handleCallLogInput(c);
+      case CONTACT_PAGE:  return handleContactPageInput(c);
       case INBOX:         return handleInboxInput(c);
       case CONVERSATION:  return handleConversationInput(c);
       case COMPOSE:       return handleComposeInput(c);
@@ -1139,11 +1574,11 @@ public:
   bool handleAppMenuInput(char c) {
     switch (c) {
       case 'w': case 'W':
-        _menuCursor = 0;
+        if (_menuCursor > 0) _menuCursor--;
         return true;
 
       case 's': case 'S':
-        _menuCursor = 1;
+        if (_menuCursor < 3) _menuCursor++;
         return true;
 
       case '\r':  // Enter - select menu item
@@ -1152,6 +1587,21 @@ public:
           _phoneInputBuf[0] = '\0';
           _phoneInputPos = 0;
           _view = PHONE_DIALER;
+        } else if (_menuCursor == 1) {
+          // Call Log
+          if (_sdReady) {
+            smsStore.markMissedSeen();
+            refreshCallLog();
+          }
+          _callLogCursor = 0;
+          _callLogScrollTop = 0;
+          _view = CALL_LOG;
+        } else if (_menuCursor == 2) {
+          // Contacts
+          _contactsCursor = 0;
+          _contactsScrollTop = 0;
+          _contactsReturnView = APP_MENU;
+          _view = CONTACTS;
         } else {
           // SMS Inbox
           if (_sdReady) refreshInbox();
@@ -1161,7 +1611,7 @@ public:
         }
         return true;
 
-      case 'q': case 'Q':  // Back to home (handled by main.cpp)
+      case KEY_CANCEL:  // Back to home (handled by main.cpp)
         return false;
 
       default:
@@ -1207,7 +1657,7 @@ public:
         }
         return true;
 
-      case 'q':  // Back to app menu
+      case KEY_CANCEL:  // Back to app menu
         _phoneInputBuf[0] = '\0';
         _phoneInputPos = 0;
         _view = APP_MENU;
@@ -1340,10 +1790,12 @@ public:
       case 'd': case 'D':  // Open contacts list
         _contactsCursor = 0;
         _contactsScrollTop = 0;
+        _contactsReturnView = INBOX;
         _view = CONTACTS;
         return true;
 
-      case 'q': case 'Q':  // Back to app menu
+      case 'q':
+      case KEY_CANCEL:  // Back to app menu
         _view = APP_MENU;
         _menuCursor = 0;
         return true;
@@ -1399,7 +1851,8 @@ public:
         return true;
       }
 
-      case 'q': case 'Q':  // Back to inbox
+      case 'q':
+      case KEY_CANCEL:  // Back to inbox
         refreshInbox();
         _view = INBOX;
         return true;
@@ -1508,7 +1961,18 @@ public:
         if (_contactsCursor < cnt - 1) _contactsCursor++;
         return true;
 
-      case '\r':  // Enter - compose to selected contact
+      case '\r':  // Enter - open the contact page
+        if (cnt > 0 && _contactsCursor < cnt) {
+          const SMSContact& ct = smsContacts.get(_contactsCursor);
+          openContactPage(ct.name, ct.phone, false);
+        }
+        return true;
+
+      case 'a': case 'A':  // Add a new contact
+        openContactPage("", "", true);
+        return true;
+
+      case 'm': case 'M':  // Compose an SMS to the selected contact
         if (cnt > 0 && _contactsCursor < cnt) {
           const SMSContact& ct = smsContacts.get(_contactsCursor);
           _composeNewConversation = true;
@@ -1527,9 +1991,15 @@ public:
         }
         return true;
 
-      case 'q': case 'Q':  // Back to inbox
-        refreshInbox();
-        _view = INBOX;
+      case 'q':
+      case KEY_CANCEL:  // Back to wherever the list was opened from
+        if (_contactsReturnView == INBOX) {
+          refreshInbox();
+          _view = INBOX;
+        } else {
+          _view = APP_MENU;
+          _menuCursor = 2;
+        }
         return true;
 
       default:
@@ -1579,11 +2049,11 @@ public:
     }
   }
 
-  // ---- Dialing out input (Enter or Q to cancel/hang up) ----
+  // ---- Dialing out input (Enter or Shift+Del to cancel/hang up) ----
   bool handleDialingOutInput(char c) {
     switch (c) {
       case '\r':  // Enter - hang up
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';
@@ -1594,14 +2064,14 @@ public:
     }
   }
 
-  // ---- Incoming call input (Enter to answer, Q to reject) ----
+  // ---- Incoming call input (Enter to answer, Shift+Del to reject) ----
   bool handleIncomingCallInput(char c) {
     switch (c) {
       case '\r':  // Enter - answer call
         modemManager.answerCall();
         return true;
 
-      case 'q': case 'Q':  // Reject call
+      case KEY_CANCEL:  // Reject call
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';
@@ -1616,7 +2086,7 @@ public:
   bool handleInCallInput(char c) {
     switch (c) {
       case '\r':  // Enter - hang up
-      case 'q': case 'Q':
+      case KEY_CANCEL:
         modemManager.hangupCall();
         _view = _callReturnView;
         _callPhone[0] = '\0';

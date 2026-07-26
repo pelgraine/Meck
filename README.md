@@ -768,7 +768,11 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 
 Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts). The SMS Inbox entry shows the number of unread received messages in brackets (e.g. **SMS Inbox [3]**); the badge disappears once everything is read.
 
+<<<<<<< HEAD
 **Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.**
+=======
+# Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.
+>>>>>>> dev
 
 For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
@@ -863,7 +867,7 @@ Packets are sent with staggered 3-second delays to avoid congesting the channel.
 | Enter | Send to selected contact |
 | Q | Back to home screen |
 
-### Lock Screen (T-Deck Pro)
+### Lock Screen (T-Deck Pro & Max)
 
 Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
 
@@ -871,7 +875,7 @@ Double-click the Boot button again to unlock and return to whatever screen you w
 
 An auto-lock timer can be configured in **Settings → Auto Lock** (None / 2 / 5 / 10 / 15 / 30 minutes of idle time).
 
-### Shutdown (T-Deck Pro)
+### Shutdown (T-Deck Pro & Max)
 
 The home screen includes a **Shutdown** page. Selecting it powers the device off completely — the ESP32-S3 enters deep sleep with no wake sources, peripheral power is cut, and the LoRa module is powered down. Only a hardware reset (reset button) or USB power-on will wake the device. This is distinct from the auto-lock hibernate, which maintains wake-on-LoRa capability.
 

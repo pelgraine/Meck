@@ -12,6 +12,15 @@
   #include <SD.h>
 #endif
 
+// DM send status codes (session only). Guarded so AbstractUITask.h can carry
+// the same definitions without a clash.
+#ifndef DM_SEND_NONE
+#define DM_SEND_NONE       0
+#define DM_SEND_SENDING    1
+#define DM_SEND_DELIVERED  2
+#define DM_SEND_FAILED     3
+#endif
+
 // Maximum messages to store in history
 #ifndef CHANNEL_MSG_HISTORY_SIZE
 #define CHANNEL_MSG_HISTORY_SIZE 300
@@ -68,7 +77,13 @@ public:
     uint8_t path[MSG_PATH_MAX];  // Repeater hop hashes
     char text[CHANNEL_MSG_TEXT_LEN];
     bool valid;
+    bool has_fp;        // sent bubble carries a 12-byte send fingerprint in path[] ("Heard by")
     uint8_t scope_idx;  // Region scope index for display (session only, 0xFF = unscoped). Not persisted.
+    // --- DM send status (session only). Not persisted to SD. ---
+    uint32_t send_ref;   // Tracked-send handle from MyMesh (0 = untracked)
+    uint8_t dm_status;   // DM_SEND_NONE / SENDING / DELIVERED / FAILED
+    uint8_t dm_attempt;  // attempts sent so far (for "Sending x/N")
+    uint8_t dm_total;    // planned attempts (3 or 5)
   };
 
   // Simple hash for DM peer matching
@@ -141,6 +156,10 @@ public:
       _messages[i].dm_peer_hash = 0;
       memset(_messages[i].path, 0, MSG_PATH_MAX);
       _messages[i].scope_idx = 0xFF;
+      _messages[i].send_ref = 0;
+      _messages[i].dm_status = DM_SEND_NONE;
+      _messages[i].dm_attempt = 0;
+      _messages[i].dm_total = 0;
     }
     // Initialize unread counts
     memset(_unread, 0, sizeof(_unread));
@@ -153,7 +172,9 @@ public:
   // suppressUnread: if true, do not increment the unread counter for this message
   void addMessage(uint8_t channel_idx, uint8_t path_len, const char* sender, const char* text,
                   const uint8_t* path_bytes = nullptr, int8_t snr = 0, const char* peer_name = nullptr,
-                  bool suppressUnread = false, uint8_t scope_idx = 0xFF) {
+                  bool suppressUnread = false, uint8_t scope_idx = 0xFF,
+                  uint32_t send_ref = 0, uint8_t send_total = 0,
+                  const uint8_t* sent_fp = nullptr) {
     // Move to next slot in circular buffer
     _newestIdx = (_newestIdx + 1) % CHANNEL_MSG_HISTORY_SIZE;
     
@@ -164,6 +185,12 @@ public:
     msg->snr = snr;
     msg->valid = true;
     msg->scope_idx = scope_idx;
+    // Tracked send: attempt 1 has already been transmitted by the time the
+    // local echo is added, so the initial state is "Sending 1/N"
+    msg->send_ref = send_ref;
+    msg->dm_status = send_ref ? DM_SEND_SENDING : DM_SEND_NONE;
+    msg->dm_attempt = send_ref ? 1 : 0;
+    msg->dm_total = send_total;
     
     // Set DM peer hash for conversation filtering
     if (channel_idx == 0xFF) {
@@ -178,6 +205,14 @@ public:
       int n = mesh::Packet::getPathByteLenFor(path_len);
       if (n > MSG_PATH_MAX) n = MSG_PATH_MAX;
       memcpy(msg->path, path_bytes, n);
+    }
+
+    // Sent bubble: stash the 12-byte send fingerprint in the otherwise-unused
+    // path buffer so the "Heard by" overlay can match it to the repeat track.
+    msg->has_fp = false;
+    if (sent_fp && path_len == 0) {
+      memcpy(msg->path, sent_fp, 12);  // SENT_FINGERPRINT_SIZE
+      msg->has_fp = true;
     }
     
     // Sanitize emoji: replace UTF-8 emoji sequences with single-byte escape codes
@@ -221,6 +256,23 @@ public:
   }
 
   int getMessageCount() const { return _msgCount; }
+
+  // Read-only access to stored messages for a given channel, by recency.
+  // n = 0 returns the newest message on that channel, n = 1 the next newest,
+  // and so on. Returns nullptr when fewer than n + 1 messages exist.
+  const ChannelMessage* getChannelMsgByRecency(uint8_t channel_idx, int n) const {
+    if (n < 0 || _msgCount == 0) return nullptr;
+    int seen = 0;
+    for (int i = 0; i < _msgCount; i++) {
+      int idx = _newestIdx - i;
+      while (idx < 0) idx += CHANNEL_MSG_HISTORY_SIZE;
+      const ChannelMessage& m = _messages[idx];
+      if (!m.valid || m.channel_idx != channel_idx) continue;
+      if (seen == n) return &m;
+      seen++;
+    }
+    return nullptr;
+  }
   
   uint8_t getViewChannelIdx() const { return _viewChannelIdx; }
   void setViewChannelIdx(uint8_t idx) {
@@ -404,6 +456,21 @@ public:
   }
 
   // -----------------------------------------------------------------------
+  // Update the send status of a tracked sent DM (from MyMesh via UITask).
+  // Returns true if a message with this send_ref was found and updated.
+  bool setSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) {
+    if (send_ref == 0) return false;
+    for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
+      ChannelMessage* m = &_messages[i];
+      if (!m->valid || m->send_ref != send_ref) continue;
+      m->dm_status = status;
+      m->dm_attempt = attempt;
+      m->dm_total = total;
+      return true;
+    }
+    return false;
+  }
+
   // Per-channel history deletion
   // -----------------------------------------------------------------------
 
@@ -488,6 +555,7 @@ public:
 #endif
   }
 
+
   // Load message buffer from SD card.  Returns true if messages were loaded.
   bool loadFromSD() {
 #if defined(HAS_SDCARD) && defined(ESP32)
@@ -549,6 +617,11 @@ public:
       memcpy(_messages[i].path, rec.path, MSG_PATH_MAX);
       memcpy(_messages[i].text, rec.text, CHANNEL_MSG_TEXT_LEN);
       _messages[i].scope_idx = 0xFF;  // region scope is session-only, not stored on SD
+      // DM send status is session-only, not stored on SD
+      _messages[i].send_ref = 0;
+      _messages[i].dm_status = DM_SEND_NONE;
+      _messages[i].dm_attempt = 0;
+      _messages[i].dm_total = 0;
       if (_messages[i].valid) loaded++;
     }
 
@@ -791,9 +864,9 @@ public:
       display.print(rtInbox);
 #else
       display.setCursor(0, footerY);
-      display.print("Q:Bck A/D:Ch");
+      display.print("Q:Bck");
       const char* rtInbox = "Ent:Open";
-      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 6, footerY);
       display.print(rtInbox);
 #endif
 
@@ -1258,6 +1331,15 @@ public:
           } else {
             sprintf(tmp, ">%dd ", age / 86400);
           }
+        } else if (msg->dm_status == DM_SEND_SENDING) {
+          // Tracked sent DM still in flight -- show the attempt counter
+          sprintf(tmp, "Sending %d/%d ", msg->dm_attempt, msg->dm_total);
+        } else if (msg->dm_status == DM_SEND_DELIVERED) {
+          // Recipient's ack received
+          sprintf(tmp, "Delivered ");
+        } else if (msg->dm_status == DM_SEND_FAILED) {
+          // All attempts exhausted without an ack from the recipient
+          sprintf(tmp, "Failed ");
         } else {
           int hopsDisp = (msg->path_len == 0xFF) ? 0 : (msg->path_len & 63);
           // Byte mode: flood packets encode it in the upper bits of path_len.
@@ -1549,7 +1631,7 @@ public:
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
     } else {
-      display.print("Q:Bck A/D:Ch R:Rply");
+      display.print("Q:Bck R:Rply");
       const char* rightText = "Ent:New";
       display.setCursor(display.width() - display.getTextWidth(rightText) - 2, footerY);
       display.print(rightText);
@@ -1563,10 +1645,20 @@ public:
 #endif
   }
 
+  // Vertical-swipe scroll (watch). Pages the normal message view a screenful at
+  // a time; keeps single-step in reply-select / path-overlay / DM-inbox so
+  // precise selection isn't lost. Bounds clamping is handled by handleInput.
+  void pageScroll(bool older) {
+    char k = older ? 'w' : 's';
+    bool normalView = !_replySelectMode && !_showPathOverlay && !_dmInboxMode;
+    int steps = (normalView && _msgsPerPage > 1) ? _msgsPerPage : 1;
+    for (int i = 0; i < steps; i++) handleInput(k);
+  }
+
   bool handleInput(char c) override {
     // If overlay is showing, handle scroll and dismiss
     if (_showPathOverlay) {
-      if (c == 'q' || c == 'Q' || c == '\b' || c == 'v' || c == 'V') {
+      if (c == KEY_CANCEL || c == 'v' || c == 'V') {
         _showPathOverlay = false;
         _pathScrollPos = 0;
         return true;
@@ -1597,8 +1689,8 @@ public:
 
     // --- Reply select mode ---
     if (_replySelectMode) {
-      // Q - exit reply select
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      // Shift+Del - exit reply select
+      if (c == KEY_CANCEL) {
         _replySelectMode = false;
         _replySelectPos = -1;
         return true;
@@ -1705,8 +1797,8 @@ public:
         }
         return true;
       }
-      // Q - let main.cpp handle (back to home)
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      // Shift+Del - let main.cpp handle (back to home)
+      if (c == KEY_CANCEL) {
         return false;
       }
       // A/D pass through to channel switching below
@@ -1717,9 +1809,9 @@ public:
       }
     }
 
-    // --- DM Conversation mode: Q goes back to inbox ---
+    // --- DM Conversation mode: Shift+Del goes back to inbox ---
     if (_viewChannelIdx == 0xFF && !_dmInboxMode) {
-      if (c == 'q' || c == 'Q' || c == '\b') {
+      if (c == KEY_CANCEL) {
         _dmInboxMode = true;
         _dmFilterName[0] = '\0';
         _scrollPos = 0;

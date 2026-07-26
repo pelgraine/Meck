@@ -80,6 +80,11 @@ class GxEPDDisplay : public DisplayDriver {
   // Render one glyph from the current 8b font at the display's cursor position
   void drawGlyphAtCursor(uint16_t cp);
 
+  // Helpers for drawRoundRectShadedRaw: 1px rounded outline rasteriser
+  // (physical coords) and dither-masked pixel plot
+  void plotRoundOutline(int px, int py, int pw, int ph, int pr, uint8_t shade, uint16_t color);
+  void plotShadedPixel(int px, int py, uint8_t shade, uint16_t color);
+
 public:
 // Virtual canvas dimensions — default 128×128 (MeshCore standard).
 // Override for displays where physical resolution / scale < 128.
@@ -133,6 +138,22 @@ public:
     display.setCursor(x, y);
     display.print(text);
   }
+
+  // --- Raw (physical-pixel) tile-grid helpers for the MAX home screen ---
+  // Foreground colour respecting dark mode (raw draws bypass setColor mapping)
+  uint16_t rawFgColor() const { return _darkMode ? GxEPD_WHITE : GxEPD_BLACK; }
+  // 1:1 MSB-first bitmap draw, no virtual block scaling
+  void drawXbmRaw(int16_t x, int16_t y, const uint8_t* bits, int w, int h, uint16_t color);
+  // Rounded-rect border band, `thickness` px wide, with 1-bit dither shading:
+  // shade 0 = solid, 1 = dark grey (~75%), 2 = light grey (50% checker)
+  void drawRoundRectShadedRaw(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint8_t thickness, uint8_t shade, uint16_t color);
+  // drawTextRaw plus frame-CRC tracking so changed text triggers a refresh
+  void drawTextRawTracked(int16_t x, int16_t y, const char* text, uint16_t color);
+  // Style-honouring raw text: Classic uses the built-in 5x7, Noto/Montserrat
+  // use their 7pt faces. `yTop` is the top of the text box (custom GFX fonts
+  // position by baseline internally; this compensates). CRC tracked.
+  int16_t measureTextRawStyled(const char* text);
+  void drawTextRawStyled(int16_t x, int16_t yTop, const char* text, uint16_t color);
 
   // Force endFrame() to push to display even if CRC unchanged
   // (needed because drawPixelRaw bypasses CRC tracking)

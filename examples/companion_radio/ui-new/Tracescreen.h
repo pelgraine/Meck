@@ -313,6 +313,12 @@ public:
     return _state == STATE_BUILD && menuItemAt(_menuSel) == MENU_TYPE_PATH;
   }
 
+  // True if the highlighted menu row is the Mode selector (STATE_BUILD only).
+  bool isOnModeRow() const {
+    return _state == STATE_BUILD && menuItemAt(_menuSel) == MENU_PATH_SIZE;
+  }
+
+
   // Returns the current path formatted as a comma-separated string, suitable
   // for pre-populating an external text editor (e.g. the T5S3 virtual keyboard).
   // The returned pointer references an internal buffer and is valid until the
@@ -787,8 +793,8 @@ private:
       }
       return true;
     }
-    // Q or Escape: cancel edit
-    if (c == 'q' || c == 'Q' || c == 27) {
+    // Shift+Del: cancel edit
+    if (c == KEY_CANCEL) {
       _editing = false;
       return true;
     }
@@ -833,8 +839,8 @@ private:
       memset(_pathBuf, 0, sizeof(_pathBuf));
       return true;
     }
-    // Q - exit
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - exit
+    if (c == KEY_CANCEL) {
       _wantExit = true;
       return true;
     }
@@ -843,8 +849,8 @@ private:
       MenuItem item = menuItemAt(_menuSel);
       switch (item) {
         case MENU_TYPE_PATH:
-          // Enter edit mode -- pre-fill with current path if any
           pathToEditBuf();
+          // Enter inline edit mode -- pre-fill with current path if any
           _editing = true;
           return true;
 
@@ -888,8 +894,8 @@ private:
       if (_repSel < _repCount - 1) _repSel++;
       return true;
     }
-    // Q - back to build
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - back to build
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       return true;
     }
@@ -915,8 +921,8 @@ private:
   }
 
   bool handleRunningInput(char c) {
-    // Q - cancel
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - cancel
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       return true;
     }
@@ -934,8 +940,8 @@ private:
       _resultScroll++;
       return true;
     }
-    // Q - back to build screen (keep path)
-    if (c == 'q' || c == 'Q' || c == '\b') {
+    // Shift+Del - back to build screen (keep path)
+    if (c == KEY_CANCEL) {
       _state = STATE_BUILD;
       _menuSel = 0;
       return true;

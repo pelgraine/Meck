@@ -1299,7 +1299,7 @@ private:
     display.setCursor(0, footerY);
     display.print(status);
 
-    const char* right = _gotoMode ? "Ent:Go Q:Cancel" : "Entr:Pg# Q:Bk";
+    const char* right = _gotoMode ? "Ent:Go Sh+Del:Cancel" : "Entr:Pg# Q:Bk";
     display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
     display.print(right);
 #endif
@@ -1953,8 +1953,8 @@ public:
       return true;
     }
 
-    // Q - close book, back to file list
-    if (c == 'q' || c == 'Q') {
+    // Shift+Del - close book, back to file list
+    if (c == KEY_CANCEL) {
       closeBook();
       _mode = FILE_LIST;
       return true;
@@ -1974,8 +1974,8 @@ public:
       return true;
     }
 
-    // Q or Escape — cancel
-    if (c == 'q' || c == 'Q' || c == 0x1B) {
+    // Shift+Del - cancel
+    if (c == KEY_CANCEL) {
       _gotoMode = false;
       return true;
     }

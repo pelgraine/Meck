@@ -4,7 +4,7 @@ bool LGFXDisplay::begin() {
   turnOn();
   display->init();
   display->setRotation(1);
-  display->setBrightness(64);
+  display->setBrightness(25);
   display->setColorDepth(8);
   display->setTextColor(TFT_WHITE);
 
@@ -113,7 +113,7 @@ void LGFXDisplay::endFrame() {
 
 bool LGFXDisplay::getTouch(int *x, int *y) {
   lgfx::v1::touch_point_t point;
-  display->getTouch(&point);
+  if (!display->getTouch(&point)) return false;
   if (UI_ZOOM != 1) {
     *x = point.x / UI_ZOOM;
     *y = point.y / UI_ZOOM;
@@ -121,5 +121,5 @@ bool LGFXDisplay::getTouch(int *x, int *y) {
     *x = point.x;
     *y = point.y;
   }
-  return (*x >= 0) && (*y >= 0);
+  return true;
 }

@@ -13,7 +13,7 @@ extern MyMesh the_mesh;
 // each received packet as an app-style block: route + payload type, time,
 // size, hash, path, channel hash/name or From/To, the decoded line (for
 // decryptable channels), and SNR. Entries are shown newest-first; W/S scroll
-// by entry, Q returns to Settings (where the screen is opened from).
+// by entry, Shift+Del returns to Settings (where the screen is opened from).
 // ==========================================================================
 
 class RxLogScreen : public UIScreen {
@@ -207,7 +207,7 @@ public:
       return false;
     }
     // Back to Settings
-    if (c == 'q' || c == 'Q' || c == 0x1B) {
+    if (c == KEY_CANCEL) {
       if (_task) _task->gotoSettingsScreen();
       return true;
     }

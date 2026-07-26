@@ -36,6 +36,9 @@ class UITask;
 #define SNAKE_HI_PATH    "/games/snake_hi.dat"
 #define SNAKE_HI_VERSION 1
 
+// Tick cadence: the watch LCD has no e-ink refresh limit, so run a touch faster.
+  #define SNAKE_TICK_MS  500
+
 class SnakeScreen : public UIScreen {
 public:
   enum GameState { READY, PLAYING, GAME_OVER };
@@ -128,7 +131,7 @@ private:
     _dir = RIGHT;
     _pendingDir = RIGHT;
     _score = 0;
-    _tickInterval = 500;
+    _tickInterval = SNAKE_TICK_MS;
     _newHiScore = false;
     _newHiRank = -1;
     _rngState = (uint16_t)(millis() ^ 0xA5A5);
@@ -296,7 +299,7 @@ public:
     : _task(task), _rtc(rtc), _wantsExit(false), _gridW(0), _gridH(0),
       _offsetX(0), _offsetY(0), _headIdx(0), _length(0),
       _state(READY), _dir(RIGHT), _pendingDir(RIGHT),
-      _score(0), _lastTick(0), _tickInterval(500), _rngState(0xBEEF),
+      _score(0), _lastTick(0), _tickInterval(SNAKE_TICK_MS), _rngState(0xBEEF),
       _hiCount(0), _newHiScore(false), _newHiRank(-1) {
     _food = {0, 0};
     memset(_body, 0, sizeof(_body));
@@ -317,7 +320,7 @@ public:
     switch (_state) {
       case READY:
         if (c == '\r') { _state = PLAYING; _lastTick = millis(); return true; }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
       case PLAYING:
         switch (c) {
@@ -325,15 +328,40 @@ public:
           case 's': case 'S': if (_dir != UP)    _pendingDir = DOWN;  return true;
           case 'a': case 'A': if (_dir != RIGHT) _pendingDir = LEFT;  return true;
           case 'd': case 'D': if (_dir != LEFT)  _pendingDir = RIGHT; return true;
-          case 'q': case 'Q': _wantsExit = true; return true;
+          case KEY_CANCEL: _wantsExit = true; return true;
           default: return false;
         }
       case GAME_OVER:
         if (c == '\r') { resetGame(); _state = PLAYING; _lastTick = millis(); return true; }
-        if (c == 'q' || c == 'Q') { _wantsExit = true; return true; }
+        if (c == KEY_CANCEL) { _wantsExit = true; return true; }
         return false;
     }
     return false;
+  }
+
+  // Touch control (watch): a tap starts/restarts the game, or -- while playing --
+  // steers by tapping the up/down/left/right zone relative to the board centre.
+  // x/y are logical (render-space) coordinates, matching the board geometry.
+  void handleTap(int x, int y) {
+    if (_state != PLAYING) {
+      if (_state == GAME_OVER) resetGame();   // mirror Enter: restart on game over
+      _state = PLAYING;
+      _lastTick = millis();
+      return;
+    }
+    int cx = _offsetX + (_gridW * SNAKE_CELL) / 2;
+    int cy = _offsetY + (_gridH * SNAKE_CELL) / 2;
+    int dx = x - cx;
+    int dy = y - cy;
+    int adx = (dx < 0) ? -dx : dx;
+    int ady = (dy < 0) ? -dy : dy;
+    if (adx > ady) {                          // horizontal tap dominates
+      if (dx > 0) { if (_dir != LEFT)  _pendingDir = RIGHT; }
+      else        { if (_dir != RIGHT) _pendingDir = LEFT;  }
+    } else {                                  // vertical tap dominates
+      if (dy > 0) { if (_dir != UP)    _pendingDir = DOWN;  }
+      else        { if (_dir != DOWN)  _pendingDir = UP;    }
+    }
   }
 
   int render(DisplayDriver& display) override {
@@ -371,7 +399,7 @@ public:
       display.drawTextCentered(cx, y, "Classic Snake");
       y += 14;
       display.setColor(DisplayDriver::GREEN);
-#if defined(LilyGo_T5S3_EPaper_Pro)
+#if   defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(cx, y, "Swipe to steer");
 #else
       display.drawTextCentered(cx, y, "W/S/A/D to steer");
@@ -459,7 +487,7 @@ public:
           ty += 12;
         }
         display.setColor(DisplayDriver::GREEN);
-        display.drawTextCentered(cx, ty, "Enter:Retry  Q:Back");
+        display.drawTextCentered(cx, ty, "Enter:Retry  Sh+Del:Back");
       }
     }
 
@@ -476,10 +504,10 @@ public:
     display.drawRect(0, fy - 2, display.width(), 1);
     if (_state == PLAYING) {
       display.setCursor(2, fy);
-      display.print("Q:Back");
+      display.print("Sh+Del:Back");
     } else if (_state == READY) {
       display.setCursor(2, fy);
-      display.print("Enter:Start  Q:Back");
+      display.print("Enter:Start  Sh+Del:Back");
     }
 #endif
 

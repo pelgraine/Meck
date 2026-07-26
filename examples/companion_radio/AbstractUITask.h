@@ -22,6 +22,15 @@ enum class UIEventType {
     ack
 };
 
+// DM send status codes (device-side tracked sends, pushed via dmSendStatus()).
+// Guarded so ChannelScreen.h can carry the same definitions without a clash.
+#ifndef DM_SEND_NONE
+#define DM_SEND_NONE       0
+#define DM_SEND_SENDING    1
+#define DM_SEND_DELIVERED  2
+#define DM_SEND_FAILED     3
+#endif
+
 class AbstractUITask {
 protected:
   mesh::MainBoard* _board;
@@ -49,6 +58,10 @@ public:
   virtual void showAlert(const char* text, int duration_millis) {}
   virtual void forceRefresh() {}
   virtual void addSentChannelMessage(uint8_t channel_idx, const char* sender, const char* text) {}
+
+  // Device-side tracked DM send status (from MyMesh retry engine).
+  // status is one of DM_SEND_*; attempt/total describe the retry counter.
+  virtual void dmSendStatus(uint32_t send_ref, uint8_t status, uint8_t attempt, uint8_t total) {}
 
   // Mark a channel as read when BLE companion app syncs a message
   virtual void markChannelReadFromBLE(uint8_t channel_idx) {}

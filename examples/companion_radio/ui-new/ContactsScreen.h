@@ -4,6 +4,7 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <MeshCore.h>
 
+
 // Timestamps before this (Jan 1 2026 UTC) are treated as invalid/unsynced
 #define EPOCH_2026  1735689600UL
 
@@ -52,6 +53,7 @@ private:
   // --- Select mode state ---
   bool _selectMode;
   uint8_t* _selectedBits;   // Bitfield: 1 bit per MAX_CONTACTS raw index
+
 
   // --- helpers ---
 
@@ -288,6 +290,7 @@ public:
     return true;
   }
 
+
   int render(DisplayDriver& display) override {
     if (!_cacheValid) rebuildCache();
 
@@ -484,12 +487,13 @@ public:
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
     } else {
-      display.print("Q:Bk A/D:Filter");
+      display.print("A/D:Filter");
       const char* right = "P:Path Ent:Sel";
       display.setCursor(display.width() - display.getTextWidth(right) - 2, footerY);
       display.print(right);
     }
 #endif
+
 
     return 5000;  // e-ink: next render after 5s
   }

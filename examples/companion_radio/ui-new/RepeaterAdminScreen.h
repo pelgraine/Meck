@@ -479,6 +479,39 @@ public:
   AdminState getState() const { return _state; }
   uint8_t getPermissions() const { return _permissions; }
 
+  // Map a touch Y (128-virtual space) to a menu row and select it.
+  // Returns 0 = miss/no-op, 1 = selection moved, 2 = tapped current selection.
+  // Mirrors the row layout in renderCategoryMenu / renderCommandMenu.
+  int selectRowAtVY(int vy) {
+    const int headerH = 14, footerH = 14;
+    int lineH = the_mesh.getNodePrefs()->smallLineH();
+
+    if (_state == STATE_CATEGORY_MENU) {
+      int bodyTop = headerH;
+      if (_serverTime > 0) bodyTop += lineH + 2;                                  // clock drift line
+      if (_telemHasVoltage || _telemHasTemp || _telemRequested) bodyTop += lineH + 2;  // telemetry line
+      if (vy < bodyTop || vy >= 128 - footerH) return 0;
+      int row = (vy - bodyTop) / lineH;
+      if (row < 0 || row >= CAT_COUNT) return 0;
+      if (row == _catSel) return 2;
+      _catSel = row;
+      return 1;
+    }
+
+    if (_state == STATE_COMMAND_MENU) {
+      int bodyTop = headerH + lineH + 2;   // category title line
+      if (vy < bodyTop || vy >= 128 - footerH) return 0;
+      int idx = _scrollOffset + (vy - bodyTop) / lineH;
+      int count = CATEGORIES[_catSel].count;
+      if (idx < 0 || idx >= count) return 0;
+      if (idx == _cmdSel) return 2;
+      _cmdSel = idx;
+      return 1;
+    }
+
+    return 0;
+  }
+
   void onLoginResult(bool success, uint8_t permissions, uint32_t server_time) {
     _waitingForLogin = false;
     if (success) {
@@ -617,7 +650,7 @@ public:
 #if defined(LilyGo_T5S3_EPaper_Pro)
         display.print("Boot:Cancel");
 #else
-        display.print("Sh+Del:Cancel");
+        display.print("Q:Cancel");
 #endif
         break;
 
@@ -626,8 +659,8 @@ public:
         display.print("Boot:Exit");
         renderFooterMidRight(display, footerY, "Back:Exit", "Tap:Open", "Swipe:Sel");
 #else
-        display.print("Sh+Del:Exit");
-        renderFooterMidRight(display, footerY, "Sh+Del:Exit", "Ent:Open", "W/S:Sel");
+        display.print("Q:Exit");
+        renderFooterMidRight(display, footerY, "Q:Exit", "Ent:Open", "W/S:Sel");
 #endif
         break;
 
@@ -636,8 +669,8 @@ public:
         display.print("Boot:Back");
         renderFooterMidRight(display, footerY, "Back:Back", "Tap:Run", "Swipe:Sel");
 #else
-        display.print("Sh+Del:Back");
-        renderFooterMidRight(display, footerY, "Sh+Del:Back", "Ent:Run", "W/S:Sel");
+        display.print("Q:Back");
+        renderFooterMidRight(display, footerY, "Q:Back", "Ent:Run", "W/S:Sel");
 #endif
         break;
 
@@ -656,7 +689,7 @@ public:
         display.print("Boot:No");
         renderFooterRight(display, footerY, "Tap:Yes");
 #else
-        display.print("Sh+Del:No");
+        display.print("Q:No");
         renderFooterRight(display, footerY, "Ent:Yes");
 #endif
         break;
@@ -669,13 +702,14 @@ public:
           renderFooterRight(display, footerY, "Swipe:Scroll");
         }
 #else
-        display.print("Sh+Del:Back");
+        display.print("Q:Back");
         if (_responseTotalLines > bodyHeight / 9) {
           renderFooterRight(display, footerY, "W/S:Scrll");
         }
 #endif
         break;
     }
+
 
     if (_state == STATE_LOGGING_IN || _state == STATE_COMMAND_PENDING) return 30000;  // static text; poll()/callbacks force refresh on state change
     if (_state == STATE_PASSWORD_ENTRY && _lastCharAt > 0 && (millis() - _lastCharAt) < 800) {
@@ -712,14 +746,14 @@ private:
 
   // --- Footer helpers ---
   void renderFooterRight(DisplayDriver& display, int footerY, const char* text) {
-    display.setCursor(display.width() - display.getTextWidth(text) - 2, footerY);
+    display.setCursor(display.width() - display.getTextWidth(text) - 6, footerY);
     display.print(text);
   }
 
   void renderFooterMidRight(DisplayDriver& display, int footerY,
                             const char* left, const char* right, const char* mid) {
     int leftEnd = display.getTextWidth(left) + 2;
-    int rightStart = display.width() - display.getTextWidth(right) - 2;
+    int rightStart = display.width() - display.getTextWidth(right) - 6;
     int midX = leftEnd + (rightStart - leftEnd - display.getTextWidth(mid)) / 2;
     display.setCursor(midX, footerY);
     display.print(mid);
@@ -1045,7 +1079,7 @@ private:
 #if defined(LilyGo_T5S3_EPaper_Pro)
       display.print("Tap=Yes  Back=No");
 #else
-      display.print("Enter=Yes  Sh+Del=No");
+      display.print("Enter=Yes  Q=No");
 #endif
     }
 

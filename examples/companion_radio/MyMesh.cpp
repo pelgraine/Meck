@@ -13,7 +13,7 @@
 #endif
 
 #if defined(LilyGo_TDeck_Pro_Max)
-  #include "DRV2605Haptic.h"     // TEMP: inline haptic driver for the 'buzz' CLI test command
+  #include "DRV2605Haptic.h"     // inline haptic driver for the 'buzz' CLI test command
 #endif
 
 #define CMD_APP_START                 1
@@ -119,6 +119,7 @@
 #define DIRECT_SEND_PERHOP_EXTRA_MILLIS 250
 #define LAZY_CONTACTS_WRITE_DELAY       5000
 #define USER_IDLE_SAVE_THRESHOLD       15000  // Defer saves until 15s after last keypress
+#define CONTACTS_SAVE_INTERVAL       43200000  // 12h: cap chunked contact flush to twice a day
 
 #define PUBLIC_GROUP_PSK                "izOH6cXN6mrJ5e26oRXNcg=="
 
@@ -501,6 +502,16 @@ void MyMesh::scheduleLazyContactSave() {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+// A contact add/update/import arrived from the BLE companion app (not passive
+// advert learning). Schedule the normal 5s lazy write AND clear the 12h flush
+// cap so the change is persisted promptly -- otherwise a BLE import can be lost
+// on reboot for up to CONTACTS_SAVE_INTERVAL. The 5s dirty debounce still
+// coalesces a bulk sync into a single chunked save once the burst ends.
+void MyMesh::scheduleAppContactSave() {
+  dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+  _nextContactSaveDue   = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+}
+
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   out_frame[0] = PUSH_CODE_PATH_UPDATED;
   memcpy(&out_frame[1], contact.id.pub_key, PUB_KEY_SIZE);
@@ -509,7 +520,31 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
+// Resolve a device-side tracked DM send when any of its attempts' acks
+// arrives. Checked independently of expected_ack_table so a circular-table
+// overwrite under load cannot strand a pending send.
+void MyMesh::resolvePendingDMSend(uint32_t ack) {
+  if (ack == 0) return;
+  for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+    PendingDMSend& p = pending_dm[i];
+    if (!p.active) continue;
+    for (int a = 0; a < p.attempt && a < 5; a++) {
+      if (p.acks[a] != ack) continue;
+      p.active = false;
+      MESH_DEBUG_PRINTLN("UI: DM delivered (attempt %d/%d), ref=0x%08X",
+                         p.attempt, p.total, p.send_ref);
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_DELIVERED, p.attempt, p.total);
+      break;
+    }
+  }
+}
+
 ContactInfo*  MyMesh::processAck(const uint8_t *data) {
+  {
+    uint32_t ack;
+    memcpy(&ack, data, 4);
+    resolvePendingDMSend(ack);
+  }
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
@@ -608,6 +643,27 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
       if (memcmp(packet->payload, t->fingerprint, SENT_FINGERPRINT_SIZE) == 0) {
         t->repeat_count++;
         MESH_DEBUG_PRINTLN("SentTrack: heard repeat #%d (SNR=%.1f)", t->repeat_count, packet->getSNR());
+
+        // Record only the FIRST hop of each echo -- the repeater that heard our
+        // transmission directly and re-flooded it. Later hops in the path are
+        // downstream relays we did NOT hear directly, so they don't belong in
+        // "Heard by". Dedup so each direct repeater is listed once.
+        {
+          uint8_t hops = packet->path_len & 63;
+          uint8_t bph  = (packet->path_len >> 6) + 1;
+          if (hops > 0 && bph >= 1 && bph <= 2) {
+            bool seen = false;
+            for (int e = 0; e < t->echo_count; e++) {
+              if (memcmp(&t->echo_hash[e * bph], packet->path, bph) == 0) { seen = true; break; }
+            }
+            if (!seen && t->echo_count < SENT_ECHO_MAX) {
+              t->echo_bph = bph;
+              memcpy(&t->echo_hash[t->echo_count * bph], packet->path, bph);
+              t->echo_snr[t->echo_count] = packet->_snr;
+              t->echo_count++;
+            }
+          }
+        }
         
 #ifdef DISPLAY_CLASS
         if (_ui) {
@@ -622,6 +678,38 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
   }
 
   return false;  // never filter Ã¢â‚¬â€ let normal processing continue
+}
+
+uint8_t MyMesh::getHeardBy(const uint8_t* payload, uint16_t payload_len,
+                           uint8_t& out_bph, uint8_t& out_count,
+                           uint8_t* out_hash, int8_t* out_snr, uint8_t max_src) const {
+  out_bph = 0;
+  out_count = 0;
+  if (payload_len < SENT_FINGERPRINT_SIZE) return 0;
+  unsigned long now = millis();
+  for (int i = 0; i < SENT_TRACK_SIZE; i++) {
+    const SentMsgTrack* t = &_sent_track[i];
+    if (!t->active) continue;
+    if ((now - t->sent_millis) > SENT_TRACK_EXPIRY_MS) continue;
+    if (memcmp(payload, t->fingerprint, SENT_FINGERPRINT_SIZE) != 0) continue;
+    out_bph = t->echo_bph;
+    uint8_t n = (t->echo_count > max_src) ? max_src : t->echo_count;
+    for (uint8_t e = 0; e < n; e++) {
+      if (t->echo_bph) memcpy(&out_hash[e * t->echo_bph], &t->echo_hash[e * t->echo_bph], t->echo_bph);
+      out_snr[e] = t->echo_snr[e];
+    }
+    out_count = n;
+    return t->repeat_count;
+  }
+  return 0;
+}
+
+bool MyMesh::getLastSentFingerprint(uint8_t* out) const {
+  int last = (_sent_track_idx - 1 + SENT_TRACK_SIZE) % SENT_TRACK_SIZE;
+  const SentMsgTrack* t = &_sent_track[last];
+  if (!t->active) return false;
+  memcpy(out, t->fingerprint, SENT_FINGERPRINT_SIZE);
+  return true;
 }
 
 void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -649,6 +737,8 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     SentMsgTrack* t = &_sent_track[_sent_track_idx];
     memcpy(t->fingerprint, pkt->payload, SENT_FINGERPRINT_SIZE);
     t->repeat_count = 0;
+    t->echo_count = 0;
+    t->echo_bph = 0;
     t->sent_millis = millis();
     t->active = true;
     _sent_track_idx = (_sent_track_idx + 1) % SENT_TRACK_SIZE;
@@ -945,12 +1035,20 @@ void MyMesh::queueSentChannelMessage(uint8_t channel_idx, uint32_t timestamp, co
   }
 }
 
-bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
+bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text,
+                                 uint32_t* out_send_ref, uint8_t* out_total) {
+  if (out_send_ref) *out_send_ref = 0;
+  if (out_total) *out_total = 0;
+
   ContactInfo contact;
   if (!getContactByIdx(contact_idx, contact)) return false;
 
   ContactInfo* recipient = lookupContactByPubKey(contact.id.pub_key, PUB_KEY_SIZE);
   if (!recipient) return false;
+
+  // Plan the attempt count from the path state at first transmit:
+  // no path -> 3 flood attempts, path set -> 4 direct then 1 flood after reset
+  uint8_t total = (recipient->out_path_len == OUT_PATH_UNKNOWN) ? 3 : 5;
 
   uint32_t timestamp = getRTCClock()->getCurrentTimeUnique();
   uint32_t expected_ack, est_timeout;
@@ -967,6 +1065,29 @@ bool MyMesh::uiSendDirectMessage(uint32_t contact_idx, const char* text) {
     expected_ack_table[next_ack_idx].ack = expected_ack;
     expected_ack_table[next_ack_idx].contact = recipient;
     next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+  }
+
+  // Tracked send: allocate a retry slot so the message gets app-style
+  // retries and DM_SEND_* status pushes. If the table is full the send
+  // stays single-shot and the caller shows no status (send_ref stays 0).
+  if (out_send_ref) {
+    for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+      if (pending_dm[i].active) continue;
+      PendingDMSend& p = pending_dm[i];
+      memset(&p, 0, sizeof(p));
+      p.active = true;
+      p.attempt = 1;
+      p.total = total;
+      memcpy(p.contact_pub, recipient->id.pub_key, PUB_KEY_SIZE);
+      p.timestamp = timestamp;
+      p.send_ref = expected_ack ? expected_ack : 1;
+      p.acks[0] = expected_ack;
+      p.deadline = futureMillis(est_timeout);
+      StrHelper::strncpy(p.text, text, sizeof(p.text));
+      *out_send_ref = p.send_ref;
+      if (out_total) *out_total = p.total;
+      break;
+    }
   }
 
   MESH_DEBUG_PRINTLN("UI: DM sent to %s (%s), ack=0x%08X timeout=%dms",
@@ -1493,8 +1614,10 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   app_target_ver = 0;
   clearPendingReqs();
   next_ack_idx = 0;
+  memset(pending_dm, 0, sizeof(pending_dm));
   sign_data = NULL;
   dirty_contacts_expiry = 0;
+  _nextContactSaveDue = 0;
   advert_paths = nullptr;  // PSRAM-allocated in begin()
   _rxlog = nullptr;        // PSRAM-allocated in begin()
   _rxlog_head = 0;
@@ -1878,7 +2001,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (recipient) {
       recipient->out_path_len = OUT_PATH_UNKNOWN;
       // recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // unknown contact
@@ -1890,7 +2013,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (recipient) {
       updateContactFromFrame(*recipient, last_mod, cmd_frame, len);
       recipient->lastmod = last_mod;
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       ContactInfo contact;
@@ -1898,7 +2021,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       contact.lastmod = last_mod;
       contact.sync_since = 0;
       if (addContact(contact)) {
-        dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+        scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
         writeOKFrame();
       } else {
         writeErrFrame(ERR_CODE_TABLE_FULL);
@@ -1908,7 +2031,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     uint8_t *pub_key = &cmd_frame[1];
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient && removeContact(*recipient)) {
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app change: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND); // not found, or unable to remove
@@ -1965,7 +2088,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     }
   } else if (cmd_frame[0] == CMD_IMPORT_CONTACT && len > 2 + 32 + 64) {
     if (importContact(&cmd_frame[1], len - 1)) {
-      dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
+      scheduleAppContactSave();  // BLE app import: persist promptly, not on the 12h cap
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
@@ -3610,19 +3733,28 @@ void MyMesh::checkCLIRescueCmd() {
 
     }
 #if defined(LilyGo_TDeck_Pro_Max)
-    else if (strcmp(cli_command, "buzz") == 0) {
-      // TEMP: fire the DRV2605 haptic motor once to confirm it works.
-      // Lazy-inits the driver (and motor power rail) on first invocation.
+    else if (strncmp(cli_command, "buzz", 4) == 0 &&
+             (cli_command[4] == '\0' || cli_command[4] == ' ')) {
+      // Fire a DRV2605 library-1 effect to confirm the motor works.
+      // "buzz" uses effect 1 (strong click); "buzz <n>" fires effect n.
+      // Lazy-inits the driver (and, on the MAX, its motor power rail).
       static DRV2605Haptic haptic;
       static bool haptic_ready = false;
       if (!haptic_ready) {
-        board.motorEnable();
+#if defined(LilyGo_TDeck_Pro_Max)
+        board.motorEnable();       // MAX: motor rail is behind an XL9555 pin
         delay(10);                 // let the motor rail settle before I2C
+#endif
         haptic_ready = haptic.begin();
       }
       if (haptic_ready) {
-        haptic.buzz(1);
-        Serial.println("  > buzz");
+        int effect = 1;
+        const char* arg = cli_command + 4;
+        while (*arg == ' ') arg++;
+        if (*arg) effect = atoi(arg);
+        if (effect < 1 || effect > 123) effect = 1;
+        haptic.buzz((uint8_t)effect);
+        Serial.printf("  > buzz: effect %d\n", effect);
       } else {
         Serial.println("  > buzz: DRV2605 not found");
       }
@@ -3674,8 +3806,74 @@ void MyMesh::checkSerialInterface() {
   }
 }
 
+// Retry engine for device-side tracked DM sends. Each pass: any pending send
+// whose current attempt window (per-attempt est_timeout, hop-aware for direct)
+// has elapsed either resends with the attempt counter bumped, or is marked
+// failed once its planned attempts are exhausted. Before the final attempt of
+// a 5-attempt (path set) plan, the path is reset so the last try goes flood.
+void MyMesh::sweepPendingDMSends() {
+  for (int i = 0; i < MAX_PENDING_DM_SENDS; i++) {
+    PendingDMSend& p = pending_dm[i];
+    if (!p.active) continue;
+    if (!millisHasNowPassed(p.deadline)) continue;
+
+    if (p.attempt >= p.total) {
+      // All attempts exhausted without an ack
+      p.active = false;
+      MESH_DEBUG_PRINTLN("UI: DM failed after %d attempts, ref=0x%08X", p.attempt, p.send_ref);
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      continue;
+    }
+
+    ContactInfo* recipient = lookupContactByPubKey(p.contact_pub, PUB_KEY_SIZE);
+    if (recipient == NULL) {
+      // Contact removed mid-flight -- nothing left to send to
+      p.active = false;
+      if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      continue;
+    }
+
+    uint8_t next_attempt = p.attempt + 1;
+    if (p.total == 5 && next_attempt == p.total) {
+      resetPathTo(*recipient);   // final attempt: drop the set path, go flood
+    }
+
+    uint32_t expected_ack, est_timeout;
+    int result = sendMessage(*recipient, p.timestamp, next_attempt - 1, p.text,
+                             expected_ack, est_timeout);
+    if (result == MSG_SEND_FAILED) {
+      if (next_attempt >= p.total) {
+        // Final attempt never left the radio -- give up now
+        p.active = false;
+        if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_FAILED, p.attempt, p.total);
+      } else {
+        p.deadline = futureMillis(2000);  // packet pool busy -- retry this attempt shortly
+      }
+      continue;
+    }
+
+    p.attempt = next_attempt;
+    p.acks[next_attempt - 1] = expected_ack;
+    p.deadline = futureMillis(est_timeout);
+
+    if (expected_ack) {
+      expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis();
+      expected_ack_table[next_ack_idx].ack = expected_ack;
+      expected_ack_table[next_ack_idx].contact = recipient;
+      next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
+    }
+
+    MESH_DEBUG_PRINTLN("UI: DM retry %d/%d to %s (%s)", p.attempt, p.total, recipient->name,
+                       result == MSG_SEND_SENT_FLOOD ? "flood" : "direct");
+    if (_ui) _ui->dmSendStatus(p.send_ref, DM_SEND_SENDING, p.attempt, p.total);
+  }
+}
+
 void MyMesh::loop() {
   BaseChatMesh::loop();
+
+  // Device-side DM retry engine
+  sweepPendingDMSends();
 
   // Always check USB serial for text CLI commands (independent of BLE)
   checkCLIRescueCmd();
@@ -3701,8 +3899,15 @@ void MyMesh::loop() {
       // Voice session or active keyboard use -- push save forward
       dirty_contacts_expiry = futureMillis(2000);
     } else if (!_store->isSaveInProgress()) {
-      _store->beginSaveContacts(this);
-      dirty_contacts_expiry = 0;
+      // Cap the chunked flush to CONTACTS_SAVE_INTERVAL (twice a day): anchor
+      // the next-due time on the first dirty pass, then only write once it is
+      // reached. Cleared after a save so the next dirty event re-anchors.
+      if (_nextContactSaveDue == 0) _nextContactSaveDue = futureMillis(CONTACTS_SAVE_INTERVAL);
+      if (millisHasNowPassed(_nextContactSaveDue)) {
+        _store->beginSaveContacts(this);
+        dirty_contacts_expiry = 0;
+        _nextContactSaveDue = 0;
+      }
     }
 #endif
   }

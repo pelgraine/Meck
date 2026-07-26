@@ -271,4 +271,149 @@ void SMSStore::migrateExistingAsRead() {
   digitalWrite(SDCARD_CS, HIGH);
 }
 
+bool SMSStore::appendCallLog(uint8_t type, const char* phone, uint32_t duration, uint32_t timestamp) {
+  if (!_ready) return false;
+
+  CallLogRecord rec;
+  memset(&rec, 0, sizeof(rec));
+  rec.timestamp = timestamp;
+  rec.duration = duration;
+  rec.type = type;
+  strncpy(rec.phone, phone, SMS_PHONE_LEN - 1);
+
+  File f = SD.open(SMS_CALLLOG_FILE, FILE_APPEND);
+  if (!f) {
+    // Try creating
+    f = SD.open(SMS_CALLLOG_FILE, FILE_WRITE);
+    if (!f) {
+      MESH_DEBUG_PRINTLN("[SMSStore] can't open %s", SMS_CALLLOG_FILE);
+      digitalWrite(SDCARD_CS, HIGH);
+      return false;
+    }
+  }
+
+  size_t written = f.write((uint8_t*)&rec, sizeof(rec));
+  f.close();
+
+  // Drop oldest records once the file exceeds the cap
+  trimCallLog();
+
+  // Release SD CS
+  digitalWrite(SDCARD_CS, HIGH);
+
+  return written == sizeof(rec);
+}
+
+void SMSStore::trimCallLog() {
+  File f = SD.open(SMS_CALLLOG_FILE, FILE_READ);
+  if (!f) return;
+
+  int numRecords = f.size() / sizeof(CallLogRecord);
+  if (numRecords <= SMS_CALLLOG_MAX) { f.close(); return; }
+
+  int startIdx = numRecords - SMS_CALLLOG_MAX;
+  File t = SD.open(SMS_CALLLOG_TMP, FILE_WRITE);
+  if (!t) { f.close(); return; }
+
+  CallLogRecord rec;
+  for (int i = startIdx; i < numRecords; i++) {
+    f.seek((size_t)i * sizeof(CallLogRecord));
+    if (f.read((uint8_t*)&rec, sizeof(CallLogRecord)) != sizeof(CallLogRecord)) continue;
+    t.write((uint8_t*)&rec, sizeof(CallLogRecord));
+  }
+  f.close();
+  t.close();
+
+  SD.remove(SMS_CALLLOG_FILE);
+  SD.rename(SMS_CALLLOG_TMP, SMS_CALLLOG_FILE);
+}
+
+int SMSStore::loadCallLog(CallLogRecord* out, int maxCount) {
+  if (!_ready) return 0;
+
+  File f = SD.open(SMS_CALLLOG_FILE, FILE_READ);
+  if (!f) return 0;
+
+  int numRecords = f.size() / sizeof(CallLogRecord);
+
+  // Newest first
+  CallLogRecord rec;
+  int outIdx = 0;
+  for (int i = numRecords - 1; i >= 0 && outIdx < maxCount; i--) {
+    f.seek((size_t)i * sizeof(CallLogRecord));
+    if (f.read((uint8_t*)&rec, sizeof(CallLogRecord)) != sizeof(CallLogRecord)) continue;
+    out[outIdx++] = rec;
+  }
+
+  f.close();
+
+  digitalWrite(SDCARD_CS, HIGH);
+
+  return outIdx;
+}
+
+bool SMSStore::deleteCallLogEntry(int newestFirstIdx) {
+  if (!_ready) return false;
+
+  File f = SD.open(SMS_CALLLOG_FILE, FILE_READ);
+  if (!f) return false;
+
+  int numRecords = f.size() / sizeof(CallLogRecord);
+  int fileIdx = numRecords - 1 - newestFirstIdx;
+  if (fileIdx < 0 || fileIdx >= numRecords) {
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+    return false;
+  }
+
+  File t = SD.open(SMS_CALLLOG_TMP, FILE_WRITE);
+  if (!t) {
+    f.close();
+    digitalWrite(SDCARD_CS, HIGH);
+    return false;
+  }
+
+  CallLogRecord rec;
+  for (int i = 0; i < numRecords; i++) {
+    if (i == fileIdx) continue;
+    f.seek((size_t)i * sizeof(CallLogRecord));
+    if (f.read((uint8_t*)&rec, sizeof(CallLogRecord)) != sizeof(CallLogRecord)) continue;
+    t.write((uint8_t*)&rec, sizeof(CallLogRecord));
+  }
+  f.close();
+  t.close();
+
+  SD.remove(SMS_CALLLOG_FILE);
+  bool ok = SD.rename(SMS_CALLLOG_TMP, SMS_CALLLOG_FILE);
+
+  digitalWrite(SDCARD_CS, HIGH);
+
+  return ok;
+}
+
+void SMSStore::markMissedSeen() {
+  if (!_ready) return;
+
+  // In-place flag update, same approach as markFileRead()
+  File f = SD.open(SMS_CALLLOG_FILE, "r+");
+  if (!f) return;
+
+  int numRecords = f.size() / sizeof(CallLogRecord);
+
+  CallLogRecord rec;
+  for (int i = 0; i < numRecords; i++) {
+    f.seek((size_t)i * sizeof(CallLogRecord));
+    if (f.read((uint8_t*)&rec, sizeof(CallLogRecord)) != sizeof(CallLogRecord)) continue;
+    if (rec.type == CALL_LOG_MISSED && rec.seen == 0) {
+      rec.seen = 1;
+      f.seek((size_t)i * sizeof(CallLogRecord));
+      f.write((uint8_t*)&rec, sizeof(CallLogRecord));
+    }
+  }
+
+  f.close();
+
+  digitalWrite(SDCARD_CS, HIGH);
+}
+
 #endif // HAS_4G_MODEM
