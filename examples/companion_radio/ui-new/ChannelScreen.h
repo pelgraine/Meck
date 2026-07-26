@@ -866,7 +866,7 @@ public:
       display.setCursor(0, footerY);
       display.print("Q:Bck");
       const char* rtInbox = "Ent:Open";
-      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 2, footerY);
+      display.setCursor(display.width() - display.getTextWidth(rtInbox) - 6, footerY);
       display.print(rtInbox);
 #endif
 

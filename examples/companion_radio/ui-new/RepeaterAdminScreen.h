@@ -746,14 +746,14 @@ private:
 
   // --- Footer helpers ---
   void renderFooterRight(DisplayDriver& display, int footerY, const char* text) {
-    display.setCursor(display.width() - display.getTextWidth(text) - 2, footerY);
+    display.setCursor(display.width() - display.getTextWidth(text) - 6, footerY);
     display.print(text);
   }
 
   void renderFooterMidRight(DisplayDriver& display, int footerY,
                             const char* left, const char* right, const char* mid) {
     int leftEnd = display.getTextWidth(left) + 2;
-    int rightStart = display.width() - display.getTextWidth(right) - 2;
+    int rightStart = display.width() - display.getTextWidth(right) - 6;
     int midX = leftEnd + (rightStart - leftEnd - display.getTextWidth(mid)) / 2;
     display.setCursor(midX, footerY);
     display.print(mid);

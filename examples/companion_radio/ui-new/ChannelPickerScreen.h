@@ -415,7 +415,7 @@ public:
     } else {
       display.print("W/S:Nav Q:X");
       const char* rt = "Ent:Open";
-      display.setCursor(display.width() - display.getTextWidth(rt) - 2, footerY);
+      display.setCursor(display.width() - display.getTextWidth(rt) - 6, footerY);
       display.print(rt);
     }
 #endif
