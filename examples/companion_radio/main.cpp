@@ -3470,7 +3470,8 @@ void loop() {
     if (dialerNeedsRefresh && (millis() - lastDialerRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       if (smsMode) {
         SMSScreen* dialScr = (SMSScreen*)ui_task.getSMSScreen();
-        if (dialScr && dialScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        if (dialScr && (dialScr->getSubView() == SMSScreen::PHONE_DIALER
+                        || dialScr->getSubView() == SMSScreen::APP_MENU)) {
           display.startFrame();
           dialScr->render(display);
           display.endFrame();
@@ -3623,7 +3624,8 @@ void loop() {
     // SMS dialer has its own dedicated touch handler — don't consume touch data here
     if (smsMode) {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
-      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+      if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
+                     || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         touchBlocked = true;
       }
     }
@@ -4297,7 +4299,8 @@ void loop() {
 
     if (smsMode) {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
-      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+      if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
+                     || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         int16_t tx, ty;
         #if defined(LilyGo_TDeck_Pro_Max)
         int16_t _htx[1], _hty[1];

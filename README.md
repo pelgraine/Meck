@@ -4,6 +4,8 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
+**Meck Watch** -- the LilyGo T-Watch S3 and T-Watch S3 Plus firmware -- is a separate, private repository, available to monthly [GitHub sponsors](https://github.com/sponsors/pelgraine) from $2 USD per month.
+
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
 ### Contents
@@ -422,7 +424,7 @@ Press **R** on the contacts list (outside select mode) to import contacts from a
 
 Select a **Chat** contact in the contacts list and press **Enter** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
 
-While a DM is in flight the conversation view shows its delivery state: **Sending x/N** as the device retries, a **delivered tick** once the recipient acknowledges, or **Failed** if every attempt goes unanswered. Retries are handled on the device, so this works without a companion app connected.
+While a DM is in flight the conversation view shows its delivery state: **Sending x/N** as the device retries, **Delivered** once the recipient acknowledges, or **Failed** if every attempt goes unanswered. Retries are handled on the device, so this works without a companion app connected.
 
 Contacts with unread direct messages show a `*` marker next to their name in the contacts list.
 
@@ -907,7 +909,7 @@ The home screen includes a **Shutdown** page. Selecting it powers the device off
 
 The LilyGo T-Deck Max is a close relative of the T-Deck Pro: same 240×320 e-ink panel and TCA8418 keyboard, same ESP32-S3, and the same on-device UI. **All the [T-Deck Pro](#t-deck-pro) keyboard controls and screens apply unchanged** — this section only covers what's different on the MAX.
 
-The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1500 mAh battery.
+The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1400 mAh battery.
 
 ### T-Deck Max Build Variants
 
