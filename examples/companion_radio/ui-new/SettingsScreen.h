@@ -3810,12 +3810,14 @@ public:
 
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
+        #ifndef MECK_40MHZ_TEST
           _savedTopCursor = _cursor;
           _subScreen = SUB_OTA_TOOLS;
           _cursor = 0;
           _scrollTop = 0;
           rebuildRows();
           Serial.println("Settings: entered OTA Tools sub-screen");
+        #endif  // MECK_40MHZ_TEST: OTA Tools inert (needs WiFi)
           break;
         case ROW_FW_UPDATE:
           startOTA();

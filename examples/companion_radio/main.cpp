@@ -1326,7 +1326,7 @@ static void lastHeardToggleContact() {
         int row = (y - gridY) / pitch;
         if (row > 6) row = 6;
         if (row == 6) {
-  #ifdef HAS_4G_MODEM
+  #if defined(HAS_4G_MODEM) && !defined(MECK_40MHZ_TEST)
           ui_task.gotoSMSScreen();
   #endif
           return 0;
@@ -1341,14 +1341,14 @@ static void lastHeardToggleContact() {
           case 3: ui_task.gotoDiscoveryScreen(); return 0;
           case 4: ui_task.gotoTraceScreen(); return 0;
           case 5:
-  #if HAS_GPS
+  #if HAS_GPS && !defined(MECK_40MHZ_TEST)
             ui_task.gotoMapScreen();
   #endif
             return 0;
           case 6: ui_task.gotoNotesScreen(); return 0;
           case 7: ui_task.gotoTextReader(); return 0;
           case 8:
-  #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
+  #if (!defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)) && !defined(MECK_40MHZ_TEST)
             // Audiobooks: lazy-init Audio + screen on first use (mirrors 'p' key handler)
             if (!ui_task.getAudiobookScreen()) {
               audio = new Audio();
@@ -1360,7 +1360,7 @@ static void lastHeardToggleContact() {
   #endif
             return 0;
           case 9:
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
             // Alarm: ensure Audio* exists (mirrors 'k' key handler)
             if (!audio) {
               audio = new Audio();
@@ -1373,7 +1373,7 @@ static void lastHeardToggleContact() {
   #endif
             return 0;
           case 10:
-  #ifdef MECK_WEB_READER
+  #if defined(MECK_WEB_READER) && !defined(MECK_40MHZ_TEST)
             ui_task.gotoWebReader();
   #endif
             return 0;
@@ -2594,7 +2594,11 @@ void setup() {
       }
 
       // Start modem if enabled in config (default = enabled)
+#ifdef MECK_40MHZ_TEST
+      bool modemEnabled = false;  // 40 MHz test build: Phone gated, modem stays off
+#else
       bool modemEnabled = ModemManager::loadEnabledConfig();
+#endif
       if (modemEnabled) {
         modemManager.begin();
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
@@ -2664,7 +2668,11 @@ void setup() {
   // GPS is critical for timesync on standalone variants without 4G.
   #if HAS_GPS
   {
+#ifdef MECK_40MHZ_TEST
+    bool gps_wanted = false;  // 40 MHz test build: GPS gated, rail forced off
+#else
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
+#endif
     Serial.printf("GPS: pref gps_enabled=%d\n", (int)gps_wanted);
     if (gps_wanted) {
       #ifdef PIN_GPS_EN
@@ -2716,7 +2724,7 @@ void setup() {
   // Register voice-over-LoRa callbacks early so incoming VE3 envelopes and
   // raw voice packets are handled even before user opens the voice screen.
   // The callbacks null-check the voice screen pointer, so they're safe at boot.
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
   the_mesh.setVoiceHandler(voiceRawCallback);
   the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
   #endif
@@ -2940,6 +2948,7 @@ void loop() {
         cpuPower.setBoost();
       }
 
+      #ifndef MECK_40MHZ_TEST
       // Periodic alarm check (~every 10 seconds)
       static unsigned long lastAlarmCheck = 0;
       if (millis() - lastAlarmCheck > ALARM_CHECK_INTERVAL_MS) {
@@ -2980,6 +2989,7 @@ void loop() {
           Serial.printf("ALARM: Fired slot %d, switched to ringing screen\n", fireSlot);
         }
       }
+      #endif  // MECK_40MHZ_TEST: alarm firing gated
     }
   }
   #endif
@@ -3470,7 +3480,8 @@ void loop() {
     if (dialerNeedsRefresh && (millis() - lastDialerRefresh) >= COMPOSE_REFRESH_INTERVAL) {
       if (smsMode) {
         SMSScreen* dialScr = (SMSScreen*)ui_task.getSMSScreen();
-        if (dialScr && dialScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        if (dialScr && (dialScr->getSubView() == SMSScreen::PHONE_DIALER
+                        || dialScr->getSubView() == SMSScreen::APP_MENU)) {
           display.startFrame();
           dialScr->render(display);
           display.endFrame();
@@ -3623,7 +3634,8 @@ void loop() {
     // SMS dialer has its own dedicated touch handler — don't consume touch data here
     if (smsMode) {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
-      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+      if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
+                     || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         touchBlocked = true;
       }
     }
@@ -4297,7 +4309,8 @@ void loop() {
 
     if (smsMode) {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
-      if (smsScr && smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+      if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
+                     || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         int16_t tx, ty;
         #if defined(LilyGo_TDeck_Pro_Max)
         int16_t _htx[1], _hty[1];
@@ -5137,7 +5150,7 @@ void handleKeyboardInput() {
   if (key == KB_KEY_MIC_RELEASE) return;
 
   // Mic key press from any non-modal screen — open voice message screen
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
   if (key == KB_KEY_MIC) {
     Serial.println("Opening voice message screen (mic key)");
     if (!ui_task.getVoiceScreen()) {
@@ -5306,7 +5319,7 @@ void handleKeyboardInput() {
         }
         break;
       }
-    #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
+    #if (!defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)) && !defined(MECK_40MHZ_TEST)
       // Otherwise: open audiobook player - lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
@@ -5322,7 +5335,7 @@ void handleKeyboardInput() {
     #endif
       break;
 
-    #ifdef MECK_AUDIO_VARIANT
+    #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
     case 'k':
       // Open alarm clock (screen created at boot; just ensure Audio* is available)
       Serial.println("Opening alarm clock");
@@ -5339,7 +5352,7 @@ void handleKeyboardInput() {
       break;
     #endif
 
-    #ifdef HAS_4G_MODEM
+    #if defined(HAS_4G_MODEM) && !defined(MECK_40MHZ_TEST)
     case 't':
       // Open SMS (4G variant only)
       Serial.println("Opening SMS");
@@ -5347,7 +5360,7 @@ void handleKeyboardInput() {
       break;
     #endif
 
-    #ifdef MECK_WEB_READER
+    #if defined(MECK_WEB_READER) && !defined(MECK_40MHZ_TEST)
     case 'b':
       // Open web reader (browser)
       Serial.println("Opening web reader");
@@ -5397,6 +5410,7 @@ void handleKeyboardInput() {
     #endif
     
     case 'g':
+    #ifndef MECK_40MHZ_TEST
       // Open map screen, or re-center on GPS if already on map
       if (ui_task.isOnMapScreen()) {
         ui_task.injectKey('g');  // Re-center on GPS
@@ -5427,6 +5441,7 @@ void handleKeyboardInput() {
         }
         ui_task.gotoMapScreen();
       }
+    #endif  // MECK_40MHZ_TEST: map gated
       break;
     
     case 'n':

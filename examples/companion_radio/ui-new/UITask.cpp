@@ -159,7 +159,7 @@ class HomeScreen : public UIScreen {
     WIFI_STATUS,
 #endif
     ADVERT,
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     GPS,
 #endif
 #if UI_SENSORS_PAGE == 1
@@ -511,6 +511,19 @@ public:
           eink->drawXbmRaw(tx + (tileW - HOME_ICON_W) / 2, ty + 5, tiles[i].icon, HOME_ICON_W, HOME_ICON_H, fg);
           int lw = eink->measureTextRawStyled(tiles[i].label);
           eink->drawTextRawStyled(tx + (tileW - lw) / 2, ty + 17, tiles[i].label, fg);
+#ifdef MECK_40MHZ_TEST
+          // 40 MHz test build: Maps(5), Audiobooks(8), Alarm(9) and Browser(10)
+          // are gated -- knock out every other pixel so the tile reads greyed.
+          // Taps on these tiles are inert (see mapTouchTap in main.cpp).
+          if (i == 5 || i == 8 || i == 9 || i == 10) {
+            const uint16_t bg = (fg == GxEPD_BLACK) ? GxEPD_WHITE : GxEPD_BLACK;
+            for (int py = ty; py < ty + tileH; py++) {
+              for (int px = tx; px < tx + tileW; px++) {
+                if (((px + py) & 1) == 0) eink->drawPixelRaw(px, py, bg);
+              }
+            }
+          }
+#endif
         }
 
         // Full-width Phone tile (row 6)
@@ -521,6 +534,17 @@ public:
           eink->drawXbmRaw(gridX + (tw - HOME_ICON_W) / 2, ty + 5, icon_phone, HOME_ICON_W, HOME_ICON_H, fg);
           int lw = eink->measureTextRawStyled("Phone");
           eink->drawTextRawStyled(gridX + (tw - lw) / 2, ty + 17, "Phone", fg);
+#ifdef MECK_40MHZ_TEST
+          // Phone is gated on the 40 MHz test build -- grey it out too
+          {
+            const uint16_t bg = (fg == GxEPD_BLACK) ? GxEPD_WHITE : GxEPD_BLACK;
+            for (int py = ty; py < ty + tileH; py++) {
+              for (int px = gridX; px < gridX + tw; px++) {
+                if (((px + py) & 1) == 0) eink->drawPixelRaw(px, py, bg);
+              }
+            }
+          }
+#endif
         }
 
         // Top status strip (physical, between page dots and grid): unread
@@ -995,7 +1019,7 @@ public:
       display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
       display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     } else if (_page == HomePage::GPS) {
       extern GPSStreamCounter gpsStream;
       LocationProvider* nmea = sensors.getLocationProvider();
@@ -1366,7 +1390,7 @@ public:
       }
       return true;
     }
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     if (c == KEY_ENTER && _page == HomePage::GPS) {
       _task->toggleGPS();
       return true;
@@ -1793,7 +1817,11 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   {
   #ifdef MECK_AUDIO_VARIANT
   if (!suppressNotif) {
+  #ifdef MECK_40MHZ_TEST
+    const char* customSound = NULL;  // MP3 tones gated -- default buzzer path runs
+  #else
     const char* customSound = notifSounds.getSoundForChannel(channel_idx);
+  #endif
     if (customSound && customSound[0] != '\0') {
       char soundPath[48];
       snprintf(soundPath, sizeof(soundPath), "/alarms/%s", customSound);
@@ -2961,6 +2989,11 @@ void UITask::toggleGPS() {
         #endif
         notify(UIEventType::ack);
       } else {
+#ifdef MECK_40MHZ_TEST
+        // 40 MHz test build: GPS is gated -- refuse the enable, leave rail off
+        showAlert("GPS gated (40MHz build)", 1200);
+        return;
+#endif
         // Enable GPS — power on hardware
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
