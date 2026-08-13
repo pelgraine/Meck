@@ -120,6 +120,13 @@ private:
   int  _dmInboxScroll;         // Scroll position in inbox list
   char _dmFilterName[32];      // Selected contact name for conversation view
   int  _dmContactIdx;          // Contact index for conversation (-1 if unknown)
+
+  // --- Canned messages overlay (opened by a board trigger, e.g. the Max
+  // speech-bubble capacitive pad; see main.cpp) ---
+  bool _cannedOpen;
+  uint8_t _cannedMap[CANNED_MSG_SLOTS];   // visible row -> prefs slot index
+  uint8_t _cannedCount;
+  int _cannedPendingSlot;                 // tapped slot awaiting main-loop send; -1 = none
   uint8_t _dmContactPerms;     // Last login permissions for this contact (0=none/guest)
   const uint8_t* _dmUnreadPtr; // Pointer to per-contact DM unread array (from UITask)
 
@@ -148,7 +155,8 @@ public:
     : _task(task), _rtc(rtc), _msgCount(0), _newestIdx(-1), _scrollPos(0), 
       _msgsPerPage(6), _viewChannelIdx(0), _sdReady(false), _showPathOverlay(false), _pathScrollPos(0), _pathHopsVisible(20),
       _replySelectMode(false), _replySelectPos(-1), _replyChannelMsgCount(0),
-      _dmInboxMode(true), _dmInboxScroll(0), _dmContactIdx(-1), _dmContactPerms(0), _dmUnreadPtr(nullptr) {
+      _dmInboxMode(true), _dmInboxScroll(0), _dmContactIdx(-1), _dmContactPerms(0), _dmUnreadPtr(nullptr),
+      _cannedOpen(false), _cannedCount(0), _cannedPendingSlot(-1) {
     _dmFilterName[0] = '\0';
     // Initialize all messages as invalid
     for (int i = 0; i < CHANNEL_MSG_HISTORY_SIZE; i++) {
@@ -280,6 +288,8 @@ public:
     _scrollPos = 0;
     _showPathOverlay = false;
     _pathScrollPos = 0;
+    _cannedOpen = false;
+    _cannedPendingSlot = -1;
     // Reset DM inbox state when entering DM tab
     if (idx == 0xFF) {
       _dmInboxMode = true;
@@ -310,6 +320,43 @@ public:
   void setDMContactPerms(uint8_t p) { _dmContactPerms = p; }
   bool isShowingPathOverlay() const { return _showPathOverlay; }
   void dismissPathOverlay() { _showPathOverlay = false; _pathScrollPos = 0; }
+
+  // --- Canned messages overlay ---
+  bool isCannedOpen() const { return _cannedOpen; }
+  // Build the list of non-empty slots and open the overlay.
+  // Returns false (and stays closed) when every slot is empty.
+  bool openCannedList() {
+    _cannedCount = 0;
+    const NodePrefs* np = the_mesh.getNodePrefs();
+    for (uint8_t i = 0; i < CANNED_MSG_SLOTS; i++) {
+      if (np->canned_msgs[i][0]) _cannedMap[_cannedCount++] = i;
+    }
+    if (_cannedCount == 0) return false;
+    _cannedOpen = true;
+    return true;
+  }
+  void closeCannedList() { _cannedOpen = false; }
+  // Virtual-coordinate tap while the overlay is open: a row tap queues that
+  // slot for the main loop to send; any other tap just closes the overlay.
+  // Geometry must match the render block (headerH + smallLineH rows).
+  void cannedTapAt(int vx, int vy) {
+    (void)vx;
+    const int headerH = 14;
+    int lineH = the_mesh.getNodePrefs()->smallLineH();
+    if (vy >= headerH) {
+      int row = (vy - headerH) / lineH;
+      if (row >= 0 && row < (int)_cannedCount) {
+        _cannedPendingSlot = _cannedMap[row];
+      }
+    }
+    _cannedOpen = false;
+  }
+  // Consumed by the main loop: returns the tapped slot once, then -1.
+  int consumeCannedSend() {
+    int s = _cannedPendingSlot;
+    _cannedPendingSlot = -1;
+    return s;
+  }
 
   // Set pointer to per-contact DM unread array (called by UITask after allocation)
   void setDMUnreadPtr(const uint8_t* ptr) { _dmUnreadPtr = ptr; }
@@ -680,6 +727,27 @@ public:
     
     // Divider line
     display.drawRect(0, 11, display.width(), 1);
+
+    // === Canned messages overlay: takes over the body while open ===
+    // The channel/DM header above stays visible, showing the send target.
+    if (_cannedOpen) {
+      display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+      int lineH = the_mesh.getNodePrefs()->smallLineH();
+      int y = 14;
+      for (uint8_t r = 0; r < _cannedCount; r++) {
+        display.setCursor(0, y);
+        display.setColor(DisplayDriver::LIGHT);
+        snprintf(tmp, sizeof(tmp), "%u: %.26s", (unsigned)(_cannedMap[r] + 1),
+                 the_mesh.getNodePrefs()->canned_msgs[_cannedMap[r]]);
+        display.print(tmp);
+        y += lineH;
+      }
+#ifdef USE_EINK
+      return 5000;
+#else
+      return 1000;
+#endif
+    }
 
     // === DM Inbox mode: show list of contacts with DMs ===
     if (_viewChannelIdx == 0xFF && _dmInboxMode) {
@@ -1656,6 +1724,11 @@ public:
   }
 
   bool handleInput(char c) override {
+    // Canned overlay open: any key closes it (mirrors the path overlay)
+    if (_cannedOpen) {
+      _cannedOpen = false;
+      return true;
+    }
     // If overlay is showing, handle scroll and dismiss
     if (_showPathOverlay) {
       if (c == KEY_CANCEL || c == 'v' || c == 'V') {

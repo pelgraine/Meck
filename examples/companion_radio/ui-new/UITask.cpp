@@ -526,7 +526,10 @@ public:
 #endif
         }
 
-        // Full-width Phone tile (row 6)
+        // Full-width Phone tile (row 6) -- omitted on Pro audio builds
+        // (MECK_AUDIO_VARIANT without HAS_4G_MODEM): no modem, and the
+        // tile's tap was already inert on those builds (see mapTouchTap).
+        #if !defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
         {
           int ty = gridY + 6 * (tileH + gapY);
           int tw = tileW * 2 + gapX;
@@ -546,6 +549,7 @@ public:
           }
 #endif
         }
+        #endif  // Phone tile (Pro audio builds omit)
 
         // Top status strip (physical, between page dots and grid): unread
         // count plus connection state / WiFi IP / BLE pin
@@ -2340,6 +2344,10 @@ if (curr) curr->poll();
             else if (rt == ROW_FREQ) label = "Frequency";
             showVirtualKeyboard(VKB_SETTINGS_TEXT, label, ss->getEditBuf(), 31);
           }
+          if (ss->needsCannedVKB()) {
+            ss->clearCannedNeedsVKB();
+            showVirtualKeyboard(VKB_CANNED_TEXT, "Canned Message", ss->getCannedBuf(), CANNED_MSG_LEN - 1);
+          }
         }
 
         if (_hintActive && millis() < _hintExpiry) {
@@ -2831,6 +2839,13 @@ void UITask::onVKBSubmit() {
         // Empty submission — cancel the edit
         ss->handleInput('q');
       }
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
+    case VKB_CANNED_TEXT: {
+      // Canned slot edit -- commit even when empty (empty clears the slot)
+      SettingsScreen* ss = (SettingsScreen*)settings_screen;
+      ss->submitCannedText(text);
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }

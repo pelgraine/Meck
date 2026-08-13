@@ -31,6 +31,7 @@ enum VKBPurpose {
   VKB_NOTES,          // Insert text into notes
   VKB_SETTINGS_NAME,  // Edit node name
   VKB_SETTINGS_TEXT,  // Generic settings text edit (channel name, freq, APN)
+  VKB_CANNED_TEXT,    // Canned message slot edit (full 133-char length)
   VKB_WIFI_PASSWORD,  // WiFi password entry (settings screen)
 #ifdef MECK_WEB_READER
   VKB_WEB_URL,        // Web reader URL entry

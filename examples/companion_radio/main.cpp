@@ -113,13 +113,16 @@
   #ifdef HAS_TOUCHSCREEN
     #include "TouchInput.h"
     TouchInput touchInput(&Wire);
-    #if defined(LilyGo_TDeck_Pro_Max)
+    #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
       // T-Deck Pro MAX uses the vendored Hynitron driver (HynTouch) for the
       // CST328 instead of TouchInput. Its reset line is XL9555 P07; route the
       // driver's virtual-GPIO writes/reads through the board's XL9555 access,
       // mirroring the LilyGo factory driver (driver self-resets during init).
+      // MECK_PRO_HYN_TOUCH (T-Deck Pro v1.1 with the CST3530): same driver,
+      // but reset is native GPIO 38 -- no XL9555, so no virtual-GPIO callbacks.
       #include "HynTouch.h"
       #include "HynTouchBoard.h"
+      #if defined(LilyGo_TDeck_Pro_Max)
       static bool meckHynXl9555Write(uint32_t gpio_id, bool value, void* /*user_data*/) {
         if (!XL9555_GPIO_IS((int)gpio_id)) return false;
         board.xl9555_digitalWrite(XL9555_GPIO_TO_PIN(gpio_id), value);
@@ -130,6 +133,7 @@
         *out_value = board.xl9555_digitalRead(XL9555_GPIO_TO_PIN(gpio_id)) ? 1 : 0;
         return true;
       }
+      #endif
     #endif
   #endif
 
@@ -907,7 +911,7 @@
       return readTouchPortrait(outX, outY);
     }
     return readTouchLandscape(outX, outY);
-  #elif defined(LilyGo_TDeck_Pro_Max)
+  #elif defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
     {
       int16_t hx[1], hy[1];
       if (hyn_touch_get_point(hx, hy, 1) > 0) {
@@ -1254,7 +1258,20 @@ static void lastHeardToggleContact() {
           board.backlightSetBrightness((uint8_t)((_blPct * 255 + 50) / 100));
         }
         break;
-      case 1:  // speech bubble -- open channel picker (same as 'M')
+      case 1:  // speech bubble -- canned messages when a channel or DM
+               // conversation is open; otherwise channel picker (same as 'M')
+        if (ui_task.isOnChannelScreen()) {
+          ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+          if (chScr && (chScr->getViewChannelIdx() != 0xFF || chScr->isDMConversation())) {
+            if (chScr->isCannedOpen()) {
+              chScr->closeCannedList();
+            } else if (!chScr->openCannedList()) {
+              ui_task.showAlert("No canned messages", 1200);
+            }
+            ui_task.forceRefresh();
+            break;
+          }
+        }
         ui_task.gotoChannelPickerScreen();
         break;
       case 2:  // send / paper plane -- open DM inbox
@@ -1275,6 +1292,19 @@ static void lastHeardToggleContact() {
     if (ui_task.isHintActive()) {
       ui_task.dismissBootHint();
       return 0;
+    }
+
+    // Canned messages overlay open on the channel screen: it owns every tap.
+    // This must run before the status-bar go-home rule below -- the overlay's
+    // first row starts at vy 14 and straddles the vy<18 band, so a row tap
+    // was going home instead of sending, leaving the overlay flag set.
+    if (ui_task.isOnChannelScreen()) {
+      ChannelScreen* cannedTapScr = (ChannelScreen*)ui_task.getChannelScreen();
+      if (cannedTapScr && cannedTapScr->isCannedOpen()) {
+        cannedTapScr->cannedTapAt(vx, vy);   // row tap queues the send; else closes
+        ui_task.forceRefresh();
+        return 0;
+      }
     }
 
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
@@ -2015,6 +2045,24 @@ void setup() {
           MESH_DEBUG_PRINTLN("setup() - Touch input FAILED (HynTouch)");
         }
       }
+    #elif defined(MECK_PRO_HYN_TOUCH)
+      // T-Deck Pro v1.1 with the CST3530 (CST66xx family) at 0x1A: use the
+      // vendored Hynitron driver with native pins. The driver self-resets
+      // (cst66xx_rst) as its first init action using reset_pin, so no manual
+      // pulse is needed -- and the later GPIO 38 pulse in the DISPLAY_CLASS
+      // block is suppressed for this build (it would undo this init).
+      {
+        HynTouchConfig hcfg = hyn_touch_default_config();
+        hcfg.sda_pin = I2C_SDA;            // 13 (shared bus, same as the Max)
+        hcfg.scl_pin = I2C_SCL;            // 14
+        hcfg.reset_pin = CST328_PIN_RST;   // 38: native GPIO on the Pro v1.1
+        hcfg.irq_pin = CST328_PIN_INT;     // 12
+        if (hyn_touch_init_with_config(&hcfg)) {
+          MESH_DEBUG_PRINTLN("setup() - Touch input initialized (HynTouch, Pro v1.1)");
+        } else {
+          MESH_DEBUG_PRINTLN("setup() - Touch input FAILED (HynTouch, Pro v1.1)");
+        }
+      }
     #else
       if (touchInput.begin(CST328_PIN_INT)) {
         MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
@@ -2040,7 +2088,7 @@ void setup() {
     
     // Initialize Touch reset pin (GPIO 38) 
     Serial.printf(">>> TOUCH DIAG: compiled CST328_PIN_RST = %d (MAX expects -1; a real GPIO means stale Pro variant)\n", (int)CST328_PIN_RST);
-    #ifdef CST328_PIN_RST
+    #if defined(CST328_PIN_RST) && !defined(MECK_PRO_HYN_TOUCH)
       pinMode(CST328_PIN_RST, OUTPUT);
       digitalWrite(CST328_PIN_RST, HIGH);
       delay(20);
@@ -3331,6 +3379,44 @@ void loop() {
   }
   #endif
 
+  // Canned messages: consume a tapped slot from the channel screen overlay
+  // and send it through the normal composed-message path (Max speech-bubble
+  // trigger). A channel view sends to that channel; a DM conversation sends
+  // a DM to that contact.
+  #if defined(LilyGo_TDeck_Pro_Max) && defined(MECK_TOUCH_ENABLED)
+  {
+    ChannelScreen* cannedChScr = (ChannelScreen*)ui_task.getChannelScreen();
+    int cannedSlot = cannedChScr ? cannedChScr->consumeCannedSend() : -1;
+    if (cannedSlot >= 0 && cannedSlot < CANNED_MSG_SLOTS) {
+      const char* cannedMsg = the_mesh.getNodePrefs()->canned_msgs[cannedSlot];
+      if (cannedMsg[0]) {
+        strncpy(composeBuffer, cannedMsg, sizeof(composeBuffer) - 1);
+        composeBuffer[sizeof(composeBuffer) - 1] = '\0';
+        composePos = strlen(composeBuffer);
+        if (cannedChScr->isDMConversation() && cannedChScr->getDMContactIdx() >= 0) {
+          composeDM = true;
+          composeDMContactIdx = cannedChScr->getDMContactIdx();
+          ContactInfo cannedCi;
+          if (the_mesh.getContactByIdx((uint32_t)composeDMContactIdx, cannedCi)) {
+            strncpy(composeDMName, cannedCi.name, sizeof(composeDMName) - 1);
+            composeDMName[sizeof(composeDMName) - 1] = '\0';
+          } else {
+            composeDMName[0] = '\0';
+          }
+        } else {
+          composeDM = false;
+          composeChannelIdx = cannedChScr->getViewChannelIdx();
+        }
+        sendComposedMessage();
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        composeDM = false;
+        ui_task.forceRefresh();
+      }
+    }
+  }
+  #endif
+
   // SMS: poll for incoming messages from modem
   #ifdef HAS_4G_MODEM
   {
@@ -4312,7 +4398,7 @@ void loop() {
       if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
                      || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         int16_t tx, ty;
-        #if defined(LilyGo_TDeck_Pro_Max)
+        #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
         int16_t _htx[1], _hty[1];
         bool _have = (hyn_touch_get_point(_htx, _hty, 1) > 0);
         if (_have) { tx = _htx[0]; ty = _hty[0]; }
@@ -4399,6 +4485,19 @@ void handleKeyboardInput() {
   if (ui_task.isHintActive()) {
     ui_task.dismissBootHint();
     return;  // Consume the keypress (don't act on it)
+  }
+
+  // Canned messages overlay: any key closes it. Keyboard keys on the Pro/Max
+  // are handled directly in this function and never reach
+  // ChannelScreen::handleInput, so the overlay's own key handling cannot see
+  // them -- close it here and consume the key.
+  if (ui_task.isOnChannelScreen()) {
+    ChannelScreen* cannedKeyScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (cannedKeyScr && cannedKeyScr->isCannedOpen()) {
+      cannedKeyScr->closeCannedList();
+      ui_task.forceRefresh();
+      return;
+    }
   }
   
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 

@@ -310,6 +310,9 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.kb_backlight_pct, sizeof(_prefs.kb_backlight_pct)) != sizeof(_prefs.kb_backlight_pct)) {
       _prefs.kb_backlight_pct = 50;  // default: 50%
     }
+    if (file.read((uint8_t *)_prefs.canned_msgs, sizeof(_prefs.canned_msgs)) != sizeof(_prefs.canned_msgs)) {
+      memset(_prefs.canned_msgs, 0, sizeof(_prefs.canned_msgs));  // default: all slots empty
+    }
 
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
@@ -326,6 +329,10 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (_prefs.lora_antenna > 1) _prefs.lora_antenna = 0;
     if (_prefs.backlight_brightness_pct < 5 || _prefs.backlight_brightness_pct > 100) _prefs.backlight_brightness_pct = 100;
     if (_prefs.kb_backlight_pct < 5 || _prefs.kb_backlight_pct > 100) _prefs.kb_backlight_pct = 50;
+    // Force NUL termination on each canned message slot in case of garbage
+    for (int i = 0; i < (int)(sizeof(_prefs.canned_msgs) / sizeof(_prefs.canned_msgs[0])); i++) {
+      _prefs.canned_msgs[i][sizeof(_prefs.canned_msgs[0]) - 1] = '\0';
+    }
     // auto_lock_minutes: only accept known options (0, 2, 5, 10, 15, 30)
     {
       uint8_t alm = _prefs.auto_lock_minutes;
@@ -389,6 +396,7 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.lora_antenna, sizeof(_prefs.lora_antenna));                    // 174
     file.write((uint8_t *)&_prefs.backlight_brightness_pct, sizeof(_prefs.backlight_brightness_pct)); // 175
     file.write((uint8_t *)&_prefs.kb_backlight_pct, sizeof(_prefs.kb_backlight_pct));            // 176
+    file.write((uint8_t *)_prefs.canned_msgs, sizeof(_prefs.canned_msgs));                        // 177
 
     file.close();
   }

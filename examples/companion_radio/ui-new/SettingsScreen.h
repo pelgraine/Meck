@@ -187,6 +187,8 @@ enum SettingsRowType : uint8_t {
   ROW_EXPORT_NOW,        // ">> Export Now" action trigger
   #endif
   ROW_RXLOG,          // Rx Log packet sniffer (opens RxLogScreen)
+  ROW_CANNED_SUBMENU, // Folder row: enters Canned Messages sub-screen
+  ROW_CANNED_SLOT,    // A canned message slot; param = slot index 0..9
   ROW_INFO_HEADER,    // "--- Info ---" separator
   #ifdef MECK_OTA_UPDATE
   ROW_OTA_TOOLS_SUBMENU, // Folder row → enters OTA Tools sub-screen
@@ -208,6 +210,7 @@ enum SettingsRowType : uint8_t {
 enum EditMode : uint8_t {
   EDIT_NONE,         // Just browsing
   EDIT_TEXT,         // Typing into a text buffer (name, channel name)
+  EDIT_CANNED,       // Typing a canned message slot (full-length buffer)
   EDIT_PICKER,       // A/D cycles options (radio preset, contact mode)
   EDIT_NUMBER,       // W/S adjusts value (freq, BW, SF, CR, TX, UTC)
   EDIT_CONFIRM,      // Confirmation dialog (delete channel, apply radio)
@@ -229,6 +232,7 @@ enum SubScreen : uint8_t {
   SUB_NONE,        // Top-level settings list
   SUB_CONTACTS,    // Contacts settings sub-screen
   SUB_CHANNELS,    // Channels management sub-screen
+  SUB_CANNED,      // Canned Messages sub-screen
   #ifdef MECK_OTA_UPDATE
   SUB_OTA_TOOLS,   // OTA Tools sub-screen (FW update + File Manager)
   #endif
@@ -297,6 +301,9 @@ private:
   // Editing state
   EditMode _editMode;
   char _editBuf[SETTINGS_TEXT_BUF];
+  char _cannedBuf[CANNED_MSG_LEN];  // Canned-slot edit buffer (full 133-char length)
+  int _cannedPos;
+  uint8_t _cannedEditSlot;
   int _editPos;
   int _editPickerIdx;       // for preset picker / contact mode picker
   float _editFloat;         // for freq/BW editing
@@ -341,6 +348,7 @@ private:
 
   // T5S3: signal UITask to open VKB when entering text edit mode
   bool _needsTextVKB;
+  bool _needsCannedVKB;   // T5S3: open VKB for a canned slot (full-length path)
   bool _wantsWatchChannels;   // Watch: hand off to WatchChannelConfigScreen (polled by UITask)
 
   // 4G modem state (runtime cache of config)
@@ -463,6 +471,11 @@ private:
         }
       }
       addRow(ROW_ADD_CHANNEL);
+    } else if (_subScreen == SUB_CANNED) {
+      // --- Canned Messages sub-screen: ten editable slots ---
+      for (uint8_t i = 0; i < CANNED_MSG_SLOTS; i++) {
+        addRow(ROW_CANNED_SLOT, i);
+      }
     #ifdef MECK_OTA_UPDATE
     } else if (_subScreen == SUB_OTA_TOOLS) {
       // --- OTA Tools sub-screen ---
@@ -496,6 +509,12 @@ private:
       addRow(ROW_CR);
       addRow(ROW_TX_POWER);
       addRow(ROW_UTC_OFFSET);
+    #if defined(LilyGo_TDeck_Pro_Max)
+      // Canned messages are Max-only for now: the send trigger is the Max's
+      // speech-bubble capacitive pad, and no Pro/T5S3 trigger is wired. The
+      // NodePrefs storage stays shared so the prefs layout is uniform.
+      addRow(ROW_CANNED_SUBMENU);
+    #endif
 #if defined(LilyGo_TDeck_Pro_Max)
       addRow(ROW_BACKLIGHT_BRIGHTNESS);
       addRow(ROW_KB_BACKLIGHT);
@@ -695,7 +714,8 @@ public:
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
       _editFloat(0), _editInt(0), _fontPickerOriginal(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
-      _radioChanged(false), _needsTextVKB(false), _wantsWatchChannels(false) {
+      _radioChanged(false), _needsTextVKB(false), _needsCannedVKB(false),
+      _cannedPos(0), _cannedEditSlot(0), _wantsWatchChannels(false) {
     memset(_editBuf, 0, sizeof(_editBuf));
     #ifdef HAS_SDCARD
     _savedExportCursor = 0;
@@ -939,6 +959,9 @@ public:
   bool wantsWatchChannels() const { return _wantsWatchChannels; }
   void clearWantsWatchChannels() { _wantsWatchChannels = false; }
   const char* getEditBuf() const { return _editBuf; }
+  bool needsCannedVKB() const { return _needsCannedVKB; }
+  void clearCannedNeedsVKB() { _needsCannedVKB = false; }
+  const char* getCannedBuf() const { return _cannedBuf; }
   SettingsRowType getCurrentRowType() const { return _rows[_cursor].type; }
   void submitEditText(const char* text) {
     strncpy(_editBuf, text, SETTINGS_TEXT_BUF - 1);
@@ -1745,6 +1768,28 @@ public:
 #endif
   }
 
+  // Canned slot edit: full-length buffer, bypasses the 32-char _editBuf.
+  void startEditCanned(uint8_t slot) {
+    if (slot >= CANNED_MSG_SLOTS) return;
+    _editMode = EDIT_CANNED;
+    _cannedEditSlot = slot;
+    strncpy(_cannedBuf, _prefs->canned_msgs[slot], CANNED_MSG_LEN - 1);
+    _cannedBuf[CANNED_MSG_LEN - 1] = '\0';
+    _cannedPos = strlen(_cannedBuf);
+#if defined(LilyGo_T5S3_EPaper_Pro)
+    _needsCannedVKB = true;  // Signal UITask to open the virtual keyboard
+#endif
+  }
+
+  // T5S3 VKB return path for canned slots: commit the full-length text
+  // directly (empty clears the slot) through the normal Enter path.
+  void submitCannedText(const char* text) {
+    strncpy(_cannedBuf, text ? text : "", CANNED_MSG_LEN - 1);
+    _cannedBuf[CANNED_MSG_LEN - 1] = '\0';
+    _cannedPos = strlen(_cannedBuf);
+    handleInput('\r');
+  }
+
   void startEditPicker(int initialIdx) {
     _editMode = EDIT_PICKER;
     _editPickerIdx = initialIdx;
@@ -2235,6 +2280,26 @@ public:
           }
           display.print(tmp);
           break;
+
+        case ROW_CANNED_SUBMENU:
+          display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+          display.print("Canned Messages >>");
+          break;
+
+        case ROW_CANNED_SLOT: {
+          uint8_t slot = _rows[i].param;
+          if (editing && _editMode == EDIT_CANNED && slot == _cannedEditSlot) {
+            // Editing: show the tail of the text plus a live counter
+            const char* tail = _cannedBuf + (_cannedPos > 20 ? _cannedPos - 20 : 0);
+            snprintf(tmp, sizeof(tmp), "%u:%s_ %d/133", (unsigned)(slot + 1), tail, _cannedPos);
+          } else if (_prefs->canned_msgs[slot][0]) {
+            snprintf(tmp, sizeof(tmp), "%u: %.28s", (unsigned)(slot + 1), _prefs->canned_msgs[slot]);
+          } else {
+            snprintf(tmp, sizeof(tmp), "%u: (empty)", (unsigned)(slot + 1));
+          }
+          display.print(tmp);
+          break;
+        }
 
         #ifdef MECK_OTA_UPDATE
         case ROW_OTA_TOOLS_SUBMENU:
@@ -2868,7 +2933,7 @@ public:
         display.print("Please wait...");
       }
     #endif
-    } else if (_editMode == EDIT_TEXT) {
+    } else if (_editMode == EDIT_TEXT || _editMode == EDIT_CANNED) {
       display.print("Hold:Type");
       const char* r = "Tap:OK  Boot:Cancel";
       display.setCursor(display.width() - display.getTextWidth(r) - 2, footerY);
@@ -2877,7 +2942,7 @@ public:
       display.print("Editing...");
     }
 #elif defined(LILYGO_TECHO_LITE)
-    if (_editMode == EDIT_TEXT) {
+    if (_editMode == EDIT_TEXT || _editMode == EDIT_CANNED) {
       display.print("Ent:Ok Sh+Del:Cancel");
     } else if (_editMode == EDIT_PICKER) {
       display.print("A/D:Pick Ent:Ok");
@@ -2892,7 +2957,7 @@ public:
       display.print(r);
     }
 #else
-    if (_editMode == EDIT_TEXT) {
+    if (_editMode == EDIT_TEXT || _editMode == EDIT_CANNED) {
       display.print("Type, Enter:Ok Sh+Del:Cancel");
     #ifdef MECK_WIFI_COMPANION
     } else if (_editMode == EDIT_WIFI) {
@@ -3337,6 +3402,39 @@ public:
         return true;
       }
       return true;  // consume all keys in text edit
+    }
+
+    // --- Canned message edit (full-length buffer, bypasses _editBuf) ---
+    if (_editMode == EDIT_CANNED) {
+      if (c == '\r' || c == 13) {
+        // Commit: empty clears the slot
+        if (_cannedEditSlot < CANNED_MSG_SLOTS) {
+          strncpy(_prefs->canned_msgs[_cannedEditSlot], _cannedBuf, CANNED_MSG_LEN - 1);
+          _prefs->canned_msgs[_cannedEditSlot][CANNED_MSG_LEN - 1] = '\0';
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Canned slot %u %s\n", (unsigned)(_cannedEditSlot + 1),
+                        _cannedBuf[0] ? "saved" : "cleared");
+        }
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      if (c == KEY_CANCEL) {
+        _editMode = EDIT_NONE;
+        return true;
+      }
+      if (c == '\b') {
+        if (_cannedPos > 0) {
+          _cannedPos--;
+          _cannedBuf[_cannedPos] = '\0';
+        }
+        return true;
+      }
+      if (c >= 32 && c < 127 && _cannedPos < CANNED_MSG_LEN - 1) {
+        _cannedBuf[_cannedPos++] = c;
+        _cannedBuf[_cannedPos] = '\0';
+        return true;
+      }
+      return true;  // consume all keys while editing a canned slot
     }
 
     // --- Picker mode (radio preset or contact mode) ---
@@ -3806,6 +3904,19 @@ public:
 
         case ROW_ADD_CHANNEL:
           startEditText("");
+          break;
+
+        case ROW_CANNED_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_CANNED;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered Canned Messages sub-screen");
+          break;
+
+        case ROW_CANNED_SLOT:
+          startEditCanned(_rows[_cursor].param);
           break;
 
         #ifdef MECK_OTA_UPDATE

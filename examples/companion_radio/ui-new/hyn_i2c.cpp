@@ -1,4 +1,4 @@
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
 // =============================================================================
 // hyn_i2c.cpp -- Meck port of the HynTouch I2C transport.
 //
