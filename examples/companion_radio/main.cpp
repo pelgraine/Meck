@@ -1106,6 +1106,30 @@ MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
 
 /* END GLOBAL OBJECTS */
 
+#if defined(LilyGo_TDeck_Pro)
+static void prepareMapScreen() {
+  MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+  if (!ms) return;
+
+  ms->setSDReady(sdCardReady);
+  ms->setGPSPosition(sensors.node_lat, sensors.node_lon);
+  ms->clearMarkers();
+
+  ContactsIterator it = the_mesh.startContactsIterator();
+  ContactInfo ci;
+  int markerCount = 0;
+  while (it.hasNext(&the_mesh, ci)) {
+    if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+      double lat = ((double)ci.gps_lat) / 1000000.0;
+      double lon = ((double)ci.gps_lon) / 1000000.0;
+      ms->addMarker(lat, lon, ci.name, ci.type);
+      markerCount++;
+    }
+  }
+  Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Voice-over-LoRa: incoming raw packet handler (dz0ny VE3 protocol)
 // Registered with the_mesh.setVoiceHandler() when voice screen is created.
@@ -1342,6 +1366,7 @@ static void lastHeardToggleContact() {
           case 4: ui_task.gotoTraceScreen(); return 0;
           case 5:
   #if HAS_GPS
+            prepareMapScreen();
             ui_task.gotoMapScreen();
   #endif
             return 0;
@@ -5406,28 +5431,7 @@ void handleKeyboardInput() {
       } else {
         Serial.println("Opening map");
         cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
-        {
-          MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
-          if (ms) {
-            ms->setSDReady(sdCardReady);
-            ms->setGPSPosition(sensors.node_lat,
-                               sensors.node_lon);
-            // Populate contact markers via iterator
-            ms->clearMarkers();
-            ContactsIterator it = the_mesh.startContactsIterator();
-            ContactInfo ci;
-            int markerCount = 0;
-            while (it.hasNext(&the_mesh, ci)) {
-              if (ci.gps_lat != 0 || ci.gps_lon != 0) {
-                double lat = ((double)ci.gps_lat) / 1000000.0;
-                double lon = ((double)ci.gps_lon) / 1000000.0;
-                ms->addMarker(lat, lon, ci.name, ci.type);
-                markerCount++;
-              }
-            }
-            Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
-          }
-        }
+        prepareMapScreen();
         ui_task.gotoMapScreen();
       }
       break;
