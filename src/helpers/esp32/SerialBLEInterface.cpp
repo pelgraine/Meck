@@ -46,7 +46,14 @@ void SerialBLEInterface::_realBegin() {
 
   BLESecurity  sec;
   sec.setStaticPIN(_pin_code);
+#ifdef MECK_BLE_JUST_WORKS
+  // Garmin Connect IQ has no way to enter a PIN, so a watch can only reach an
+  // encrypted-but-unverified ("just works") link. Drop the MITM requirement so
+  // that link is accepted. The static PIN above is then never asked for.
+  sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
+#else
   sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+#endif
 
   //BLEDevice::setPower(ESP_PWR_LVL_N8);
 
@@ -59,11 +66,19 @@ void SerialBLEInterface::_realBegin() {
 
   // Create a BLE Characteristic
   pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+#ifdef MECK_BLE_JUST_WORKS
+  pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED);
+#else
   pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+#endif
   pTxCharacteristic->addDescriptor(new BLE2902());
 
   BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+#ifdef MECK_BLE_JUST_WORKS
+  pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENCRYPTED);
+#else
   pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+#endif
   pRxCharacteristic->setCallbacks(this);
 
   pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
@@ -94,6 +109,13 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
   if (cmpl.success) {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Success");
     deviceConnected = true;
+    _auth_ok = true;
+
+    // Take the peer address from the event itself. A peer that pairs at
+    // connect time (e.g. a bonded Garmin watch) reaches this callback before
+    // onConnect() has stored _remote_bda, leaving it zeroed and making the
+    // three requests below fail with "Invalid connection remote_bda".
+    memcpy(_remote_bda, cmpl.bd_addr, 6);
 
     // Request fast connection interval (15ms) for faster contact sync.
     // Phone may negotiate higher, but most modern phones accept 15ms.
@@ -118,6 +140,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     BLE_DEBUG_PRINTLN(" - Requested 2M PHY and DLE (251 bytes)");
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
+    _auth_ok = false;
 
     //pServer->removePeerDevice(pServer->getConnId(), true);
     pServer->disconnect(pServer->getConnId());
@@ -142,6 +165,7 @@ void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param
 
 void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
   BLE_DEBUG_PRINTLN("onDisconnect()");
+  _auth_ok = false;
   if (_isEnabled) {
     adv_restart_time = millis() + ADVERT_RESTART_DELAY;
 
@@ -267,7 +291,15 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     return len;
   }
 
-  if (pServer->getConnectedCount() == 0)  deviceConnected = false;
+  if (pServer->getConnectedCount() == 0) {
+    deviceConnected = false;
+  } else if (_auth_ok) {
+    // Authentication can complete before the GATT connect event (a bonded
+    // peer, e.g. a Garmin watch, encrypts immediately). The connected count
+    // is still 0 then, so the line above resets deviceConnected; restore it
+    // once the connect event has landed.
+    deviceConnected = true;
+  }
 
   if (deviceConnected != oldDeviceConnected) {
     if (!deviceConnected) {    // disconnecting

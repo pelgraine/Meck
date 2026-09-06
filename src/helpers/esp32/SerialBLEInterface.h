@@ -14,6 +14,7 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   bool oldDeviceConnected;
   bool _isEnabled;
   bool _begun;              // has _realBegin() run? (deferred BLE bring-up)
+  bool _auth_ok;            // authentication completed on the current link (see checkRecvFrame)
   uint16_t last_conn_id;
   uint8_t _remote_bda[6];   // peer BDA, stored in onConnect for conn param updates
   uint32_t _pin_code;
@@ -62,6 +63,7 @@ public:
     adv_restart_time = 0;
     _isEnabled = false;
     _begun = false;
+    _auth_ok = false;
     _last_write = 0;
     last_conn_id = 0;
     memset(_remote_bda, 0, 6);
