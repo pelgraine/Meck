@@ -151,12 +151,15 @@
 #define CMD_MECK_GET_CANNED       0x71   // [slot] -> RESP_MECK_CANNED
 #define CMD_MECK_GET_SENT_TRACK   0x72   // [n: 0 = most recent] -> RESP_MECK_SENT_TRACK
 #define CMD_MECK_GET_SCOPE        0x73   // [idx] -> RESP_MECK_SCOPE
+#define CMD_MECK_DISCOVER_START   0x74   // -> OK; runs the node's own 30 s discovery scan
+#define CMD_MECK_DISCOVER_GET     0x75   // [n] -> RESP_MECK_DISCOVER
 
 #define RESP_MECK_INFO            0x60   // [ext_ver][canned_slots][bph][scope_count]
 #define RESP_MECK_CANNED          0x61   // [slot][text...] (empty text = unused slot)
 #define RESP_MECK_SENT_TRACK      0x62   // [n][active][fingerprint*12][repeats][bph][count][hash*bph*count][snr*count]
 #define RESP_MECK_CHANNEL_MSG     0x63   // [snr*4][scope_idx][path_len][channel_idx][txt_type][timestamp:4][path bytes][text]
 #define RESP_MECK_SCOPE           0x64   // [idx][name...] (empty = no such scope)
+#define RESP_MECK_DISCOVER        0x65   // [n][active][count] then, if n < count: [type][snr*4][path_len][known][pubkey:2][name...]
 #define MECK_WATCH_EXT_VER        1
 #endif
 
@@ -1920,6 +1923,31 @@ void MyMesh::handleCmdFrame(size_t len) {
       int tlen = strlen(name);
       if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
       memcpy(&out_frame[i], name, tlen);
+      i += tlen;
+    }
+    _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_MECK_DISCOVER_START) {
+    startDiscovery();
+    writeOKFrame();
+  } else if (cmd_frame[0] == CMD_MECK_DISCOVER_GET && len >= 2) {
+    uint8_t n = cmd_frame[1];
+    int count = getDiscoveredCount();
+    int i = 0;
+    out_frame[i++] = RESP_MECK_DISCOVER;
+    out_frame[i++] = n;
+    out_frame[i++] = isDiscoveryActive() ? 1 : 0;
+    out_frame[i++] = (uint8_t)count;
+    if (n < count) {
+      const DiscoveredNode& d = getDiscovered(n);
+      out_frame[i++] = d.contact.type;
+      out_frame[i++] = (uint8_t)d.snr;
+      out_frame[i++] = d.path_len;
+      out_frame[i++] = d.already_in_contacts ? 1 : 0;
+      memcpy(&out_frame[i], d.contact.id.pub_key, 2);
+      i += 2;
+      int tlen = strlen(d.contact.name);
+      if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+      memcpy(&out_frame[i], d.contact.name, tlen);
       i += tlen;
     }
     _serial->writeFrame(out_frame, i);
