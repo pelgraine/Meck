@@ -14,7 +14,9 @@
 #ifdef MECK_BLE_SMALL_MTU_SPLIT
 // Slice tags for small-MTU peers. No real frame can start with one of these:
 // command codes are below 0x80 and push codes stop at 0x90. When slicing is in
-// effect, every frame to or from the peer carries exactly one leading tag byte.
+// effect, every frame to or from the peer travels as [tag][len][payload]
+// slices; the length byte lets stream-style transports (nRF52 BLEUart)
+// recover slice boundaries as well.
 #define SLICE_TAG_FIRST   0xF0   // first slice of a multi-slice frame
 #define SLICE_TAG_MIDDLE  0xF1
 #define SLICE_TAG_LAST    0xF2
@@ -136,12 +138,23 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     // Units are 1.25ms, so 12 = 15ms, 16 = 20ms.
     esp_ble_conn_update_params_t conn_params;
     memcpy(conn_params.bda, _remote_bda, 6);
+#ifdef MECK_BLE_SLOW_INTERVAL
+    // Watch link: a message every few minutes does not need a 15 ms interval,
+    // and a fast interval keeps the watch radio (and this stack) busy all day.
+    conn_params.min_int = 80;   // 100ms  (80 x 1.25ms)
+    conn_params.max_int = 160;  // 200ms  (160 x 1.25ms)
+    conn_params.latency = 2;    // peer may skip 2 intervals when idle
+    conn_params.timeout = 600;  // 6 seconds supervision timeout
+    esp_ble_gap_update_conn_params(&conn_params);
+    BLE_DEBUG_PRINTLN(" - Requested relaxed connection interval (100-200ms)");
+#else
     conn_params.min_int = 12;   // 15ms   (12 × 1.25ms)
     conn_params.max_int = 16;   // 20ms   (16 × 1.25ms)
     conn_params.latency = 0;    // no skipped intervals
     conn_params.timeout = 400;  // 4 seconds supervision timeout
     esp_ble_gap_update_conn_params(&conn_params);
     BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
+#endif
 
     // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
     // Note: ESP-IDF misspells "preferred" as "prefered" in their API
@@ -198,9 +211,11 @@ void SerialBLEInterface::onWrite(BLECharacteristic* pCharacteristic, esp_ble_gat
     uint8_t tag = rxValue[0];
     if (tag == SLICE_TAG_FIRST || tag == SLICE_TAG_SINGLE) _rx_len = 0;
     if (_rx_len < 0) return;                                  // middle/last with no start: drop
-    int n = len - 1;
+    if (len < 2) return;                                      // no length byte
+    int n = rxValue[1];
+    if (n > len - 2) n = len - 2;                             // never read past the write
     if (_rx_len + n > MAX_FRAME_SIZE) { _rx_len = -1; return; }   // oversize: drop the frame
-    memcpy(&_rx_buf[_rx_len], rxValue + 1, n);
+    memcpy(&_rx_buf[_rx_len], rxValue + 2, n);
     _rx_len += n;
     if (tag == SLICE_TAG_LAST || tag == SLICE_TAG_SINGLE) {
       if (recv_queue_len < FRAME_QUEUE_SIZE) {
@@ -310,7 +325,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       // Small-MTU peer: send the next slice of the frame at the head of the
       // queue, one slice per pass (keeps BLE_WRITE_MIN_INTERVAL pacing). The
       // frame is only popped once its last slice has gone.
-      int room = (int)mtu - 3 - 1;                 // ATT payload minus the tag byte
+      int room = (int)mtu - 3 - 2;                 // ATT payload minus tag and length bytes
       if (room < 1) room = 1;
       int total = send_queue[0].len;
       int n = total - _tx_off;
@@ -321,8 +336,9 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       chunk[0] = (first && last) ? SLICE_TAG_SINGLE
                : first ? SLICE_TAG_FIRST
                : last  ? SLICE_TAG_LAST : SLICE_TAG_MIDDLE;
-      memcpy(&chunk[1], &send_queue[0].buf[_tx_off], n);
-      pTxCharacteristic->setValue(chunk, n + 1);
+      chunk[1] = (uint8_t)n;
+      memcpy(&chunk[2], &send_queue[0].buf[_tx_off], n);
+      pTxCharacteristic->setValue(chunk, n + 2);
       pTxCharacteristic->notify();
       BLE_DEBUG_PRINTLN("writeSlice: tag=%02X off=%d n=%d of %d", chunk[0], (int)_tx_off, n, total);
       _tx_off += n;

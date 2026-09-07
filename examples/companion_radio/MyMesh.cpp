@@ -782,14 +782,32 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
     // BLE app has set a scope via CMD 54 — use it (highest priority)
     memcpy(scope.key, send_scope.key, sizeof(scope.key));
   } else {
-    const char* ch_scope = getChannelScopeName(channel);
-    if (ch_scope && ch_scope[0]) {
-      deriveScopeKey(ch_scope, scope);
+    // Per-channel key was derived when the channel was written; just copy it.
+    static const uint8_t no_key[16] = { 0 };
+    ChannelDetails cd;
+    int ci = findChannelIdx(channel);
+    if (ci >= 0 && getChannel(ci, cd) && memcmp(cd.scope_key, no_key, sizeof(no_key)) != 0) {
+      memcpy(scope.key, cd.scope_key, sizeof(scope.key));
     } else {
       memcpy(scope.key, _prefs.default_scope_key, sizeof(scope.key));
     }
   }
   sendFloodScoped(scope, pkt, delay_millis);
+}
+
+// Derive-at-set, as the device default region does: the key is computed when
+// the record is written and copied at send time. Shadows BaseChatMesh's
+// setChannel for every caller that goes through MyMesh.
+bool MyMesh::setChannel(int idx, const ChannelDetails& src) {
+  ChannelDetails ch = src;
+  if (ch.scope_name[0] != '\0') {
+    TransportKey k;
+    deriveScopeKey(ch.scope_name, k);
+    memcpy(ch.scope_key, k.key, sizeof(ch.scope_key));
+  } else {
+    memset(ch.scope_key, 0, sizeof(ch.scope_key));
+  }
+  return BaseChatMesh::setChannel(idx, ch);
 }
 
 bool MyMesh::deriveScopeKey(const char* scopeName, TransportKey& keyOut) {
@@ -806,16 +824,20 @@ bool MyMesh::deriveScopeKey(const char* scopeName, TransportKey& keyOut) {
   return true;
 }
 
-const char* MyMesh::getChannelScopeName(const mesh::GroupChannel& channel) {
+bool MyMesh::getChannelScopeName(const mesh::GroupChannel& channel, char* out, size_t out_len) {
+  if (out_len == 0) return false;
+  out[0] = '\0';
   ChannelDetails ch;
   for (uint8_t i = 0; i < MAX_GROUP_CHANNELS; i++) {
     if (getChannel(i, ch) && ch.name[0] != '\0') {
       if (memcmp(ch.channel.secret, channel.secret, sizeof(channel.secret)) == 0) {
-        return ch.scope_name;
+        strncpy(out, ch.scope_name, out_len - 1);
+        out[out_len - 1] = '\0';
+        return true;
       }
     }
   }
-  return nullptr;
+  return false;
 }
 
 // --- Region scope candidate list (display-only resolution of incoming channel msgs) ---

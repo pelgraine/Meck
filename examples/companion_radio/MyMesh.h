@@ -138,6 +138,11 @@ public:
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
 
+  // Every channel write goes through here (screens, serial, phone sync, boot
+  // load, import): derives scope_key from scope_name once, so sending is a
+  // byte copy. Public: the screens and MeckImport call it directly.
+  bool setChannel(int idx, const ChannelDetails& src);
+
   // RX packet counter for the radio details page. Returns the number of packets
   // (flood + direct) received since boot, less a baseline. resetRxPacketCount()
   // snaps the baseline to the current total so the displayed count can be zeroed
@@ -224,7 +229,10 @@ public:
   // Returns true if name is non-empty and key was derived; false if name is empty (unscoped).
   bool deriveScopeKey(const char* scopeName, TransportKey& keyOut);
   // Look up per-channel scope name by GroupChannel secret match. Returns nullptr if no scope set.
-  const char* getChannelScopeName(const mesh::GroupChannel& channel);
+  // Copies the channel's region name into out (empty string if none or
+  // unknown). Returns true if the channel was found. Copy-out, because the
+  // record is a local copy and a pointer into it would be dangling.
+  bool getChannelScopeName(const mesh::GroupChannel& channel, char* out, size_t out_len);
   // Resolve a region scope index (as produced by resolveScopeIndex during onChannelMessageRecv)
   // to a display name. Returns nullptr for unscoped, "(reg unknown)" for scoped-but-unmatched,
   // otherwise the candidate region name. Used by the channel path-detail overlay.
