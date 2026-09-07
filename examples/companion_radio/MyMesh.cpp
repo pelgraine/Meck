@@ -153,6 +153,8 @@
 #define CMD_MECK_GET_SCOPE        0x73   // [idx] -> RESP_MECK_SCOPE
 #define CMD_MECK_DISCOVER_START   0x74   // -> OK; runs the node's own 30 s discovery scan
 #define CMD_MECK_DISCOVER_GET     0x75   // [n] -> RESP_MECK_DISCOVER
+#define CMD_MECK_GET_FAV          0x76   // [n] -> RESP_MECK_FAV (n-th favourite contact)
+#define CMD_MECK_RESOLVE          0x77   // [plen][pubkey prefix] -> RESP_MECK_RESOLVE
 
 #define RESP_MECK_INFO            0x60   // [ext_ver][canned_slots][bph][scope_count]
 #define RESP_MECK_CANNED          0x61   // [slot][text...] (empty text = unused slot)
@@ -160,6 +162,8 @@
 #define RESP_MECK_CHANNEL_MSG     0x63   // [snr*4][scope_idx][path_len][channel_idx][txt_type][timestamp:4][path bytes][text]
 #define RESP_MECK_SCOPE           0x64   // [idx][name...] (empty = no such scope)
 #define RESP_MECK_DISCOVER        0x65   // [n][active][count] then, if n < count: [type][snr*4][path_len][known][pubkey:2][name...]
+#define RESP_MECK_FAV             0x66   // [n][count] then, if n < count: [type][last_advert:4][pubkey:32][name...]
+#define RESP_MECK_RESOLVE         0x67   // [plen][prefix][name...] (empty name = unknown)
 #define MECK_WATCH_EXT_VER        1
 #endif
 
@@ -1951,6 +1955,56 @@ void MyMesh::handleCmdFrame(size_t len) {
       i += tlen;
     }
     _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_MECK_GET_FAV && len >= 2) {
+    // n-th contact with the favourite bit (flags bit 0), in contact order
+    uint8_t n = cmd_frame[1];
+    int total = getNumContacts();
+    int count = 0;
+    bool found = false;
+    ContactInfo hit;
+    ContactInfo c;
+    for (int k = 0; k < total; k++) {
+      if (getContactByIdx(k, c) && (c.flags & 1)) {
+        if (count == n) { hit = c; found = true; }
+        count++;
+      }
+    }
+    if (count > 255) count = 255;
+    int i = 0;
+    out_frame[i++] = RESP_MECK_FAV;
+    out_frame[i++] = n;
+    out_frame[i++] = (uint8_t)count;
+    if (found) {
+      out_frame[i++] = hit.type;
+      memcpy(&out_frame[i], &hit.last_advert_timestamp, 4);
+      i += 4;
+      memcpy(&out_frame[i], hit.id.pub_key, PUB_KEY_SIZE);
+      i += PUB_KEY_SIZE;
+      int tlen = strlen(hit.name);
+      if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+      memcpy(&out_frame[i], hit.name, tlen);
+      i += tlen;
+    }
+    _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_MECK_RESOLVE && len >= 3) {
+    uint8_t plen = cmd_frame[1];
+    if (plen < 1 || plen > PUB_KEY_SIZE || len < 2 + plen) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+    } else {
+      ContactInfo* c = lookupContactByPubKey(&cmd_frame[2], plen);
+      int i = 0;
+      out_frame[i++] = RESP_MECK_RESOLVE;
+      out_frame[i++] = plen;
+      memcpy(&out_frame[i], &cmd_frame[2], plen);
+      i += plen;
+      if (c != NULL && c->name[0] != '\0') {
+        int tlen = strlen(c->name);
+        if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+        memcpy(&out_frame[i], c->name, tlen);
+        i += tlen;
+      }
+      _serial->writeFrame(out_frame, i);
+    }
   } else if (cmd_frame[0] == CMD_MECK_GET_SENT_TRACK && len >= 2) {
     uint8_t n = cmd_frame[1];
     int i = 0;
