@@ -361,6 +361,9 @@ private:
   bool _cli_rescue;
   char cli_command[80];
   uint8_t app_target_ver;
+#ifdef MECK_WATCH_EXT
+  bool _meck_client;   // current client sent CMD_MECK_HELLO (Garmin watch); cleared on CMD_APP_START
+#endif
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;

@@ -142,6 +142,24 @@
 #define PUSH_CODE_CONTACT_DELETED       0x8F // used to notify client app of deleted contact when overwriting oldest
 #define PUSH_CODE_CONTACTS_FULL         0x90 // used to notify client app that contacts storage is full
 
+#ifdef MECK_WATCH_EXT
+// ---- Meck watch extensions (MECK_WATCH_EXT) ----
+// Meck-only commands and responses for a thin client such as the Garmin app.
+// Codes sit in ranges the standard protocol does not use: commands from 0x70,
+// responses from 0x60 (standard responses stop at 28, pushes start at 0x80).
+#define CMD_MECK_HELLO            0x70   // [ver] -> RESP_MECK_INFO; marks this client as the watch
+#define CMD_MECK_GET_CANNED       0x71   // [slot] -> RESP_MECK_CANNED
+#define CMD_MECK_GET_SENT_TRACK   0x72   // [n: 0 = most recent] -> RESP_MECK_SENT_TRACK
+#define CMD_MECK_GET_SCOPE        0x73   // [idx] -> RESP_MECK_SCOPE
+
+#define RESP_MECK_INFO            0x60   // [ext_ver][canned_slots][bph][scope_count]
+#define RESP_MECK_CANNED          0x61   // [slot][text...] (empty text = unused slot)
+#define RESP_MECK_SENT_TRACK      0x62   // [n][active][fingerprint*12][repeats][bph][count][hash*bph*count][snr*count]
+#define RESP_MECK_CHANNEL_MSG     0x63   // [snr*4][scope_idx][path_len][channel_idx][txt_type][timestamp:4][path bytes][text]
+#define RESP_MECK_SCOPE           0x64   // [idx][name...] (empty = no such scope)
+#define MECK_WATCH_EXT_VER        1
+#endif
+
 #define ERR_CODE_UNSUPPORTED_CMD        1
 #define ERR_CODE_NOT_FOUND              2
 #define ERR_CODE_TABLE_FULL             3
@@ -231,6 +249,9 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
 }
 
 bool MyMesh::Frame::isChannelMsg() const {
+#ifdef MECK_WATCH_EXT
+  if (buf[0] == RESP_MECK_CHANNEL_MSG) return true;
+#endif
   return buf[0] == RESP_CODE_CHANNEL_MSG_RECV || buf[0] == RESP_CODE_CHANNEL_MSG_RECV_V3;
 }
 
@@ -314,6 +335,9 @@ uint8_t MyMesh::getAutoAddMaxHops() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+#ifdef MECK_WATCH_EXT
+  if (_meck_client) return;   // the watch does not want the raw packet log
+#endif
   if (_serial->isConnected() && len + 3 <= MAX_FRAME_SIZE) {
     int i = 0;
     out_frame[i++] = PUSH_CODE_LOG_RX_DATA;
@@ -931,6 +955,26 @@ void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uin
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
   int i = 0;
+  uint8_t channel_idx = findChannelIdx(channel);
+  uint8_t path_len = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+#ifdef MECK_WATCH_EXT
+  if (_meck_client) {
+    // Watch frame: carries the two things the node's own screen gets but the
+    // standard frame omits -- the region index and the raw hop list. Converted
+    // back to a standard frame for non-watch clients in CMD_SYNC_NEXT_MESSAGE.
+    out_frame[i++] = RESP_MECK_CHANNEL_MSG;
+    out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
+    out_frame[i++] = resolveScopeIndex(pkt);
+    out_frame[i++] = path_len;
+    out_frame[i++] = channel_idx;
+    out_frame[i++] = TXT_TYPE_PLAIN;
+    memcpy(&out_frame[i], &timestamp, 4);
+    i += 4;
+    int plen = (pkt->isRouteFlood() && pkt->path_len > 0) ? pkt->path_len : 0;
+    memcpy(&out_frame[i], pkt->path, plen);
+    i += plen;
+  } else {
+#endif
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
     out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -940,13 +984,15 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
   }
 
-  uint8_t channel_idx = findChannelIdx(channel);
   out_frame[i++] = channel_idx;
-  uint8_t path_len = out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  out_frame[i++] = path_len;
 
   out_frame[i++] = TXT_TYPE_PLAIN;
   memcpy(&out_frame[i], &timestamp, 4);
   i += 4;
+#ifdef MECK_WATCH_EXT
+  }
+#endif
   int tlen = strlen(text); // TODO: UTF-8 ??
   if (i + tlen > MAX_FRAME_SIZE) {
     tlen = MAX_FRAME_SIZE - i;
@@ -1612,6 +1658,9 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _cli_rescue = false;
   offline_queue_len = 0;
   app_target_ver = 0;
+#ifdef MECK_WATCH_EXT
+  _meck_client = false;
+#endif
   clearPendingReqs();
   next_ack_idx = 0;
   memset(pending_dm, 0, sizeof(pending_dm));
@@ -1789,6 +1838,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     _serial->writeFrame(out_frame, i);
   } else if (cmd_frame[0] == CMD_APP_START &&
              len >= 8) { // sent when app establishes connection, respond with node ID
+#ifdef MECK_WATCH_EXT
+    _meck_client = false;   // new client; the watch re-declares itself with CMD_MECK_HELLO
+#endif
     //  cmd_frame[1..7]  reserved future
     char *app_name = (char *)&cmd_frame[8];
     cmd_frame[len] = 0; // make app_name null terminated
@@ -1834,6 +1886,70 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&out_frame[i], _prefs.node_name, tlen);
     i += tlen;
     _serial->writeFrame(out_frame, i);
+#ifdef MECK_WATCH_EXT
+  } else if (cmd_frame[0] == CMD_MECK_HELLO) {
+    _meck_client = true;
+    int i = 0;
+    out_frame[i++] = RESP_MECK_INFO;
+    out_frame[i++] = MECK_WATCH_EXT_VER;
+    out_frame[i++] = CANNED_MSG_SLOTS;
+    out_frame[i++] = getPathHashSize();   // bytes per hop in hop lists
+    out_frame[i++] = SCOPE_COUNT;
+    _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_MECK_GET_CANNED && len >= 2) {
+    uint8_t slot = cmd_frame[1];
+    if (slot >= CANNED_MSG_SLOTS) {
+      writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+    } else {
+      int i = 0;
+      out_frame[i++] = RESP_MECK_CANNED;
+      out_frame[i++] = slot;
+      int tlen = strlen(_prefs.canned_msgs[slot]);
+      if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+      memcpy(&out_frame[i], _prefs.canned_msgs[slot], tlen);
+      i += tlen;
+      _serial->writeFrame(out_frame, i);
+    }
+  } else if (cmd_frame[0] == CMD_MECK_GET_SCOPE && len >= 2) {
+    uint8_t idx = cmd_frame[1];
+    const char* name = getScopeName(idx);
+    int i = 0;
+    out_frame[i++] = RESP_MECK_SCOPE;
+    out_frame[i++] = idx;
+    if (name != nullptr) {
+      int tlen = strlen(name);
+      if (i + tlen > MAX_FRAME_SIZE) tlen = MAX_FRAME_SIZE - i;
+      memcpy(&out_frame[i], name, tlen);
+      i += tlen;
+    }
+    _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_MECK_GET_SENT_TRACK && len >= 2) {
+    uint8_t n = cmd_frame[1];
+    int i = 0;
+    out_frame[i++] = RESP_MECK_SENT_TRACK;
+    out_frame[i++] = n;
+    if (n >= SENT_TRACK_SIZE) {
+      out_frame[i++] = 0;   // no such slot
+    } else {
+      // n = 0 is the most recent send, n = 1 the one before, and so on
+      const SentMsgTrack* t = &_sent_track[(_sent_track_idx - 1 - n + 2 * SENT_TRACK_SIZE) % SENT_TRACK_SIZE];
+      bool live = t->active && (millis() - t->sent_millis) <= SENT_TRACK_EXPIRY_MS;
+      out_frame[i++] = live ? 1 : 0;
+      if (live) {
+        memcpy(&out_frame[i], t->fingerprint, SENT_FINGERPRINT_SIZE);
+        i += SENT_FINGERPRINT_SIZE;
+        out_frame[i++] = t->repeat_count;
+        out_frame[i++] = t->echo_bph;
+        out_frame[i++] = t->echo_count;
+        int hlen = t->echo_bph * t->echo_count;
+        memcpy(&out_frame[i], t->echo_hash, hlen);
+        i += hlen;
+        memcpy(&out_frame[i], t->echo_snr, t->echo_count);
+        i += t->echo_count;
+      }
+    }
+    _serial->writeFrame(out_frame, i);
+#endif
   } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 14) {
     int i = 1;
     uint8_t txt_type = cmd_frame[i++];
@@ -2096,6 +2212,41 @@ void MyMesh::handleCmdFrame(size_t len) {
   } else if (cmd_frame[0] == CMD_SYNC_NEXT_MESSAGE) {
     int out_len;
     if ((out_len = getFromOfflineQueue(out_frame)) > 0) {
+#ifdef MECK_WATCH_EXT
+      if (!_meck_client && out_frame[0] == RESP_MECK_CHANNEL_MSG && out_len >= 10) {
+        // Queued while the watch was the client: rebuild as a standard frame for
+        // this client (V3 if it supports it, else V1) and drop the hop list.
+        uint8_t snr = out_frame[1];
+        uint8_t plen_byte = out_frame[3];
+        uint8_t ch = out_frame[4];
+        uint8_t txt_type = out_frame[5];
+        uint8_t ts[4];
+        memcpy(ts, &out_frame[6], 4);
+        int plen = (plen_byte != 0xFF) ? plen_byte : 0;
+        int text_off = 10 + plen;
+        int tlen = out_len - text_off;
+        if (tlen < 0) tlen = 0;
+        uint8_t tmp[MAX_FRAME_SIZE];
+        memcpy(tmp, &out_frame[text_off], tlen);
+        int i = 0;
+        if (app_target_ver >= 3) {
+          out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
+          out_frame[i++] = snr;
+          out_frame[i++] = 0; // reserved1
+          out_frame[i++] = 0; // reserved2
+        } else {
+          out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV;
+        }
+        out_frame[i++] = ch;
+        out_frame[i++] = plen_byte;
+        out_frame[i++] = txt_type;
+        memcpy(&out_frame[i], ts, 4);
+        i += 4;
+        memcpy(&out_frame[i], tmp, tlen);
+        i += tlen;
+        out_len = i;
+      }
+#endif
       _serial->writeFrame(out_frame, out_len);
 #ifdef DISPLAY_CLASS
       if (_ui) {
