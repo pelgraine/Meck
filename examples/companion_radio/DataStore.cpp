@@ -692,6 +692,11 @@ void DataStore::loadChannels(DataStoreHost* host) {
 
     File file = openRead(fs, "/channels2");
     if (file) {
+      // Per-channel region names live in a companion file, one 31-byte
+      // record per channel in the same order as /channels2. The main file's
+      // 68-byte record format is unchanged, so older files still load; a
+      // missing companion file simply leaves every region blank as before.
+      File scopeFile = openRead(fs, "/channels2.scope");
       bool full = false;
       uint8_t channel_idx = 0;
       while (!full) {
@@ -704,6 +709,13 @@ void DataStore::loadChannels(DataStoreHost* host) {
 
         if (!success) break; // EOF
 
+        if (scopeFile) {
+          if (scopeFile.read((uint8_t *)ch.scope_name, sizeof(ch.scope_name)) != sizeof(ch.scope_name)) {
+            memset(ch.scope_name, 0, sizeof(ch.scope_name));   // short/absent record: no region
+          }
+          ch.scope_name[sizeof(ch.scope_name) - 1] = '\0';
+        }
+
         if (host->onChannelLoaded(channel_idx, ch)) {
           channel_idx++;
         } else {
@@ -711,6 +723,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
         }
       }
       file.close();
+      if (scopeFile) scopeFile.close();
     }
 }
 
@@ -763,6 +776,36 @@ void DataStore::saveChannels(DataStoreHost* host) {
     Serial.printf("DataStore: saved %d channels (%d bytes)\n", channel_idx, (int)bytesWritten);
   } else {
     Serial.println("DataStore: channels rename failed, tmp file preserved");
+    return;
+  }
+
+  // Companion file: per-channel region names, 31 bytes each, same order as
+  // the records above. Written via tmp + rename like the main file.
+  const char* scopePath    = "/channels2.scope";
+  const char* scopeTmpPath = "/channels2.scope.tmp";
+  File scopeFile = openWrite(fs, scopeTmpPath);
+  if (!scopeFile) {
+    Serial.println("DataStore: saveChannels scope FAILED -- cannot open tmp file");
+    return;
+  }
+  uint8_t scope_idx = 0;
+  bool scopeOk = true;
+  while (host->getChannelForSave(scope_idx, ch)) {
+    if (scopeFile.write((uint8_t *)ch.scope_name, sizeof(ch.scope_name)) != sizeof(ch.scope_name)) {
+      scopeOk = false;
+      break;
+    }
+    scope_idx++;
+  }
+  scopeFile.close();
+  if (!scopeOk) {
+    Serial.println("DataStore: saveChannels scope write error, keeping previous scope file");
+    fs->remove(scopeTmpPath);
+    return;
+  }
+  fs->remove(scopePath);
+  if (!fs->rename(scopeTmpPath, scopePath)) {
+    Serial.println("DataStore: channel scope rename failed");
   }
 }
 
