@@ -15,6 +15,14 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   bool _isEnabled;
   bool _begun;              // has _realBegin() run? (deferred BLE bring-up)
   bool _auth_ok;            // authentication completed on the current link (see checkRecvFrame)
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+  // Small-MTU peers (e.g. a Garmin watch, which never raises the ATT MTU above
+  // 23) can only carry 20 bytes per notification or write. Frames to and from
+  // such a peer travel as tagged slices; see SLICE_TAG_* in the .cpp.
+  uint16_t _tx_off;                  // bytes of send_queue[0] already sent (0 = none yet)
+  uint8_t  _rx_buf[MAX_FRAME_SIZE];  // reassembly buffer for sliced writes
+  int      _rx_len;                  // bytes collected so far (-1 = not mid-frame)
+#endif
   uint16_t last_conn_id;
   uint8_t _remote_bda[6];   // peer BDA, stored in onConnect for conn param updates
   uint32_t _pin_code;
@@ -33,7 +41,12 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
 
-  void clearBuffers() { recv_queue_len = 0; send_queue_len = 0; }
+  void clearBuffers() {
+    recv_queue_len = 0; send_queue_len = 0;
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    _tx_off = 0; _rx_len = -1;
+#endif
+  }
 
   void _realBegin();       // deferred BLE controller + GATT bring-up
 
@@ -64,6 +77,9 @@ public:
     _isEnabled = false;
     _begun = false;
     _auth_ok = false;
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    _tx_off = 0; _rx_len = -1;
+#endif
     _last_write = 0;
     last_conn_id = 0;
     memset(_remote_bda, 0, 6);

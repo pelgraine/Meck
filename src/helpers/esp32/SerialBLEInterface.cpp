@@ -11,6 +11,20 @@
 
 #define ADVERT_RESTART_DELAY  1000   // millis
 
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+// Slice tags for small-MTU peers. No real frame can start with one of these:
+// command codes are below 0x80 and push codes stop at 0x90. When slicing is in
+// effect, every frame to or from the peer carries exactly one leading tag byte.
+#define SLICE_TAG_FIRST   0xF0   // first slice of a multi-slice frame
+#define SLICE_TAG_MIDDLE  0xF1
+#define SLICE_TAG_LAST    0xF2
+#define SLICE_TAG_SINGLE  0xF3   // whole frame fits in one slice
+#define SLICE_TAG_MASK    0xFC   // (b & MASK) == SLICE_TAG_FIRST matches any tag
+#ifndef MECK_BLE_SPLIT_MAX_MTU
+#define MECK_BLE_SPLIT_MAX_MTU 23   // slice outgoing frames when the peer MTU is at or below this
+#endif
+#endif
+
 void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code) {
   _pin_code = pin_code;
 
@@ -179,6 +193,28 @@ void SerialBLEInterface::onWrite(BLECharacteristic* pCharacteristic, esp_ble_gat
   uint8_t* rxValue = pCharacteristic->getData();
   int len = pCharacteristic->getLength();
 
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+  if (len >= 1 && (rxValue[0] & SLICE_TAG_MASK) == SLICE_TAG_FIRST) {   // any SLICE_TAG_*
+    uint8_t tag = rxValue[0];
+    if (tag == SLICE_TAG_FIRST || tag == SLICE_TAG_SINGLE) _rx_len = 0;
+    if (_rx_len < 0) return;                                  // middle/last with no start: drop
+    int n = len - 1;
+    if (_rx_len + n > MAX_FRAME_SIZE) { _rx_len = -1; return; }   // oversize: drop the frame
+    memcpy(&_rx_buf[_rx_len], rxValue + 1, n);
+    _rx_len += n;
+    if (tag == SLICE_TAG_LAST || tag == SLICE_TAG_SINGLE) {
+      if (recv_queue_len < FRAME_QUEUE_SIZE) {
+        recv_queue[recv_queue_len].len = _rx_len;
+        memcpy(recv_queue[recv_queue_len].buf, _rx_buf, _rx_len);
+        recv_queue_len++;
+      } else {
+        BLE_DEBUG_PRINTLN("ERROR: onWrite(), recv_queue is full! (sliced)");
+      }
+      _rx_len = -1;
+    }
+    return;
+  }
+#endif
   if (len > MAX_FRAME_SIZE) {
     BLE_DEBUG_PRINTLN("ERROR: onWrite(), frame too big, len=%d", len);
   } else if (recv_queue_len >= FRAME_QUEUE_SIZE) {
@@ -267,15 +303,52 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
     _last_write = millis();
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    bool popFrame = true;
+    uint16_t mtu = pServer->getPeerMTU(last_conn_id);
+    if (mtu <= MECK_BLE_SPLIT_MAX_MTU) {
+      // Small-MTU peer: send the next slice of the frame at the head of the
+      // queue, one slice per pass (keeps BLE_WRITE_MIN_INTERVAL pacing). The
+      // frame is only popped once its last slice has gone.
+      int room = (int)mtu - 3 - 1;                 // ATT payload minus the tag byte
+      if (room < 1) room = 1;
+      int total = send_queue[0].len;
+      int n = total - _tx_off;
+      if (n > room) n = room;
+      bool first = (_tx_off == 0);
+      bool last  = (_tx_off + n >= total);
+      uint8_t chunk[MAX_FRAME_SIZE + 1];
+      chunk[0] = (first && last) ? SLICE_TAG_SINGLE
+               : first ? SLICE_TAG_FIRST
+               : last  ? SLICE_TAG_LAST : SLICE_TAG_MIDDLE;
+      memcpy(&chunk[1], &send_queue[0].buf[_tx_off], n);
+      pTxCharacteristic->setValue(chunk, n + 1);
+      pTxCharacteristic->notify();
+      BLE_DEBUG_PRINTLN("writeSlice: tag=%02X off=%d n=%d of %d", chunk[0], (int)_tx_off, n, total);
+      _tx_off += n;
+      if (last) {
+        _tx_off = 0;
+        BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d (sliced)", total, (uint32_t) send_queue[0].buf[0]);
+      } else {
+        popFrame = false;
+      }
+    } else {
+#endif
     pTxCharacteristic->setValue(send_queue[0].buf, send_queue[0].len);
     pTxCharacteristic->notify();
 
     BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
-
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    }
+    if (popFrame) {
+#endif
     send_queue_len--;
     if (send_queue_len > 0) {
       memmove(&send_queue[0], &send_queue[1], send_queue_len * sizeof(Frame));
     }
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    }
+#endif
   }
 
   if (recv_queue_len > 0) {   // check recv queue
