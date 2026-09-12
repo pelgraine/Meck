@@ -12,7 +12,7 @@
 // Game Boy's real 59.73 Hz while this screen shows a black-and-white snapshot
 // of the game picture on the e-ink at the UI's normal refresh cadence.
 // In-game keys: W/A/S/D d-pad, K = A, J = B, Enter = Start, Space = Select,
-// Shift+Backspace = quit (back to the ROM list, save written).
+// Q or Shift+Backspace = quit (back to the ROM list, save written).
 //
 // The core and everything that touches it live in GBCEmulatorScreen.cpp so
 // the single-header core is compiled exactly once.

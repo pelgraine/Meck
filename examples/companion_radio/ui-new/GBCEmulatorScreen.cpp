@@ -41,8 +41,8 @@
 //     Peanut-GB direct.joypad: a 0x01, b 0x02, select 0x04, start 0x08,
 //     right 0x10, left 0x20, up 0x40, down 0x80) and nothing reaches the
 //     normal key path, so no keystroke leaks into the UI mid-game. The
-//     emulator task samples the mask once per frame. Shift+Backspace is a
-//     press-edge exit latch the screen polls. The keyboard is normally read
+//     emulator task samples the mask once per frame. Q or Shift+Backspace is
+//     a press-edge exit latch the screen polls. The keyboard is normally read
 //     from loop(), which spends ~650 ms blocked inside every e-ink refresh;
 //     while a game runs a GxEPD2 busy callback keeps draining the keyboard
 //     through the refresh, so input never waits for the panel.
@@ -671,7 +671,7 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
   const uint16_t fg = d.rawFgColor();
   d.drawXbmRaw(GBC_IMG_X, GBC_IMG_Y, s_mono_ui, OUT_W, OUT_H, fg);
   if (++s_pictures % GBC_FULL_REFRESH_EVERY == 0) d.requestFullRefresh();
-  d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..." : "Sh+Del: Quit", fg);
+  d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..." : "Q: Quit", fg);
   return 100;   // the UI loop's 800 ms e-ink floor sets the real cadence
 }
 

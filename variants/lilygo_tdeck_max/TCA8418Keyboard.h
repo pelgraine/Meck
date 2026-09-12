@@ -52,17 +52,22 @@ private:
   // while readKey() writes them on this one, hence volatile.
   bool             _rawJoypad;
   volatile uint8_t _rawMask;      // Peanut-GB direct.joypad bit layout, set = held
-  volatile bool    _rawExit;      // Shift+Backspace press-edge latch
+  volatile bool    _rawExit;      // Q or Shift+Backspace press-edge latch
   bool             _rawShiftL;    // left Shift (35) physically held
   bool             _rawShiftR;    // right Shift (31) physically held
 
   // Map a raw scan code to its joypad bit and apply the edge. Codes come
   // from getKeyChar()'s table: W=9 A=20 S=19 D=18 K=13 J=14 Enter=21
-  // Space=33 Backspace=11 Shift=35/31. Bits: a 0x01, b 0x02, select 0x04,
-  // start 0x08, right 0x10, left 0x20, up 0x40, down 0x80.
+  // Space=33 Backspace=11 Q=10 Shift=35/31. Bits: a 0x01, b 0x02,
+  // select 0x04, start 0x08, right 0x10, left 0x20, up 0x40, down 0x80.
+  // Quit is Q (the UI's usual back key) or Shift+Backspace.
   void rawJoypadEvent(uint8_t keyCode, bool pressed) {
     if (keyCode == 35) { _rawShiftL = pressed; return; }
     if (keyCode == 31) { _rawShiftR = pressed; return; }
+    if (keyCode == 10) {                       // Q = quit
+      if (pressed) _rawExit = true;
+      return;
+    }
     if (keyCode == 11) {                       // Backspace: Shift+Backspace = quit
       if (pressed && (_rawShiftL || _rawShiftR)) _rawExit = true;
       return;
@@ -458,7 +463,7 @@ public:
   }
   bool    rawJoypadActive() const { return _rawJoypad; }
   uint8_t rawJoypad() const { return _rawMask; }
-  // Shift+Backspace press-edge latch, consumed on read.
+  // Q / Shift+Backspace press-edge latch, consumed on read.
   bool rawExitPressed() {
     bool e = _rawExit;
     _rawExit = false;
