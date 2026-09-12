@@ -611,6 +611,14 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
+  if (_fullNext) {
+    // Requested full refresh: push the frame with the full waveform even if
+    // nothing changed, to clear partial-update ghosting.
+    _fullNext = false;
+    display.display(false);
+    last_display_crc_value = crc;
+    return;
+  }
   if (crc != last_display_crc_value) {
 #ifdef EINK_FULL_REFRESH_ONLY
     display.display(false);  // Full refresh (SSD1681 doesn't support partial)

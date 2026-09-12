@@ -75,6 +75,7 @@ class GxEPDDisplay : public DisplayDriver {
   FrameCRC32 display_crc;
   int last_display_crc_value = 0;
   const GFXfont* _currentFont = nullptr;  // Track for UTF-8 rendering
+  bool _fullNext = false;                 // Next endFrame() does a full refresh
   uint8_t _currentTextScale = 1;          // Track glyph scale factor
 
   // Render one glyph from the current 8b font at the display's cursor position
@@ -158,6 +159,12 @@ public:
   // Force endFrame() to push to display even if CRC unchanged
   // (needed because drawPixelRaw bypasses CRC tracking)
   void invalidateFrameCRC() { last_display_crc_value = 0; }
+
+  // Make the next endFrame() a full refresh (the black/white flash) instead
+  // of a partial one, regardless of whether the frame changed. Clears the
+  // residue that builds up over many partial refreshes. The Game Boy
+  // emulator requests one when a game quits and periodically during play.
+  void requestFullRefresh() { _fullNext = true; }
 
   // Run a function repeatedly while the panel is busy refreshing: GxEPD2 calls
   // it in place of its 1 ms sleep inside the busy wait, on the calling task.

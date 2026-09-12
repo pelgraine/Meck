@@ -22,12 +22,19 @@
 //     RGB555 buffer in PSRAM (the same work the speed probe measured).
 //
 //   - The UI task never reads that buffer. When render() wants a picture it
-//     raises s_snap_req; the emulator task then converts the current frame to
-//     luminance, thresholds it, packs it 8 pixels per byte into a work buffer,
-//     and copies the 2880-byte result into the shared snapshot buffer inside a
+//     raises s_snap_req; the emulator task then scales the current frame to
+//     1.5x (240x216, the full panel width, nearest neighbour), converts it to
+//     luminance, dithers it to black and white with an ordered 4x4 Bayer
+//     pattern (about 17 tones; the pattern is fixed to panel position so it
+//     does not crawl between refreshes), packs it 8 pixels per byte into a
+//     work buffer,
+//     and copies the 6480-byte result into the shared snapshot buffer inside a
 //     short critical section. render() copies the snapshot out under the same
 //     lock and draws it with GxEPDDisplay::drawXbmRaw, whose CRC tracking means
-//     the panel only refreshes when the picture actually changed.
+//     the panel only refreshes when the picture actually changed. Every
+//     GBC_FULL_REFRESH_EVERY pictures, and once more when a game quits, the
+//     refresh is a full one (the black/white flash) to clear the residue
+//     that partial refreshes leave behind.
 //
 //   - Input: the Max keyboard driver's raw joypad mode. While on, every key
 //     press and release updates a held-key bitmask (bit layout matches
@@ -51,11 +58,14 @@
 //     after gb_init, written once on quit after the task has stopped
 //     (flush-on-exit, the same decision as Meck-P4).
 //
-//   - Memory: core context (49952 bytes), cart RAM (128 KB), ROM arena
-//     (reserved at 2 MB on first launch and retained for the life of the
-//     boot, so a big game late in a long session never has to find a fresh
-//     contiguous block), RGB555 frame and the two mono buffers all live in
-//     PSRAM. Only the task stack is internal.
+//   - Memory: cart RAM (128 KB), ROM arena (reserved at 2 MB on first launch
+//     and retained for the life of the boot, so a big game late in a long
+//     session never has to find a fresh contiguous block), RGB555 frame and
+//     the three mono buffers live in PSRAM. The core context (49952 bytes),
+//     which the core touches on every instruction, is allocated from
+//     internal RAM for the duration of a game and freed on quit; if no
+//     internal block is available it goes to PSRAM instead and the launch
+//     log says so. The task stack is internal.
 //
 //   - No sound yet (build 3).
 //
@@ -97,29 +107,36 @@ extern void otaResumeRadio();             // main.cpp
 // ---- Geometry and constants -------------------------------------------------
 #define GB_W            160
 #define GB_H            144
-#define GB_MONO_STRIDE  (GB_W / 8)                    // 20 bytes per row
-#define GB_MONO_BYTES   (GB_MONO_STRIDE * GB_H)       // 2880
+// Output picture: 1.5x nearest-neighbour scale, the full 240 px panel width.
+#define OUT_W           240
+#define OUT_H           216
+#define OUT_MONO_STRIDE (OUT_W / 8)                   // 30 bytes per row
+#define OUT_MONO_BYTES  (OUT_MONO_STRIDE * OUT_H)     // 6480
 
 #define GBC_ROM_DIR     "/roms"
 #define GBC_CRAM_SIZE   0x20000                       // 128 KB, largest standard bank set
 #define GBC_ROM_RESERVE 0x200000                      // 2 MB arena on first launch
 #define GBC_FRAME_US    16742                         // 59.73 Hz
+#define GBC_MAX_DEFICIT_US 250000                     // behind by more than this = stall, resync
+#define GBC_FULL_REFRESH_EVERY 45                     // pictures between full refreshes (~30 s)
 #define GBC_TASK_STACK  12288                         // bytes, internal RAM
 #define GBC_TASK_PRIO   2
 #define GBC_TASK_CORE   0
 
-// Panel placement (physical 240x320 portrait pixels).
-#define GBC_IMG_X       40
-#define GBC_IMG_Y       88
+// Panel placement (physical 240x320 portrait pixels): full width, centred in
+// the space above the quit hint.
+#define GBC_IMG_X       0
+#define GBC_IMG_Y       42
 
 // ---- Module state (single emulator instance) -------------------------------
-static struct gb_s     *s_gb        = NULL;   // PSRAM
+static struct gb_s     *s_gb        = NULL;   // internal RAM per game, PSRAM if that fails
+static bool             s_gb_internal = false;
 static uint8_t         *s_rom       = NULL;   // PSRAM arena, retained
 static size_t           s_rom_cap   = 0;
 static size_t           s_rom_size  = 0;
 static uint8_t         *s_cram      = NULL;   // PSRAM
 static uint16_t        *s_fb        = NULL;   // PSRAM, GB_W*GB_H RGB555
-static uint8_t         *s_mono_work = NULL;   // PSRAM, emulator task only
+static uint8_t         *s_mono_work = NULL;   // PSRAM, emulator task only (OUT_MONO_BYTES)
 static uint8_t         *s_mono_show = NULL;   // PSRAM, shared under s_mux
 static uint8_t         *s_mono_ui   = NULL;   // PSRAM, UI task only
 
@@ -131,6 +148,7 @@ static volatile bool    s_core_error   = false;
 static volatile unsigned long s_frames = 0;
 static TaskHandle_t     s_task = NULL;
 
+static unsigned         s_pictures  = 0;      // pictures drawn this game (full-refresh cadence)
 static size_t           s_save_size = 0;
 static char             s_save_path[96];
 
@@ -163,23 +181,39 @@ static void draw_line(struct gb_s *gb, const uint8_t *pixels, const uint_fast8_t
   for (int x = 0; x < GB_W; x++) dst[x] = gb->cgb.fixPalette[pixels[x]];
 }
 
-// ---- Black-and-white conversion (emulator task) -----------------------------
-// RGB555 with red in the high bits. Integer luminance weights 77/151/28 over
-// 256 give 0..31; threshold at the midpoint; bit 7 is the leftmost pixel,
-// matching the MSB-first order drawXbmRaw expects. A set bit is a dark pixel.
+// ---- Scale, dither and pack (emulator task) ---------------------------------
+// 160x144 -> 240x216 by nearest neighbour (every output pixel maps to source
+// pixel x*2/3, so source pixels alternate between one and two output pixels).
+// RGB555 with red in the high bits. Integer luminance weights 77/151/28 give
+// 0..248 on a 0..255 scale. Each panel pixel is then compared against the
+// 4x4 Bayer threshold for its screen position: a flat mid-grey area comes
+// out as a regular pattern of 7 dark pixels in 16, pure white stays white,
+// pure black stays black, and the game's four-shade palette ramps map to
+// distinguishable stipples. Bit 7 is the leftmost pixel, matching the
+// MSB-first order drawXbmRaw expects. A set bit is a dark pixel.
+static const uint8_t s_bayer4[4][4] = {
+  {  0,  8,  2, 10 },
+  { 12,  4, 14,  6 },
+  {  3, 11,  1,  9 },
+  { 15,  7, 13,  5 },
+};
+
 static void mono_convert(uint8_t *dst_buf) {
-  for (int y = 0; y < GB_H; y++) {
-    const uint16_t *src = &s_fb[(size_t)y * GB_W];
-    uint8_t        *dst = &dst_buf[(size_t)y * GB_MONO_STRIDE];
-    for (int bx = 0; bx < GB_MONO_STRIDE; bx++) {
+  for (int y = 0; y < OUT_H; y++) {
+    const uint16_t *src = &s_fb[(size_t)((y * 2) / 3) * GB_W];
+    uint8_t        *dst = &dst_buf[(size_t)y * OUT_MONO_STRIDE];
+    const uint8_t  *brow = s_bayer4[y & 3];
+    for (int bx = 0; bx < OUT_MONO_STRIDE; bx++) {
       uint8_t byte = 0;
       for (int b = 0; b < 8; b++) {
-        const uint16_t v  = src[bx * 8 + b];
+        const int      x  = bx * 8 + b;
+        const uint16_t v  = src[(x * 2) / 3];
         const uint32_t r  = (v >> 10) & 0x1F;
         const uint32_t g  = (v >> 5)  & 0x1F;
         const uint32_t bl =  v        & 0x1F;
-        const uint32_t lum = (r * 77 + g * 151 + bl * 28) >> 8;
-        if (lum < 16) byte |= (uint8_t)(0x80 >> b);
+        const uint32_t lum = (r * 77 + g * 151 + bl * 28) >> 5;   // 0..248
+        const uint32_t thr = (uint32_t)brow[x & 3] * 16 + 8;      // 8..248
+        if (lum < thr) byte |= (uint8_t)(0x80 >> b);
       }
       dst[bx] = byte;
     }
@@ -228,17 +262,22 @@ static void gbc_task(void *arg) {
     if (s_snap_req) {
       mono_convert(s_mono_work);
       taskENTER_CRITICAL(&s_mux);
-      memcpy(s_mono_show, s_mono_work, GB_MONO_BYTES);
+      memcpy(s_mono_show, s_mono_work, OUT_MONO_BYTES);
       taskEXIT_CRITICAL(&s_mux);
       s_snap_req = false;
     }
 
     // Pace to the accumulated deadline. Rounding the wait down to whole
     // milliseconds runs a frame slightly early; the deadline keeps advancing
-    // by exactly one frame, so the average rate is exact. If we fall behind,
-    // resync rather than spiral. Either way the idle task on this core must
-    // get a slice now and then or the task watchdog (5 s) reboots the board:
-    // after 30 frames without a delay, give it 1 ms.
+    // by exactly one frame, so the average rate is exact. If we are behind
+    // (the BLE stack on this core preempted us and a frame finished late),
+    // KEEP the deficit and run frames back-to-back until it is paid off --
+    // the bench says the core has the headroom. Build 2 reset the deadline
+    // to "now" on any lateness, forgiving the lost time each time, and ran
+    // at 0.96x. Only a real stall (behind by more than GBC_MAX_DEFICIT_US)
+    // resyncs. Either way the idle task on this core must get a slice now
+    // and then or the task watchdog (5 s) reboots the board: after 30
+    // frames without a delay, give it 1 ms.
     next += GBC_FRAME_US;
     const int64_t now = esp_timer_get_time();
     if (next > now) {
@@ -248,7 +287,7 @@ static void gbc_task(void *arg) {
         frames_since_delay = 0;
         continue;
       }
-    } else {
+    } else if (now - next > GBC_MAX_DEFICIT_US) {
       next = now;
     }
     if (++frames_since_delay >= 30) {
@@ -267,12 +306,19 @@ static void gbc_task(void *arg) {
 
 // ---- Buffers ----------------------------------------------------------------
 static bool gbc_alloc_buffers() {
-  if (!s_gb)        s_gb        = (struct gb_s*)heap_caps_malloc(sizeof(struct gb_s), MALLOC_CAP_SPIRAM);
+  // Core context: internal RAM for this game if a block is free, else PSRAM.
+  if (!s_gb) {
+    s_gb = (struct gb_s*)heap_caps_malloc(sizeof(struct gb_s), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    s_gb_internal = (s_gb != NULL);
+    if (!s_gb) s_gb = (struct gb_s*)heap_caps_malloc(sizeof(struct gb_s), MALLOC_CAP_SPIRAM);
+    if (s_gb) Serial.printf("[GBC] core context (%u bytes) in %s\n", (unsigned)sizeof(struct gb_s),
+                            s_gb_internal ? "internal RAM" : "PSRAM (no internal block free)");
+  }
   if (!s_cram)      s_cram      = (uint8_t*)heap_caps_malloc(GBC_CRAM_SIZE, MALLOC_CAP_SPIRAM);
   if (!s_fb)        s_fb        = (uint16_t*)heap_caps_malloc((size_t)GB_W * GB_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-  if (!s_mono_work) s_mono_work = (uint8_t*)heap_caps_malloc(GB_MONO_BYTES, MALLOC_CAP_SPIRAM);
-  if (!s_mono_show) s_mono_show = (uint8_t*)heap_caps_malloc(GB_MONO_BYTES, MALLOC_CAP_SPIRAM);
-  if (!s_mono_ui)   s_mono_ui   = (uint8_t*)heap_caps_malloc(GB_MONO_BYTES, MALLOC_CAP_SPIRAM);
+  if (!s_mono_work) s_mono_work = (uint8_t*)heap_caps_malloc(OUT_MONO_BYTES, MALLOC_CAP_SPIRAM);
+  if (!s_mono_show) s_mono_show = (uint8_t*)heap_caps_malloc(OUT_MONO_BYTES, MALLOC_CAP_SPIRAM);
+  if (!s_mono_ui)   s_mono_ui   = (uint8_t*)heap_caps_malloc(OUT_MONO_BYTES, MALLOC_CAP_SPIRAM);
   if (!s_gb)        Serial.println("[GBC] gb_s alloc failed");
   if (!s_cram)      Serial.println("[GBC] cram alloc failed");
   if (!s_fb)        Serial.println("[GBC] fb alloc failed");
@@ -443,7 +489,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   gb_init_lcd(s_gb, draw_line);
   s_gb->direct.frame_skip = 1;
   memset(s_fb, 0, (size_t)GB_W * GB_H * sizeof(uint16_t));
-  memset(s_mono_show, 0, GB_MONO_BYTES);
+  memset(s_mono_show, 0, OUT_MONO_BYTES);
   Serial.printf("[GBC] cgbMode=%d mbc=%d rom=%u bytes save=%u bytes\n",
                 (int)s_gb->cgb.cgbMode, (int)s_gb->mbc, (unsigned)s_rom_size, (unsigned)s_save_size);
 
@@ -456,6 +502,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   s_task_stopped = false;
   s_core_error = false;
   s_frames = 0;
+  s_pictures = 0;
   s_snap_req = true;
   print_heaps("before task create");
   if (xTaskCreatePinnedToCore(gbc_task, "meck_gbc", GBC_TASK_STACK, NULL,
@@ -499,11 +546,13 @@ void GBCEmulatorScreen::finishStop() {
   otaResumeRadio();
 #endif
   s_rom_size = 0;                 // arena retained
+  if (s_gb) { heap_caps_free(s_gb); s_gb = NULL; s_gb_internal = false; }
   _playing = -1;
   _mode = BROWSER;
   if (s_core_error)  setStatus("Game crashed");
   else if (saved)    setStatus("Saved");
   print_heaps("after stop");
+  if (_eink) _eink->requestFullRefresh();   // wipe the game's ghosting off the panel
   _task->forceRefresh();
 }
 
@@ -616,12 +665,12 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
   // one it prepared last time.
   s_snap_req = true;
   taskENTER_CRITICAL(&s_mux);
-  memcpy(s_mono_ui, s_mono_show, GB_MONO_BYTES);
+  memcpy(s_mono_ui, s_mono_show, OUT_MONO_BYTES);
   taskEXIT_CRITICAL(&s_mux);
 
   const uint16_t fg = d.rawFgColor();
-  d.drawXbmRaw(GBC_IMG_X, GBC_IMG_Y, s_mono_ui, GB_W, GB_H, fg);
-  d.drawTextRaw(2, 4, (_playing >= 0) ? _romNames[_playing] : "", fg);
+  d.drawXbmRaw(GBC_IMG_X, GBC_IMG_Y, s_mono_ui, OUT_W, OUT_H, fg);
+  if (++s_pictures % GBC_FULL_REFRESH_EVERY == 0) d.requestFullRefresh();
   d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..." : "Sh+Del: Quit", fg);
   return 100;   // the UI loop's 800 ms e-ink floor sets the real cadence
 }
