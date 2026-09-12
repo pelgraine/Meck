@@ -158,6 +158,14 @@ public:
   // Force endFrame() to push to display even if CRC unchanged
   // (needed because drawPixelRaw bypasses CRC tracking)
   void invalidateFrameCRC() { last_display_crc_value = 0; }
+
+  // Run a function repeatedly while the panel is busy refreshing: GxEPD2 calls
+  // it in place of its 1 ms sleep inside the busy wait, on the calling task.
+  // The Game Boy emulator uses it to keep polling the keyboard through the
+  // ~650 ms partial refresh. Pass NULL to remove.
+  void setBusyCallback(void (*cb)(const void*), const void* param = 0) {
+    display.epd2.setBusyCallback(cb, param);
+  }
 };
 
 #endif // !LilyGo_T5S3_EPaper_Pro

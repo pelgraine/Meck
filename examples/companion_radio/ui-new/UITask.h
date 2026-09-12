@@ -105,6 +105,9 @@ class UITask : public AbstractUITask {
   UIScreen* games_menu_screen; // Games launcher menu
   UIScreen* snake_screen;      // Snake game screen
   UIScreen* minesweeper_screen; // Minesweeper game screen
+#if defined(LilyGo_TDeck_Pro_Max)
+  UIScreen* gbc_screen;        // Game Boy / Game Boy Color emulator (ROM list + game)
+#endif
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -211,6 +214,9 @@ public:
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
+#if defined(LilyGo_TDeck_Pro_Max)
+  void gotoGBCScreen();                    // Navigate to Game Boy emulator ROM list
+#endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen
 #endif
@@ -235,6 +241,14 @@ public:
   void keepAlive() {
     if (_display != NULL && !_display->isOn()) _display->turnOn();
     _auto_off = millis() + 15000;  // matches AUTO_OFF_MILLIS default
+  }
+  // Reset the auto-lock idle timer without injecting a key. The Game Boy
+  // emulator's in-game input never passes through injectKey(), so without
+  // this the lock screen would land on top of a running game.
+  void resetIdleTimer() {
+#if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
+    _lastInputMillis = millis();
+#endif
   }
   int  getMsgCount() const { return _msgcount; }
   int  getUnreadMsgCount() const;  // Per-channel unread tracking (standalone)
@@ -273,6 +287,9 @@ public:
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
+#if defined(LilyGo_TDeck_Pro_Max)
+  bool isOnGBCScreen() const { return curr == gbc_screen; }
+#endif
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
@@ -365,6 +382,9 @@ public:
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
+#if defined(LilyGo_TDeck_Pro_Max)
+  UIScreen* getGBCScreen() const { return gbc_screen; }
+#endif
   UIScreen* getMapScreen() const { return map_screen; }
 #ifdef MECK_WEB_READER
   UIScreen* getWebReaderScreen() const { return web_reader; }

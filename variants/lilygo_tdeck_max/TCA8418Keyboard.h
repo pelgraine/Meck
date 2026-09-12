@@ -45,6 +45,44 @@ private:
   bool _enterHeld;              // Enter key physically held down
   unsigned long _enterPressTime; // millis() when Enter was pressed
 
+  // GBC raw joypad mode (GBCEmulatorScreen). While on, every key press and
+  // release updates _rawMask on BOTH edges and readKey() returns 0, so the
+  // emulator gets true press-and-hold input and nothing reaches the UI.
+  // _rawMask and _rawExit are read from the emulator task on the other core
+  // while readKey() writes them on this one, hence volatile.
+  bool             _rawJoypad;
+  volatile uint8_t _rawMask;      // Peanut-GB direct.joypad bit layout, set = held
+  volatile bool    _rawExit;      // Shift+Backspace press-edge latch
+  bool             _rawShiftL;    // left Shift (35) physically held
+  bool             _rawShiftR;    // right Shift (31) physically held
+
+  // Map a raw scan code to its joypad bit and apply the edge. Codes come
+  // from getKeyChar()'s table: W=9 A=20 S=19 D=18 K=13 J=14 Enter=21
+  // Space=33 Backspace=11 Shift=35/31. Bits: a 0x01, b 0x02, select 0x04,
+  // start 0x08, right 0x10, left 0x20, up 0x40, down 0x80.
+  void rawJoypadEvent(uint8_t keyCode, bool pressed) {
+    if (keyCode == 35) { _rawShiftL = pressed; return; }
+    if (keyCode == 31) { _rawShiftR = pressed; return; }
+    if (keyCode == 11) {                       // Backspace: Shift+Backspace = quit
+      if (pressed && (_rawShiftL || _rawShiftR)) _rawExit = true;
+      return;
+    }
+    uint8_t bit = 0;
+    switch (keyCode) {
+      case 13: bit = 0x01; break;   // K = A
+      case 14: bit = 0x02; break;   // J = B
+      case 33: bit = 0x04; break;   // Space = Select
+      case 21: bit = 0x08; break;   // Enter = Start
+      case 18: bit = 0x10; break;   // D = right
+      case 20: bit = 0x20; break;   // A = left
+      case 9:  bit = 0x40; break;   // W = up
+      case 19: bit = 0x80; break;   // S = down
+      default: return;
+    }
+    if (pressed) _rawMask = (uint8_t)(_rawMask | bit);
+    else         _rawMask = (uint8_t)(_rawMask & (uint8_t)~bit);
+  }
+
   uint8_t readReg(uint8_t reg) {
     _wire->beginTransmission(_addr);
     _wire->write(reg);
@@ -161,7 +199,8 @@ public:
   TCA8418Keyboard(uint8_t addr = 0x34, TwoWire* wire = &Wire) 
     : _addr(addr), _wire(wire), _initialized(false), 
       _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _leftShiftHeld(false), _rightShiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
-      _enterHeld(false), _enterPressTime(0) {}
+      _enterHeld(false), _enterPressTime(0),
+      _rawJoypad(false), _rawMask(0), _rawExit(false), _rawShiftL(false), _rawShiftR(false) {}
 
   bool begin() {
     // Check if device responds
@@ -238,6 +277,12 @@ public:
 
     Serial.printf("KB raw: event=0x%02X code=%d pressed=%d count=%d\n", 
                   keyEvent, keyCode, pressed, keyCount);
+
+    // GBC raw joypad mode: both edges feed the held-key mask, nothing else.
+    if (_rawJoypad) {
+      rawJoypadEvent(keyCode, pressed);
+      return 0;
+    }
 
     // Track shift release (before the general release-ignore)
     if (!pressed && (keyCode == 35 || keyCode == 31)) {
@@ -397,6 +442,28 @@ public:
   }
 
   bool isReady() const { return _initialized; }
+
+  // ---- GBC raw joypad mode ----
+  // Switching on clears every sticky modifier and held-key state so no
+  // stale Shift/Alt/Sym survives into or out of the game.
+  void setRawJoypad(bool on) {
+    _rawJoypad = on;
+    _rawMask = 0;
+    _rawExit = false;
+    _rawShiftL = _rawShiftR = false;
+    _shiftActive = _shiftHeld = _leftShiftHeld = _rightShiftHeld = false;
+    _shiftUsedWhileHeld = _shiftConsumed = false;
+    _altActive = _symActive = false;
+    _micHeld = _enterHeld = false;
+  }
+  bool    rawJoypadActive() const { return _rawJoypad; }
+  uint8_t rawJoypad() const { return _rawMask; }
+  // Shift+Backspace press-edge latch, consumed on read.
+  bool rawExitPressed() {
+    bool e = _rawExit;
+    _rawExit = false;
+    return e;
+  }
   bool isMicHeld() const { return _micHeld; }
   
   // Check if shift was pressed within the last N milliseconds

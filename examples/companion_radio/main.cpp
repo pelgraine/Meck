@@ -34,6 +34,9 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include "GBCEmulatorScreen.h"
+#endif
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -741,6 +744,9 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
+#if defined(LilyGo_TDeck_Pro_Max)
+  #include "GBCEmulatorScreen.h"
+#endif
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -1240,6 +1246,42 @@ static void lastHeardToggleContact() {
 #endif
 
 // Touch mapping — must be after ui_task declaration
+#if HAS_GPS
+// Open the map screen with everything it needs: the SD flag, the GPS position
+// and the contact markers, then navigate. This is the setup the G key handler
+// has always done. The touch tile and CardKB routes used to call
+// ui_task.gotoMapScreen() bare, so a map opened from the tile before any G
+// press that boot showed "SD card not found" (MapScreen::_sdReady starts
+// false and only setSDReady() sets it). All three routes now come here.
+static void openMapScreen() {
+  Serial.println("Opening map");
+  cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
+  {
+    MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+    if (ms) {
+      ms->setSDReady(sdCardReady);
+      ms->setGPSPosition(sensors.node_lat,
+                         sensors.node_lon);
+      // Populate contact markers via iterator
+      ms->clearMarkers();
+      ContactsIterator it = the_mesh.startContactsIterator();
+      ContactInfo ci;
+      int markerCount = 0;
+      while (it.hasNext(&the_mesh, ci)) {
+        if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+          double lat = ((double)ci.gps_lat) / 1000000.0;
+          double lon = ((double)ci.gps_lon) / 1000000.0;
+          ms->addMarker(lat, lon, ci.name, ci.type);
+          markerCount++;
+        }
+      }
+      Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
+    }
+  }
+  ui_task.gotoMapScreen();
+}
+#endif  // HAS_GPS
+
 #ifdef MECK_TOUCH_ENABLED
   #if defined(LilyGo_TDeck_Pro_Max)
   // T-Deck Pro MAX: the three capacitive pads below the screen are CST328 keys,
@@ -1372,7 +1414,7 @@ static void lastHeardToggleContact() {
           case 4: ui_task.gotoTraceScreen(); return 0;
           case 5:
   #if HAS_GPS && !defined(MECK_40MHZ_TEST)
-            ui_task.gotoMapScreen();
+            openMapScreen();
   #endif
             return 0;
           case 6: ui_task.gotoNotesScreen(); return 0;
@@ -2985,6 +3027,19 @@ void loop() {
   }
   #endif
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Game Boy emulator: hold the CPU at boost while a game runs (the core
+  // needs 240 MHz), and return to the games menu when the ROM list is
+  // backed out of. The screen's own poll() handles in-game quit.
+  if (ui_task.isOnGBCScreen()) {
+    GBCEmulatorScreen* gbc = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+    if (gbc) {
+      if (gbc->isRunning()) cpuPower.setBoost();
+      if (gbc->wantsExit()) ui_task.gotoGamesMenu();
+    }
+  }
+#endif
+
   // Alarm clock: background alarm check + audio tick
   #if defined(LilyGo_TDeck_Pro) && defined(MECK_AUDIO_VARIANT)
   {
@@ -3868,6 +3923,9 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro_Max)
+                  case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                   default: break;
                 }
               }
@@ -3929,6 +3987,9 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro_Max)
+                  case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                   default: break;
                 }
               }
@@ -4083,7 +4144,7 @@ void loop() {
               case 'b': ui_task.gotoWebReader(); break;
 #endif
 #if HAS_GPS
-              case 'g': ui_task.gotoMapScreen(); break;
+              case 'g': openMapScreen(); break;
 #endif
               default:  ui_task.injectKey(ckb); break;
             }
@@ -4306,6 +4367,9 @@ void loop() {
                   switch (sel) {
                     case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                     case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro_Max)
+                    case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                     default: break;
                   }
                 }
@@ -5514,31 +5578,7 @@ void handleKeyboardInput() {
       if (ui_task.isOnMapScreen()) {
         ui_task.injectKey('g');  // Re-center on GPS
       } else {
-        Serial.println("Opening map");
-        cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
-        {
-          MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
-          if (ms) {
-            ms->setSDReady(sdCardReady);
-            ms->setGPSPosition(sensors.node_lat,
-                               sensors.node_lon);
-            // Populate contact markers via iterator
-            ms->clearMarkers();
-            ContactsIterator it = the_mesh.startContactsIterator();
-            ContactInfo ci;
-            int markerCount = 0;
-            while (it.hasNext(&the_mesh, ci)) {
-              if (ci.gps_lat != 0 || ci.gps_lon != 0) {
-                double lat = ((double)ci.gps_lat) / 1000000.0;
-                double lon = ((double)ci.gps_lon) / 1000000.0;
-                ms->addMarker(lat, lon, ci.name, ci.type);
-                markerCount++;
-              }
-            }
-            Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
-          }
-        }
-        ui_task.gotoMapScreen();
+        openMapScreen();
       }
     #endif  // MECK_40MHZ_TEST: map gated
       break;
@@ -5556,6 +5596,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro_Max)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5576,6 +5619,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro_Max)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5600,6 +5646,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro_Max)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5620,6 +5669,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro_Max)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5700,10 +5752,17 @@ void handleKeyboardInput() {
           switch (sel) {
             case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
             case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro_Max)
+            case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
             // case GAME_2048: ui_task.goto2048Screen(); break;
             default: break;
           }
         }
+#if defined(LilyGo_TDeck_Pro_Max)
+      } else if (ui_task.isOnGBCScreen()) {
+        ui_task.injectKey('\r');   // ROM list: play the highlighted ROM
+#endif
       } else if (ui_task.isOnSnakeScreen()) {
         ui_task.injectKey('\r');
         SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
@@ -6009,6 +6068,20 @@ void handleKeyboardInput() {
         }
         break;
       }
+#if defined(LilyGo_TDeck_Pro_Max)
+      // Game Boy screen: Shift+Del in the ROM list goes back to games menu.
+      // While a game runs the keyboard is in raw joypad mode and no key
+      // reaches here; the quit chord is handled inside the emulator screen.
+      if (ui_task.isOnGBCScreen()) {
+        ui_task.injectKey(KEY_CANCEL);
+        GBCEmulatorScreen* gbs = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gbs && gbs->wantsExit()) {
+          Serial.println("Nav: Game Boy -> Games Menu");
+          ui_task.gotoGamesMenu();
+        }
+        break;
+      }
+#endif
       // Snake screen: Shift+Del goes back to games menu
       if (ui_task.isOnSnakeScreen()) {
         ui_task.injectKey(KEY_CANCEL);
