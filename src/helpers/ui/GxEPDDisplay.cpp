@@ -615,7 +615,15 @@ void GxEPDDisplay::endFrame() {
     // Requested full refresh: push the frame with the full waveform even if
     // nothing changed, to clear partial-update ghosting.
     _fullNext = false;
+    _windowNext = false;
     display.display(false);
+    last_display_crc_value = crc;
+    return;
+  }
+  if (_windowNext) {
+    // Requested window refresh: push and refresh only that window.
+    _windowNext = false;
+    display.displayWindow(_wx, _wy, _ww, _wh);
     last_display_crc_value = crc;
     return;
   }

@@ -70,6 +70,8 @@ private:
   unsigned long _statusUntil;
   GxEPDDisplay* _eink;                       // captured on first render
   bool    _busyHooked;                       // keyboard poll registered with GxEPD2
+  bool    _releaseKbAfterDraw;               // quit: keep raw mode until the ROM list is drawn
+  bool    _browserDrawn;                     // set by renderBrowser()
 };
 
 #endif // LilyGo_TDeck_Pro_Max

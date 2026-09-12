@@ -15,6 +15,15 @@
 #include <GxEPD2_3C.h>
 #include <GxEPD2_4C.h>
 #include <GxEPD2_7C.h>
+
+// Experiment: swap the library's GDEQ031T10 driver for the vendored copy whose
+// partial-window command sets PT_SCAN=0 (see GxEPD2_310_GDEQ031T10_PTS.h).
+// Enabled only by the meck_max_ble_ptscan build environment.
+#ifdef EINK_PTSCAN_EXPERIMENT
+#include "GxEPD2_310_GDEQ031T10_PTS.h"
+#undef EINK_DISPLAY_MODEL
+#define EINK_DISPLAY_MODEL GxEPD2_310_GDEQ031T10_PTS
+#endif
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
@@ -76,6 +85,8 @@ class GxEPDDisplay : public DisplayDriver {
   int last_display_crc_value = 0;
   const GFXfont* _currentFont = nullptr;  // Track for UTF-8 rendering
   bool _fullNext = false;                 // Next endFrame() does a full refresh
+  bool _windowNext = false;               // Next endFrame() refreshes only a window
+  int16_t _wx = 0, _wy = 0, _ww = 0, _wh = 0;   // that window, physical pixels
   uint8_t _currentTextScale = 1;          // Track glyph scale factor
 
   // Render one glyph from the current 8b font at the display's cursor position
@@ -165,6 +176,16 @@ public:
   // residue that builds up over many partial refreshes. The Game Boy
   // emulator requests one when a game quits and periodically during play.
   void requestFullRefresh() { _fullNext = true; }
+
+  // Make the next endFrame() push and refresh only the given window of the
+  // panel (physical pixels; x and w are rounded out to byte boundaries by
+  // the driver), regardless of whether the frame changed. A pending full
+  // refresh takes precedence. The Game Boy emulator uses it for the game
+  // picture so the panel only has to refresh 216 of its 320 lines.
+  void requestWindowRefresh(int16_t x, int16_t y, int16_t w, int16_t h) {
+    _windowNext = true;
+    _wx = x; _wy = y; _ww = w; _wh = h;
+  }
 
   // Run a function repeatedly while the panel is busy refreshing: GxEPD2 calls
   // it in place of its 1 ms sleep inside the busy wait, on the calling task.

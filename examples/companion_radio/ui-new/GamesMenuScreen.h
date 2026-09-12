@@ -13,6 +13,8 @@
 
 // Forward declarations
 class UITask;
+class MyMesh;
+extern MyMesh the_mesh;   // for NodePrefs font helpers (same route as ChannelPickerScreen)
 
 // Game identifiers -- add new entries here as games are added
 enum GameID {
@@ -117,6 +119,7 @@ public:
     display.drawRect(0, 12, display.width(), 1);
 
     // --- Game list ---
+#if defined(LilyGo_T5S3_EPaper_Pro)
     int y = 18;
     int lineH = 16;
 
@@ -132,15 +135,35 @@ public:
         display.setColor(DisplayDriver::LIGHT);
       }
 
-#if defined(LilyGo_T5S3_EPaper_Pro)
       display.drawTextCentered(display.width() / 2, y + 2, getGames()[i].name);
-#else
-      display.setCursor(6, y + 2);
-      display.print(getGames()[i].name);
-#endif
 
       y += lineH;
     }
+#else
+    // T-Deck Pro / MAX: rows follow the user's font size and style, the same
+    // way the channel picker does (NodePrefs font helpers).
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    const int lineH = prefs->smallLineH();
+    const int hlOff = prefs->smallHighlightOff();
+    int y = 14;
+    display.setTextSize(prefs->smallTextSize());
+
+    for (int i = 0; i < NUM_GAMES; i++) {
+      bool selected = (i == _cursor);
+
+      if (selected) {
+        display.setColor(DisplayDriver::LIGHT);
+        display.fillRect(0, y + hlOff, display.width(), lineH);
+        display.setColor(DisplayDriver::DARK);
+      } else {
+        display.setColor(DisplayDriver::LIGHT);
+      }
+
+      display.drawTextEllipsized(6, y, display.width() - 12, getGames()[i].name);
+
+      y += lineH;
+    }
+#endif
 
     // --- Footer ---
     display.setColor(DisplayDriver::LIGHT);
@@ -153,16 +176,23 @@ public:
     int fy = display.height() - 12;
     display.drawRect(0, fy - 2, display.width(), 1);
     display.setCursor(2, fy);
-    display.print("Enter:Play  Sh+Del:Back");
+    display.print("Enter:Play  Q:Back");
 #endif
 
     return 5000;  // Static menu -- slow refresh
   }
 
-  // --- T5S3 touch: tap to select game entry ---
+  // --- Touch: tap to select game entry (T5S3 and T-Deck Pro / MAX) ---
   int selectRowAtVY(int vy) {
+#if defined(LilyGo_T5S3_EPaper_Pro)
     int y = 18;
     int lineH = 16;
+#else
+    // Must match the render geometry above (NodePrefs font helpers).
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    int lineH = prefs->smallLineH();
+    int y = 14 + prefs->smallHighlightOff();
+#endif
     if (vy < y) return 0;  // Above list
     int row = (vy - y) / lineH;
     if (row >= NUM_GAMES) return 0;  // Below list

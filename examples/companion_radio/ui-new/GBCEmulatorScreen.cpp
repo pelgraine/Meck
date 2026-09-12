@@ -6,9 +6,14 @@
 // How it hangs together:
 //
 //   - The Peanut-GB core (peanut_gb.h, the same patched copy Meck-P4 ships)
-//     runs in its own FreeRTOS task pinned to core 0, priority 2, 12 KB stack
-//     from internal RAM (this Arduino core's config does not allow PSRAM task
-//     stacks, unlike the P4 build). The task paces gb_run_frame() to the GBC's
+//     runs in its own FreeRTOS task pinned to core 0, priority 2, on an 8 KB
+//     stack that is a static array reserved at boot. It has to be internal
+//     RAM (this Arduino core's config does not allow PSRAM task stacks, unlike
+//     the P4 build), and it is static rather than allocated at launch because
+//     once Bluetooth has been switched on in a boot its stack stays resident
+//     and can leave under 8 KB of internal RAM in one piece; a stack claimed
+//     before that happens is never at its mercy. The measured high-water
+//     mark is about 2 KB. The task paces gb_run_frame() to the GBC's
 //     59.73 Hz with an accumulated microsecond deadline and vTaskDelay(); the
 //     tick here is 1 ms, so plain delays are accurate enough.
 //
@@ -31,10 +36,14 @@
 //     and copies the 6480-byte result into the shared snapshot buffer inside a
 //     short critical section. render() copies the snapshot out under the same
 //     lock and draws it with GxEPDDisplay::drawXbmRaw, whose CRC tracking means
-//     the panel only refreshes when the picture actually changed. Every
-//     GBC_FULL_REFRESH_EVERY pictures, and once more when a game quits, the
-//     refresh is a full one (the black/white flash) to clear the residue
-//     that partial refreshes leave behind.
+//     the panel only refreshes when the picture actually changed. The first
+//     picture after launch is a normal full-screen partial refresh (it has
+//     to clear the ROM list); every picture after that refreshes only the
+//     216-line game window, so the panel moves less ink per picture. When a game
+//     quits the next refresh is a full one (the black/white flash) so the
+//     residue partial refreshes leave behind does not follow the user back
+//     to the ROM list and home screen. There is no periodic full refresh
+//     during play: it was tried and the flash was too distracting.
 //
 //   - Input: the Max keyboard driver's raw joypad mode. While on, every key
 //     press and release updates a held-key bitmask (bit layout matches
@@ -42,7 +51,9 @@
 //     right 0x10, left 0x20, up 0x40, down 0x80) and nothing reaches the
 //     normal key path, so no keystroke leaks into the UI mid-game. The
 //     emulator task samples the mask once per frame. Q or Shift+Backspace is
-//     a press-edge exit latch the screen polls. The keyboard is normally read
+//     a press-edge exit latch the screen polls. The both-shifts keyboard
+//     backlight chord is the one key raw mode lets through; it is acted on
+//     via main.cpp's toggleKeyboardBacklight(). The keyboard is normally read
 //     from loop(), which spends ~650 ms blocked inside every e-ink refresh;
 //     while a game runs a GxEPD2 busy callback keeps draining the keyboard
 //     through the refresh, so input never waits for the panel.
@@ -55,17 +66,22 @@
 //
 //   - Saves: raw cart RAM as a .sav sidecar next to the ROM, size from the
 //     cartridge header (MBC2 carts declare 0 but carry 512 bytes). Loaded
-//     after gb_init, written once on quit after the task has stopped
-//     (flush-on-exit, the same decision as Meck-P4).
+//     after gb_init. Written in the background: every cart-RAM write by
+//     the game marks the save dirty, and poll() (UI task, so it owns the
+//     SD card) writes the file once the game has left its cart RAM alone
+//     for GBC_SAVE_QUIET_MS -- in practice a couple of seconds after the
+//     user saves in-game. Quit writes only if something is still dirty,
+//     so quitting is normally instant. (Build 9 wrote only on quit.)
 //
 //   - Memory: cart RAM (128 KB), ROM arena (reserved at 2 MB on first launch
 //     and retained for the life of the boot, so a big game late in a long
 //     session never has to find a fresh contiguous block), RGB555 frame and
 //     the three mono buffers live in PSRAM. The core context (49952 bytes),
 //     which the core touches on every instruction, is allocated from
-//     internal RAM for the duration of a game and freed on quit; if no
+//     internal RAM for the duration of a game and freed on quit, and also
+//     freed on every failed launch so a failure never holds memory; if no
 //     internal block is available it goes to PSRAM instead and the launch
-//     log says so. The task stack is internal.
+//     log says so.
 //
 //   - No sound yet (build 3).
 //
@@ -99,6 +115,7 @@
 
 // ---- Firmware hooks ---------------------------------------------------------
 extern TCA8418Keyboard keyboard;          // main.cpp
+extern void toggleKeyboardBacklight();    // main.cpp (both-shifts chord)
 #ifdef MECK_OTA_UPDATE
 extern void otaPauseRadio();              // main.cpp
 extern void otaResumeRadio();             // main.cpp
@@ -118,8 +135,9 @@ extern void otaResumeRadio();             // main.cpp
 #define GBC_ROM_RESERVE 0x200000                      // 2 MB arena on first launch
 #define GBC_FRAME_US    16742                         // 59.73 Hz
 #define GBC_MAX_DEFICIT_US 250000                     // behind by more than this = stall, resync
-#define GBC_FULL_REFRESH_EVERY 45                     // pictures between full refreshes (~30 s)
-#define GBC_TASK_STACK  12288                         // bytes, internal RAM
+#define GBC_SAVE_QUIET_MS  2000                       // cart RAM untouched this long -> write .sav
+#define GBC_STOP_WAIT_MS   200                        // max wait for the task to park on quit
+#define GBC_TASK_STACK  8192                          // bytes, static, reserved at boot
 #define GBC_TASK_PRIO   2
 #define GBC_TASK_CORE   0
 
@@ -145,11 +163,16 @@ static volatile bool    s_snap_req     = false;
 static volatile bool    s_stop         = false;
 static volatile bool    s_task_stopped = false;
 static volatile bool    s_core_error   = false;
+static volatile bool    s_kbd_bl_req   = false;   // both-shifts chord seen by the busy poll
 static volatile unsigned long s_frames = 0;
+static unsigned         s_pictures = 0;       // pictures drawn this game (first one is full-screen)
 static TaskHandle_t     s_task = NULL;
+static StackType_t      s_task_stack[GBC_TASK_STACK / sizeof(StackType_t)];   // .bss, internal RAM
+static StaticTask_t     s_task_tcb;
 
-static unsigned         s_pictures  = 0;      // pictures drawn this game (full-refresh cadence)
 static size_t           s_save_size = 0;
+static volatile bool    s_cram_dirty = false;    // set by the game's cart-RAM writes (emulator task)
+static volatile uint32_t s_cram_dirty_ms = 0;   // millis() of the last such write
 static char             s_save_path[96];
 
 // ---- Core callbacks ---------------------------------------------------------
@@ -166,6 +189,8 @@ static uint8_t cram_read(struct gb_s *gb, const uint_fast32_t addr) {
 static void cram_write(struct gb_s *gb, const uint_fast32_t addr, const uint8_t val) {
   (void)gb;
   s_cram[addr] = val;
+  s_cram_dirty = true;
+  s_cram_dirty_ms = (uint32_t)millis();
 }
 
 static void gb_error_cb(struct gb_s *gb, const enum gb_error_e err, const uint16_t addr) {
@@ -227,7 +252,9 @@ static void mono_convert(uint8_t *dst_buf) {
 // updates the held-key mask and returns 0, so nothing is lost or misrouted.
 static void gbc_busy_poll(const void *arg) {
   (void)arg;
-  keyboard.readKey();
+  // Raw mode returns 0 for everything except the both-shifts chord. Latch
+  // that here and act on it from poll(), outside the panel's busy wait.
+  if (keyboard.readKey() == KB_KEY_KBD_BACKLIGHT) s_kbd_bl_req = true;
   delay(1);
 }
 
@@ -305,6 +332,12 @@ static void gbc_task(void *arg) {
 }
 
 // ---- Buffers ----------------------------------------------------------------
+// Give the core context back. Called on quit and on every failed launch, so
+// a failure never leaves 50 KB (usually internal RAM) held.
+static void gbc_release_core() {
+  if (s_gb) { heap_caps_free(s_gb); s_gb = NULL; s_gb_internal = false; }
+}
+
 static bool gbc_alloc_buffers() {
   // Core context: internal RAM for this game if a block is free, else PSRAM.
   if (!s_gb) {
@@ -337,12 +370,29 @@ static void print_heaps(const char *when) {
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 }
 
+// Write cart RAM to the .sav file. UI task only (the SD card is the UI
+// task's). Returns true if the whole file was written.
+static bool gbc_write_save(void) {
+  if (s_save_size == 0) return false;
+  if (SD.exists(s_save_path)) SD.remove(s_save_path);
+  File sf = SD.open(s_save_path, FILE_WRITE);
+  if (!sf) {
+    Serial.printf("[GBC] save write FAILED: cannot open %s\n", s_save_path);
+    return false;
+  }
+  const size_t put = sf.write(s_cram, s_save_size);
+  sf.close();
+  Serial.printf("[GBC] save written: %u bytes to %s\n", (unsigned)put, s_save_path);
+  return put == s_save_size;
+}
+
 // =============================================================================
 // GBCEmulatorScreen
 // =============================================================================
 GBCEmulatorScreen::GBCEmulatorScreen(UITask* task)
   : _task(task), _wantsExit(false), _mode(BROWSER), _cursor(0), _scroll(0),
-    _romCount(0), _playing(-1), _statusUntil(0), _eink(NULL), _busyHooked(false) {
+    _romCount(0), _playing(-1), _statusUntil(0), _eink(NULL), _busyHooked(false),
+    _releaseKbAfterDraw(false), _browserDrawn(false) {
   memset(_romNames, 0, sizeof(_romNames));
   _status[0] = 0;
 }
@@ -405,6 +455,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   print_heaps("before launch");
 
   if (!gbc_alloc_buffers()) {
+    gbc_release_core();
     setStatus("Out of memory");
     return false;
   }
@@ -413,6 +464,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   File f = SD.open(path, FILE_READ);
   if (!f) {
     Serial.printf("[GBC] cannot open %s\n", path);
+    gbc_release_core();
     setStatus("Cannot open ROM");
     return false;
   }
@@ -420,6 +472,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   if (sz < 0x8000) {
     f.close();
     Serial.println("[GBC] file too small to be a ROM");
+    gbc_release_core();
     setStatus("Not a ROM");
     return false;
   }
@@ -439,6 +492,7 @@ bool GBCEmulatorScreen::launch(int idx) {
       f.close();
       Serial.printf("[GBC] ROM alloc failed (%u bytes; largest free PSRAM block %u)\n",
                     (unsigned)sz, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+      gbc_release_core();
       setStatus("Out of PSRAM");
       return false;
     }
@@ -449,6 +503,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   f.close();
   if (got != sz) {
     Serial.printf("[GBC] short read (%u/%u)\n", (unsigned)got, (unsigned)sz);
+    gbc_release_core();
     setStatus("ROM read failed");
     return false;
   }
@@ -472,6 +527,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   if (e != GB_INIT_NO_ERROR) {
     Serial.printf("[GBC] gb_init failed: %d\n", (int)e);
     s_rom_size = 0;
+    gbc_release_core();
     setStatus("Unsupported ROM");
     return false;
   }
@@ -486,6 +542,7 @@ bool GBCEmulatorScreen::launch(int idx) {
       Serial.println("[GBC] no save file (fresh start)");
     }
   }
+  s_cram_dirty = false;      // the load above is not the game writing
   gb_init_lcd(s_gb, draw_line);
   s_gb->direct.frame_skip = 1;
   memset(s_fb, 0, (size_t)GB_W * GB_H * sizeof(uint16_t));
@@ -505,14 +562,16 @@ bool GBCEmulatorScreen::launch(int idx) {
   s_pictures = 0;
   s_snap_req = true;
   print_heaps("before task create");
-  if (xTaskCreatePinnedToCore(gbc_task, "meck_gbc", GBC_TASK_STACK, NULL,
-                              GBC_TASK_PRIO, &s_task, GBC_TASK_CORE) != pdPASS) {
+  s_task = xTaskCreateStaticPinnedToCore(gbc_task, "meck_gbc", GBC_TASK_STACK, NULL,
+                                         GBC_TASK_PRIO, s_task_stack, &s_task_tcb,
+                                         GBC_TASK_CORE);
+  if (s_task == NULL) {
     Serial.println("[GBC] task create failed");
-    s_task = NULL;
     keyboard.setRawJoypad(false);
 #ifdef MECK_OTA_UPDATE
     otaResumeRadio();
 #endif
+    gbc_release_core();
     setStatus("Task create failed");
     return false;
   }
@@ -525,28 +584,22 @@ bool GBCEmulatorScreen::launch(int idx) {
 void GBCEmulatorScreen::finishStop() {
   s_task = NULL;
   bool saved = false;
-  if (s_save_size > 0) {
-    if (SD.exists(s_save_path)) SD.remove(s_save_path);
-    File sf = SD.open(s_save_path, FILE_WRITE);
-    if (sf) {
-      const size_t put = sf.write(s_cram, s_save_size);
-      sf.close();
-      saved = (put == s_save_size);
-      Serial.printf("[GBC] save written: %u bytes to %s\n", (unsigned)put, s_save_path);
-    } else {
-      Serial.printf("[GBC] save write FAILED: cannot open %s\n", s_save_path);
-    }
+  if (s_cram_dirty) {              // normally already written in the background
+    s_cram_dirty = false;
+    saved = gbc_write_save();
   }
-  if (_busyHooked && _eink) {
-    _eink->setBusyCallback(NULL, 0);
-    _busyHooked = false;
-  }
-  keyboard.setRawJoypad(false);
+  // The keyboard stays in raw joypad mode, and keeps being drained by the
+  // busy poll, until the ROM list has actually been drawn (poll() releases
+  // it). Without this, keys pressed during the ~1 s full refresh that
+  // follows a quit queue up in the keyboard chip and are replayed as
+  // navigation afterwards -- one impatient Q became four screens of "back".
+  _releaseKbAfterDraw = true;
+  _browserDrawn = false;
 #ifdef MECK_OTA_UPDATE
   otaResumeRadio();
 #endif
   s_rom_size = 0;                 // arena retained
-  if (s_gb) { heap_caps_free(s_gb); s_gb = NULL; s_gb_internal = false; }
+  gbc_release_core();
   _playing = -1;
   _mode = BROWSER;
   if (s_core_error)  setStatus("Game crashed");
@@ -559,14 +612,38 @@ void GBCEmulatorScreen::finishStop() {
 // ---- Per-loop poll (UI task) ------------------------------------------------
 void GBCEmulatorScreen::poll() {
   if (_mode == PLAYING) {
+    // Background save: the game has not touched its cart RAM for a while,
+    // so write the .sav now (a few hundred ms of SD work on this task; the
+    // game keeps running on core 0 meanwhile).
+    if (s_cram_dirty && (uint32_t)(millis() - s_cram_dirty_ms) >= GBC_SAVE_QUIET_MS) {
+      s_cram_dirty = false;
+      gbc_write_save();
+    }
     if (keyboard.rawExitPressed() || s_stop) {
       s_stop = true;
       _mode = STOPPING;
       Serial.println("[GBC] stop requested");
+      // The task parks within a frame. Wait for it here (bounded) so the
+      // quit completes in this poll, without an intermediate "Saving..."
+      // frame costing a 650 ms refresh of its own.
+      const uint32_t t0 = millis();
+      while (!s_task_stopped && (uint32_t)(millis() - t0) < GBC_STOP_WAIT_MS) delay(1);
     }
   }
   if (_mode == STOPPING && s_task_stopped) {
     finishStop();
+  }
+  if (_mode == BROWSER && _releaseKbAfterDraw && _browserDrawn) {
+    if (_busyHooked && _eink) {
+      _eink->setBusyCallback(NULL, 0);
+      _busyHooked = false;
+    }
+    keyboard.setRawJoypad(false);      // also clears any quit presses latched meanwhile
+    _releaseKbAfterDraw = false;
+  }
+  if (s_kbd_bl_req) {
+    s_kbd_bl_req = false;
+    toggleKeyboardBacklight();
   }
   // In-game input never passes through injectKey(), so the auto-lock idle
   // timer would otherwise expire mid-game and lock the screen over the top
@@ -576,7 +653,7 @@ void GBCEmulatorScreen::poll() {
 
 // ---- Input (browser only; raw mode swallows keys while playing) -------------
 bool GBCEmulatorScreen::handleInput(char c) {
-  if (_mode != BROWSER) return false;
+  if (_mode != BROWSER || _releaseKbAfterDraw) return false;
   switch (c) {
     case 'w': case 'W':
       if (_cursor > 0) _cursor--;
@@ -604,6 +681,16 @@ int GBCEmulatorScreen::render(DisplayDriver& display) {
 }
 
 int GBCEmulatorScreen::renderBrowser(DisplayDriver& display) {
+  // Rows follow the user's font size and style via the NodePrefs helpers,
+  // the same way the channel picker and games menu do.
+  NodePrefs* prefs = _task->getNodePrefs();
+  const int lineH = prefs->smallLineH();
+  const int hlOff = prefs->smallHighlightOff();
+  const int headerH = 14;
+  const int footerH = 14;
+  int rows = (display.height() - footerH - headerH) / lineH;
+  if (rows < 3) rows = 3;
+
   display.startFrame();
   display.setTextSize(1);
 
@@ -613,33 +700,32 @@ int GBCEmulatorScreen::renderBrowser(DisplayDriver& display) {
   display.setColor(DisplayDriver::LIGHT);
   display.drawRect(0, 12, display.width(), 1);
 
-  const int y0 = 18;
-  const int lineH = 16;
-  const int rows = (display.height() - y0 - 14) / lineH;
   if (_cursor >= _scroll + rows) _scroll = _cursor - rows + 1;
   if (_scroll < 0) _scroll = 0;
 
+  display.setTextSize(prefs->smallTextSize());
   if (_romCount == 0) {
     display.setColor(DisplayDriver::LIGHT);
-    display.setCursor(6, y0 + 2);
-    display.print("No .gb/.gbc files");
-    display.setCursor(6, y0 + 14);
-    display.print("in /roms on SD");
+    display.drawTextEllipsized(6, headerH, display.width() - 12, "No .gb/.gbc files");
+    display.drawTextEllipsized(6, headerH + lineH, display.width() - 12, "in /roms on SD");
   } else {
-    int y = y0;
+    int y = headerH;
     for (int i = _scroll; i < _romCount && i < _scroll + rows; i++) {
       if (i == _cursor) {
         display.setColor(DisplayDriver::LIGHT);
-        display.fillRect(0, y - 1, display.width(), lineH);
+        display.fillRect(0, y + hlOff, display.width(), lineH);
         display.setColor(DisplayDriver::DARK);
       } else {
         display.setColor(DisplayDriver::LIGHT);
       }
-      display.drawTextEllipsized(6, y + 2, display.width() - 12, _romNames[i]);
+      display.drawTextEllipsized(6, y, display.width() - 12, _romNames[i]);
       y += lineH;
     }
   }
 
+  _browserDrawn = true;
+
+  display.setTextSize(1);
   display.setColor(DisplayDriver::LIGHT);
   const int fy = display.height() - 12;
   display.drawRect(0, fy - 2, display.width(), 1);
@@ -648,7 +734,7 @@ int GBCEmulatorScreen::renderBrowser(DisplayDriver& display) {
     display.print(_status);
     return 500;
   }
-  display.print("Enter:Play  Sh+Del:Back");
+  display.print("Enter:Play  Q:Back");
   return 5000;
 }
 
@@ -670,8 +756,11 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
 
   const uint16_t fg = d.rawFgColor();
   d.drawXbmRaw(GBC_IMG_X, GBC_IMG_Y, s_mono_ui, OUT_W, OUT_H, fg);
-  if (++s_pictures % GBC_FULL_REFRESH_EVERY == 0) d.requestFullRefresh();
   d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..." : "Q: Quit", fg);
+  if (_mode == PLAYING) {
+    if (s_pictures > 0) d.requestWindowRefresh(GBC_IMG_X, GBC_IMG_Y, OUT_W, OUT_H);
+    s_pictures++;
+  }
   return 100;   // the UI loop's 800 ms e-ink floor sets the real cadence
 }
 

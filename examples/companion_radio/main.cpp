@@ -52,7 +52,10 @@
   static unsigned long lastComposeRefresh = 0;
   static unsigned long lastComposeKeystroke = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 700  // ms — must exceed e-ink partial refresh time (~644ms)
+  #define COMPOSE_REFRESH_INTERVAL 0    // ms -- lastComposeRefresh is stamped AFTER drawComposeScreen()
+                                        // returns, i.e. after the ~650 ms e-ink refresh has already
+                                        // completed, so this interval only ever added dead time on top
+                                        // of the refresh (was 700, on the belief it had to cover it)
   #define COMPOSE_TYPING_PAUSE    250   // ms — wait this long after last keystroke before refreshing
 
   // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
@@ -4528,6 +4531,20 @@ void initKeyboard() {
   }
 }
 
+#if defined(LilyGo_TDeck_Pro_Max)
+// Both-shifts keyboard backlight toggle (MAX only -- IO42). Shared by the
+// normal key path below and by the Game Boy emulator, whose raw joypad mode
+// reads the keyboard itself, so the on/off state lives here rather than in
+// handleKeyboardInput().
+void toggleKeyboardBacklight() {
+  static bool kbdBacklightOn = false;
+  kbdBacklightOn = !kbdBacklightOn;
+  uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
+  analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
+  Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
+}
+#endif
+
 void handleKeyboardInput() {
   if (!keyboard.isReady()) return;
   
@@ -4579,11 +4596,7 @@ void handleKeyboardInput() {
   }
   // Both shifts together toggle the keyboard backlight (MAX only -- IO42).
   if (key == KB_KEY_KBD_BACKLIGHT) {
-    static bool kbdBacklightOn = false;
-    kbdBacklightOn = !kbdBacklightOn;
-    uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
-    analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
-    Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
+    toggleKeyboardBacklight();
     return;
   }
 #endif

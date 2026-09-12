@@ -60,17 +60,22 @@ private:
   // from getKeyChar()'s table: W=9 A=20 S=19 D=18 K=13 J=14 Enter=21
   // Space=33 Backspace=11 Q=10 Shift=35/31. Bits: a 0x01, b 0x02,
   // select 0x04, start 0x08, right 0x10, left 0x20, up 0x40, down 0x80.
-  // Quit is Q (the UI's usual back key) or Shift+Backspace.
-  void rawJoypadEvent(uint8_t keyCode, bool pressed) {
-    if (keyCode == 35) { _rawShiftL = pressed; return; }
-    if (keyCode == 31) { _rawShiftR = pressed; return; }
+  // Quit is Q (the UI's usual back key) or Shift+Backspace. Returns 0 for
+  // everything except the both-shifts chord, which returns
+  // KB_KEY_KBD_BACKLIGHT so the keyboard backlight still toggles mid-game.
+  char rawJoypadEvent(uint8_t keyCode, bool pressed) {
+    if (keyCode == 35 || keyCode == 31) {
+      if (keyCode == 35) _rawShiftL = pressed; else _rawShiftR = pressed;
+      if (pressed && _rawShiftL && _rawShiftR) return KB_KEY_KBD_BACKLIGHT;
+      return 0;
+    }
     if (keyCode == 10) {                       // Q = quit
       if (pressed) _rawExit = true;
-      return;
+      return 0;
     }
     if (keyCode == 11) {                       // Backspace: Shift+Backspace = quit
       if (pressed && (_rawShiftL || _rawShiftR)) _rawExit = true;
-      return;
+      return 0;
     }
     uint8_t bit = 0;
     switch (keyCode) {
@@ -82,10 +87,11 @@ private:
       case 20: bit = 0x20; break;   // A = left
       case 9:  bit = 0x40; break;   // W = up
       case 19: bit = 0x80; break;   // S = down
-      default: return;
+      default: return 0;
     }
     if (pressed) _rawMask = (uint8_t)(_rawMask | bit);
     else         _rawMask = (uint8_t)(_rawMask & (uint8_t)~bit);
+    return 0;
   }
 
   uint8_t readReg(uint8_t reg) {
@@ -283,10 +289,10 @@ public:
     Serial.printf("KB raw: event=0x%02X code=%d pressed=%d count=%d\n", 
                   keyEvent, keyCode, pressed, keyCount);
 
-    // GBC raw joypad mode: both edges feed the held-key mask, nothing else.
+    // GBC raw joypad mode: both edges feed the held-key mask. The only key
+    // that gets through is the both-shifts keyboard-backlight chord.
     if (_rawJoypad) {
-      rawJoypadEvent(keyCode, pressed);
-      return 0;
+      return rawJoypadEvent(keyCode, pressed);
     }
 
     // Track shift release (before the general release-ignore)
