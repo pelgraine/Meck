@@ -1974,7 +1974,22 @@ void UITask::userLedHandler() {
 #endif
 }
 
+#ifndef EINK_FAST_FULL_EVERY
+#define EINK_FAST_FULL_EVERY 20
+#endif
+
 void UITask::setCurrScreen(UIScreen* c) {
+#if defined(LilyGo_TDeck_Pro) && defined(EINK_FASTLUT_EXPERIMENT)
+  // Fast-waveform housekeeping: the register waveform pushes every pixel on
+  // every partial and builds up ghosting and ink imbalance. After
+  // EINK_FAST_FULL_EVERY fast partials, make the redraw that comes with this
+  // screen change a full refresh, so the flash lands where a redraw is
+  // happening anyway rather than mid-typing.
+  if (_display != NULL) {
+    GxEPDDisplay* gd = static_cast<GxEPDDisplay*>(_display);
+    if (gd->fastPartialsSinceFull() >= EINK_FAST_FULL_EVERY) gd->requestFullRefresh();
+  }
+#endif
   curr = c;
   _alert_expiry = 0;  // Dismiss any active toast — prevents stale overlay from
                        // triggering extra 644ms e-ink refreshes on the new screen

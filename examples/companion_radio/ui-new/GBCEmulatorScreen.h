@@ -32,7 +32,7 @@ class GxEPDDisplay;
 
 class GBCEmulatorScreen : public UIScreen {
 public:
-  enum Mode { BROWSER, PLAYING, STOPPING };
+  enum Mode { BROWSER, LOADING, PLAYING, STOPPING };
 
   GBCEmulatorScreen(UITask* task);
 
@@ -43,8 +43,8 @@ public:
   // returns to the games menu, the same way it does for Snake.
   bool wantsExit() const { return _wantsExit; }
 
-  // True while a ROM is running or shutting down. main.cpp holds the CPU
-  // boost while this is true.
+  // True while a ROM is loading, running or shutting down. main.cpp holds
+  // the CPU boost while this is true.
   bool isRunning() const { return _mode != BROWSER; }
 
   bool handleInput(char c) override;
@@ -66,6 +66,8 @@ private:
   int     _scroll;
   int     _romCount;
   int     _playing;                          // index into _romNames while running
+  int     _pendingLaunch;                    // ROM chosen; launched once "Loading..." is on the panel
+  bool    _loadingDrawn;                     // set by renderBrowser() while LOADING
   char    _romNames[GBC_MAX_ROMS][GBC_NAME_MAX];
   char    _status[48];
   unsigned long _statusUntil;

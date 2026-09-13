@@ -83,6 +83,11 @@
 //     internal block is available it goes to PSRAM instead and the launch
 //     log says so.
 //
+//   - Waveform: on fast-waveform builds the display's partial refreshes run
+//     on a short register LUT; while a game runs this screen switches the
+//     driver back to the factory OTP waveform (dither needs its drive) and
+//     restores fast on quit.
+//
 //   - No sound yet (build 3).
 //
 //   - Telemetry: the task prints a speed line every 5 s (frames in the
@@ -383,15 +388,25 @@ static void print_heaps(const char *when) {
 // task's). Returns true if the whole file was written.
 static bool gbc_write_save(void) {
   if (s_save_size == 0) return false;
+  const uint32_t t0 = millis();
   if (SD.exists(s_save_path)) SD.remove(s_save_path);
+  const uint32_t t1 = millis();
   File sf = SD.open(s_save_path, FILE_WRITE);
   if (!sf) {
-    Serial.printf("[GBC] save write FAILED: cannot open %s\n", s_save_path);
+    Serial.printf("[GBC] save write FAILED: cannot open %s (remove took %lu ms)\n",
+                  s_save_path, (unsigned long)(t1 - t0));
     return false;
   }
+  const uint32_t t2 = millis();
   const size_t put = sf.write(s_cram, s_save_size);
+  const uint32_t t3 = millis();
   sf.close();
-  Serial.printf("[GBC] save written: %u bytes to %s\n", (unsigned)put, s_save_path);
+  const uint32_t t4 = millis();
+  // Timed, because one session showed the UI loop blocked ~45 s with this
+  // write completing at the moment it unblocked.
+  Serial.printf("[GBC] save written: %u bytes to %s (remove %lu, open %lu, write %lu, close %lu ms)\n",
+                (unsigned)put, s_save_path, (unsigned long)(t1 - t0), (unsigned long)(t2 - t1),
+                (unsigned long)(t3 - t2), (unsigned long)(t4 - t3));
   return put == s_save_size;
 }
 
@@ -400,7 +415,8 @@ static bool gbc_write_save(void) {
 // =============================================================================
 GBCEmulatorScreen::GBCEmulatorScreen(UITask* task)
   : _task(task), _wantsExit(false), _mode(BROWSER), _cursor(0), _scroll(0),
-    _romCount(0), _playing(-1), _statusUntil(0), _eink(NULL), _busyHooked(false),
+    _romCount(0), _playing(-1), _pendingLaunch(-1), _loadingDrawn(false),
+    _statusUntil(0), _eink(NULL), _busyHooked(false),
     _releaseKbAfterDraw(false), _browserDrawn(false) {
   memset(_romNames, 0, sizeof(_romNames));
   _status[0] = 0;
@@ -564,6 +580,17 @@ bool GBCEmulatorScreen::launch(int idx) {
 #ifdef MECK_OTA_UPDATE
   otaPauseRadio();
 #endif
+  // The dithered game picture needs the factory waveform's longer drive;
+  // the fast register waveform half-develops the stipple. Fast comes back
+  // on quit. No-op on builds without the fast waveform.
+  if (_eink) {
+    _eink->setFastWaveform(false);
+    // Start every game on a clean, balanced panel: the fast waveform used
+    // by the interface leaves ink only partly settled, and the factory
+    // differential waveform assumes it is settled -- moving sprites left
+    // shadows when a game followed fast-waveform use. One 1 s flash.
+    _eink->requestFullRefresh();
+  }
   s_stop = false;
   s_task_stopped = false;
   s_core_error = false;
@@ -614,12 +641,28 @@ void GBCEmulatorScreen::finishStop() {
   if (s_core_error)  setStatus("Game crashed");
   else if (saved)    setStatus("Saved");
   print_heaps("after stop");
-  if (_eink) _eink->requestFullRefresh();   // wipe the game's ghosting off the panel
+  if (_eink) {
+    _eink->setFastWaveform(true);
+    _eink->requestFullRefresh();   // wipe the game's ghosting off the panel
+  }
   _task->forceRefresh();
 }
 
 // ---- Per-loop poll (UI task) ------------------------------------------------
 void GBCEmulatorScreen::poll() {
+  if (_mode == LOADING && _loadingDrawn) {
+    // poll() runs at the top of the loop pass, so by now the previous pass
+    // has drawn and refreshed the "Loading..." box.
+    const int idx = _pendingLaunch;
+    _pendingLaunch = -1;
+    _mode = BROWSER;                 // launch() expects to start from the browser
+    if (!launch(idx)) {
+      _task->showAlert("", 0);      // clear the box; launch() set a status line
+      _task->forceRefresh();
+    } else {
+      _task->showAlert("", 0);      // the game's first picture replaces the box
+    }
+  }
   if (_mode == PLAYING) {
     // Background save: the game has not touched its cart RAM for a while,
     // so write the .sav now (a few hundred ms of SD work on this task; the
@@ -675,7 +718,13 @@ bool GBCEmulatorScreen::handleInput(char c) {
       return true;
     case '\r':
       if (_romCount == 0) { setStatus("No ROMs in /roms"); return true; }
-      launch(_cursor);
+      // Reading a 2 MB ROM off the SD card takes several seconds. Show the
+      // standard alert box first and launch from poll() once it has been
+      // drawn, so the panel is not left showing the ROM list meanwhile.
+      _pendingLaunch = _cursor;
+      _loadingDrawn = false;
+      _mode = LOADING;
+      _task->showAlert("Loading...", 30000);
       return true;
     case KEY_CANCEL:
       _wantsExit = true;
@@ -687,11 +736,12 @@ bool GBCEmulatorScreen::handleInput(char c) {
 
 // ---- Render -----------------------------------------------------------------
 int GBCEmulatorScreen::render(DisplayDriver& display) {
-  if (_mode == BROWSER) return renderBrowser(display);
+  if (_mode == BROWSER || _mode == LOADING) return renderBrowser(display);
   return renderGame(display);
 }
 
 int GBCEmulatorScreen::renderBrowser(DisplayDriver& display) {
+  _eink = static_cast<GxEPDDisplay*>(&display);
   // Rows follow the user's font size and style via the NodePrefs helpers,
   // the same way the channel picker and games menu do.
   NodePrefs* prefs = _task->getNodePrefs();
@@ -735,6 +785,7 @@ int GBCEmulatorScreen::renderBrowser(DisplayDriver& display) {
   }
 
   _browserDrawn = true;
+  if (_mode == LOADING) _loadingDrawn = true;
 
   display.setTextSize(1);
   display.setColor(DisplayDriver::LIGHT);

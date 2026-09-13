@@ -15,6 +15,15 @@
 #include <GxEPD2_3C.h>
 #include <GxEPD2_4C.h>
 #include <GxEPD2_7C.h>
+
+// Experiment: swap the library's GDEQ031T10 driver for the vendored copy that
+// runs partial refreshes on a register waveform (see GxEPD2_310_GDEQ031T10_FAST.h).
+// Enabled only by the meck_max_ble_fastlut build environment.
+#ifdef EINK_FASTLUT_EXPERIMENT
+#include "GxEPD2_310_GDEQ031T10_FAST.h"
+#undef EINK_DISPLAY_MODEL
+#define EINK_DISPLAY_MODEL GxEPD2_310_GDEQ031T10_FAST
+#endif
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
@@ -176,6 +185,34 @@ public:
   void requestWindowRefresh(int16_t x, int16_t y, int16_t w, int16_t h) {
     _windowNext = true;
     _wx = x; _wy = y; _ww = w; _wh = h;
+  }
+
+  // Fast-waveform builds: choose the partial-refresh waveform (fast register
+  // LUT, or the factory OTP one while a dithered game picture is showing),
+  // and read how many fast partials have run since the last full refresh.
+  // No-ops on builds using the library driver.
+  void setFastWaveform(bool on) {
+#ifdef EINK_FASTLUT_EXPERIMENT
+    display.epd2.setFastWaveform(on);
+    if (!on) {
+      // Switching back to the factory waveform: put the panel through a
+      // hardware reset first. hibernate() powers it down and deep-sleeps
+      // it; the next refresh re-initialises it via the reset pin, which
+      // returns every register -- the five LUTs the fast mode loaded
+      // included -- to power-on defaults. Tests whether register-LUT
+      // residue is what ghosts moving sprites under the factory waveform.
+      display.hibernate();
+    }
+#else
+    (void)on;
+#endif
+  }
+  uint16_t fastPartialsSinceFull() const {
+#ifdef EINK_FASTLUT_EXPERIMENT
+    return display.epd2.fastPartialsSinceFull();
+#else
+    return 0;
+#endif
   }
 
   // Run a function repeatedly while the panel is busy refreshing: GxEPD2 calls
