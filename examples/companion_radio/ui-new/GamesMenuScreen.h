@@ -21,7 +21,7 @@ enum GameID {
   GAME_NONE = 0,
   GAME_SNAKE,
   GAME_MINESWEEPER,
-  GAME_GBC,          // Game Boy / Game Boy Color emulator (T-Deck Max, build 1)
+  GAME_GBC,          // Game Boy / Game Boy Color emulator (T-Deck Pro and Max)
   // GAME_2048,
   GAME_COUNT   // Must be last -- used for array sizing
 };
@@ -41,7 +41,7 @@ private:
     const char* description;
   };
 
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   static constexpr int NUM_GAMES = 3;  // Increment as games are added
 #else
   static constexpr int NUM_GAMES = 2;  // Increment as games are added
@@ -51,7 +51,7 @@ private:
     static const GameEntry games[NUM_GAMES] = {
       { GAME_SNAKE,       "Snake",       "Classic Nokia-style" },
       { GAME_MINESWEEPER, "Minesweeper", "Find the mines" },
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
       { GAME_GBC,         "Game Boy",    "GB / GBC emulator" },
 #endif
       // { GAME_2048,        "2048",        "Slide and merge" },

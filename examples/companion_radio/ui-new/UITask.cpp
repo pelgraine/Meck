@@ -13,7 +13,7 @@
 #include "GamesMenuScreen.h"
 #include "SnakeScreen.h"
 #include "MinesweeperScreen.h"
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
 #include "GBCEmulatorScreen.h"
 #endif
 #ifdef MECK_WEB_READER
@@ -1619,7 +1619,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   games_menu_screen = new GamesMenuScreen(this);
   snake_screen = new SnakeScreen(this, &rtc_clock);
   minesweeper_screen = new MinesweeperScreen(this);
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   gbc_screen = new GBCEmulatorScreen(this);
 #endif
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
@@ -2457,7 +2457,7 @@ if (curr) curr->poll();
 #else
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
 #endif
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
       // Game Boy emulator: no floor while a game runs. The picture changes
       // every frame, so the panel should refresh back-to-back at its own
       // partial-refresh rate rather than pause 800 ms between pictures.
@@ -3517,7 +3517,7 @@ void UITask::gotoMinesweeperScreen() {
   _next_refresh = 100;
 }
 
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
 void UITask::gotoGBCScreen() {
   GBCEmulatorScreen* gb = (GBCEmulatorScreen*)gbc_screen;
   gb->enter();

@@ -105,7 +105,7 @@ class UITask : public AbstractUITask {
   UIScreen* games_menu_screen; // Games launcher menu
   UIScreen* snake_screen;      // Snake game screen
   UIScreen* minesweeper_screen; // Minesweeper game screen
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   UIScreen* gbc_screen;        // Game Boy / Game Boy Color emulator (ROM list + game)
 #endif
 #ifdef MECK_WEB_READER
@@ -214,7 +214,7 @@ public:
   void gotoGamesMenu();                    // Navigate to games launcher menu
   void gotoSnakeScreen();                  // Navigate to snake game
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   void gotoGBCScreen();                    // Navigate to Game Boy emulator ROM list
 #endif
 #if HAS_GPS
@@ -287,7 +287,7 @@ public:
   bool isOnGamesMenu() const { return curr == games_menu_screen; }
   bool isOnSnakeScreen() const { return curr == snake_screen; }
   bool isOnMinesweeperScreen() const { return curr == minesweeper_screen; }
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   bool isOnGBCScreen() const { return curr == gbc_screen; }
 #endif
   bool isOnMapScreen() const { return curr == map_screen; }
@@ -382,7 +382,7 @@ public:
   UIScreen* getGamesMenuScreen() const { return games_menu_screen; }
   UIScreen* getSnakeScreen() const { return snake_screen; }
   UIScreen* getMinesweeperScreen() const { return minesweeper_screen; }
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   UIScreen* getGBCScreen() const { return gbc_screen; }
 #endif
   UIScreen* getMapScreen() const { return map_screen; }

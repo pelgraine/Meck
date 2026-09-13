@@ -1,7 +1,7 @@
 // =============================================================================
 // GBCEmulatorScreen.cpp -- Game Boy / Game Boy Color emulator for Meck
 //
-// Build 1 (T-Deck Max). See GBCEmulatorScreen.h for the user-facing summary.
+// T-Deck Pro and Max. See GBCEmulatorScreen.h for the user-facing summary.
 //
 // How it hangs together:
 //
@@ -51,9 +51,9 @@
 //     right 0x10, left 0x20, up 0x40, down 0x80) and nothing reaches the
 //     normal key path, so no keystroke leaks into the UI mid-game. The
 //     emulator task samples the mask once per frame. Q or Shift+Backspace is
-//     a press-edge exit latch the screen polls. The both-shifts keyboard
-//     backlight chord is the one key raw mode lets through; it is acted on
-//     via main.cpp's toggleKeyboardBacklight(). The keyboard is normally read
+//     a press-edge exit latch the screen polls. On the Max the both-shifts
+//     keyboard backlight chord is the one key raw mode lets through; it is
+//     acted on via main.cpp's toggleKeyboardBacklight(). The keyboard is normally read
 //     from loop(), which spends ~650 ms blocked inside every e-ink refresh;
 //     while a game runs a GxEPD2 busy callback keeps draining the keyboard
 //     through the refresh, so input never waits for the panel.
@@ -90,7 +90,7 @@
 //     core keeps up is read from the log, not guessed.
 // =============================================================================
 
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
 
 #include "GBCEmulatorScreen.h"
 #include "UITask.h"
@@ -115,7 +115,9 @@
 
 // ---- Firmware hooks ---------------------------------------------------------
 extern TCA8418Keyboard keyboard;          // main.cpp
-extern void toggleKeyboardBacklight();    // main.cpp (both-shifts chord)
+#if defined(LilyGo_TDeck_Pro_Max)
+extern void toggleKeyboardBacklight();    // main.cpp (both-shifts chord, Max keyboard backlight)
+#endif
 #ifdef MECK_OTA_UPDATE
 extern void otaPauseRadio();              // main.cpp
 extern void otaResumeRadio();             // main.cpp
@@ -163,7 +165,9 @@ static volatile bool    s_snap_req     = false;
 static volatile bool    s_stop         = false;
 static volatile bool    s_task_stopped = false;
 static volatile bool    s_core_error   = false;
+#if defined(LilyGo_TDeck_Pro_Max)
 static volatile bool    s_kbd_bl_req   = false;   // both-shifts chord seen by the busy poll
+#endif
 static volatile unsigned long s_frames = 0;
 static unsigned         s_pictures = 0;       // pictures drawn this game (first one is full-screen)
 static TaskHandle_t     s_task = NULL;
@@ -252,9 +256,14 @@ static void mono_convert(uint8_t *dst_buf) {
 // updates the held-key mask and returns 0, so nothing is lost or misrouted.
 static void gbc_busy_poll(const void *arg) {
   (void)arg;
-  // Raw mode returns 0 for everything except the both-shifts chord. Latch
-  // that here and act on it from poll(), outside the panel's busy wait.
+  // Raw mode returns 0 for everything except (on the Max) the both-shifts
+  // backlight chord. Latch that here and act on it from poll(), outside the
+  // panel's busy wait.
+#if defined(LilyGo_TDeck_Pro_Max)
   if (keyboard.readKey() == KB_KEY_KBD_BACKLIGHT) s_kbd_bl_req = true;
+#else
+  keyboard.readKey();
+#endif
   delay(1);
 }
 
@@ -641,10 +650,12 @@ void GBCEmulatorScreen::poll() {
     keyboard.setRawJoypad(false);      // also clears any quit presses latched meanwhile
     _releaseKbAfterDraw = false;
   }
+#if defined(LilyGo_TDeck_Pro_Max)
   if (s_kbd_bl_req) {
     s_kbd_bl_req = false;
     toggleKeyboardBacklight();
   }
+#endif
   // In-game input never passes through injectKey(), so the auto-lock idle
   // timer would otherwise expire mid-game and lock the screen over the top
   // of a running emulator.
@@ -764,4 +775,4 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
   return 100;   // the UI loop's 800 ms e-ink floor sets the real cadence
 }
 
-#endif // LilyGo_TDeck_Pro_Max
+#endif // LilyGo_TDeck_Pro

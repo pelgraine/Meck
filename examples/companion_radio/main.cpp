@@ -34,7 +34,7 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   #include "GBCEmulatorScreen.h"
 #endif
   #ifdef MECK_WEB_READER
@@ -747,7 +747,7 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   #include "GBCEmulatorScreen.h"
 #endif
 
@@ -3030,7 +3030,7 @@ void loop() {
   }
   #endif
 
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
   // Game Boy emulator: hold the CPU at boost while a game runs (the core
   // needs 240 MHz), and return to the games menu when the ROM list is
   // backed out of. The screen's own poll() handles in-game quit.
@@ -3926,7 +3926,7 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
                   case GAME_GBC: ui_task.gotoGBCScreen(); break;
 #endif
                   default: break;
@@ -3990,7 +3990,7 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
                   case GAME_GBC: ui_task.gotoGBCScreen(); break;
 #endif
                   default: break;
@@ -4370,7 +4370,7 @@ void loop() {
                   switch (sel) {
                     case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                     case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
                     case GAME_GBC: ui_task.gotoGBCScreen(); break;
 #endif
                     default: break;
@@ -5609,7 +5609,7 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
           || ui_task.isOnGBCScreen()
 #endif
 #ifdef MECK_WEB_READER
@@ -5632,7 +5632,7 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
           || ui_task.isOnGBCScreen()
 #endif
 #ifdef MECK_WEB_READER
@@ -5659,7 +5659,7 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
           || ui_task.isOnGBCScreen()
 #endif
 #ifdef MECK_WEB_READER
@@ -5682,7 +5682,7 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
           || ui_task.isOnGBCScreen()
 #endif
 #ifdef MECK_WEB_READER
@@ -5765,14 +5765,14 @@ void handleKeyboardInput() {
           switch (sel) {
             case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
             case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
             case GAME_GBC: ui_task.gotoGBCScreen(); break;
 #endif
             // case GAME_2048: ui_task.goto2048Screen(); break;
             default: break;
           }
         }
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
       } else if (ui_task.isOnGBCScreen()) {
         ui_task.injectKey('\r');   // ROM list: play the highlighted ROM
 #endif
@@ -6081,7 +6081,7 @@ void handleKeyboardInput() {
         }
         break;
       }
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
       // Game Boy screen: Shift+Del in the ROM list goes back to games menu.
       // While a game runs the keyboard is in raw joypad mode and no key
       // reaches here; the quit chord is handled inside the emulator screen.

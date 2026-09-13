@@ -3,8 +3,9 @@
 // =============================================================================
 // GBCEmulatorScreen -- Game Boy / Game Boy Color emulator for Meck (T-Deck)
 //
-// Build 1: T-Deck Max only. Needs the raw joypad mode in the Max
-// TCA8418Keyboard.h; the Pro follows once its keyboard driver has the same.
+// T-Deck Pro and Max (both define LilyGo_TDeck_Pro). Needs the raw joypad
+// mode in the variant's TCA8418Keyboard.h; the T5S3 is excluded (different
+// display class).
 //
 // Two modes. BROWSER lists the .gb/.gbc files in /roms on the SD card
 // (W/S to move, Enter to play, Shift+Backspace back to the games menu).
@@ -18,7 +19,7 @@
 // the single-header core is compiled exactly once.
 // =============================================================================
 
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro)
 
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
@@ -74,4 +75,4 @@ private:
   bool    _browserDrawn;                     // set by renderBrowser()
 };
 
-#endif // LilyGo_TDeck_Pro_Max
+#endif // LilyGo_TDeck_Pro
