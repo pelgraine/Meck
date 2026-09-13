@@ -398,22 +398,31 @@ void GxEPD2_310_GDEQ031T10_FAST::_Update_Full()
 // 42 bytes: VCOM (0x20), WW (0x21), BW (0x22), WB (0x23), BB (0x24). UC8253
 // group layout per Larry Bank's comment: group repeat, level+count 1,
 // level+count 1, level+count 2, level+count 2, repeat 1, repeat 2. Only the
-// first group is used; the other five are zero. 0x89 = 9 frames towards
-// white, 0x49 = 9 frames towards black, 0x09 = 9 frames at VCOM DC.
+// first group is used; the other five are zero. Each level+count byte is
+// the level in bits 7:6 (10 = towards white, 01 = towards black, 00 = VCOM
+// DC) and the frame count in bits 5:0. bb_epaper ships 9 frames (0x89 /
+// 0x49 / 0x09, measured 244 ms per partial on the Max); FAST_LUT_FRAMES
+// is the tuning knob: more frames, darker blacks, longer refresh.
+#ifndef FAST_LUT_FRAMES
+#define FAST_LUT_FRAMES 12
+#endif
+#define FAST_TO_WHITE  (uint8_t)(0x80 | FAST_LUT_FRAMES)
+#define FAST_TO_BLACK  (uint8_t)(0x40 | FAST_LUT_FRAMES)
+#define FAST_VCOM_DC   (uint8_t)(0x00 | FAST_LUT_FRAMES)
 static const uint8_t fast_lut_vcom[42] = {
-  0x01, 0x09, 0x01, 0x00, 0x00, 0x01, 0x00,
+  0x01, FAST_VCOM_DC, 0x01, 0x00, 0x00, 0x01, 0x00,
   0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0 };
 static const uint8_t fast_lut_ww[42] = {
-  0x01, 0x89, 0x01, 0x00, 0x00, 0x01, 0x00,
+  0x01, FAST_TO_WHITE, 0x01, 0x00, 0x00, 0x01, 0x00,
   0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0 };
 static const uint8_t fast_lut_bw[42] = {
-  0x01, 0x89, 0x01, 0x00, 0x00, 0x01, 0x00,
+  0x01, FAST_TO_WHITE, 0x01, 0x00, 0x00, 0x01, 0x00,
   0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0 };
 static const uint8_t fast_lut_wb[42] = {
-  0x01, 0x49, 0x01, 0x00, 0x00, 0x01, 0x00,
+  0x01, FAST_TO_BLACK, 0x01, 0x00, 0x00, 0x01, 0x00,
   0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0 };
 static const uint8_t fast_lut_bb[42] = {
-  0x01, 0x49, 0x01, 0x00, 0x00, 0x01, 0x00,
+  0x01, FAST_TO_BLACK, 0x01, 0x00, 0x00, 0x01, 0x00,
   0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0, 0,0,0,0,0,0,0 };
 
 void GxEPD2_310_GDEQ031T10_FAST::_writeLut(uint8_t command, const uint8_t* lut)

@@ -134,6 +134,13 @@ bool GxEPDDisplay::begin() {
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);
   setTextSize(1);  // Default to size 1
+  // Adafruit GFX wraps text to the next line by itself when a glyph would
+  // cross the right edge. Every Meck screen positions and wraps its own
+  // text, so that behaviour only ever corrupts a layout: a glyph the
+  // screen's wrap thought fitted lands on the next line's left margin on
+  // top of the real text (seen with Larger Noto in compose). Off: an
+  // over-wide line clips at the edge instead.
+  display.setTextWrap(false);
 #ifdef EINK_FULL_REFRESH_ONLY
   display.setFullWindow();
   display.fillScreen(GxEPD_WHITE);

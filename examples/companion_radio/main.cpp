@@ -6239,7 +6239,11 @@ void drawComposeScreen() {
   char dblStr[3] = {0, 0, 0};
   
   int px = 0;
-  int lineW = display.width();
+  // The e-ink driver draws everything 2 virtual units to the right of the
+  // cursor it is given (its x offset), so a line measured against the full
+  // width can run a few physical pixels past the panel edge. Leave that
+  // margin out of the usable width.
+  int lineW = display.width() - 2;
   bool atWordBoundary = true;
   
   for (int i = 0; i < composePos; i++) {
