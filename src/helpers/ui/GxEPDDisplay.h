@@ -15,15 +15,6 @@
 #include <GxEPD2_3C.h>
 #include <GxEPD2_4C.h>
 #include <GxEPD2_7C.h>
-
-// Experiment: swap the library's GDEQ031T10 driver for the vendored copy whose
-// partial-window command sets PT_SCAN=0 (see GxEPD2_310_GDEQ031T10_PTS.h).
-// Enabled only by the meck_max_ble_ptscan build environment.
-#ifdef EINK_PTSCAN_EXPERIMENT
-#include "GxEPD2_310_GDEQ031T10_PTS.h"
-#undef EINK_DISPLAY_MODEL
-#define EINK_DISPLAY_MODEL GxEPD2_310_GDEQ031T10_PTS
-#endif
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
