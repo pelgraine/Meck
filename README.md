@@ -941,7 +941,7 @@ The LilyGo T-Deck Max is a close relative of the T-Deck Pro: same 240×320 e-ink
 
 The Max is also, as of v1.14, the only Meck device that plays [Game Boy emulator](#game-boy--game-boy-color-emulator-v114) sound (the emulator itself also runs on the T-Deck Pro).
 
-The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1500 mAh battery.
+The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1400 mAh battery.
 
 ### T-Deck Max Build Variants
 
