@@ -36,10 +36,7 @@
 //     and copies the 6480-byte result into the shared snapshot buffer inside a
 //     short critical section. render() copies the snapshot out under the same
 //     lock and draws it with GxEPDDisplay::drawXbmRaw, whose CRC tracking means
-//     the panel only refreshes when the picture actually changed. The first
-//     picture after launch is a normal full-screen partial refresh (it has
-//     to clear the ROM list); every picture after that refreshes only the
-//     216-line game window, so the panel moves less ink per picture. When a game
+//     the panel only refreshes when the picture actually changed. When a game
 //     quits the next refresh is a full one (the black/white flash) so the
 //     residue partial refreshes leave behind does not follow the user back
 //     to the ROM list and home screen. There is no periodic full refresh
@@ -58,11 +55,12 @@
 //     while a game runs a GxEPD2 busy callback keeps draining the keyboard
 //     through the refresh, so input never waits for the panel.
 //
-//   - While a ROM runs the LoRa radio is put into standby and the mesh loop
-//     paused, reusing the OTA update's otaPauseRadio()/otaResumeRadio(). That
-//     keeps the shared SPI bus (LoRa, e-ink, SD) free for the panel and the
-//     save file, and keeps the mesh loop out of the frame budget. The node
-//     receives nothing while a game is running.
+//   - The LoRa radio and mesh loop keep running while a ROM runs (the mesh
+//     is on the other core, and the loop already lives with the panel
+//     blocking it during every refresh). Notification tones are suppressed
+//     while a game runs because the game owns the codec; toasts, buzzer and
+//     vibration behave as usual. GBC_PAUSE_RADIO=1 restores the OTA-style
+//     pause that earlier builds used.
 //
 //   - Saves: raw cart RAM as a .sav sidecar next to the ROM, size from the
 //     cartridge header (MBC2 carts declare 0 but carry 512 bytes). Loaded
@@ -88,7 +86,15 @@
 //     driver back to the factory OTP waveform (dither needs its drive) and
 //     restores fast on quit.
 //
-//   - No sound yet (build 3).
+//   - Sound (T-Deck Max): minigb_apu (MIT, vendored, patched to 44100 Hz as
+//     in Meck-P4, at 22050 Hz here) is fed by the core's audio_read/
+//     audio_write hooks; once per emulated frame the task renders 369 stereo
+//     samples, passes them through a GBC_AUDIO_DELAY_MS delay line so they
+//     land when the picture does, and writes them to the I2S driver the
+//     shared Audio object installed on port 0, after the
+//     ES8311 has been brought up the way the notification tones do it. Games
+//     start muted; the mic key toggles the codec's hard mute. The Pro runs
+//     silent for now.
 //
 //   - Telemetry: the task prints a speed line every 5 s (frames in the
 //     window, fps, and the cumulative average against 59.73) so whether the
@@ -99,6 +105,7 @@
 
 #include "GBCEmulatorScreen.h"
 #include "UITask.h"
+#include "../MyMesh.h"        // the_mesh.getRTCClock() for the header clock
 #include <helpers/ui/GxEPDDisplay.h>
 #include "TCA8418Keyboard.h"
 
@@ -113,13 +120,39 @@
 #include <strings.h>
 #include <stdio.h>
 
+// Sound: T-Deck Max (ES8311 codec) only in this build. The Pro's PCM5102A
+// path is different and stays silent for now.
+#if defined(HAS_ES8311_AUDIO)
+#define GBC_SOUND 1
+#else
+#define GBC_SOUND 0
+#endif
+
+#if GBC_SOUND
+// The APU declarations must precede the core: with ENABLE_SOUND the core
+// calls audio_read/audio_write directly. minigb_apu.h has no C++ linkage
+// guard of its own, and minigb_apu.c is compiled as C.
+extern "C" {
+#include "minigb_apu.h"
+}
+#include "variant.h"          // BOARD_I2S_* pins
+#include "target.h"           // board (amplifier off on quit)
+#include "Audio.h"            // ESP32-audioI2S: owns the I2S driver on port 0
+#include "ES8311.h"           // es8311_set_mute
+#include "driver/i2s.h"       // i2s_write / i2s_set_sample_rates on that driver
+extern Audio* audio;                      // main.cpp: shared Audio object
+extern void meck_audio_route_amp();       // target.cpp: AUDIO_SEL -> ES8311, amp on
+extern void meck_audio_codec_init();      // target.cpp: ES8311 register init, once per boot
+#endif
+
 #define PEANUT_FULL_GBC_SUPPORT 1
 #define ENABLE_LCD 1
-#define ENABLE_SOUND 0
+#define ENABLE_SOUND GBC_SOUND
 #include "peanut_gb.h"
 
 // ---- Firmware hooks ---------------------------------------------------------
 extern TCA8418Keyboard keyboard;          // main.cpp
+extern MyMesh the_mesh;                   // main.cpp
 #if defined(LilyGo_TDeck_Pro_Max)
 extern void toggleKeyboardBacklight();    // main.cpp (both-shifts chord, Max keyboard backlight)
 #endif
@@ -145,6 +178,12 @@ extern void otaResumeRadio();             // main.cpp
 #define GBC_SAVE_QUIET_MS  2000                       // cart RAM untouched this long -> write .sav
 #define GBC_STOP_WAIT_MS   200                        // max wait for the task to park on quit
 #define GBC_TASK_STACK  8192                          // bytes, static, reserved at boot
+// The LoRa radio and mesh loop keep running while a game plays (they live on
+// the other core; the loop already tolerates the panel blocking it during
+// every refresh). Set GBC_PAUSE_RADIO=1 to restore the OTA-style pause.
+#ifndef GBC_PAUSE_RADIO
+#define GBC_PAUSE_RADIO 0
+#endif
 #define GBC_TASK_PRIO   2
 #define GBC_TASK_CORE   0
 
@@ -176,6 +215,29 @@ static volatile bool    s_kbd_bl_req   = false;   // both-shifts chord seen by t
 static volatile unsigned long s_frames = 0;
 static unsigned         s_pictures = 0;       // pictures drawn this game (first one is full-screen)
 static TaskHandle_t     s_task = NULL;
+#if GBC_SOUND
+// One emulated frame of stereo s16 APU output: 44100/59.73 = 738 sample pairs.
+#define GBC_AUDIO_FRAME_BYTES (AUDIO_SAMPLES * 2 * sizeof(int16_t))
+// Software gain: the codec's DAC sits at 0 dB (audiobooks scale their own
+// samples first), so the APU's full-scale output is divided by 2^SHIFT.
+#ifndef GBC_AUDIO_SHIFT
+#define GBC_AUDIO_SHIFT 3                       // /8, about -18 dB
+#endif
+static bool             s_audio_on  = false;   // codec and I2S taken for this game
+static int16_t         *s_audio_buf = NULL;    // internal RAM (+1 stereo pair for the pad)
+static bool             s_muted     = false;
+// Delay line between the APU and the codec so sound lines up with a picture
+// that reaches the glass ~0.7-1 s after the frame it shows. PSRAM ring of
+// stereo pairs; sequential access only.
+#ifndef GBC_AUDIO_DELAY_MS
+#define GBC_AUDIO_DELAY_MS 950                   // tuned by ear on the Max
+#endif
+#define GBC_DELAY_PAIRS   ((uint32_t)AUDIO_SAMPLE_RATE * GBC_AUDIO_DELAY_MS / 1000)
+#define GBC_RING_PAIRS    (GBC_DELAY_PAIRS + 4 * AUDIO_SAMPLES)
+static int16_t         *s_delay_ring = NULL;   // PSRAM, GBC_RING_PAIRS stereo pairs
+static uint32_t         s_ring_w = 0, s_ring_r = 0, s_ring_fill = 0;
+#endif
+static volatile uint32_t s_us_core = 0, s_us_apu = 0, s_us_i2s = 0;   // per-window totals (all builds)
 static StackType_t      s_task_stack[GBC_TASK_STACK / sizeof(StackType_t)];   // .bss, internal RAM
 static StaticTask_t     s_task_tcb;
 
@@ -285,7 +347,52 @@ static void gbc_task(void *arg) {
   while (!s_stop) {
     // Peanut-GB's joypad register is active-low.
     s_gb->direct.joypad = (uint8_t)~keyboard.rawJoypad();
+    const int64_t tc0 = esp_timer_get_time();
     gb_run_frame(s_gb);
+    const int64_t tc1 = esp_timer_get_time();
+    s_us_core += (uint32_t)(tc1 - tc0);
+#if GBC_SOUND
+    if (s_audio_on) {
+      // This frame's APU output, scaled down, through the delay line, to the
+      // codec. The APU renders a fixed 369 stereo pairs per frame at 22050
+      // (= 22040/s, a shade under the DAC's 22050/s), so every sixth frame
+      // the last pair is sent twice: 369.17 per frame keeps the DMA queue
+      // (~370 ms at this rate) full, and i2s_write then blocks briefly each
+      // frame -- the audio clock pacing the game at exactly 1.00x rather
+      // than the queue draining into gaps.
+      audio_callback(NULL, (uint8_t*)s_audio_buf, (int)GBC_AUDIO_FRAME_BYTES);
+      for (unsigned i = 0; i < AUDIO_SAMPLES * 2; i++) s_audio_buf[i] >>= GBC_AUDIO_SHIFT;
+      uint32_t pairs = AUDIO_SAMPLES;
+      if ((s_frames % 6) == 0) {
+        s_audio_buf[AUDIO_SAMPLES * 2]     = s_audio_buf[AUDIO_SAMPLES * 2 - 2];
+        s_audio_buf[AUDIO_SAMPLES * 2 + 1] = s_audio_buf[AUDIO_SAMPLES * 2 - 1];
+        pairs++;
+      }
+      // Push this frame into the ring, pop the same number of pairs from
+      // GBC_AUDIO_DELAY_MS ago (silence until the ring has filled that far).
+      for (uint32_t i = 0; i < pairs; i++) {
+        s_delay_ring[s_ring_w * 2]     = s_audio_buf[i * 2];
+        s_delay_ring[s_ring_w * 2 + 1] = s_audio_buf[i * 2 + 1];
+        if (++s_ring_w >= GBC_RING_PAIRS) s_ring_w = 0;
+      }
+      s_ring_fill += pairs;
+      if (s_ring_fill >= GBC_DELAY_PAIRS + pairs) {
+        for (uint32_t i = 0; i < pairs; i++) {
+          s_audio_buf[i * 2]     = s_delay_ring[s_ring_r * 2];
+          s_audio_buf[i * 2 + 1] = s_delay_ring[s_ring_r * 2 + 1];
+          if (++s_ring_r >= GBC_RING_PAIRS) s_ring_r = 0;
+        }
+        s_ring_fill -= pairs;
+      } else {
+        memset(s_audio_buf, 0, pairs * 2 * sizeof(int16_t));
+      }
+      const int64_t ta1 = esp_timer_get_time();
+      s_us_apu += (uint32_t)(ta1 - tc1);
+      size_t put = 0;
+      i2s_write(I2S_NUM_0, s_audio_buf, pairs * 2 * sizeof(int16_t), &put, pdMS_TO_TICKS(100));
+      s_us_i2s += (uint32_t)(esp_timer_get_time() - ta1);
+    }
+#endif
     s_frames = s_frames + 1;
     f_win++;
     {
@@ -293,8 +400,12 @@ static void gbc_task(void *arg) {
       if (t - t_win >= 5000000) {
         const float win_fps = (float)f_win * 1000000.0f / (float)(t - t_win);
         const float avg_fps = (float)s_frames * 1000000.0f / (float)(t - t_start);
-        Serial.printf("[GBC] speed: %.1f fps last 5 s, %.1f fps average (%.2fx real-time)\n",
-                      win_fps, avg_fps, avg_fps / 59.73f);
+        Serial.printf("[GBC] speed: %.1f fps last 5 s, %.1f fps average (%.2fx real-time); per frame: core %lu us, apu %lu us, i2s wait %lu us\n",
+                      win_fps, avg_fps, avg_fps / 59.73f,
+                      (unsigned long)(f_win ? s_us_core / f_win : 0),
+                      (unsigned long)(f_win ? s_us_apu / f_win : 0),
+                      (unsigned long)(f_win ? s_us_i2s / f_win : 0));
+        s_us_core = s_us_apu = s_us_i2s = 0;
         t_win = t;
         f_win = 0;
       }
@@ -575,9 +686,54 @@ bool GBCEmulatorScreen::launch(int idx) {
   Serial.printf("[GBC] cgbMode=%d mbc=%d rom=%u bytes save=%u bytes\n",
                 (int)s_gb->cgb.cgbMode, (int)s_gb->mbc, (unsigned)s_rom_size, (unsigned)s_save_size);
 
+#if GBC_SOUND
+  // Sound. Same bring-up the notification tones and audiobooks use, minus
+  // the decoder: the shared Audio object installs and clocks the I2S driver
+  // on port 0 (with MCLK, which the ES8311 needs), routing and amp via the
+  // XL9555, then -- with the clocks already running, which the codec insists
+  // on -- the ES8311 register init. The game then writes raw stereo PCM into
+  // that driver every frame. If any step fails the game runs silent.
+  s_audio_on = false;
+  // Internal RAM: the APU makes four read-modify-write passes over this
+  // buffer per frame, which PSRAM handles badly. One extra stereo pair for
+  // the every-third-frame pad.
+  if (!s_audio_buf) s_audio_buf = (int16_t*)heap_caps_malloc(GBC_AUDIO_FRAME_BYTES + 2 * sizeof(int16_t),
+                                                              MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!s_audio_buf) s_audio_buf = (int16_t*)heap_caps_malloc(GBC_AUDIO_FRAME_BYTES + 2 * sizeof(int16_t),
+                                                              MALLOC_CAP_SPIRAM);
+  if (!s_delay_ring) s_delay_ring = (int16_t*)heap_caps_malloc(GBC_RING_PAIRS * 2 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+  if (s_delay_ring) { s_ring_w = s_ring_r = s_ring_fill = 0; memset(s_delay_ring, 0, GBC_RING_PAIRS * 2 * sizeof(int16_t)); }
+  if (s_audio_buf && s_delay_ring) {
+    if (!audio) audio = new Audio();
+    audio->stopSong();               // an audiobook or tone in progress loses the codec
+    meck_audio_route_amp();
+    bool ok = audio->setPinout(BOARD_I2S_BCLK, BOARD_I2S_LRC, BOARD_I2S_DOUT,
+                               I2S_PIN_NO_CHANGE, BOARD_I2S_MCLK);
+    if (ok) {
+      i2s_set_sample_rates(I2S_NUM_0, AUDIO_SAMPLE_RATE);
+      memset(s_audio_buf, 0, GBC_AUDIO_FRAME_BYTES);
+      for (int i = 0; i < 12; i++) {   // ~200 ms of silence: clocks live, no pop
+        size_t put = 0;
+        i2s_write(I2S_NUM_0, s_audio_buf, GBC_AUDIO_FRAME_BYTES, &put, pdMS_TO_TICKS(100));
+      }
+      meck_audio_codec_init();
+      es8311_set_mute(true);          // games start muted; the mic key unmutes
+      s_muted = true;
+      audio_init();                    // reset the APU
+      s_audio_on = true;
+      Serial.printf("[GBC] audio on (muted): %u Hz, %u samples/frame, gain 1/%u, delay %u ms, mic key = unmute\n",
+                    (unsigned)AUDIO_SAMPLE_RATE, (unsigned)AUDIO_SAMPLES, 1u << GBC_AUDIO_SHIFT, (unsigned)GBC_AUDIO_DELAY_MS);
+    } else {
+      Serial.println("[GBC] audio: setPinout failed -- running silent");
+    }
+  } else {
+    Serial.println("[GBC] audio buffer alloc failed -- running silent");
+  }
+#endif
+
   // ---- Hand the keyboard and the radio over, then start the task ----
   keyboard.setRawJoypad(true);
-#ifdef MECK_OTA_UPDATE
+#if GBC_PAUSE_RADIO && defined(MECK_OTA_UPDATE)
   otaPauseRadio();
 #endif
   // The dithered game picture needs the factory waveform's longer drive;
@@ -604,7 +760,7 @@ bool GBCEmulatorScreen::launch(int idx) {
   if (s_task == NULL) {
     Serial.println("[GBC] task create failed");
     keyboard.setRawJoypad(false);
-#ifdef MECK_OTA_UPDATE
+#if GBC_PAUSE_RADIO && defined(MECK_OTA_UPDATE)
     otaResumeRadio();
 #endif
     gbc_release_core();
@@ -631,10 +787,19 @@ void GBCEmulatorScreen::finishStop() {
   // navigation afterwards -- one impatient Q became four screens of "back".
   _releaseKbAfterDraw = true;
   _browserDrawn = false;
-#ifdef MECK_OTA_UPDATE
+#if GBC_PAUSE_RADIO && defined(MECK_OTA_UPDATE)
   otaResumeRadio();
 #endif
   s_rom_size = 0;                 // arena retained
+#if GBC_SOUND
+  if (s_audio_on) {
+    s_audio_on = false;
+    es8311_set_mute(false);          // leave the codec unmuted for the next user
+    i2s_zero_dma_buffer(I2S_NUM_0);
+    board.amplifierDisable();        // the next tone or book re-enables it
+    Serial.println("[GBC] audio off");
+  }
+#endif
   gbc_release_core();
   _playing = -1;
   _mode = BROWSER;
@@ -671,6 +836,15 @@ void GBCEmulatorScreen::poll() {
       s_cram_dirty = false;
       gbc_write_save();
     }
+#if GBC_SOUND
+    if (keyboard.rawMutePressed() && s_audio_on) {
+      s_muted = !s_muted;
+      es8311_set_mute(s_muted);
+      Serial.printf("[GBC] %s\n", s_muted ? "muted" : "unmuted");
+    }
+#else
+    keyboard.rawMutePressed();       // consume; no sound on this build
+#endif
     if (keyboard.rawExitPressed() || s_stop) {
       s_stop = true;
       _mode = STOPPING;
@@ -732,6 +906,65 @@ bool GBCEmulatorScreen::handleInput(char c) {
     default:
       return false;
   }
+}
+
+// ---- Game-screen header -----------------------------------------------------
+// The home screen's header, with the cumulative unread channel-message count
+// ("3 Unread", the same figure as the home screen's MSG strip) where the
+// node name goes, since the mesh keeps running during a game. Same text
+// size, colours and row (HOME_HDR_Y = -3 on the T-Deck) as the home screen;
+// battery as text-only percent at the right, which is what the home screen
+// shows for the Larger and custom-font styles; clock centred and kept
+// clear of the label, shown only once the time is valid.
+static void draw_game_header(DisplayDriver& display, UITask* task) {
+  NodePrefs* prefs = task->getNodePrefs();
+  const int hdrY = -3;
+  char label[16];
+  snprintf(label, sizeof(label), "%d Unread", task->getUnreadMsgCount());
+
+  display.setTextSize(prefs->smallTextSize());
+  display.setColor(DisplayDriver::GREEN);
+  display.setCursor(0, hdrY);
+  display.print(label);
+
+  uint8_t pct = 0;
+#if HAS_BQ27220
+  pct = task->getBatteryPercent();
+#else
+  {
+    const uint16_t mv = task->getBattMilliVolts();
+    if (mv > 0) {
+      int p = ((int)mv - 3000) * 100 / (4200 - 3000);
+      if (p < 0) p = 0;
+      if (p > 100) p = 100;
+      pct = (uint8_t)p;
+    }
+  }
+#endif
+  char pctStr[6];
+  snprintf(pctStr, sizeof(pctStr), "%d%%", (int)pct);
+  const uint16_t pw = display.getTextWidth(pctStr);
+  display.setCursor(display.width() - pw - 2, hdrY);
+  display.print(pctStr);
+
+  const uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  if (now > 1700000000) {
+    // now is past 2023 and the offset is at most +/-14 h, so local cannot
+    // go negative; unsigned keeps the arithmetic simple.
+    const uint32_t local = now + (uint32_t)((int32_t)prefs->utc_offset_hours * 3600);
+    const unsigned hrs  = (unsigned)((local / 3600) % 24);
+    const unsigned mins = (unsigned)((local / 60) % 60);
+    char timeBuf[8];
+    snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", hrs, mins);
+    display.setColor(DisplayDriver::LIGHT);
+    const uint16_t tw = display.getTextWidth(timeBuf);
+    int clockX = (display.width() - tw) / 2;
+    const int labelRight = display.getTextWidth(label) + 4;
+    if (clockX < labelRight) clockX = labelRight;
+    display.setCursor(clockX, hdrY);
+    display.print(timeBuf);
+  }
+  display.setTextSize(1);
 }
 
 // ---- Render -----------------------------------------------------------------
@@ -808,6 +1041,7 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
     _busyHooked = true;
   }
   display.startFrame();
+  draw_game_header(display, _task);
 
   // Ask the emulator task for a fresh picture for next time, and draw the
   // one it prepared last time.
@@ -818,11 +1052,19 @@ int GBCEmulatorScreen::renderGame(DisplayDriver& display) {
 
   const uint16_t fg = d.rawFgColor();
   d.drawXbmRaw(GBC_IMG_X, GBC_IMG_Y, s_mono_ui, OUT_W, OUT_H, fg);
+#if GBC_SOUND
+  d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..."
+                       : (!s_audio_on ? "Q: Quit"
+                       : (s_muted ? "Q: Quit   Press Mic key to unmute" : "Q: Quit   Mic: Mute")), fg);
+#else
   d.drawTextRaw(2, 308, (_mode == STOPPING) ? "Saving..." : "Q: Quit", fg);
-  if (_mode == PLAYING) {
-    if (s_pictures > 0) d.requestWindowRefresh(GBC_IMG_X, GBC_IMG_Y, OUT_W, OUT_H);
-    s_pictures++;
-  }
+#endif
+  // No windowed refresh: it was measured to save nothing (the panel's
+  // waveform time is the same for any window), and it left the footer row
+  // outside the window, so the mute hint never reached the glass. The
+  // driver's normal partial refresh covers the whole panel and skips
+  // refreshes when the frame has not changed.
+  if (_mode == PLAYING) s_pictures++;
   return 100;   // the UI loop's 800 ms e-ink floor sets the real cadence
 }
 

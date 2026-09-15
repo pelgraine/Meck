@@ -3171,6 +3171,14 @@ void loop() {
       bool audioBusy = (alarmScr && alarmScr->isRinging()) ||
                        (alarmScr && alarmScr->isAlarmAudioActive()) ||
                        (abPlayer && abPlayer->isAudioActive());
+#if defined(LilyGo_TDeck_Pro)
+      // A running Game Boy game owns the codec and I2S port: skip the tone
+      // (vibration and the toast still happen).
+      {
+        GBCEmulatorScreen* gbcScr = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gbcScr && gbcScr->isRunning()) audioBusy = true;
+      }
+#endif
 
       if (!audioBusy && file[0] != '\0') {
         // Lazy-init Audio object

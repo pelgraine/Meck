@@ -1918,7 +1918,15 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
   // Suppress toasts for room server messages (bulk sync would spam toasts)
-  if (!isOnRepeaterAdmin() && !isRoomMsg && !suppressNotif) {
+#if defined(LilyGo_TDeck_Pro)
+  // No toasts over a running Game Boy game either: on a busy mesh they would
+  // be constant. The header on that screen shows the unread count instead.
+  // Snake and Minesweeper are other screens and keep their toasts.
+  const bool gbcPlaying = isOnGBCScreen() && ((GBCEmulatorScreen*)gbc_screen)->isRunning();
+#else
+  const bool gbcPlaying = false;
+#endif
+  if (!isOnRepeaterAdmin() && !isRoomMsg && !suppressNotif && !gbcPlaying) {
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
     showAlert(alertBuf, 2000);

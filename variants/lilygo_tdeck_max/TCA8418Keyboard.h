@@ -53,6 +53,7 @@ private:
   bool             _rawJoypad;
   volatile uint8_t _rawMask;      // Peanut-GB direct.joypad bit layout, set = held
   volatile bool    _rawExit;      // Q or Shift+Backspace press-edge latch
+  volatile bool    _rawMute;      // Mic key press-edge latch (game sound mute toggle)
   bool             _rawShiftL;    // left Shift (35) physically held
   bool             _rawShiftR;    // right Shift (31) physically held
 
@@ -71,6 +72,10 @@ private:
     }
     if (keyCode == 10) {                       // Q = quit
       if (pressed) _rawExit = true;
+      return 0;
+    }
+    if (keyCode == 34) {                       // Mic = mute toggle
+      if (pressed) _rawMute = true;
       return 0;
     }
     if (keyCode == 11) {                       // Backspace: Shift+Backspace = quit
@@ -211,7 +216,7 @@ public:
     : _addr(addr), _wire(wire), _initialized(false), 
       _shiftActive(false), _shiftConsumed(false), _shiftHeld(false), _leftShiftHeld(false), _rightShiftHeld(false), _shiftUsedWhileHeld(false), _altActive(false), _symActive(false), _micHeld(false), _lastShiftTime(0),
       _enterHeld(false), _enterPressTime(0),
-      _rawJoypad(false), _rawMask(0), _rawExit(false), _rawShiftL(false), _rawShiftR(false) {}
+      _rawJoypad(false), _rawMask(0), _rawExit(false), _rawMute(false), _rawShiftL(false), _rawShiftR(false) {}
 
   bool begin() {
     // Check if device responds
@@ -461,6 +466,7 @@ public:
     _rawJoypad = on;
     _rawMask = 0;
     _rawExit = false;
+    _rawMute = false;
     _rawShiftL = _rawShiftR = false;
     _shiftActive = _shiftHeld = _leftShiftHeld = _rightShiftHeld = false;
     _shiftUsedWhileHeld = _shiftConsumed = false;
@@ -474,6 +480,12 @@ public:
     bool e = _rawExit;
     _rawExit = false;
     return e;
+  }
+  // Mic key press-edge latch, consumed on read.
+  bool rawMutePressed() {
+    bool m = _rawMute;
+    _rawMute = false;
+    return m;
   }
   bool isMicHeld() const { return _micHeld; }
   
