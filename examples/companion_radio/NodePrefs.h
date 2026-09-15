@@ -13,6 +13,11 @@
 #define NOTIF_MENTIONS  1   // Notify only when @nodename appears in message
 #define NOTIF_NONE      2   // No notifications (muted)
 
+// Canned messages: slot count and per-slot buffer size. CANNED_MSG_LEN is
+// the 133-char channel message cap plus a NUL terminator.
+#define CANNED_MSG_SLOTS  10
+#define CANNED_MSG_LEN    134
+
 struct NodePrefs {  // persisted to file
   float airtime_factor;
   char node_name[32];
@@ -78,6 +83,13 @@ struct NodePrefs {  // persisted to file
   // Percentage (5..100) the both-shifts toggle turns the keyboard backlight on to.
   // Takes effect on next toggle. Default 50.
   uint8_t kb_backlight_pct;        // 5..100, default 50
+
+  // --- Canned messages ---
+  // Ten pre-written messages, edited in Settings -> Canned Messages and sent
+  // from the channel screen (Max: speech-bubble capacitive button). Each slot
+  // holds up to 133 chars + NUL; an empty string marks an unused slot. Older
+  // prefs files short-read this final field and keep the all-empty default.
+  char canned_msgs[CANNED_MSG_SLOTS][CANNED_MSG_LEN];
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.

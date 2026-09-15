@@ -134,6 +134,13 @@ bool GxEPDDisplay::begin() {
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);
   setTextSize(1);  // Default to size 1
+  // Adafruit GFX wraps text to the next line by itself when a glyph would
+  // cross the right edge. Every Meck screen positions and wraps its own
+  // text, so that behaviour only ever corrupts a layout: a glyph the
+  // screen's wrap thought fitted lands on the next line's left margin on
+  // top of the real text (seen with Larger Noto in compose). Off: an
+  // over-wide line clips at the edge instead.
+  display.setTextWrap(false);
 #ifdef EINK_FULL_REFRESH_ONLY
   display.setFullWindow();
   display.fillScreen(GxEPD_WHITE);
@@ -611,6 +618,22 @@ uint16_t GxEPDDisplay::getTextWidth(const char* str) {
 
 void GxEPDDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
+  if (_fullNext) {
+    // Requested full refresh: push the frame with the full waveform even if
+    // nothing changed, to clear partial-update ghosting.
+    _fullNext = false;
+    _windowNext = false;
+    display.display(false);
+    last_display_crc_value = crc;
+    return;
+  }
+  if (_windowNext) {
+    // Requested window refresh: push and refresh only that window.
+    _windowNext = false;
+    display.displayWindow(_wx, _wy, _ww, _wh);
+    last_display_crc_value = crc;
+    return;
+  }
   if (crc != last_display_crc_value) {
 #ifdef EINK_FULL_REFRESH_ONLY
     display.display(false);  // Full refresh (SSD1681 doesn't support partial)

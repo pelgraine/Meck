@@ -11,6 +11,22 @@
 
 #define ADVERT_RESTART_DELAY  1000   // millis
 
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+// Slice tags for small-MTU peers. No real frame can start with one of these:
+// command codes are below 0x80 and push codes stop at 0x90. When slicing is in
+// effect, every frame to or from the peer travels as [tag][len][payload]
+// slices; the length byte lets stream-style transports (nRF52 BLEUart)
+// recover slice boundaries as well.
+#define SLICE_TAG_FIRST   0xF0   // first slice of a multi-slice frame
+#define SLICE_TAG_MIDDLE  0xF1
+#define SLICE_TAG_LAST    0xF2
+#define SLICE_TAG_SINGLE  0xF3   // whole frame fits in one slice
+#define SLICE_TAG_MASK    0xFC   // (b & MASK) == SLICE_TAG_FIRST matches any tag
+#ifndef MECK_BLE_SPLIT_MAX_MTU
+#define MECK_BLE_SPLIT_MAX_MTU 23   // slice outgoing frames when the peer MTU is at or below this
+#endif
+#endif
+
 void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code) {
   _pin_code = pin_code;
 
@@ -46,7 +62,14 @@ void SerialBLEInterface::_realBegin() {
 
   BLESecurity  sec;
   sec.setStaticPIN(_pin_code);
+#ifdef MECK_BLE_JUST_WORKS
+  // Garmin Connect IQ has no way to enter a PIN, so a watch can only reach an
+  // encrypted-but-unverified ("just works") link. Drop the MITM requirement so
+  // that link is accepted. The static PIN above is then never asked for.
+  sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_BOND);
+#else
   sec.setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+#endif
 
   //BLEDevice::setPower(ESP_PWR_LVL_N8);
 
@@ -59,11 +82,19 @@ void SerialBLEInterface::_realBegin() {
 
   // Create a BLE Characteristic
   pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+#ifdef MECK_BLE_JUST_WORKS
+  pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENCRYPTED);
+#else
   pTxCharacteristic->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
+#endif
   pTxCharacteristic->addDescriptor(new BLE2902());
 
   BLECharacteristic * pRxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+#ifdef MECK_BLE_JUST_WORKS
+  pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENCRYPTED);
+#else
   pRxCharacteristic->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
+#endif
   pRxCharacteristic->setCallbacks(this);
 
   pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
@@ -94,18 +125,36 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
   if (cmpl.success) {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Success");
     deviceConnected = true;
+    _auth_ok = true;
+
+    // Take the peer address from the event itself. A peer that pairs at
+    // connect time (e.g. a bonded Garmin watch) reaches this callback before
+    // onConnect() has stored _remote_bda, leaving it zeroed and making the
+    // three requests below fail with "Invalid connection remote_bda".
+    memcpy(_remote_bda, cmpl.bd_addr, 6);
 
     // Request fast connection interval (15ms) for faster contact sync.
     // Phone may negotiate higher, but most modern phones accept 15ms.
     // Units are 1.25ms, so 12 = 15ms, 16 = 20ms.
     esp_ble_conn_update_params_t conn_params;
     memcpy(conn_params.bda, _remote_bda, 6);
+#ifdef MECK_BLE_SLOW_INTERVAL
+    // Watch link: a message every few minutes does not need a 15 ms interval,
+    // and a fast interval keeps the watch radio (and this stack) busy all day.
+    conn_params.min_int = 80;   // 100ms  (80 x 1.25ms)
+    conn_params.max_int = 160;  // 200ms  (160 x 1.25ms)
+    conn_params.latency = 2;    // peer may skip 2 intervals when idle
+    conn_params.timeout = 600;  // 6 seconds supervision timeout
+    esp_ble_gap_update_conn_params(&conn_params);
+    BLE_DEBUG_PRINTLN(" - Requested relaxed connection interval (100-200ms)");
+#else
     conn_params.min_int = 12;   // 15ms   (12 × 1.25ms)
     conn_params.max_int = 16;   // 20ms   (16 × 1.25ms)
     conn_params.latency = 0;    // no skipped intervals
     conn_params.timeout = 400;  // 4 seconds supervision timeout
     esp_ble_gap_update_conn_params(&conn_params);
     BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
+#endif
 
     // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
     // Note: ESP-IDF misspells "preferred" as "prefered" in their API
@@ -118,6 +167,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     BLE_DEBUG_PRINTLN(" - Requested 2M PHY and DLE (251 bytes)");
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
+    _auth_ok = false;
 
     //pServer->removePeerDevice(pServer->getConnId(), true);
     pServer->disconnect(pServer->getConnId());
@@ -142,6 +192,7 @@ void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param
 
 void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
   BLE_DEBUG_PRINTLN("onDisconnect()");
+  _auth_ok = false;
   if (_isEnabled) {
     adv_restart_time = millis() + ADVERT_RESTART_DELAY;
 
@@ -155,6 +206,30 @@ void SerialBLEInterface::onWrite(BLECharacteristic* pCharacteristic, esp_ble_gat
   uint8_t* rxValue = pCharacteristic->getData();
   int len = pCharacteristic->getLength();
 
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+  if (len >= 1 && (rxValue[0] & SLICE_TAG_MASK) == SLICE_TAG_FIRST) {   // any SLICE_TAG_*
+    uint8_t tag = rxValue[0];
+    if (tag == SLICE_TAG_FIRST || tag == SLICE_TAG_SINGLE) _rx_len = 0;
+    if (_rx_len < 0) return;                                  // middle/last with no start: drop
+    if (len < 2) return;                                      // no length byte
+    int n = rxValue[1];
+    if (n > len - 2) n = len - 2;                             // never read past the write
+    if (_rx_len + n > MAX_FRAME_SIZE) { _rx_len = -1; return; }   // oversize: drop the frame
+    memcpy(&_rx_buf[_rx_len], rxValue + 2, n);
+    _rx_len += n;
+    if (tag == SLICE_TAG_LAST || tag == SLICE_TAG_SINGLE) {
+      if (recv_queue_len < FRAME_QUEUE_SIZE) {
+        recv_queue[recv_queue_len].len = _rx_len;
+        memcpy(recv_queue[recv_queue_len].buf, _rx_buf, _rx_len);
+        recv_queue_len++;
+      } else {
+        BLE_DEBUG_PRINTLN("ERROR: onWrite(), recv_queue is full! (sliced)");
+      }
+      _rx_len = -1;
+    }
+    return;
+  }
+#endif
   if (len > MAX_FRAME_SIZE) {
     BLE_DEBUG_PRINTLN("ERROR: onWrite(), frame too big, len=%d", len);
   } else if (recv_queue_len >= FRAME_QUEUE_SIZE) {
@@ -243,15 +318,53 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
     _last_write = millis();
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    bool popFrame = true;
+    uint16_t mtu = pServer->getPeerMTU(last_conn_id);
+    if (mtu <= MECK_BLE_SPLIT_MAX_MTU) {
+      // Small-MTU peer: send the next slice of the frame at the head of the
+      // queue, one slice per pass (keeps BLE_WRITE_MIN_INTERVAL pacing). The
+      // frame is only popped once its last slice has gone.
+      int room = (int)mtu - 3 - 2;                 // ATT payload minus tag and length bytes
+      if (room < 1) room = 1;
+      int total = send_queue[0].len;
+      int n = total - _tx_off;
+      if (n > room) n = room;
+      bool first = (_tx_off == 0);
+      bool last  = (_tx_off + n >= total);
+      uint8_t chunk[MAX_FRAME_SIZE + 1];
+      chunk[0] = (first && last) ? SLICE_TAG_SINGLE
+               : first ? SLICE_TAG_FIRST
+               : last  ? SLICE_TAG_LAST : SLICE_TAG_MIDDLE;
+      chunk[1] = (uint8_t)n;
+      memcpy(&chunk[2], &send_queue[0].buf[_tx_off], n);
+      pTxCharacteristic->setValue(chunk, n + 2);
+      pTxCharacteristic->notify();
+      BLE_DEBUG_PRINTLN("writeSlice: tag=%02X off=%d n=%d of %d", chunk[0], (int)_tx_off, n, total);
+      _tx_off += n;
+      if (last) {
+        _tx_off = 0;
+        BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d (sliced)", total, (uint32_t) send_queue[0].buf[0]);
+      } else {
+        popFrame = false;
+      }
+    } else {
+#endif
     pTxCharacteristic->setValue(send_queue[0].buf, send_queue[0].len);
     pTxCharacteristic->notify();
 
     BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
-
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    }
+    if (popFrame) {
+#endif
     send_queue_len--;
     if (send_queue_len > 0) {
       memmove(&send_queue[0], &send_queue[1], send_queue_len * sizeof(Frame));
     }
+#ifdef MECK_BLE_SMALL_MTU_SPLIT
+    }
+#endif
   }
 
   if (recv_queue_len > 0) {   // check recv queue
@@ -267,7 +380,15 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
     return len;
   }
 
-  if (pServer->getConnectedCount() == 0)  deviceConnected = false;
+  if (pServer->getConnectedCount() == 0) {
+    deviceConnected = false;
+  } else if (_auth_ok) {
+    // Authentication can complete before the GATT connect event (a bonded
+    // peer, e.g. a Garmin watch, encrypts immediately). The connected count
+    // is still 0 then, so the line above resets deviceConnected; restore it
+    // once the connect event has landed.
+    deviceConnected = true;
+  }
 
   if (deviceConnected != oldDeviceConnected) {
     if (!deviceConnected) {    // disconnecting

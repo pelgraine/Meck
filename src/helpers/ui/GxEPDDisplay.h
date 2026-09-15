@@ -15,6 +15,15 @@
 #include <GxEPD2_3C.h>
 #include <GxEPD2_4C.h>
 #include <GxEPD2_7C.h>
+
+// Experiment: swap the library's GDEQ031T10 driver for the vendored copy that
+// runs partial refreshes on a register waveform (see GxEPD2_310_GDEQ031T10_FAST.h).
+// Enabled only by the meck_max_ble_fastlut build environment.
+#ifdef EINK_FASTLUT_EXPERIMENT
+#include "GxEPD2_310_GDEQ031T10_FAST.h"
+#undef EINK_DISPLAY_MODEL
+#define EINK_DISPLAY_MODEL GxEPD2_310_GDEQ031T10_FAST
+#endif
 #include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSans18pt7b.h>
@@ -75,6 +84,9 @@ class GxEPDDisplay : public DisplayDriver {
   FrameCRC32 display_crc;
   int last_display_crc_value = 0;
   const GFXfont* _currentFont = nullptr;  // Track for UTF-8 rendering
+  bool _fullNext = false;                 // Next endFrame() does a full refresh
+  bool _windowNext = false;               // Next endFrame() refreshes only a window
+  int16_t _wx = 0, _wy = 0, _ww = 0, _wh = 0;   // that window, physical pixels
   uint8_t _currentTextScale = 1;          // Track glyph scale factor
 
   // Render one glyph from the current 8b font at the display's cursor position
@@ -158,6 +170,58 @@ public:
   // Force endFrame() to push to display even if CRC unchanged
   // (needed because drawPixelRaw bypasses CRC tracking)
   void invalidateFrameCRC() { last_display_crc_value = 0; }
+
+  // Make the next endFrame() a full refresh (the black/white flash) instead
+  // of a partial one, regardless of whether the frame changed. Clears the
+  // residue that builds up over many partial refreshes. The Game Boy
+  // emulator requests one when a game quits and periodically during play.
+  void requestFullRefresh() { _fullNext = true; }
+
+  // Make the next endFrame() push and refresh only the given window of the
+  // panel (physical pixels; x and w are rounded out to byte boundaries by
+  // the driver), regardless of whether the frame changed. A pending full
+  // refresh takes precedence. The Game Boy emulator uses it for the game
+  // picture so the panel only has to refresh 216 of its 320 lines.
+  void requestWindowRefresh(int16_t x, int16_t y, int16_t w, int16_t h) {
+    _windowNext = true;
+    _wx = x; _wy = y; _ww = w; _wh = h;
+  }
+
+  // Fast-waveform builds: choose the partial-refresh waveform (fast register
+  // LUT, or the factory OTP one while a dithered game picture is showing),
+  // and read how many fast partials have run since the last full refresh.
+  // No-ops on builds using the library driver.
+  void setFastWaveform(bool on) {
+#ifdef EINK_FASTLUT_EXPERIMENT
+    display.epd2.setFastWaveform(on);
+    if (!on) {
+      // Switching back to the factory waveform: put the panel through a
+      // hardware reset first. hibernate() powers it down and deep-sleeps
+      // it; the next refresh re-initialises it via the reset pin, which
+      // returns every register -- the five LUTs the fast mode loaded
+      // included -- to power-on defaults. Tests whether register-LUT
+      // residue is what ghosts moving sprites under the factory waveform.
+      display.hibernate();
+    }
+#else
+    (void)on;
+#endif
+  }
+  uint16_t fastPartialsSinceFull() const {
+#ifdef EINK_FASTLUT_EXPERIMENT
+    return display.epd2.fastPartialsSinceFull();
+#else
+    return 0;
+#endif
+  }
+
+  // Run a function repeatedly while the panel is busy refreshing: GxEPD2 calls
+  // it in place of its 1 ms sleep inside the busy wait, on the calling task.
+  // The Game Boy emulator uses it to keep polling the keyboard through the
+  // ~650 ms partial refresh. Pass NULL to remove.
+  void setBusyCallback(void (*cb)(const void*), const void* param = 0) {
+    display.epd2.setBusyCallback(cb, param);
+  }
 };
 
 #endif // !LilyGo_T5S3_EPaper_Pro

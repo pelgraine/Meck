@@ -34,6 +34,9 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
+#if defined(LilyGo_TDeck_Pro)
+  #include "GBCEmulatorScreen.h"
+#endif
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -49,7 +52,10 @@
   static unsigned long lastComposeRefresh = 0;
   static unsigned long lastComposeKeystroke = 0;
   static bool composeNeedsRefresh = false;
-  #define COMPOSE_REFRESH_INTERVAL 700  // ms — must exceed e-ink partial refresh time (~644ms)
+  #define COMPOSE_REFRESH_INTERVAL 0    // ms -- lastComposeRefresh is stamped AFTER drawComposeScreen()
+                                        // returns, i.e. after the ~650 ms e-ink refresh has already
+                                        // completed, so this interval only ever added dead time on top
+                                        // of the refresh (was 700, on the belief it had to cover it)
   #define COMPOSE_TYPING_PAUSE    250   // ms — wait this long after last keystroke before refreshing
 
   // Phone dialer debounce — independent from compose/smsSuppressLoop to avoid
@@ -113,13 +119,16 @@
   #ifdef HAS_TOUCHSCREEN
     #include "TouchInput.h"
     TouchInput touchInput(&Wire);
-    #if defined(LilyGo_TDeck_Pro_Max)
+    #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
       // T-Deck Pro MAX uses the vendored Hynitron driver (HynTouch) for the
       // CST328 instead of TouchInput. Its reset line is XL9555 P07; route the
       // driver's virtual-GPIO writes/reads through the board's XL9555 access,
       // mirroring the LilyGo factory driver (driver self-resets during init).
+      // MECK_PRO_HYN_TOUCH (T-Deck Pro v1.1 with the CST3530): same driver,
+      // but reset is native GPIO 38 -- no XL9555, so no virtual-GPIO callbacks.
       #include "HynTouch.h"
       #include "HynTouchBoard.h"
+      #if defined(LilyGo_TDeck_Pro_Max)
       static bool meckHynXl9555Write(uint32_t gpio_id, bool value, void* /*user_data*/) {
         if (!XL9555_GPIO_IS((int)gpio_id)) return false;
         board.xl9555_digitalWrite(XL9555_GPIO_TO_PIN(gpio_id), value);
@@ -130,6 +139,7 @@
         *out_value = board.xl9555_digitalRead(XL9555_GPIO_TO_PIN(gpio_id)) ? 1 : 0;
         return true;
       }
+      #endif
     #endif
   #endif
 
@@ -737,6 +747,9 @@
   #include "GamesMenuScreen.h"
   #include "SnakeScreen.h"
   #include "MinesweeperScreen.h"
+#if defined(LilyGo_TDeck_Pro)
+  #include "GBCEmulatorScreen.h"
+#endif
 
   static TouchDrvGT911 gt911Touch;
   static bool gt911Ready = false;
@@ -907,7 +920,7 @@
       return readTouchPortrait(outX, outY);
     }
     return readTouchLandscape(outX, outY);
-  #elif defined(LilyGo_TDeck_Pro_Max)
+  #elif defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
     {
       int16_t hx[1], hy[1];
       if (hyn_touch_get_point(hx, hy, 1) > 0) {
@@ -1236,6 +1249,42 @@ static void lastHeardToggleContact() {
 #endif
 
 // Touch mapping — must be after ui_task declaration
+#if HAS_GPS
+// Open the map screen with everything it needs: the SD flag, the GPS position
+// and the contact markers, then navigate. This is the setup the G key handler
+// has always done. The touch tile and CardKB routes used to call
+// ui_task.gotoMapScreen() bare, so a map opened from the tile before any G
+// press that boot showed "SD card not found" (MapScreen::_sdReady starts
+// false and only setSDReady() sets it). All three routes now come here.
+static void openMapScreen() {
+  Serial.println("Opening map");
+  cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
+  {
+    MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+    if (ms) {
+      ms->setSDReady(sdCardReady);
+      ms->setGPSPosition(sensors.node_lat,
+                         sensors.node_lon);
+      // Populate contact markers via iterator
+      ms->clearMarkers();
+      ContactsIterator it = the_mesh.startContactsIterator();
+      ContactInfo ci;
+      int markerCount = 0;
+      while (it.hasNext(&the_mesh, ci)) {
+        if (ci.gps_lat != 0 || ci.gps_lon != 0) {
+          double lat = ((double)ci.gps_lat) / 1000000.0;
+          double lon = ((double)ci.gps_lon) / 1000000.0;
+          ms->addMarker(lat, lon, ci.name, ci.type);
+          markerCount++;
+        }
+      }
+      Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
+    }
+  }
+  ui_task.gotoMapScreen();
+}
+#endif  // HAS_GPS
+
 #ifdef MECK_TOUCH_ENABLED
   #if defined(LilyGo_TDeck_Pro_Max)
   // T-Deck Pro MAX: the three capacitive pads below the screen are CST328 keys,
@@ -1254,7 +1303,20 @@ static void lastHeardToggleContact() {
           board.backlightSetBrightness((uint8_t)((_blPct * 255 + 50) / 100));
         }
         break;
-      case 1:  // speech bubble -- open channel picker (same as 'M')
+      case 1:  // speech bubble -- canned messages when a channel or DM
+               // conversation is open; otherwise channel picker (same as 'M')
+        if (ui_task.isOnChannelScreen()) {
+          ChannelScreen* chScr = (ChannelScreen*)ui_task.getChannelScreen();
+          if (chScr && (chScr->getViewChannelIdx() != 0xFF || chScr->isDMConversation())) {
+            if (chScr->isCannedOpen()) {
+              chScr->closeCannedList();
+            } else if (!chScr->openCannedList()) {
+              ui_task.showAlert("No canned messages", 1200);
+            }
+            ui_task.forceRefresh();
+            break;
+          }
+        }
         ui_task.gotoChannelPickerScreen();
         break;
       case 2:  // send / paper plane -- open DM inbox
@@ -1275,6 +1337,19 @@ static void lastHeardToggleContact() {
     if (ui_task.isHintActive()) {
       ui_task.dismissBootHint();
       return 0;
+    }
+
+    // Canned messages overlay open on the channel screen: it owns every tap.
+    // This must run before the status-bar go-home rule below -- the overlay's
+    // first row starts at vy 14 and straddles the vy<18 band, so a row tap
+    // was going home instead of sending, leaving the overlay flag set.
+    if (ui_task.isOnChannelScreen()) {
+      ChannelScreen* cannedTapScr = (ChannelScreen*)ui_task.getChannelScreen();
+      if (cannedTapScr && cannedTapScr->isCannedOpen()) {
+        cannedTapScr->cannedTapAt(vx, vy);   // row tap queues the send; else closes
+        ui_task.forceRefresh();
+        return 0;
+      }
     }
 
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
@@ -1326,7 +1401,7 @@ static void lastHeardToggleContact() {
         int row = (y - gridY) / pitch;
         if (row > 6) row = 6;
         if (row == 6) {
-  #ifdef HAS_4G_MODEM
+  #if defined(HAS_4G_MODEM) && !defined(MECK_40MHZ_TEST)
           ui_task.gotoSMSScreen();
   #endif
           return 0;
@@ -1341,14 +1416,14 @@ static void lastHeardToggleContact() {
           case 3: ui_task.gotoDiscoveryScreen(); return 0;
           case 4: ui_task.gotoTraceScreen(); return 0;
           case 5:
-  #if HAS_GPS
-            ui_task.gotoMapScreen();
+  #if HAS_GPS && !defined(MECK_40MHZ_TEST)
+            openMapScreen();
   #endif
             return 0;
           case 6: ui_task.gotoNotesScreen(); return 0;
           case 7: ui_task.gotoTextReader(); return 0;
           case 8:
-  #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
+  #if (!defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)) && !defined(MECK_40MHZ_TEST)
             // Audiobooks: lazy-init Audio + screen on first use (mirrors 'p' key handler)
             if (!ui_task.getAudiobookScreen()) {
               audio = new Audio();
@@ -1360,7 +1435,7 @@ static void lastHeardToggleContact() {
   #endif
             return 0;
           case 9:
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
             // Alarm: ensure Audio* exists (mirrors 'k' key handler)
             if (!audio) {
               audio = new Audio();
@@ -1373,7 +1448,7 @@ static void lastHeardToggleContact() {
   #endif
             return 0;
           case 10:
-  #ifdef MECK_WEB_READER
+  #if defined(MECK_WEB_READER) && !defined(MECK_40MHZ_TEST)
             ui_task.gotoWebReader();
   #endif
             return 0;
@@ -2015,6 +2090,24 @@ void setup() {
           MESH_DEBUG_PRINTLN("setup() - Touch input FAILED (HynTouch)");
         }
       }
+    #elif defined(MECK_PRO_HYN_TOUCH)
+      // T-Deck Pro v1.1 with the CST3530 (CST66xx family) at 0x1A: use the
+      // vendored Hynitron driver with native pins. The driver self-resets
+      // (cst66xx_rst) as its first init action using reset_pin, so no manual
+      // pulse is needed -- and the later GPIO 38 pulse in the DISPLAY_CLASS
+      // block is suppressed for this build (it would undo this init).
+      {
+        HynTouchConfig hcfg = hyn_touch_default_config();
+        hcfg.sda_pin = I2C_SDA;            // 13 (shared bus, same as the Max)
+        hcfg.scl_pin = I2C_SCL;            // 14
+        hcfg.reset_pin = CST328_PIN_RST;   // 38: native GPIO on the Pro v1.1
+        hcfg.irq_pin = CST328_PIN_INT;     // 12
+        if (hyn_touch_init_with_config(&hcfg)) {
+          MESH_DEBUG_PRINTLN("setup() - Touch input initialized (HynTouch, Pro v1.1)");
+        } else {
+          MESH_DEBUG_PRINTLN("setup() - Touch input FAILED (HynTouch, Pro v1.1)");
+        }
+      }
     #else
       if (touchInput.begin(CST328_PIN_INT)) {
         MESH_DEBUG_PRINTLN("setup() - Touch input initialized");
@@ -2040,7 +2133,7 @@ void setup() {
     
     // Initialize Touch reset pin (GPIO 38) 
     Serial.printf(">>> TOUCH DIAG: compiled CST328_PIN_RST = %d (MAX expects -1; a real GPIO means stale Pro variant)\n", (int)CST328_PIN_RST);
-    #ifdef CST328_PIN_RST
+    #if defined(CST328_PIN_RST) && !defined(MECK_PRO_HYN_TOUCH)
       pinMode(CST328_PIN_RST, OUTPUT);
       digitalWrite(CST328_PIN_RST, HIGH);
       delay(20);
@@ -2594,7 +2687,11 @@ void setup() {
       }
 
       // Start modem if enabled in config (default = enabled)
+#ifdef MECK_40MHZ_TEST
+      bool modemEnabled = false;  // 40 MHz test build: Phone gated, modem stays off
+#else
       bool modemEnabled = ModemManager::loadEnabledConfig();
+#endif
       if (modemEnabled) {
         modemManager.begin();
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
@@ -2664,7 +2761,11 @@ void setup() {
   // GPS is critical for timesync on standalone variants without 4G.
   #if HAS_GPS
   {
+#ifdef MECK_40MHZ_TEST
+    bool gps_wanted = false;  // 40 MHz test build: GPS gated, rail forced off
+#else
     bool gps_wanted = the_mesh.getNodePrefs()->gps_enabled;
+#endif
     Serial.printf("GPS: pref gps_enabled=%d\n", (int)gps_wanted);
     if (gps_wanted) {
       #ifdef PIN_GPS_EN
@@ -2716,7 +2817,7 @@ void setup() {
   // Register voice-over-LoRa callbacks early so incoming VE3 envelopes and
   // raw voice packets are handled even before user opens the voice screen.
   // The callbacks null-check the voice screen pointer, so they're safe at boot.
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
   the_mesh.setVoiceHandler(voiceRawCallback);
   the_mesh.setVoiceEnvelopeHandler(voiceEnvelopeCallback);
   #endif
@@ -2929,6 +3030,19 @@ void loop() {
   }
   #endif
 
+#if defined(LilyGo_TDeck_Pro)
+  // Game Boy emulator: hold the CPU at boost while a game runs (the core
+  // needs 240 MHz), and return to the games menu when the ROM list is
+  // backed out of. The screen's own poll() handles in-game quit.
+  if (ui_task.isOnGBCScreen()) {
+    GBCEmulatorScreen* gbc = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+    if (gbc) {
+      if (gbc->isRunning()) cpuPower.setBoost();
+      if (gbc->wantsExit()) ui_task.gotoGamesMenu();
+    }
+  }
+#endif
+
   // Alarm clock: background alarm check + audio tick
   #if defined(LilyGo_TDeck_Pro) && defined(MECK_AUDIO_VARIANT)
   {
@@ -2940,6 +3054,7 @@ void loop() {
         cpuPower.setBoost();
       }
 
+      #ifndef MECK_40MHZ_TEST
       // Periodic alarm check (~every 10 seconds)
       static unsigned long lastAlarmCheck = 0;
       if (millis() - lastAlarmCheck > ALARM_CHECK_INTERVAL_MS) {
@@ -2980,6 +3095,7 @@ void loop() {
           Serial.printf("ALARM: Fired slot %d, switched to ringing screen\n", fireSlot);
         }
       }
+      #endif  // MECK_40MHZ_TEST: alarm firing gated
     }
   }
   #endif
@@ -3055,6 +3171,14 @@ void loop() {
       bool audioBusy = (alarmScr && alarmScr->isRinging()) ||
                        (alarmScr && alarmScr->isAlarmAudioActive()) ||
                        (abPlayer && abPlayer->isAudioActive());
+#if defined(LilyGo_TDeck_Pro)
+      // A running Game Boy game owns the codec and I2S port: skip the tone
+      // (vibration and the toast still happen).
+      {
+        GBCEmulatorScreen* gbcScr = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gbcScr && gbcScr->isRunning()) audioBusy = true;
+      }
+#endif
 
       if (!audioBusy && file[0] != '\0') {
         // Lazy-init Audio object
@@ -3316,6 +3440,44 @@ void loop() {
       // During recording: keep CPU fast for DMA reads
       if (voiceScr->isRecording()) {
         cpuPower.setBoost();
+      }
+    }
+  }
+  #endif
+
+  // Canned messages: consume a tapped slot from the channel screen overlay
+  // and send it through the normal composed-message path (Max speech-bubble
+  // trigger). A channel view sends to that channel; a DM conversation sends
+  // a DM to that contact.
+  #if defined(LilyGo_TDeck_Pro_Max) && defined(MECK_TOUCH_ENABLED)
+  {
+    ChannelScreen* cannedChScr = (ChannelScreen*)ui_task.getChannelScreen();
+    int cannedSlot = cannedChScr ? cannedChScr->consumeCannedSend() : -1;
+    if (cannedSlot >= 0 && cannedSlot < CANNED_MSG_SLOTS) {
+      const char* cannedMsg = the_mesh.getNodePrefs()->canned_msgs[cannedSlot];
+      if (cannedMsg[0]) {
+        strncpy(composeBuffer, cannedMsg, sizeof(composeBuffer) - 1);
+        composeBuffer[sizeof(composeBuffer) - 1] = '\0';
+        composePos = strlen(composeBuffer);
+        if (cannedChScr->isDMConversation() && cannedChScr->getDMContactIdx() >= 0) {
+          composeDM = true;
+          composeDMContactIdx = cannedChScr->getDMContactIdx();
+          ContactInfo cannedCi;
+          if (the_mesh.getContactByIdx((uint32_t)composeDMContactIdx, cannedCi)) {
+            strncpy(composeDMName, cannedCi.name, sizeof(composeDMName) - 1);
+            composeDMName[sizeof(composeDMName) - 1] = '\0';
+          } else {
+            composeDMName[0] = '\0';
+          }
+        } else {
+          composeDM = false;
+          composeChannelIdx = cannedChScr->getViewChannelIdx();
+        }
+        sendComposedMessage();
+        composeBuffer[0] = '\0';
+        composePos = 0;
+        composeDM = false;
+        ui_task.forceRefresh();
       }
     }
   }
@@ -3772,6 +3934,9 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro)
+                  case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                   default: break;
                 }
               }
@@ -3833,6 +3998,9 @@ void loop() {
                 switch (sel) {
                   case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro)
+                  case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                   default: break;
                 }
               }
@@ -3987,7 +4155,7 @@ void loop() {
               case 'b': ui_task.gotoWebReader(); break;
 #endif
 #if HAS_GPS
-              case 'g': ui_task.gotoMapScreen(); break;
+              case 'g': openMapScreen(); break;
 #endif
               default:  ui_task.injectKey(ckb); break;
             }
@@ -4210,6 +4378,9 @@ void loop() {
                   switch (sel) {
                     case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
                     case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro)
+                    case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
                     default: break;
                   }
                 }
@@ -4302,7 +4473,7 @@ void loop() {
       if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
                      || smsScr->getSubView() == SMSScreen::APP_MENU)) {
         int16_t tx, ty;
-        #if defined(LilyGo_TDeck_Pro_Max)
+        #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
         int16_t _htx[1], _hty[1];
         bool _have = (hyn_touch_get_point(_htx, _hty, 1) > 0);
         if (_have) { tx = _htx[0]; ty = _hty[0]; }
@@ -4368,6 +4539,20 @@ void initKeyboard() {
   }
 }
 
+#if defined(LilyGo_TDeck_Pro_Max)
+// Both-shifts keyboard backlight toggle (MAX only -- IO42). Shared by the
+// normal key path below and by the Game Boy emulator, whose raw joypad mode
+// reads the keyboard itself, so the on/off state lives here rather than in
+// handleKeyboardInput().
+void toggleKeyboardBacklight() {
+  static bool kbdBacklightOn = false;
+  kbdBacklightOn = !kbdBacklightOn;
+  uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
+  analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
+  Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
+}
+#endif
+
 void handleKeyboardInput() {
   if (!keyboard.isReady()) return;
   
@@ -4390,6 +4575,19 @@ void handleKeyboardInput() {
     ui_task.dismissBootHint();
     return;  // Consume the keypress (don't act on it)
   }
+
+  // Canned messages overlay: any key closes it. Keyboard keys on the Pro/Max
+  // are handled directly in this function and never reach
+  // ChannelScreen::handleInput, so the overlay's own key handling cannot see
+  // them -- close it here and consume the key.
+  if (ui_task.isOnChannelScreen()) {
+    ChannelScreen* cannedKeyScr = (ChannelScreen*)ui_task.getChannelScreen();
+    if (cannedKeyScr && cannedKeyScr->isCannedOpen()) {
+      cannedKeyScr->closeCannedList();
+      ui_task.forceRefresh();
+      return;
+    }
+  }
   
   Serial.printf("handleKeyboardInput: key='%c' (0x%02X) composeMode=%d\n", 
                 key >= 32 ? key : '?', key, composeMode);
@@ -4406,11 +4604,7 @@ void handleKeyboardInput() {
   }
   // Both shifts together toggle the keyboard backlight (MAX only -- IO42).
   if (key == KB_KEY_KBD_BACKLIGHT) {
-    static bool kbdBacklightOn = false;
-    kbdBacklightOn = !kbdBacklightOn;
-    uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
-    analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
-    Serial.printf("Keyboard backlight %s\n", kbdBacklightOn ? "ON" : "OFF");
+    toggleKeyboardBacklight();
     return;
   }
 #endif
@@ -5140,7 +5334,7 @@ void handleKeyboardInput() {
   if (key == KB_KEY_MIC_RELEASE) return;
 
   // Mic key press from any non-modal screen — open voice message screen
-  #ifdef MECK_AUDIO_VARIANT
+  #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
   if (key == KB_KEY_MIC) {
     Serial.println("Opening voice message screen (mic key)");
     if (!ui_task.getVoiceScreen()) {
@@ -5309,7 +5503,7 @@ void handleKeyboardInput() {
         }
         break;
       }
-    #if !defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)
+    #if (!defined(HAS_4G_MODEM) || defined(MECK_AUDIO_VARIANT)) && !defined(MECK_40MHZ_TEST)
       // Otherwise: open audiobook player - lazy-init Audio + screen on first use
       Serial.println("Opening audiobook player");
       if (!ui_task.getAudiobookScreen()) {
@@ -5325,7 +5519,7 @@ void handleKeyboardInput() {
     #endif
       break;
 
-    #ifdef MECK_AUDIO_VARIANT
+    #if defined(MECK_AUDIO_VARIANT) && !defined(MECK_40MHZ_TEST)
     case 'k':
       // Open alarm clock (screen created at boot; just ensure Audio* is available)
       Serial.println("Opening alarm clock");
@@ -5342,7 +5536,7 @@ void handleKeyboardInput() {
       break;
     #endif
 
-    #ifdef HAS_4G_MODEM
+    #if defined(HAS_4G_MODEM) && !defined(MECK_40MHZ_TEST)
     case 't':
       // Open SMS (4G variant only)
       Serial.println("Opening SMS");
@@ -5350,7 +5544,7 @@ void handleKeyboardInput() {
       break;
     #endif
 
-    #ifdef MECK_WEB_READER
+    #if defined(MECK_WEB_READER) && !defined(MECK_40MHZ_TEST)
     case 'b':
       // Open web reader (browser)
       Serial.println("Opening web reader");
@@ -5400,36 +5594,14 @@ void handleKeyboardInput() {
     #endif
     
     case 'g':
+    #ifndef MECK_40MHZ_TEST
       // Open map screen, or re-center on GPS if already on map
       if (ui_task.isOnMapScreen()) {
         ui_task.injectKey('g');  // Re-center on GPS
       } else {
-        Serial.println("Opening map");
-        cpuPower.setBoost();  // Map render is CPU-intensive (PNG decode + SD reads)
-        {
-          MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
-          if (ms) {
-            ms->setSDReady(sdCardReady);
-            ms->setGPSPosition(sensors.node_lat,
-                               sensors.node_lon);
-            // Populate contact markers via iterator
-            ms->clearMarkers();
-            ContactsIterator it = the_mesh.startContactsIterator();
-            ContactInfo ci;
-            int markerCount = 0;
-            while (it.hasNext(&the_mesh, ci)) {
-              if (ci.gps_lat != 0 || ci.gps_lon != 0) {
-                double lat = ((double)ci.gps_lat) / 1000000.0;
-                double lon = ((double)ci.gps_lon) / 1000000.0;
-                ms->addMarker(lat, lon, ci.name, ci.type);
-                markerCount++;
-              }
-            }
-            Serial.printf("MapScreen: %d contacts with GPS position\n", markerCount);
-          }
-        }
-        ui_task.gotoMapScreen();
+        openMapScreen();
       }
+    #endif  // MECK_40MHZ_TEST: map gated
       break;
     
     case 'n':
@@ -5445,6 +5617,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5465,6 +5640,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5489,6 +5667,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5509,6 +5690,9 @@ void handleKeyboardInput() {
           || ui_task.isOnPathEditor() || ui_task.isOnChannelPickerScreen()
           || ui_task.isOnTraceScreen()
           || ui_task.isOnGamesMenu() || ui_task.isOnSnakeScreen() || ui_task.isOnMinesweeperScreen()
+#if defined(LilyGo_TDeck_Pro)
+          || ui_task.isOnGBCScreen()
+#endif
 #ifdef MECK_WEB_READER
           || ui_task.isOnWebReader()
 #endif
@@ -5589,10 +5773,17 @@ void handleKeyboardInput() {
           switch (sel) {
             case GAME_SNAKE: ui_task.gotoSnakeScreen(); break;
             case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
+#if defined(LilyGo_TDeck_Pro)
+            case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
             // case GAME_2048: ui_task.goto2048Screen(); break;
             default: break;
           }
         }
+#if defined(LilyGo_TDeck_Pro)
+      } else if (ui_task.isOnGBCScreen()) {
+        ui_task.injectKey('\r');   // ROM list: play the highlighted ROM
+#endif
       } else if (ui_task.isOnSnakeScreen()) {
         ui_task.injectKey('\r');
         SnakeScreen* ss = (SnakeScreen*)ui_task.getSnakeScreen();
@@ -5898,6 +6089,20 @@ void handleKeyboardInput() {
         }
         break;
       }
+#if defined(LilyGo_TDeck_Pro)
+      // Game Boy screen: Shift+Del in the ROM list goes back to games menu.
+      // While a game runs the keyboard is in raw joypad mode and no key
+      // reaches here; the quit chord is handled inside the emulator screen.
+      if (ui_task.isOnGBCScreen()) {
+        ui_task.injectKey(KEY_CANCEL);
+        GBCEmulatorScreen* gbs = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gbs && gbs->wantsExit()) {
+          Serial.println("Nav: Game Boy -> Games Menu");
+          ui_task.gotoGamesMenu();
+        }
+        break;
+      }
+#endif
       // Snake screen: Shift+Del goes back to games menu
       if (ui_task.isOnSnakeScreen()) {
         ui_task.injectKey(KEY_CANCEL);
@@ -6042,7 +6247,11 @@ void drawComposeScreen() {
   char dblStr[3] = {0, 0, 0};
   
   int px = 0;
-  int lineW = display.width();
+  // The e-ink driver draws everything 2 virtual units to the right of the
+  // cursor it is given (its x offset), so a line measured against the full
+  // width can run a few physical pixels past the panel edge. Leave that
+  // margin out of the usable width.
+  int lineW = display.width() - 2;
   bool atWordBoundary = true;
   
   for (int i = 0; i < composePos; i++) {

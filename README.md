@@ -37,6 +37,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Per-Channel Notification Preferences (v1.10+)](#per-channel-notification-preferences-v110)
   - [Custom Notification Tones (v1.10+)](#custom-notification-tones-v110)
   - [Games (v1.10+)](#games-v110)
+    - [Game Boy / Game Boy Color Emulator (v1.14+)](#game-boy--game-boy-color-emulator-v114)
   - [Private Channels (v1.11+)](#private-channels-v111)
   - [Channel Sharing via DM (v1.11+)](#channel-sharing-via-dm-v111)
   - [Config Export/Import (v1.11+)](#config-exportimport-v111)
@@ -112,7 +113,7 @@ The T-Deck Pro, T-Deck Max, and T5S3 use the ESP32-S3 with 16 MB flash and 8 MB 
 
 ## SD Card Requirements
 
-**An SD card is essential for Meck to function properly.** Many features — including the e-book reader, notes, bookmarks, web reader cache, audiobook playback, firmware updates, contact import/export, and WiFi credential storage — rely on files stored on the SD card. Without an SD card inserted, the device will boot and handle mesh messaging, but most extended features will be unavailable or will fail silently.
+**An SD card is essential for Meck to function properly.** Many features — including the e-book reader, notes, bookmarks, web reader cache, audiobook playback, firmware updates, contact import/export, WiFi credential storage, and Game Boy ROMs and saves — rely on files stored on the SD card. Without an SD card inserted, the device will boot and handle mesh messaging, but most extended features will be unavailable or will fail silently.
 
 **Recommended:** A **32 GB or larger** microSD card formatted as **FAT32**. Meck's extensive feature set — audiobooks, e-books, voice recordings, contact exports, alarm sounds, web reader cache, notes, and firmware images — can accumulate significant storage over time, so a larger card is worthwhile. MeshCore users have found that **SanDisk** microSD cards are the most reliable across both the T-Deck Pro and T5S3.
 
@@ -566,7 +567,7 @@ To assign a tone: from the home screen, press **S** to open settings, scroll dow
 
 ### Games (v1.10+)
 
-Press **J** from the home screen to open the games menu. Two classic games are included:
+Press **J** from the home screen (or tap the **Games** tile) to open the games menu. Two classic games are included on every build, and the T-Deck Max adds a Game Boy emulator (see below):
 
 **Snake** -- the Nokia classic. Guide the snake around the screen to eat food and grow longer without crashing into the walls or your own tail. The game runs on the e-ink display at a pace suited to the refresh rate.
 
@@ -588,6 +589,35 @@ Press **J** from the home screen to open the games menu. Two classic games are i
 | Q | Quit to games menu |
 
 On the T-Deck Max the board is larger, with a 15x20 grid and 50 mines.
+
+#### Game Boy / Game Boy Color Emulator (v1.14+)
+
+The third entry on the games menu is **Game Boy**: an emulator built on the [Peanut-GB](https://github.com/deltabeard/Peanut-GB) core that runs original Game Boy (`.gb`) and Game Boy Color (`.gbc`) games at their real speed. Game Boy Advance (`.gba`) is a different machine and is not supported. It runs on the T-Deck Pro and the T-Deck Max. **Sound is T-Deck Max only** in this release; the Pro's audio variants can do sound but it is not yet wired up, and the Pro 4G variants have no audio hardware.
+
+**Getting games.** No game is bundled -- you supply your own ROM files. Two free homebrew titles that run well: [uCity](https://github.com/AntonioND/ucity) (GPL-3.0, a Game Boy Color city builder; the `.gbc` is on its Releases page) and [Halo: Combat Devolved](https://sofaswordsman.itch.io/halo-combat-devolved) (a free 2 MB Game Boy Color demake; download the ROM from the page). Anything else is up to you and your own copies.
+
+**Storing games.** Put ROM files in a folder named **`roms`** at the top level of the SD card. The list shows `.gb` and `.gbc` files in that folder only (no subfolders), up to 32 of them, with filenames under 48 characters; longer names are skipped without a message, and the `._` metadata files macOS leaves on FAT cards are ignored.
+
+**Running a game.** Open the games menu, choose **Game Boy**, move to a ROM with **W / S** and press **Enter**. A "Loading..." box shows while the ROM is read from the card (a second or two for a large game). The **mesh keeps running** while you play -- messages still arrive, the header shows the unread count -- but notification tones and the "new message" pop-ups are held back so they do not interrupt the game. The CPU is held at 240 MHz for the duration, so expect higher battery drain than normal use.
+
+| Key | Game Boy button |
+|-----|-----------------|
+| W / A / S / D | D-pad |
+| K | A |
+| J | B |
+| Enter | Start |
+| Space | Select |
+| Q (or Shift+Backspace) | Quit to the ROM list -- save written first |
+
+Keys are held-to-hold, so walking and holding a button together work as they would on the real thing. In-game button meanings are the game's own; on the Game Boy convention A confirms, so **K** selects on most menus. Press **Q** again on the ROM list to return to the games menu.
+
+**Sound (T-Deck Max).** Games start **muted**; press the **Mic** key to unmute, and again to mute. The footer shows which the key will do. Sound is Game Boy Color chiptune only, at a level well below the notification tones.
+
+**What the picture looks like.** The game is drawn at 1.5x (240x216, the full width of the panel) in black and white, with an ordered dither standing in for the Game Boy's shades, so lighter colours read as fine stipple. Because e-ink can only redraw about once every 0.7 seconds, the picture updates roughly 1.4 times a second while the game itself runs at the full 59.7 frames per second underneath -- fast animation is shown as a series of snapshots, but timing, gameplay and text boxes are unaffected. When you quit, the screen does a full black-and-white flash to clear the ghosting that partial updates leave behind. Games with a lot of moving sprites (Pokemon Gold's overworld, say) show some ghosting of the moving parts while you play; this is a limit of e-ink at this speed, not a fault. In dark mode the picture is inverted along with everything else.
+
+**Saves.** Games that save to cartridge RAM keep their saves: a **`.sav` file is written next to the ROM** (`game.gbc` becomes `game.sav`) and loaded on the next launch. It is the standard raw cart-RAM format desktop emulators use, so saves can be copied between the device and a PC in either direction. The file is written in the background a short while after you save in the game (and again on quit if anything is still unsaved), so you normally do not need to quit to preserve progress; but the write only happens once the game has been idle for a moment, so it is safest to pause before powering off. Real-time-clock state (the day/night cycle in Pokemon Gold, Silver and Crystal) is not persisted; the in-game clock restarts each time.
+
+**Limits in this release.** Sound on the T-Deck Max only; one ROM folder, 32 ROMs, no subfolders; a 2 MB game needs a 2 MB block of PSRAM, which is reserved on the first launch after boot and kept, so launching any game early guarantees the big ones work later. The emulator needs 240 MHz to run at full speed and is omitted from the games menu on the 40 MHz battery-saver builds.
 
 ### Private Channels (v1.11+)
 
@@ -909,7 +939,9 @@ The home screen includes a **Shutdown** page. Selecting it powers the device off
 
 The LilyGo T-Deck Max is a close relative of the T-Deck Pro: same 240×320 e-ink panel and TCA8418 keyboard, same ESP32-S3, and the same on-device UI. **All the [T-Deck Pro](#t-deck-pro) keyboard controls and screens apply unchanged** — this section only covers what's different on the MAX.
 
-The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1400 mAh battery.
+The Max is also, as of v1.14, the only Meck device that plays [Game Boy emulator](#game-boy--game-boy-color-emulator-v114) sound (the emulator itself also runs on the T-Deck Pro).
+
+The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1500 mAh battery.
 
 ### T-Deck Max Build Variants
 
@@ -1408,6 +1440,12 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Per-channel notification preferences with @mention support (v1.10)
 - [X] Custom notification tones per channel -- audio variant (MP3) and 4G variant (WAV via modem) (v1.10)
 - [X] Games menu with Snake and Minesweeper (v1.10)
+- [X] Game Boy / Game Boy Color emulator, T-Deck Max (v1.14) -- see [Games](#games-v110)
+- [X] Game Boy emulator on the T-Deck Pro (v1.14; sound not yet on the Pro)
+- [X] Game Boy emulator sound on the T-Deck Max, through the ES8311, mic key to mute (v1.14)
+- [ ] Game Boy emulator sound on the T-Deck Pro audio variants (PCM5102A)
+- [X] Emulator omitted from the games menu on the 40 MHz battery-saver builds (v1.14)
+- [ ] Game Boy real-time-clock state in save files
 - [X] MAX_GROUP_CHANNELS expanded to 40 for all builds (v1.10)
 - [X] Private channel support with random secret generation (v1.11)
 - [X] Channel sharing via encrypted DM with auto-add on receive (v1.11)
@@ -1498,6 +1536,7 @@ However, this firmware links against libraries with different license terms. Bec
 | [SensorLib](https://github.com/lewisxhe/SensorLib) | MIT | Lewis He (T5S3 touch/RTC) |
 | [ESP32-audioI2S](https://github.com/schreibfaul1/ESP32-audioI2S) | GPL-3.0 | schreibfaul1 / Wolle |
 | [Codec2](https://github.com/sh123/esp32_codec2_arduino) | LGPL-2.1 | sh123 (ESP32 port) |
+| [Peanut-GB](https://github.com/deltabeard/Peanut-GB) | MIT | Mahyar Koshkouei / deltabeard (Game Boy emulator core, vendored) |
 | [JPEGDEC](https://github.com/bitbank2/JPEGDEC) | Apache-2.0 | Larry Bank / bitbank2 |
 | [PNGdec](https://github.com/bitbank2/PNGdec) | Apache-2.0 | Larry Bank / bitbank2 |
 | [ESPAsyncWebServer](https://github.com/me-no-dev/ESPAsyncWebServer) | LGPL-2.1 | Hristo Gochkov / me-no-dev (OTA) |
@@ -1518,3 +1557,5 @@ However, this firmware links against libraries with different license terms. Bec
 ¹ Includes INA219, INA260, INA3221, AHTX0, BME280, BMP280, BME680, BMP085, SHTC3, MLX90614, VL53L0X — all MIT or BSD licensed. Used via the sensor manager for optional environmental monitoring.
 
 Full license texts for each dependency are available in their respective repositories linked above.
+
+No Game Boy software of any kind is included in Meck; the emulator runs only ROM files the user places on the SD card.

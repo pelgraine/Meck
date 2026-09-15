@@ -1,4 +1,4 @@
-#if defined(LilyGo_TDeck_Pro_Max)
+#if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
 // =============================================================================
 // hyn_platform.cpp -- Meck port.
 //

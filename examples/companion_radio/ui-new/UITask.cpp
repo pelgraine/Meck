@@ -13,6 +13,9 @@
 #include "GamesMenuScreen.h"
 #include "SnakeScreen.h"
 #include "MinesweeperScreen.h"
+#if defined(LilyGo_TDeck_Pro)
+#include "GBCEmulatorScreen.h"
+#endif
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -159,7 +162,7 @@ class HomeScreen : public UIScreen {
     WIFI_STATUS,
 #endif
     ADVERT,
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     GPS,
 #endif
 #if UI_SENSORS_PAGE == 1
@@ -511,9 +514,25 @@ public:
           eink->drawXbmRaw(tx + (tileW - HOME_ICON_W) / 2, ty + 5, tiles[i].icon, HOME_ICON_W, HOME_ICON_H, fg);
           int lw = eink->measureTextRawStyled(tiles[i].label);
           eink->drawTextRawStyled(tx + (tileW - lw) / 2, ty + 17, tiles[i].label, fg);
+#ifdef MECK_40MHZ_TEST
+          // 40 MHz test build: Maps(5), Audiobooks(8), Alarm(9) and Browser(10)
+          // are gated -- knock out every other pixel so the tile reads greyed.
+          // Taps on these tiles are inert (see mapTouchTap in main.cpp).
+          if (i == 5 || i == 8 || i == 9 || i == 10) {
+            const uint16_t bg = (fg == GxEPD_BLACK) ? GxEPD_WHITE : GxEPD_BLACK;
+            for (int py = ty; py < ty + tileH; py++) {
+              for (int px = tx; px < tx + tileW; px++) {
+                if (((px + py) & 1) == 0) eink->drawPixelRaw(px, py, bg);
+              }
+            }
+          }
+#endif
         }
 
-        // Full-width Phone tile (row 6)
+        // Full-width Phone tile (row 6) -- omitted on Pro audio builds
+        // (MECK_AUDIO_VARIANT without HAS_4G_MODEM): no modem, and the
+        // tile's tap was already inert on those builds (see mapTouchTap).
+        #if !defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
         {
           int ty = gridY + 6 * (tileH + gapY);
           int tw = tileW * 2 + gapX;
@@ -521,7 +540,19 @@ public:
           eink->drawXbmRaw(gridX + (tw - HOME_ICON_W) / 2, ty + 5, icon_phone, HOME_ICON_W, HOME_ICON_H, fg);
           int lw = eink->measureTextRawStyled("Phone");
           eink->drawTextRawStyled(gridX + (tw - lw) / 2, ty + 17, "Phone", fg);
+#ifdef MECK_40MHZ_TEST
+          // Phone is gated on the 40 MHz test build -- grey it out too
+          {
+            const uint16_t bg = (fg == GxEPD_BLACK) ? GxEPD_WHITE : GxEPD_BLACK;
+            for (int py = ty; py < ty + tileH; py++) {
+              for (int px = gridX; px < gridX + tw; px++) {
+                if (((px + py) & 1) == 0) eink->drawPixelRaw(px, py, bg);
+              }
+            }
+          }
+#endif
         }
+        #endif  // Phone tile (Pro audio builds omit)
 
         // Top status strip (physical, between page dots and grid): unread
         // count plus connection state / WiFi IP / BLE pin
@@ -995,7 +1026,7 @@ public:
       display.drawTextCentered(display.width() / 2, 57, "advert: " PRESS_LABEL);
       display.drawTextCentered(display.width() / 2, 67, "or press Enter key");
 #endif
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     } else if (_page == HomePage::GPS) {
       extern GPSStreamCounter gpsStream;
       LocationProvider* nmea = sensors.getLocationProvider();
@@ -1366,7 +1397,7 @@ public:
       }
       return true;
     }
-#if ENV_INCLUDE_GPS == 1
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
     if (c == KEY_ENTER && _page == HomePage::GPS) {
       _task->toggleGPS();
       return true;
@@ -1588,6 +1619,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   games_menu_screen = new GamesMenuScreen(this);
   snake_screen = new SnakeScreen(this, &rtc_clock);
   minesweeper_screen = new MinesweeperScreen(this);
+#if defined(LilyGo_TDeck_Pro)
+  gbc_screen = new GBCEmulatorScreen(this);
+#endif
 #if defined(LilyGo_T5S3_EPaper_Pro) || defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -1793,7 +1827,11 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   {
   #ifdef MECK_AUDIO_VARIANT
   if (!suppressNotif) {
+  #ifdef MECK_40MHZ_TEST
+    const char* customSound = NULL;  // MP3 tones gated -- default buzzer path runs
+  #else
     const char* customSound = notifSounds.getSoundForChannel(channel_idx);
+  #endif
     if (customSound && customSound[0] != '\0') {
       char soundPath[48];
       snprintf(soundPath, sizeof(soundPath), "/alarms/%s", customSound);
@@ -1880,7 +1918,15 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   // Don't interrupt user with popup - just show brief notification
   // Messages are stored in channel history, accessible via tile/key
   // Suppress toasts for room server messages (bulk sync would spam toasts)
-  if (!isOnRepeaterAdmin() && !isRoomMsg && !suppressNotif) {
+#if defined(LilyGo_TDeck_Pro)
+  // No toasts over a running Game Boy game either: on a busy mesh they would
+  // be constant. The header on that screen shows the unread count instead.
+  // Snake and Minesweeper are other screens and keep their toasts.
+  const bool gbcPlaying = isOnGBCScreen() && ((GBCEmulatorScreen*)gbc_screen)->isRunning();
+#else
+  const bool gbcPlaying = false;
+#endif
+  if (!isOnRepeaterAdmin() && !isRoomMsg && !suppressNotif && !gbcPlaying) {
     char alertBuf[40];
     snprintf(alertBuf, sizeof(alertBuf), "New: %s", from_name);
     showAlert(alertBuf, 2000);
@@ -1936,7 +1982,22 @@ void UITask::userLedHandler() {
 #endif
 }
 
+#ifndef EINK_FAST_FULL_EVERY
+#define EINK_FAST_FULL_EVERY 20
+#endif
+
 void UITask::setCurrScreen(UIScreen* c) {
+#if defined(LilyGo_TDeck_Pro) && defined(EINK_FASTLUT_EXPERIMENT)
+  // Fast-waveform housekeeping: the register waveform pushes every pixel on
+  // every partial and builds up ghosting and ink imbalance. After
+  // EINK_FAST_FULL_EVERY fast partials, make the redraw that comes with this
+  // screen change a full refresh, so the flash lands where a redraw is
+  // happening anyway rather than mid-typing.
+  if (_display != NULL) {
+    GxEPDDisplay* gd = static_cast<GxEPDDisplay*>(_display);
+    if (gd->fastPartialsSinceFull() >= EINK_FAST_FULL_EVERY) gd->requestFullRefresh();
+  }
+#endif
   curr = c;
   _alert_expiry = 0;  // Dismiss any active toast — prevents stale overlay from
                        // triggering extra 644ms e-ink refreshes on the new screen
@@ -2312,6 +2373,10 @@ if (curr) curr->poll();
             else if (rt == ROW_FREQ) label = "Frequency";
             showVirtualKeyboard(VKB_SETTINGS_TEXT, label, ss->getEditBuf(), 31);
           }
+          if (ss->needsCannedVKB()) {
+            ss->clearCannedNeedsVKB();
+            showVirtualKeyboard(VKB_CANNED_TEXT, "Canned Message", ss->getCannedBuf(), CANNED_MSG_LEN - 1);
+          }
         }
 
         if (_hintActive && millis() < _hintExpiry) {
@@ -2414,6 +2479,12 @@ if (curr) curr->poll();
       unsigned long minNext = millis() + 300000;  // Full refresh: 5 min idle
 #else
       unsigned long minNext = millis() + 800;   // Partial refresh: 800ms floor
+#endif
+#if defined(LilyGo_TDeck_Pro)
+      // Game Boy emulator: no floor while a game runs. The picture changes
+      // every frame, so the panel should refresh back-to-back at its own
+      // partial-refresh rate rather than pause 800 ms between pictures.
+      if (isOnGBCScreen() && ((GBCEmulatorScreen*)gbc_screen)->isRunning()) minNext = millis();
 #endif
       if (_next_refresh < minNext) _next_refresh = minNext;
 
@@ -2806,6 +2877,13 @@ void UITask::onVKBSubmit() {
       if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
       break;
     }
+    case VKB_CANNED_TEXT: {
+      // Canned slot edit -- commit even when empty (empty clears the slot)
+      SettingsScreen* ss = (SettingsScreen*)settings_screen;
+      ss->submitCannedText(text);
+      if (_screenBeforeVKB) setCurrScreen(_screenBeforeVKB);
+      break;
+    }
     case VKB_NOTES: {
 #if !defined(LILYGO_TECHO_LITE) && !defined(LILYGO_TECHO_CARD)
       NotesScreen* notes = (NotesScreen*)getNotesScreen();
@@ -2961,6 +3039,11 @@ void UITask::toggleGPS() {
         #endif
         notify(UIEventType::ack);
       } else {
+#ifdef MECK_40MHZ_TEST
+        // 40 MHz test build: GPS is gated -- refuse the enable, leave rail off
+        showAlert("GPS gated (40MHz build)", 1200);
+        return;
+#endif
         // Enable GPS — power on hardware
         _sensors->setSettingValue("gps", "1");
         _node_prefs->gps_enabled = 1;
@@ -3456,6 +3539,26 @@ void UITask::gotoMinesweeperScreen() {
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
 }
+
+#if defined(LilyGo_TDeck_Pro)
+void UITask::gotoGBCScreen() {
+#ifdef MECK_40MHZ_TEST
+  // The emulator needs 240 MHz; at 40 it is unusable. Refuse from every
+  // launch route (tile, J-key, games menu) and stay put. Snake and
+  // Minesweeper are fine at 40 MHz and are not gated.
+  showAlert("Game Boy needs 240MHz", 1500);
+  return;
+#endif
+  GBCEmulatorScreen* gb = (GBCEmulatorScreen*)gbc_screen;
+  gb->enter();
+  setCurrScreen(gbc_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+#endif
 
 void UITask::onTraceResult(uint32_t tag, uint8_t flags, const uint8_t* path_snrs,
                            const uint8_t* path_hashes, uint8_t path_len, int8_t final_snr) {
