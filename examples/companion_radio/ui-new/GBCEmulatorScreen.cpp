@@ -67,9 +67,11 @@
 //     after gb_init. Written in the background: every cart-RAM write by
 //     the game marks the save dirty, and poll() (UI task, so it owns the
 //     SD card) writes the file once the game has left its cart RAM alone
-//     for GBC_SAVE_QUIET_MS -- in practice a couple of seconds after the
-//     user saves in-game. Quit writes only if something is still dirty,
-//     so quitting is normally instant. (Build 9 wrote only on quit.)
+//     for GBC_SAVE_QUIET_MS (20 s) AND the bytes have actually changed
+//     since the last write (a checksum gates out the frequent identical
+//     rewrites the game makes). A 32 KB SD write blocks the UI loop on the
+//     shared SPI bus, so writes are kept rare. Quit writes only if the
+//     save still differs from disk.
 //
 //   - Memory: cart RAM (128 KB), ROM arena (reserved at 2 MB on first launch
 //     and retained for the life of the boot, so a big game late in a long
@@ -175,7 +177,7 @@ extern void otaResumeRadio();             // main.cpp
 #define GBC_ROM_RESERVE 0x200000                      // 2 MB arena on first launch
 #define GBC_FRAME_US    16742                         // 59.73 Hz
 #define GBC_MAX_DEFICIT_US 250000                     // behind by more than this = stall, resync
-#define GBC_SAVE_QUIET_MS  2000                       // cart RAM untouched this long -> write .sav
+#define GBC_SAVE_QUIET_MS  20000                      // cart RAM untouched this long -> consider a save
 #define GBC_STOP_WAIT_MS   200                        // max wait for the task to park on quit
 #define GBC_TASK_STACK  8192                          // bytes, static, reserved at boot
 // The LoRa radio and mesh loop keep running while a game plays (they live on
@@ -244,6 +246,7 @@ static StaticTask_t     s_task_tcb;
 static size_t           s_save_size = 0;
 static volatile bool    s_cram_dirty = false;    // set by the game's cart-RAM writes (emulator task)
 static volatile uint32_t s_cram_dirty_ms = 0;   // millis() of the last such write
+static uint32_t         s_saved_sum = 0;        // checksum of cart RAM as last written to .sav
 static char             s_save_path[96];
 
 // ---- Core callbacks ---------------------------------------------------------
@@ -495,6 +498,19 @@ static void print_heaps(const char *when) {
                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 }
 
+// Fast additive-rotate checksum over the live save region. Two different
+// save states practically never collide, which is all this needs: it
+// gates out writes when the bytes have not changed since the last one.
+static uint32_t gbc_cram_sum(void) {
+  uint32_t h = 2166136261u;
+  for (size_t i = 0; i < s_save_size; i++) {
+    h ^= s_cram[i];
+    h = (h << 1) | (h >> 31);
+    h += 0x9E3779B9u;
+  }
+  return h;
+}
+
 // Write cart RAM to the .sav file. UI task only (the SD card is the UI
 // task's). Returns true if the whole file was written.
 static bool gbc_write_save(void) {
@@ -518,6 +534,7 @@ static bool gbc_write_save(void) {
   Serial.printf("[GBC] save written: %u bytes to %s (remove %lu, open %lu, write %lu, close %lu ms)\n",
                 (unsigned)put, s_save_path, (unsigned long)(t1 - t0), (unsigned long)(t2 - t1),
                 (unsigned long)(t3 - t2), (unsigned long)(t4 - t3));
+  if (put == s_save_size) s_saved_sum = gbc_cram_sum();
   return put == s_save_size;
 }
 
@@ -679,6 +696,7 @@ bool GBCEmulatorScreen::launch(int idx) {
     }
   }
   s_cram_dirty = false;      // the load above is not the game writing
+  s_saved_sum = gbc_cram_sum();   // matches the .sav on disk; no write until it changes
   gb_init_lcd(s_gb, draw_line);
   s_gb->direct.frame_skip = 1;
   memset(s_fb, 0, (size_t)GB_W * GB_H * sizeof(uint16_t));
@@ -778,7 +796,8 @@ void GBCEmulatorScreen::finishStop() {
   bool saved = false;
   if (s_cram_dirty) {              // normally already written in the background
     s_cram_dirty = false;
-    saved = gbc_write_save();
+    if (gbc_cram_sum() != s_saved_sum) saved = gbc_write_save();
+    else saved = true;            // already on disk, nothing to write
   }
   // The keyboard stays in raw joypad mode, and keeps being drained by the
   // busy poll, until the ROM list has actually been drawn (poll() releases
@@ -834,7 +853,10 @@ void GBCEmulatorScreen::poll() {
     // game keeps running on core 0 meanwhile).
     if (s_cram_dirty && (uint32_t)(millis() - s_cram_dirty_ms) >= GBC_SAVE_QUIET_MS) {
       s_cram_dirty = false;
-      gbc_write_save();
+      // Only touch the card if the save actually differs from what is on
+      // it: the game rewrites cart RAM with identical bytes often, and a
+      // 32 KB SD write blocks the UI loop for the length of the write.
+      if (gbc_cram_sum() != s_saved_sum) gbc_write_save();
     }
 #if GBC_SOUND
     if (keyboard.rawMutePressed() && s_audio_on) {
