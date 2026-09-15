@@ -1696,6 +1696,25 @@ public:
   // physW/physH: physical touch panel dimensions (240/320)
   bool handleTouch(int16_t px, int16_t py, int dispW = 128, int dispH = 128,
                    int physW = 240, int physH = 320) {
+    // App menu: first tap highlights a row, tapping the same row again opens it
+    if (_view == APP_MENU) {
+      int my = (int)py * dispH / physH;
+      const int menuTop   = 24;   // must match renderAppMenu
+      const int menuLineH = 16;
+      for (int i = 0; i < 4; i++) {
+        if (my >= menuTop + i * menuLineH && my < menuTop + (i + 1) * menuLineH) {
+          if (_menuCursor == i) {
+            handleAppMenuInput(0x0D);   // second tap == Enter
+          } else {
+            _menuCursor = i;
+          }
+          _needsRefresh = true;
+          return true;
+        }
+      }
+      return false;
+    }
+
     if (_view != PHONE_DIALER) return false;
 
     // Map physical touch coordinates to virtual display coordinates
