@@ -102,7 +102,7 @@ Meck currently targets three LilyGo devices and also supports the Heltec V3 and 
 | Device | Display | Input | LoRa | Battery | GPS | RTC |
 |--------|---------|-------|------|---------|-----|-----|
 | **T-Deck Pro** | 240×320 e-ink (GxEPD2) | TCA8418 keyboard + optional touch | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes | No (uses GPS time) |
-| **T-Deck Max** | 240×320 e-ink (GxEPD2) + frontlight | TCA8418 keyboard + CST328 capacitive touch + 3 capacitive buttons | SX1262 | BQ27220 fuel gauge, 1500 mAh | Yes (multi-constellation) | No (uses GPS time) |
+| **T-Deck Max** | 240×320 e-ink (GxEPD2) + frontlight | TCA8418 keyboard + CST328 capacitive touch + 3 capacitive buttons | SX1262 | BQ27220 fuel gauge, 1400 mAh | Yes (multi-constellation) | No (uses GPS time) |
 | **T5S3 E-Paper Pro** (V2, H752-B) | 960×540 e-ink (FastEPD, parallel) | GT911 capacitive touch (no keyboard) | SX1262 | BQ27220 fuel gauge, 1500 mAh | No (non-GPS variant) | Yes (PCF8563 hardware RTC) |
 | **Heltec V3** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
 | **Heltec V4** (remote repeater only) | 0.96" OLED (SSD1306) | — | SX1262 | — | No | No |
@@ -941,7 +941,7 @@ The LilyGo T-Deck Max is a close relative of the T-Deck Pro: same 240×320 e-ink
 
 The Max is also, as of v1.14, the only Meck device that plays [Game Boy emulator](#game-boy--game-boy-color-emulator-v114) sound (the emulator itself also runs on the T-Deck Pro).
 
-The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1500 mAh battery.
+The headline difference is that the MAX carries both an A7682E 4G modem **and** an ES8311 audio codec, wired through an XL9555 I/O expander so they can run at the same time. On the T-Deck Pro the audio DAC and the 4G modem share one hardware slot and are mutually exclusive; on the MAX you get the SMS & phone app, the audiobook player, the alarm clock, **and** cellular data on a single device. The MAX also adds a CST328 capacitive touchscreen, three capacitive front buttons, a DRV2605 haptic motor for vibrate alerts, an e-ink frontlight, and a 1400 mAh battery.
 
 ### T-Deck Max Build Variants
 
