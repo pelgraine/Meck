@@ -4,6 +4,8 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
+**Meck Watch** -- the LilyGo T-Watch S3 and T-Watch S3 Plus firmware -- is a separate, private repository, available to monthly [GitHub sponsors](https://github.com/sponsors/pelgraine) from $2 USD per month.
+
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
 ### Contents
@@ -257,10 +259,10 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | E | Open e-book reader |
 | N | Open notes |
 | S | Open settings |
-| B | Open web browser (BLE and 4G variants only) |
-| T | Open SMS & Phone app (4G variant only) |
+| B | Open web browser (BLE, WiFi, and 4G variants -- not standalone audio) |
+| T | Open SMS & Phone app (Pro 4G & Max only) |
 | P | Open audiobook player (audio variant only) |
-| K | Open alarm clock (audio variant only) |
+| K | Open alarm clock (Pro Audio & Max only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
 | R | Open trace route screen (v1.9+) -- see [Trace Route Screen](#trace-route-screen-v19) |
@@ -269,6 +271,8 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | Mic | Open voice messages (audio variant only) |
 | Q | Back to home screen |
 | Double-click Boot | Lock / unlock screen |
+
+**Touch tile home screen:** the first home page is a tile grid -- Messages, Contacts, Map, Notes, Settings and the rest -- that can be tapped directly instead of using the key shortcuts above. Originally a T-Deck Max feature, this is now the home screen on **all T-Deck Pro builds**. Tiles for features a given build does not include (for example Phone on audio builds, or Audiobooks on 4G builds) are inert.
 
 ### Bluetooth (BLE)
 
@@ -337,6 +341,8 @@ Pressing **M** from the home screen opens the channel picker. All your channels 
 Pressing **X** on any highlighted channel brings up a confirmation overlay. Press **Enter** to confirm deletion or **Q** to cancel. This clears all stored messages for that channel from the circular buffer and saves to SD. The channel itself is not removed -- only its message history.
 
 On the T5S3, swiping left or right on the channel messages screen also opens the channel picker, which displays a **vertical bubble list** matching the Meck P4 aesthetic. Long-press a channel to bring up the delete history confirmation.
+
+**Unread counts and the companion app (v1.12.3+):** on standalone builds (no BLE or WiFi) the home-screen **MSG** count and the per-channel `*N` badges climb as messages arrive, and opening a channel clears that channel's count. On BLE and WiFi builds the on-device counts intentionally stay at zero while a companion app is connected, because the app marks each message read as it arrives; they resume counting once the app disconnects. Earlier firmware treated standalone builds as though a companion were permanently connected, so those counts -- along with the DM counter and the new-message screen wake -- never updated.
 
 ### Contacts Screen
 
@@ -418,6 +424,8 @@ Press **R** on the contacts list (outside select mode) to import contacts from a
 ### Sending a Direct Message
 
 Select a **Chat** contact in the contacts list and press **Enter** to start composing a direct message. The compose screen will show `DM: ContactName` in the header. Type your message and press **Enter** to send. The DM is sent encrypted directly to that contact (or flooded if no direct path is known). After sending or cancelling, you're returned to the contacts list.
+
+While a DM is in flight the conversation view shows its delivery state: **Sending x/N** as the device retries, **Delivered** once the recipient acknowledges, or **Failed** if every attempt goes unanswered. Retries are handled on the device, so this works without a companion app connected.
 
 Contacts with unread direct messages show a `*` marker next to their name in the contacts list.
 
@@ -687,7 +695,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Setting | Edit Method |
 |---------|-------------|
 | Device Name | Text entry — type a name, Enter to confirm |
-| Radio Preset | A / D to cycle presets (MeshCore Default, Long Range, Fast/Short, EU Default), Enter to apply |
+| Radio Preset | A / D to cycle region presets, Enter to apply. Includes Australia, Australia (Mid), Australia (Wide), Australia: SA/WA, Australia: QLD, EU/UK (Narrow / Long Range / Medium Range), Czech Republic and others |
 | Frequency | Text entry — type exact value (e.g. 916.575), Enter to confirm |
 | Bandwidth | W / S to cycle standard values (31.25 / 62.5 / 125 / 250 / 500 kHz), Enter to confirm |
 | Spreading Factor | W / S to adjust (5–12), Enter to confirm |
@@ -702,6 +710,8 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Larger Font | Toggle larger text size on channel messages, contacts, DM inbox, and repeater admin screens (Enter to toggle) |
 | Font Style | A / D to cycle styles (Classic / Noto Sans / Montserrat), Enter to apply. See [Font Styles](#font-styles). |
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
+| Backlight Brightness | W / S to adjust 5-100% in 5% steps (MAX only) -- e-ink frontlight level |
+| Keyboard LED | W / S to adjust 5-100% in 5% steps, default 50% (MAX only) -- see [Keyboard Backlight](#keyboard-backlight) |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
 | OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
@@ -782,6 +792,9 @@ Press the **Sym** key then the letter key to enter numbers and symbols:
 | Shift | Uppercase next letter |
 | Alt | Same as Sym (for numbers/symbols) |
 | Space | Space character / Next in navigation |
+| Q | Back / exit the current screen (see note below) |
+
+**Exit key:** on the T-Deck Pro and Max, **Q** is the back/exit key across the interface. The exception is text entry -- while typing, Q is a normal character, so **Shift+Backspace** exits instead.
 
 ### Emoji Picker
 
@@ -796,9 +809,22 @@ While in compose mode, press the **$** key to open the emoji picker. A scrollabl
 
 ### SMS & Phone App (Pro 4G * Max only)
 
-Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen where you can choose between the **Phone** dialer (for calling any number) or the **SMS Inbox** (for messaging and calling saved contacts). The SMS Inbox entry shows the number of unread received messages in brackets (e.g. **SMS Inbox [3]**); the badge disappears once everything is read.
+Press **T** from the home screen to open the SMS & Phone app. The app opens to a menu screen with four entries:
 
-# Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.
+| Row | Purpose |
+|-----|---------|
+| **Dial** | Keypad for calling any number |
+| **Call Log** | Incoming, outgoing and missed calls, stored on the SD card |
+| **Contacts** | Saved contacts -- add, edit, dial, message and delete |
+| **SMS Inbox** | Message conversations |
+
+Two of the rows carry a count in brackets. **Call Log [n]** shows missed calls you have not looked at yet, and **SMS Inbox [n]** shows unread received messages. Each badge clears when you open that screen, and both persist across a reboot.
+
+The **Call Log** stores the 32 most recent calls with the number, the contact name where known, the call type and the duration. Enter dials the highlighted entry back, and D deletes it. Calls that arrive without caller ID are still logged, shown as `Unknown`.
+
+The **Contacts** screen lists saved contacts, with A to add a new one and M to send an SMS. Opening a contact gives a page with editable Name and Number fields and a Save row, plus F to dial and D to delete. Contacts are stored on the SD card in `/sms/contacts.txt`.
+
+**Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.**
 
 For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
 
@@ -895,7 +921,9 @@ Packets are sent with staggered 3-second delays to avoid congesting the channel.
 
 ### Lock Screen (T-Deck Pro & Max)
 
-Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption.
+Double-click the Boot button to lock the screen. The lock screen shows the current time, battery percentage, and unread message count. The CPU drops to 40 MHz while locked to reduce power consumption. On the MAX, the e-ink frontlight switches off when the lock screen activates, and is not restored automatically on unlock -- press the Heart button to turn it back on.
+
+On Pro 4G and Max builds the lock screen also shows outstanding **unread SMS** and **missed calls**. These counts are read from the SMS inbox and call log rather than counted while locked, so they survive locking, unlocking and a reboot, and clear only when you open that conversation or the Call Log.
 
 Double-click the Boot button again to unlock and return to whatever screen you were on.
 
@@ -950,7 +978,7 @@ The MAX has a DRV2605 haptic motor, so each channel (and the DM inbox) can be se
 
 ### Capacitive Touch & Buttons
 
-The MAX adds a CST328 capacitive touchscreen and **three capacitive buttons** along the bottom of the front bezel — none of which the T-Deck Pro has:
+Both the MAX and the T-Deck Pro have a CST328 capacitive touchscreen. What the MAX adds is **three capacitive buttons** along the bottom of the front bezel, which the T-Deck Pro does not have:
 
 | Button | Action |
 |--------|--------|
@@ -965,6 +993,8 @@ The MAX has an e-ink frontlight. The brightness it turns on to is set in **Setti
 ### Keyboard Backlight
 
 Press **both Shift keys together** to toggle the keyboard backlight on and off.
+
+The brightness is set in **Settings -> Keyboard LED**, directly below Backlight Brightness, adjustable from **5% to 100%** in 5% steps (default **50%**). Before v1.12.3 the keyboard backlight was fixed at a very dim level. A change to the setting takes effect the next time you toggle the backlight on.
 
 ### Multi-Constellation GPS
 
