@@ -3542,6 +3542,13 @@ void UITask::gotoMinesweeperScreen() {
 
 #if defined(LilyGo_TDeck_Pro)
 void UITask::gotoGBCScreen() {
+#ifdef MECK_40MHZ_TEST
+  // The emulator needs 240 MHz; at 40 it is unusable. Refuse from every
+  // launch route (tile, J-key, games menu) and stay put. Snake and
+  // Minesweeper are fine at 40 MHz and are not gated.
+  showAlert("Game Boy needs 240MHz", 1500);
+  return;
+#endif
   GBCEmulatorScreen* gb = (GBCEmulatorScreen*)gbc_screen;
   gb->enter();
   setCurrScreen(gbc_screen);

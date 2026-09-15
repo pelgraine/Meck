@@ -41,17 +41,19 @@ private:
     const char* description;
   };
 
-#if defined(LilyGo_TDeck_Pro)
-  static constexpr int NUM_GAMES = 3;  // Increment as games are added
+// The Game Boy emulator entry is present on the T-Deck Pro and Max, except on
+// the 40 MHz battery-saver builds where it needs a clock they do not run at.
+#if defined(LilyGo_TDeck_Pro) && !defined(MECK_40MHZ_TEST)
+  static constexpr int NUM_GAMES = 3;
 #else
-  static constexpr int NUM_GAMES = 2;  // Increment as games are added
+  static constexpr int NUM_GAMES = 2;
 #endif
 
   static const GameEntry* getGames() {
     static const GameEntry games[NUM_GAMES] = {
       { GAME_SNAKE,       "Snake",       "Classic Nokia-style" },
       { GAME_MINESWEEPER, "Minesweeper", "Find the mines" },
-#if defined(LilyGo_TDeck_Pro)
+#if defined(LilyGo_TDeck_Pro) && !defined(MECK_40MHZ_TEST)
       { GAME_GBC,         "Game Boy",    "GB / GBC emulator" },
 #endif
       // { GAME_2048,        "2048",        "Slide and merge" },
