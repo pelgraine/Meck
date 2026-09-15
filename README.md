@@ -46,14 +46,14 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
   - [Emoji Picker](#emoji-picker)
-  - [SMS & Phone App (4G only)](#sms--phone-app-4g-only)
+  - [SMS & Phone App (Pro 4G & Max only)](#sms--phone-app-pro-4g--max-only)
   - [Web Browser & IRC](#web-browser--irc)
-  - [Alarm Clock (Audio only)](#alarm-clock-audio-only)
-  - [Voice Notes Over LoRa (Audio only)](#voice-notes-over-lora-audio-only)
-  - [Lock Screen (T-Deck Pro)](#lock-screen-t-deck-pro)
-  - [Shutdown (T-Deck Pro)](#shutdown-t-deck-pro)
-- [T-Deck Max](#t-deck-pro-max)
-  - [Build Variants](#t-deck-pro-max-build-variants)
+  - [Alarm Clock (Pro Audio & Max only)](#alarm-clock-pro-audio--max-only)
+  - [Voice Notes Over LoRa (Pro Audio & Max only)](#voice-notes-over-lora-pro-audio--max-only)
+  - [Lock Screen (T-Deck Pro & Max)](#lock-screen-t-deck-pro--max)
+  - [Shutdown (T-Deck Pro & Max)](#shutdown-t-deck-pro--max)
+- [T-Deck Max](#t-deck-max)
+  - [Build Variants](#t-deck-max-build-variants)
   - [4G and Audio at the Same Time](#4g-and-audio-at-the-same-time)
   - [Antenna (Internal / External)](#antenna-internal--external)
   - [Buzzer (Vibrate) Notifications](#buzzer-vibrate-notifications)
@@ -241,7 +241,7 @@ Region scope can also be configured via serial commands — see the [Serial Sett
 | Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
 | WiFi Repeater | `meck_wifi_repeater` | — | Yes (MQTT) | — | — | No | — |
 
-The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. (The T-Deck Max lifts this restriction — it runs both at once. See [T-Deck Max](#t-deck-pro-max).) The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
+The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. (The T-Deck Max lifts this restriction — it runs both at once. See [T-Deck Max](#t-deck-max).) The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
 
 ### T-Deck Pro Keyboard Controls
 
