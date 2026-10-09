@@ -1043,6 +1043,15 @@ public:
         display.setColor(DisplayDriver::LIGHT);
         display.drawTextCentered(display.width() / 2, wy, MECK_TR("Configure in Settings", "Configurer dans Param\xC3\xA8tres"));
       }
+      // Enter (or long press) turns the WiFi radio on or off, as the Settings
+      // "WiFi Radio" row does. Tiny size on every setting: at 9pt the line is
+      // wider than the screen in Montserrat (130 of 128).
+      display.setColor(DisplayDriver::GREEN);
+      display.setTextSize(0);
+      display.drawTextCentered(display.width() / 2, 90,
+          (WiFi.getMode() != WIFI_OFF)
+            ? MECK_TR("Press Enter to Turn Off Wifi", "Entr\xC3\xA9" "e : couper le WiFi")
+            : MECK_TR("Press Enter to Turn On Wifi", "Entr\xC3\xA9" "e : activer le WiFi"));
       display.setTextSize(1);
 #endif
     } else if (_page == HomePage::ADVERT) {
@@ -1413,6 +1422,58 @@ public:
       } else {
         _task->enableSerial();
       }
+      return true;
+    }
+#endif
+#ifdef MECK_WIFI_COMPANION
+    if (c == KEY_ENTER && _page == HomePage::WIFI_STATUS) {
+      // WiFi radio on/off, as the Settings "WiFi Radio" row does (this is a
+      // copy of that row's code). Network setup and password stay in Settings.
+#if defined(BLE_PIN_CODE) && defined(MECK_WIFI_COMPANION)
+      // Combined build: WiFi on turns Bluetooth off; WiFi off leaves
+      // neither on
+      extern bool meckCompanionIsWiFi();
+      extern bool meckCompanionUseWiFi(bool connectSaved);
+      if (meckCompanionIsWiFi()) {
+        meckCompanionUseNone();
+      } else if (!meckCompanionUseWiFi(true)) {
+        _task->showAlert(MECK_TR("WiFi failed to start", "\xC3\x89" "chec du WiFi"), 1500);
+      }
+#else
+      if (WiFi.getMode() != WIFI_OFF) {
+        // Turn WiFi OFF
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("Home: WiFi radio OFF");
+      } else {
+        // Turn WiFi ON -- reconnect using saved credentials
+        WiFi.mode(WIFI_STA);
+        if (SD.exists("/web/wifi.cfg")) {
+          File f = SD.open("/web/wifi.cfg", FILE_READ);
+          if (f) {
+            String ssid = f.readStringUntil('\n'); ssid.trim();
+            String pass = f.readStringUntil('\n'); pass.trim();
+            f.close();
+            digitalWrite(SDCARD_CS, HIGH);
+            if (ssid.length() > 0) {
+              WiFi.begin(ssid.c_str(), pass.c_str());
+              unsigned long timeout = millis() + 8000;
+              while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
+                delay(100);
+              }
+              if (WiFi.status() == WL_CONNECTED) {
+                Serial.printf("Home: WiFi ON, connected to %s\n", ssid.c_str());
+              } else {
+                Serial.println("Home: WiFi ON, but connection failed");
+              }
+            }
+          } else {
+            digitalWrite(SDCARD_CS, HIGH);
+          }
+        }
+        Serial.println("Home: WiFi radio ON");
+      }
+#endif
       return true;
     }
 #endif
