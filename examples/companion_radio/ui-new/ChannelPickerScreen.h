@@ -148,7 +148,7 @@ public:
     } else {
       snprintf(tmp, sizeof(tmp), "[%d]", _itemCount);
     }
-    display.setCursor(display.width() - display.getTextWidth(tmp) - 2, 0);
+    display.setCursor(display.width() - display.getTextWidth(tmp) - 6, 0);
     display.print(tmp);
     display.drawRect(0, 11, display.width(), 1);
 
