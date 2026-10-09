@@ -884,6 +884,11 @@ static uint32_t _atoi(const char* sp) {
   // the lock state without pulling in the full UITask header.
   bool meck_alarm_is_locked() { return ui_task.isLocked(); }
   #endif
+  #ifdef MECK_WIFI_COMPANION
+  // Lets the Settings WiFi setup (which only forward-declares UITask) show
+  // its Connecting / IP / Could not connect popups.
+  void meckShowAlert(const char* text, int duration_millis) { ui_task.showAlert(text, duration_millis); }
+  #endif
 #endif
 
 StdRNG fast_rng;

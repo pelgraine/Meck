@@ -290,6 +290,8 @@ enum FmPhase : uint8_t {
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 #define SETTINGS_FLIP_MS   2000  // channel row too long for the line: time on its start, then its end
+#define SETTINGS_WIFI_CONNECT_MS  15000  // WiFi setup: give up joining a network after this long
+#define SETTINGS_WIFI_ALERT_MS    2000   // WiFi setup: how long the IP / "Could not connect" popups stay up
 
 class SettingsScreen : public UIScreen {
 private:
@@ -390,6 +392,7 @@ private:
   char _wifiPassBuf[64];
   int _wifiPassLen;
   unsigned long _wifiFormLastChar;  // For brief password reveal
+  unsigned long _wifiConnectStart;  // When the current join attempt started (CONNECTING phase)
   #endif
 
   #ifdef MECK_OTA_UPDATE
@@ -798,6 +801,7 @@ public:
     _wifiPassLen = 0;
     memset(_wifiPassBuf, 0, sizeof(_wifiPassBuf));
     _wifiFormLastChar = 0;
+    _wifiConnectStart = 0;
     #endif
     rebuildRows();
   }
@@ -916,6 +920,31 @@ public:
   // Shift+Backspace can exit the picker.
   bool isInWifiNetworkSelect() const {
     return _editMode == EDIT_WIFI && _wifiPhase == WIFI_PHASE_SELECT;
+  }
+
+  // CONNECTING phase, called from poll(): on success show the IP address and
+  // return to the Settings list; after SETTINGS_WIFI_CONNECT_MS without a
+  // connection, say so and return to the network list to try again.
+  void pollWifiConnect() {
+    extern void meckShowAlert(const char* text, int duration_millis);
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("Settings: WiFi connected to %s, IP: %s\n",
+                    _wifiSSIDs[_wifiSSIDSelected].c_str(),
+                    WiFi.localIP().toString().c_str());
+      IPAddress ip = WiFi.localIP();
+      char ipMsg[24];
+      snprintf(ipMsg, sizeof(ipMsg), MECK_TR("IP: %d.%d.%d.%d", "IP : %d.%d.%d.%d"),
+               ip[0], ip[1], ip[2], ip[3]);
+      _editMode = EDIT_NONE;
+      _wifiPhase = WIFI_PHASE_IDLE;
+      if (_onboarding) _onboarding = false;  // Finish onboarding
+      meckShowAlert(ipMsg, SETTINGS_WIFI_ALERT_MS);
+    } else if ((long)(millis() - _wifiConnectStart) >= SETTINGS_WIFI_CONNECT_MS) {
+      Serial.println("Settings: WiFi connection failed");
+      // Go back to SSID selection so user can retry
+      _wifiPhase = WIFI_PHASE_SELECT;
+      meckShowAlert(MECK_TR("Could not connect", "Connexion impossible"), SETTINGS_WIFI_ALERT_MS);
+    }
   }
 
   #endif
@@ -3241,24 +3270,12 @@ public:
           WiFi.disconnect(false);
           WiFi.begin(_wifiSSIDs[_wifiSSIDSelected].c_str(), _wifiPassBuf);
 
-          // Brief blocking wait — fine for e-ink (screen won't update during this anyway)
-          unsigned long timeout = millis() + 8000;
-          while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
-            delay(100);
-          }
-
-          if (WiFi.status() == WL_CONNECTED) {
-            Serial.printf("Settings: WiFi connected to %s, IP: %s\n",
-                          _wifiSSIDs[_wifiSSIDSelected].c_str(),
-                          WiFi.localIP().toString().c_str());
-            _editMode = EDIT_NONE;
-            _wifiPhase = WIFI_PHASE_IDLE;
-            if (_onboarding) _onboarding = false;  // Finish onboarding
-          } else {
-            Serial.println("Settings: WiFi connection failed");
-            // Go back to SSID selection so user can retry
-            _wifiPhase = WIFI_PHASE_SELECT;
-          }
+          // Don't wait here: poll() checks for the result each loop, so the
+          // "Connecting..." popup can be drawn while the device joins the
+          // network. Its time runs past the limit; the result popup replaces it.
+          _wifiConnectStart = millis();
+          extern void meckShowAlert(const char* text, int duration_millis);
+          meckShowAlert(MECK_TR("Connecting...", "Connexion..."), SETTINGS_WIFI_CONNECT_MS + 2000);
           return true;
         }
         if (c == '\b') {
@@ -4204,6 +4221,12 @@ public:
   // then restart a few seconds after the result is on screen. The restart
   // rebuilds everything keyed by contact index from the empty store.
   void poll() override {
+    #ifdef MECK_WIFI_COMPANION
+    if (_editMode == EDIT_WIFI && _wifiPhase == WIFI_PHASE_CONNECTING) {
+      pollWifiConnect();
+      return;
+    }
+    #endif
     if (_editMode != EDIT_PURGE) return;
     if (_purgePhase == PURGE_RUNNING && (long)(millis() - _purgeAt) >= 0) {
       extern void meckPurgeAllContacts(int* contactsRemoved, bool* contactsOk, int* dmsRemoved);

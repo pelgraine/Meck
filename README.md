@@ -274,10 +274,14 @@ The WiFi companion variants (`meck_audio_wifi`, `meck_4g_wifi`) connect to the M
 
 **Connecting:**
 
-1. Navigate to the **WiFi** home page (use D to page through)
-2. Press **Enter** to toggle WiFi on
-3. The device scans for networks — select yours and enter the password
-4. Once connected, the IP address is displayed on the WiFi home page
+WiFi is off at boot, so it has to be turned on in Settings first.
+
+1. Open **Settings** and select the **WiFi Radio** row to turn it **ON**. It takes several seconds before the row shows ON, so please be patient.
+2. Select the **WiFi** row (it shows **WiFi: (not connected)** until you have joined a network). The device scans for networks.
+3. Select your network, enter the password and press **Enter**.
+4. A **Connecting...** popup shows while the device joins the network. This can take up to 15 seconds.
+5. Once connected, a popup shows the device's IP address for 2 seconds and you are returned to Settings. The IP address is also displayed on the WiFi home page.
+6. If the device can't connect within 15 seconds, a **Could not connect** popup shows and you are returned to the network list to try again.
 
 Connect the MeshCore web app or meshcore.js to `<device IP>:5000`.
 
