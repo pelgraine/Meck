@@ -289,6 +289,7 @@ enum FmPhase : uint8_t {
 #define SETTINGS_MAX_ROWS (55 + SETTINGS_LORA_ANTENNA_ROWS)  // Contacts section + scope + export
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
+#define SETTINGS_FLIP_MS   2000  // channel row too long for the line: time on its start, then its end
 
 class SettingsScreen : public UIScreen {
 private:
@@ -307,6 +308,9 @@ private:
   // Cursor & scroll
   int _cursor;        // selected row
   int _scrollTop;     // first visible row
+  int _tickerCh;                 // channel whose selected row is too long and flipping (-1 none)
+  unsigned long _tickerStartMs;  // when that row was selected
+  bool _tickerActive;            // a flipping row was drawn this frame
 
   // Editing state
   EditMode _editMode;
@@ -727,6 +731,7 @@ public:
   SettingsScreen(UITask* task, mesh::RTCClock* rtc, NodePrefs* prefs)
     : _task(task), _rtc(rtc), _prefs(prefs),
       _numRows(0), _cursor(0), _scrollTop(0),
+      _tickerCh(-1), _tickerStartMs(0), _tickerActive(false),
       _editMode(EDIT_NONE), _editPos(0), _editPickerIdx(0),
       _editFloat(0), _editInt(0), _fontPickerOriginal(0), _confirmAction(0),
       _onboarding(false), _subScreen(SUB_NONE), _savedTopCursor(0),
@@ -1806,6 +1811,7 @@ public:
     int sbW = showScrollbar ? 6 : 0;
 
     int y = headerH;
+    _tickerActive = false;
 
 
     for (int i = _scrollTop; i < endIdx && y + lineHeight <= maxY; i++) {
@@ -2160,6 +2166,7 @@ public:
         case ROW_CHANNEL: {
           uint8_t chIdx = _rows[i].param;
           ChannelDetails ch;
+          bool rowDrawn = false;
           if (the_mesh.getChannel(chIdx, ch)) {
             if (editing && _editMode == EDIT_TEXT) {
               // Editing scope for this channel
@@ -2190,16 +2197,34 @@ public:
                   snprintf(hintBuf, sizeof(hintBuf), MECK_TR("N:%s Ent:Region", "N:%s Ent:R\xC3\xA9gion"), nTag);
                 }
               #endif
-                int hintW = display.getTextWidth(hintBuf);
-                display.setCursor(display.width() - hintW - 2, y);
-                display.print(hintBuf);
-                display.setCursor(0, y);
+                // Name, region and hint as one line. If it fits, keep the
+                // usual layout: name on the left, hint right-aligned. If not,
+                // show the start of the line, then its end, SETTINGS_FLIP_MS
+                // each, so the hint no longer prints over the name.
+                char full[112];
+                snprintf(full, sizeof(full), "%s   %s", tmp, hintBuf);
+                int fullW = display.getTextWidth(full);
+                if (fullW <= display.width() - 2) {
+                  int hintW = display.getTextWidth(hintBuf);
+                  display.setCursor(display.width() - hintW - 2, y);
+                  display.print(hintBuf);
+                  display.setCursor(0, y);
+                } else {
+                  if (_tickerCh != chIdx) { _tickerCh = chIdx; _tickerStartMs = millis(); }
+                  _tickerActive = true;
+                  bool showEnd = ((millis() - _tickerStartMs) / SETTINGS_FLIP_MS) % 2;
+                  // End view: right edge on the highlight's edge (it stops short of
+                  // the scrollbar), so the last letters of the hint stay readable.
+                  display.setCursor(showEnd ? display.width() - sbW - 2 - fullW : 0, y);
+                  display.print(full);
+                  rowDrawn = true;
+                }
               }
             }
           } else {
             snprintf(tmp, sizeof(tmp), MECK_TR(" (empty)", " (vide)"));
           }
-          display.print(tmp);
+          if (!rowDrawn) display.print(tmp);
           break;
         }
 
@@ -2339,6 +2364,7 @@ public:
 
       y += lineHeight;
     }
+    if (!_tickerActive) _tickerCh = -1;  // next selection starts on the start view
 
 
     // Scrollbar (track + proportional thumb), mirroring the notif-sound picker.
@@ -2947,6 +2973,13 @@ public:
       return 200;  // 200ms — fast enough for web server responsiveness
     }
     #endif
+    if (_tickerActive) {
+      // Wake for the next start/end flip of a too-long channel row
+      unsigned long into = (millis() - _tickerStartMs) % SETTINGS_FLIP_MS;
+      int toFlip = (int)(SETTINGS_FLIP_MS - into);
+      int dflt = _editMode != EDIT_NONE ? 700 : 1000;
+      return toFlip < dflt ? toFlip : dflt;
+    }
     return _editMode != EDIT_NONE ? 700 : 1000;
   }
 
