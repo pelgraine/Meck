@@ -1,5 +1,7 @@
 ## Meshcore + Fork = Meck
 
+[Lire en français (traduction IA)](README_FR.md)
+
 A fork created specifically to focus on enabling BLE & WiFi companion firmware for the LilyGo T-Deck Pro & LilyGo T-Deck Max. Created wholly with Claude AI using Meshcore v1.11 code. 100% vibecoded.
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
@@ -767,8 +769,8 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
 | Default Region | Text entry — type a region name (e.g. `au-nsw`), Enter to confirm. Empty = unscoped. See [Region Scope](#region-scope-v17). |
 | Dark Mode | Toggle inverted display — white text on black background (Enter to toggle) |
-| Larger Font | Toggle larger text size on channel messages, contacts, DM inbox, and repeater admin screens (Enter to toggle) |
-| Font Style | A / D to cycle styles (Classic / Noto Sans / Montserrat), Enter to apply. See [Font Styles](#font-styles). |
+| Font Size | Toggle larger text size on channel messages, contacts, DM inbox, and repeater admin screens (Enter to toggle) |
+| Font | A / D to cycle styles (Classic / Noto Sans / Montserrat), Enter to apply. See [Font Styles](#font-styles). |
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Backlight Brightness | W / S to adjust 5-100% in 5% steps (MAX only) -- e-ink frontlight level |
 | Keyboard LED | W / S to adjust 5-100% in 5% steps, default 50% (MAX only) -- see [Keyboard Backlight](#keyboard-backlight) |
@@ -836,7 +838,7 @@ Change the font in **Settings → Font** — use A/D to cycle with a live previe
 
 Font styles are available in both Tiny and Larger text size modes. Custom fonts at Tiny size use 7pt glyphs; at Larger size, 9pt — matching the existing FreeSans layout. The font preference is saved and persists across reboots.
 
-**Accented character support (v1.8+, extended in v1.15):** All three font styles display accented and diacritical characters (Czech, Polish, French, German, etc.) instead of dropping them. **Noto Sans at both text sizes** and **Montserrat at Tiny size** render diacritical marks natively (carons, accents, cedillas). **Classic** and **Montserrat at Larger size** fold accented characters to their ASCII base letter (ě→e, ž→z, ñ→n): the letter is always visible, just without the diacritic mark.
+**Accented character support (v1.8+, extended in v1.15):** All three font styles display accented and diacritical characters (Czech, Polish, French, German, etc.) instead of dropping them. **Noto Sans** renders diacritical marks natively (carons, accents, cedillas) at every size. **Montserrat** renders them in Tiny-size text and in titles, but text drawn at the 9pt size folds accented characters to their ASCII base letter (ě→e, ž→z, ñ→n), as **Classic** always does: the letter is always visible, just without the diacritic mark. The 9pt size is used at the Larger text size, and also for some text whatever the setting, such as the status lines on the WiFi home page.
 
 ### Compose Mode
 
