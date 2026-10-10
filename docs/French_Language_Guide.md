@@ -1,7 +1,7 @@
 # French Language: Guide and Translation Table
 
-Status: draft for Meck v1.15, from the `dev` branch at commit `ccf67fbe`. French is an Experimental Feature, so its wording and behaviour may still change.
-Last updated: 7 Oct 2026
+Status: draft for Meck v1.15, from the `dev` branch at commit `4fabd991`. French is an Experimental Feature, so its wording and behaviour may still change.
+Last updated: 10 Oct 2026
 
 This guide covers how to switch Meck into French, how the fonts behave in French, and a table of every English text that has a French version, for volunteer translators to review.
 
@@ -35,7 +35,9 @@ Meck has three font styles (Settings > Font, in French Police: Classic, Noto San
 
 Where accents can be shown:
 
-| Font style | Tiny | Larger | Titles and the large clock |
+Meck draws text at three sizes: small text (7 point), normal text (9 point), and titles and the large clock (12 point bold). Where a screen follows the text size setting, Tiny uses small text and Larger uses normal text. Some text is drawn at the normal size whatever the setting, for example the status lines on the WiFi home page.
+
+| Font style | Small text | Normal text | Titles and the large clock |
 | --- | --- | --- | --- |
 | Noto Sans | Yes | Yes | Yes |
 | Montserrat | Yes | Not yet: letters show without their accents | Yes |
@@ -70,283 +72,297 @@ To suggest a change, open an issue or a pull request at [github.com/pelgraine/Me
 - Carrier and APN names, radio preset names, sound file names and emoji names.
 - Technical terms and codes: packet types in the Rx Log, FLOOD and DIRECT, SNR and dB, BW, SF, CR, TX, modem states (such as READY), and the names Snake and Game Boy.
 - Short key hints such as "W/S:Nav Q:X" and "A/D:Ch $:Emoji".
+- The emoji picker's title, "Select Emoji".
+- The GPS home page's "sat", "pos" and "alt" labels.
 - The "Search:" and "Web:" labels on the Web Reader's input lines.
 - Commands sent to repeaters and IRC servers, and the replies they send back.
 - Messages printed to the serial (USB) console.
 
-## Translation table (950 entries)
+## Translation table (976 entries)
 
 ### Home screen, header and system messages
 
-Source: `examples/companion_radio/ui-new/UITask.cpp`. All builds.
+Source: `examples/companion_radio/ui-new/UITask.cpp`. All builds. Some lines only appear in builds with that feature: the WiFi home page in WiFi builds, the restart lines in the combined T-Deck Max build (`meck_max_ble_wifi`), and the GPS page in builds with GPS (not the 40 MHz builds).
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
-| 319 | `Home` | `Local` |  |
-| 366, 1137 | `W/S:adj Enter:ok Q:cancel` | `W/S:régler Ent:ok Q:annuler` |  |
-| 367 | `Tap:-/+  Hold:save` | `Appui:-/+  Maintien:enreg.` | double space |
-| 375 | `Clock not set` | `Heure non réglée` |  |
-| 408 | `%+dD` | `%+dJ` | keep %+d |
-| 533 | `powering off...` | `extinction...` |  |
-| 534, 537 | `plug in USB-C to turn on` | `USB-C pour rallumer` |  |
-| 625 | `Messages` | `Messages` | home tile; same in both languages |
-| 625 | `Contacts` | `Contacts` | home tile; same in both languages |
-| 626 | `Settings` | `Paramètres` | home tile |
-| 626 | `Discover` | `Recherche` | home tile |
-| 627 | `Trace` | `Trace` | home tile; same in both languages |
-| 627 | `Maps` | `Cartes` | home tile |
-| 628 | `Notes` | `Notes` | home tile; same in both languages |
-| 628 | `Reader` | `Lecteur` | home tile |
-| 629 | `Audiobooks` | `Livres audio` | home tile |
-| 629 | `Alarm` | `Alarme` | home tile |
-| 630 | `Browser` | `Navigateur` | home tile |
-| 630 | `Games` | `Jeux` | home tile |
-| 675 | `Phone` | `Téléphone` |  |
-| 700, 977, 997 | `< Connected >` | `< Connecté >` |  |
-| 924 | `%dm` | `%dmin` | keep %d |
-| 942 | `H: Full Last Heard list` | `H: Liste complète` |  |
-| 960 | `Noise floor: %d` | `Bruit de fond : %d` | keep %d |
-| 963 | `RX packets: %u` | `Paquets RX : %u` | keep %u |
-| 986, 1006 | `toggle: long press` | `basculer : appui long` |  |
-| 987, 1007, 1052 | `or press Enter key` | `ou touche Entrée` |  |
-| 1013 | `WiFi Companion` | `Compagnon WiFi` |  |
-| 1033 | `< App Connected >` | `< Appli connectée >` |  |
-| 1037 | `Waiting for app...` | `Attente de l'appli...` |  |
-| 1041 | `Not connected` | `Non connecté` |  |
-| 1044 | `Configure in Settings` | `Configurer dans Paramètres` |  |
-| 1051 | `advert: long press` | `annonce : appui long` |  |
-| 1062 | `gps off` | `gps éteint` |  |
-| 1064 | `gps on` | `gps allumé` |  |
-| 1070 | `Can't access GPS` | `GPS inaccessible` |  |
-| 1072 | `no fix` | `sans fix` |  |
-| 1081 | `sentences` | `phrases` |  |
-| 1087 | `hw off` | `éteint` |  |
-| 1111, 1115 | `time(U)` | `heure(U)` |  |
-| 1116 | `no sync` | `non synchro` |  |
-| 1221 | `Battery Gauge` | `Jauge batterie` |  |
-| 1228 | `remaining` | `autonomie` |  |
-| 1230 | `depleted` | `épuisée` |  |
-| 1230 | `charging` | `en charge` |  |
-| 1232 | `%dh %dm` | `%dh %dmin` | keep %d |
-| 1241 | `avg current` | `courant moyen` |  |
-| 1248 | `avg power` | `puissance moy.` |  |
-| 1255 | `voltage` | `tension` |  |
-| 1265 | `remaining cap` | `capacité rest.` |  |
-| 1272 | `temperature` | `température` |  |
-| 1281 | `hibernating...` | `mise en veille...` |  |
-| 1285 | `power off device?` | `éteindre l'appareil ?` |  |
-| 1286 | `usb-c to wake` | `usb-c pour réveiller` |  |
-| 1287 | `Enter:yes  q:no` | `Entrée:oui  q:non` | double space |
-| 1294 | `%shibernate: long press/Enter` | `%sveille : appui long/Entrée` | keep %s |
-| 1295 | `%spower off: long press/Enter` | `%sarrêt : appui long/Entrée` | keep %s |
-| 1332 | `UTC offset saved` | `Décalage UTC enregistré` |  |
-| 1394 | `Recent adverts` | `Annonces récentes` |  |
-| 1405 | `Reboot for Bluetooth` | `Redémarrer (Bluetooth)` |  |
-| 1422 | `Advert sent!` | `Annonce envoyée !` |  |
-| 1424 | `Advert failed..` | `Échec de l'annonce..` |  |
-| 1504 | `%d%%  \|  %d unread` | `%d%%  \|  %d non lus` | keep %d; double space |
-| 1524 | `SMS: %d  Missed: %d` | `SMS : %d  Manqués : %d` | keep %d; double space |
-| 1528 | `Missed: %d` | `Manqués : %d` | keep %d |
-| 1937 | `New: %s` | `De : %s` | keep %s |
-| 2304 | `S:Settings  E:Reader` | `S:Options  E:Lecteur` | double space |
-| 2305 | `N:Notes  W/S:Scroll` | `N:Notes  W/S:Défiler` | double space |
-| 2306 | `A/D:Cycle Left/Right` | `A/D:Gauche/Droite` |  |
-| 2307 | `[X to dismiss]` | `[X pour fermer]` |  |
-| 2415 | `Low Battery.` | `Batterie faible.` |  |
-| 2416 | `Shutting Down!` | `Extinction !` |  |
-| 2558 | `GPS gated (40MHz build)` | `GPS bloqué (40 MHz)` |  |
-| 2573 | `GPS: Enabled` | `GPS : activé` |  |
-| 2573 | `GPS: Disabled` | `GPS : désactivé` |  |
-| 2590 | `Buzzer: OFF` | `Buzzer : coupé` |  |
-| 2590 | `Buzzer: ON` | `Buzzer : activé` |  |
-| 2942 | `Unknown` | `Inconnu` |  |
-| 3069 | `Game Boy needs 240MHz` | `Game Boy exige 240 MHz` |  |
+| 322 | `Home` | `Local` |  |
+| 369, 1162 | `W/S:adj Enter:ok Q:cancel` | `W/S:régler Ent:ok Q:annuler` |  |
+| 370 | `Tap:-/+  Hold:save` | `Appui:-/+  Maintien:enreg.` | double space |
+| 378 | `Clock not set` | `Heure non réglée` |  |
+| 411 | `%+dD` | `%+dJ` | keep %+d |
+| 536 | `powering off...` | `extinction...` |  |
+| 537, 540 | `plug in USB-C to turn on` | `USB-C pour rallumer` |  |
+| 628 | `Messages` | `Messages` | home tile; same in both languages |
+| 628 | `Contacts` | `Contacts` | home tile; same in both languages |
+| 629 | `Settings` | `Paramètres` | home tile |
+| 629 | `Discover` | `Recherche` | home tile |
+| 630 | `Trace` | `Trace` | home tile; same in both languages |
+| 630 | `Maps` | `Cartes` | home tile |
+| 631 | `Notes` | `Notes` | home tile; same in both languages |
+| 631 | `Reader` | `Lecteur` | home tile |
+| 632 | `Audiobooks` | `Livres audio` | home tile |
+| 632 | `Alarm` | `Alarme` | home tile |
+| 633 | `Browser` | `Navigateur` | home tile |
+| 633 | `Games` | `Jeux` | home tile |
+| 678 | `Phone` | `Téléphone` |  |
+| 703, 980, 1006 | `< Connected >` | `< Connecté >` |  |
+| 927 | `%dm` | `%dmin` | keep %d |
+| 945 | `H: Full Last Heard list` | `H: Liste complète` |  |
+| 963 | `Noise floor: %d` | `Bruit de fond : %d` | keep %d |
+| 966 | `RX packets: %u` | `Paquets RX : %u` | keep %u |
+| 991 | `restart into Bluetooth:` | `redémarrer en Bluetooth :` |  |
+| 992 | `long press or Enter` | `appui long ou Entrée` |  |
+| 994, 1015 | `toggle: long press` | `basculer : appui long` |  |
+| 995, 1016, 1077 | `or press Enter key` | `ou touche Entrée` |  |
+| 1022 | `WiFi Companion` | `Compagnon WiFi` |  |
+| 1042 | `< App Connected >` | `< Appli connectée >` |  |
+| 1046 | `Waiting for app...` | `Attente de l'appli...` |  |
+| 1050 | `Not connected` | `Non connecté` |  |
+| 1053 | `Configure in Settings` | `Configurer dans Paramètres` |  |
+| 1061 | `Press Enter to Turn Off Wifi` | `Entrée : couper le WiFi` |  |
+| 1062 | `Press Enter to Turn On Wifi` | `Entrée : activer le WiFi` |  |
+| 1067 | `Press Enter to Restart into Wifi` | `Entrée : redémarrer en WiFi` |  |
+| 1076 | `advert: long press` | `annonce : appui long` |  |
+| 1087 | `gps off` | `gps éteint` |  |
+| 1089 | `gps on` | `gps allumé` |  |
+| 1095 | `Can't access GPS` | `GPS inaccessible` |  |
+| 1097 | `no fix` | `sans fix` |  |
+| 1106 | `sentences` | `phrases` |  |
+| 1112 | `hw off` | `éteint` |  |
+| 1136, 1140 | `time(U)` | `heure(U)` |  |
+| 1141 | `no sync` | `non synchro` |  |
+| 1246 | `Battery Gauge` | `Jauge batterie` |  |
+| 1253 | `remaining` | `autonomie` |  |
+| 1255 | `depleted` | `épuisée` |  |
+| 1255 | `charging` | `en charge` |  |
+| 1257 | `%dh %dm` | `%dh %dmin` | keep %d |
+| 1266 | `avg current` | `courant moyen` |  |
+| 1273 | `avg power` | `puissance moy.` |  |
+| 1280 | `voltage` | `tension` |  |
+| 1290 | `remaining cap` | `capacité rest.` |  |
+| 1297 | `temperature` | `température` |  |
+| 1306 | `hibernating...` | `mise en veille...` |  |
+| 1310 | `power off device?` | `éteindre l'appareil ?` |  |
+| 1311 | `usb-c to wake` | `usb-c pour réveiller` |  |
+| 1312 | `Enter:yes  q:no` | `Entrée:oui  q:non` | double space |
+| 1319 | `%shibernate: long press/Enter` | `%sveille : appui long/Entrée` | keep %s |
+| 1320 | `%spower off: long press/Enter` | `%sarrêt : appui long/Entrée` | keep %s |
+| 1357 | `UTC offset saved` | `Décalage UTC enregistré` |  |
+| 1419 | `Recent adverts` | `Annonces récentes` |  |
+| 1433 | `Reboot for Bluetooth` | `Redémarrer (Bluetooth)` |  |
+| 1461 | `WiFi failed to start` | `Échec du WiFi` |  |
+| 1500 | `Advert sent!` | `Annonce envoyée !` |  |
+| 1502 | `Advert failed..` | `Échec de l'annonce..` |  |
+| 1582 | `%d%%  \|  %d unread` | `%d%%  \|  %d non lus` | keep %d; double space |
+| 1602 | `SMS: %d  Missed: %d` | `SMS : %d  Manqués : %d` | keep %d; double space |
+| 1606 | `Missed: %d` | `Manqués : %d` | keep %d |
+| 2015 | `New: %s` | `De : %s` | keep %s |
+| 2382 | `S:Settings  E:Reader` | `S:Options  E:Lecteur` | double space |
+| 2383 | `N:Notes  W/S:Scroll` | `N:Notes  W/S:Défiler` | double space |
+| 2384 | `A/D:Cycle Left/Right` | `A/D:Gauche/Droite` |  |
+| 2385 | `[X to dismiss]` | `[X pour fermer]` |  |
+| 2518 | `Low Battery.` | `Batterie faible.` |  |
+| 2519 | `Shutting Down!` | `Extinction !` |  |
+| 2661 | `GPS gated (40MHz build)` | `GPS bloqué (40 MHz)` |  |
+| 2676 | `GPS: Enabled` | `GPS : activé` |  |
+| 2676 | `GPS: Disabled` | `GPS : désactivé` |  |
+| 2693 | `Buzzer: OFF` | `Buzzer : coupé` |  |
+| 2693 | `Buzzer: ON` | `Buzzer : activé` |  |
+| 3045 | `Unknown` | `Inconnu` |  |
+| 3172 | `Game Boy needs 240MHz` | `Game Boy exige 240 MHz` |  |
 
 ### Settings
 
-Source: `examples/companion_radio/ui-new/SettingsScreen.h`. All builds. Some rows only appear in builds with that hardware or feature (WiFi, 4G modem, firmware update tools).
+Source: `examples/companion_radio/ui-new/SettingsScreen.h`. All builds. Some rows only appear in builds with that hardware or feature (WiFi, 4G modem, firmware update tools), and some only on the T-Deck Max (LoRa Antenna, Canned Messages, Backlight Brightness, Keyboard LED, Change Backlight to Alt+B).
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
 | 95 | `Default (38400)` | `Défaut 38400` |  |
 | 112 | `None` | `Aucun` |  |
-| 425 | `Auto All` | `Auto (tous)` |  |
-| 426 | `Custom` | `Personnalisé` |  |
-| 427 | `Manual Only` | `Manuel seul` |  |
-| 1109 | `File not found on SD` | `Fichier absent de la SD` |  |
-| 1114 | `Bad file size (need 0.5-6MB)` | `Taille invalide (0,5 à 6 Mo)` |  |
-| 1126 | `Not a firmware file (bad magic)` | `Pas un firmware (signature)` |  |
-| 1135 | `Cannot open firmware file` | `Firmware illisible` |  |
-| 1148 | `Out of memory` | `Mémoire insuffisante` |  |
-| 1159 | `Flash write error` | `Erreur d'écriture flash` |  |
-| 1173, 2715 | `Flashing Firmware` | `Écriture du firmware` |  |
-| 1174 | `%d / %d KB` | `%d / %d Ko` | keep %d |
-| 1177, 2717 | `DO NOT POWER OFF` | `NE PAS ÉTEINDRE` |  |
-| 1256 | `Update Complete!` | `Mise à jour terminée !` |  |
-| 1261 | `Firmware: %d KB` | `Firmware : %d Ko` | keep %d |
-| 1264 | `Firmware written` | `Firmware écrit` |  |
-| 1267 | `Rebooting in 3 seconds...` | `Redémarrage dans 3 s...` |  |
-| 1770 | `Welcome! Setup` | `Bienvenue ! Configuration` |  |
-| 1772 | `Settings > Contacts` | `Paramètres > Contacts` |  |
-| 1774 | `Settings > Channels` | `Paramètres > Canaux` |  |
-| 1777 | `Settings > OTA Tools` | `Paramètres > Outils OTA` |  |
-| 1780 | `Settings > Experimental` | `Paramètres > Expérimental` |  |
-| 1782 | `Settings` | `Paramètres` |  |
-| 1829 | `Name: %s_` | `Nom : %s_` | keep %s |
-| 1831 | `Name: %s` | `Nom : %s` | keep %s |
-| 1842 | `< Custom >` | `< Personnalisé >` |  |
-| 1846 | `Preset: %s` | `Profil : %s` | keep %s |
-| 1848 | `Preset: Custom` | `Profil : Personnalisé` |  |
-| 1857 | `Freq: %s_ MHz` | `Fréq : %s_ MHz` | keep %s |
-| 1859 | `Freq: %.3f MHz` | `Fréq : %.3f MHz` | keep %.3f |
-| 1904 | `UTC Offset: %+d` | `Décalage UTC : %+d` | keep %+d |
-| 1911 | `Brightness: %d%% <W/S>` | `Luminosité : %d%% <W/S>` | keep %d |
-| 1913 | `Backlight Brightness: %d%%` | `Rétroéclairage : %d%%` | keep %d |
-| 1920 | `Keyboard LED: %d%% <W/S>` | `LED clavier : %d%% <W/S>` | keep %d |
-| 1922 | `Keyboard LED: %d%%` | `LED clavier : %d%%` | keep %d |
-| 1928 | `Msg LED Flash: %s` | `Flash LED message : %s` | keep %s |
-| 1929, 1976, 2021, 2029, 2126, 2132, 2138, 2144, 2150, 2282 | `ON` | `OUI` |  |
-| 1929, 1976, 2021, 2029, 2126, 2132, 2138, 2144, 2150, 2282 | `OFF` | `NON` |  |
-| 1935 | `Path Hash Size: %d-byte <W/S>` | `Taille hash chemin : %d o <W/S>` | keep %d |
-| 1937 | `Path Hash Size: %d-byte` | `Taille hash chemin : %d o` | keep %d |
-| 1944 | `Region: %s_` | `Région : %s_` | keep %s |
-| 1946 | `Default Region: %s` | `Région déf. : %s` | keep %s |
-| 1948 | `Default Region: (none)` | `Région déf. : (aucune)` |  |
-| 1956 | `< GPS Baud: %s > *` | `< Débit GPS : %s > *` | keep %s |
-| 1959 | `GPS Baud: %s *` | `Débit GPS : %s *` | keep %s |
-| 1968 | `LoRa Antenna: %s` | `Antenne LoRa : %s` | keep %s |
-| 1969 | `External` | `Externe` |  |
-| 1969 | `Internal` | `Interne` |  |
-| 1975 | `Dark Mode: %s` | `Mode sombre : %s` | keep %s |
-| 1981 | `Font Size: %s` | `Taille du texte : %s` | keep %s |
-| 1982 | `LARGER` | `GRAND` |  |
-| 1982 | `TINY` | `PETIT` |  |
-| 1988 | `< Font: %s >` | `< Police : %s >` | keep %s |
-| 1991 | `Font: %s` | `Police : %s` | keep %s |
-| 2000 | `< Auto Lock: %s >` | `< Verrou auto : %s >` | keep %s |
-| 2003 | `Auto Lock: %s` | `Verrou auto : %s` | keep %s |
-| 2015 | `WiFi: (not connected)` | `WiFi : (non connecté)` |  |
-| 2020 | `WiFi Radio: %s` | `Radio WiFi : %s` | keep %s |
-| 2028 | `4G Modem: %s` | `Modem 4G : %s` | keep %s |
-| 2048 | `Channels >>` | `Canaux >>` |  |
-| 2053 | `Rx Log >>` | `Journal RX >>` |  |
-| 2059 | `Export/Import >>` | `Exporter/Importer >>` |  |
-| 2064 | `Export to SD >>` | `Exporter vers SD >>` |  |
-| 2068 | `Import from SD` | `Importer depuis SD` |  |
-| 2072 | `  [%c] Identity` | `  [%c] Identité` | keep %c; starts with a space |
-| 2078 | `  [%c] Radio Settings` | `  [%c] Réglages radio` | keep %c; starts with a space |
-| 2084 | `  [%c] Channels` | `  [%c] Canaux` | keep %c; starts with a space |
-| 2096 | `    [%c] Auto-Add Prefs` | `    [%c] Préf. d'ajout auto` | keep %c; starts with a space |
-| 2103 | `>> Export Now` | `>> Exporter maintenant` |  |
-| 2115 | `< Add Mode: %s >` | `< Ajout : %s >` | keep %s |
-| 2118 | `Add Mode: %s` | `Ajout : %s` | keep %s |
-| 2125 | `  Companion: %s` | `  Compagnon : %s` | keep %s; starts with a space |
-| 2131 | `  Repeater: %s` | `  Répéteur : %s` | keep %s; starts with a space |
-| 2137 | `  Room Server: %s` | `  Serveur salon : %s` | keep %s; starts with a space |
-| 2143 | `  Sensor: %s` | `  Capteur : %s` | keep %s; starts with a space |
-| 2149 | `  Overwrite Oldest: %s` | `  Écraser anciens : %s` | keep %s; starts with a space |
-| 2157 | `--- Channels ---` | `--- Canaux ---` |  |
-| 2177 | `Off` | `Non` |  |
-| 2178 | `All` | `Tous` |  |
-| 2182 | `N:%s T:Tone X:Del` | `N:%s T:Son X:Suppr` | keep %s |
-| 2184 | `N:%s T:Tone Ent:Region` | `N:%s T:Son Ent:Région` | keep %s |
-| 2188 | `N:%s Ent:Region X:Del` | `N:%s Ent:Région X:Suppr` | keep %s |
-| 2190 | `N:%s Ent:Region` | `N:%s Ent:Région` | keep %s |
-| 2200 | ` (empty)` | ` (vide)` | starts with a space |
-| 2211 | `+ Add Channel (# = public)` | `+ Ajouter canal (# = public)` |  |
-| 2218 | `Canned Messages >>` | `Messages prédéfinis >>` |  |
-| 2230 | `%u: (empty)` | `%u: (vide)` | keep %u |
-| 2239 | `OTA Tools >>` | `Outils OTA >>` |  |
-| 2243, 2657, 2672 | `Firmware Update` | `Mise à jour du firmware` |  |
-| 2247, 2747, 2764 | `SD File Manager` | `Gestionnaire de fichiers SD` |  |
-| 2253 | `--- Device Info ---` | `--- Infos appareil ---` |  |
-| 2260 | `Node ID: %s` | `ID nœud : %s` | keep %s |
-| 2272 | `Experimental Features >>` | `Expérimental >>` |  |
-| 2276 | `Language: Change to French` | `Langue : Passer à l'anglais` | Language row: shows the other language |
-| 2281 | `Change Backlight to Alt+B: %s` | `Rétroéclairage Alt+B : %s` | keep %s |
-| 2288 | `Delete all contacts` | `Supprimer tous les contacts` |  |
-| 2294 | `(unavailable)` | `(indisponible)` |  |
-| 2304 | `Carrier: %s (%d/5)` | `Opérateur : %s (%d/5)` | keep %s %d |
-| 2306 | `Carrier: (searching)` | `Opérateur : (recherche)` |  |
-| 2330 | `APN: (none)` | `APN : (aucun)` |  |
-| 2374 | `Delete %s?` | `Supprimer %s ?` | keep %s |
-| 2377 | `Apply radio changes?` | `Appliquer réglages radio ?` |  |
-| 2379 | `Region not set.` | `Région non définie.` |  |
-| 2380 | `Leave unset?` | `Laisser non définie ?` |  |
-| 2382, 2413, 2427 | `Enter:Yes  Q:No` | `Entrée:Oui  Q:Non` | double space |
-| 2401 | `Delete all contacts?` | `Supprimer les contacts ?` |  |
-| 2404 | `All %d contact%s, with` | `Les %d contact%s (favoris` | keep %d %s |
-| 2406 | `favourites and custom` | `et chemins manuels inclus)` |  |
-| 2407 | `paths, and the DM history` | `et l'historique des MP` |  |
-| 2408 | `will be deleted. Channel` | `seront effacés. Messages` |  |
-| 2409 | `messages are kept.` | `des canaux conservés.` |  |
-| 2411 | `The device will RESTART.` | `L'appareil va REDÉMARRER.` |  |
-| 2424 | `Are you sure?` | `Êtes-vous sûr ?` |  |
-| 2426 | `This cannot be undone.` | `Action irréversible.` |  |
-| 2431 | `Purging` | `Suppression` |  |
-| 2434 | `Deleting all contacts and` | `Suppression des contacts et` |  |
-| 2435 | `the DM history.` | `de l'historique des MP.` |  |
-| 2436, 2898, 2910, 2920 | `Please wait...` | `Veuillez patienter...` |  |
-| 2438 | `Do not switch off. The` | `Ne pas éteindre. L'appareil` |  |
-| 2439 | `device restarts when done.` | `redémarre à la fin.` |  |
-| 2443 | `Contacts deleted` | `Contacts supprimés` |  |
-| 2443 | `Purge failed` | `Échec de la suppression` |  |
-| 2447 | `Done. %d contact%s and the` | `Fait. %d contact%s et` | keep %d %s |
-| 2449 | `DM history have been` | `l'historique des MP ont été` |  |
-| 2450 | `deleted from this device.` | `supprimés de l'appareil.` |  |
-| 2452 | `Contacts file: %s` | `Fichier contacts : %s` | keep %s |
-| 2452 | `failed` | `échec` |  |
-| 2454 | `DM history: %s` | `Historique MP : %s` | keep %s |
-| 2454 | `SD not ready` | `pas de SD` |  |
-| 2456 | `The restart reloads what` | `Le redémarrage recharge` |  |
-| 2457 | `storage still holds.` | `ce qui reste en mémoire.` |  |
-| 2460 | `RESTARTING NOW...` | `REDÉMARRAGE...` |  |
-| 2481 | `Notification Tone` | `Son de notification` |  |
-| 2517 | `Default (silent)` | `Défaut (silencieux)` |  |
-| 2520 | `Buzzer (vibrate)` | `Buzzer (vibreur)` |  |
-| 2538 | `Enter:Pick  Q:Back` | `Entrée:Choisir  Q:Retour` | double space |
-| 2569 | `Scanning for networks...` | `Recherche des réseaux...` |  |
-| 2575 | `No networks found.` | `Aucun réseau trouvé.` |  |
-| 2578 | `Check your hotspot is on` | `Vérifiez que le partage est` |  |
-| 2581 | `and set to 2.4GHz.` | `actif et en 2,4 GHz.` |  |
-| 2584 | `Press R or Enter to rescan.` | `R ou Entrée pour relancer.` |  |
-| 2587 | `Select network:` | `Choisir un réseau :` |  |
-| 2622 | `Password:` | `Mot de passe :` |  |
-| 2637 | `Connecting...` | `Connexion...` |  |
-| 2660 | `Start WiFi upload server?` | `Lancer le serveur WiFi ?` |  |
-| 2663 | `You will upload a .bin file` | `Envoyez un fichier .bin` |  |
-| 2666 | `from your device's browser.` | `depuis votre navigateur.` |  |
-| 2669 | `Starting WiFi...` | `Démarrage du WiFi...` |  |
-| 2675, 2767 | `Connect to WiFi network:` | `Connectez-vous au WiFi :` |  |
-| 2683, 2775 | `Then open browser:` | `Puis ouvrez le navigateur :` |  |
-| 2693 | `Waiting for upload...` | `En attente du fichier...` |  |
-| 2699 | `Receiving Firmware` | `Réception du firmware` |  |
-| 2702 | `%d KB received` | `%d Ko reçus` | keep %d |
-| 2706 | `Do not close browser` | `Ne fermez pas la page` |  |
-| 2712 | `Verifying file...` | `Vérification du fichier...` |  |
-| 2722 | `Update Failed` | `Échec de la mise à jour` |  |
-| 2750 | `Start WiFi file server?` | `Lancer le serveur WiFi ?` |  |
-| 2753 | `Upload and download files` | `Envoyer et télécharger des` |  |
-| 2756 | `on SD card via browser.` | `fichiers SD par navigateur.` |  |
-| 2760 | `LoRa paused while active.` | `LoRa mis en pause.` |  |
-| 2785 | `File server active...` | `Serveur de fichiers actif...` |  |
-| 2791 | `File Manager Error` | `Erreur du gestionnaire` |  |
-| 2819 | `Share with contact:` | `Partager avec un contact :` |  |
-| 2824 | `No contacts available` | `Aucun contact disponible` |  |
-| 2875 | `Enter:Send  Q:Cancel` | `Entrée:Envoyer  Q:Annuler` | double space |
-| 2886 | `Type, Enter:Ok Sh+Del:Cancel` | `Entrée:Ok Sh+Del:Annuler` |  |
-| 2891 | `R/Enter:Rescan Q:Back` | `R/Entrée:Relancer Q:Retour` |  |
-| 2893 | `W/S:Pick Enter:Sel R:Rescan` | `W/S:Choix Ent:OK R:Relance` |  |
-| 2896 | `Enter:Connect Sh+Del:Exit` | `Ent:Connexion Sh+Del:Sortir` |  |
-| 2904, 2914 | `Enter:Start  Q:Cancel` | `Entrée:Lancer  Q:Annuler` | double space |
-| 2906 | `Q:Cancel` | `Q:Annuler` |  |
-| 2908, 2918, 2933 | `Q:Back` | `Q:Retour` |  |
-| 2916 | `Q:Stop` | `Q:Arrêter` |  |
-| 2924 | `A/D:Choose Enter:Ok` | `A/D:Choisir Entrée:Ok` |  |
-| 2926 | `W/S:Adj Enter:Ok Q:Cancel` | `W/S:+/- Ent:Ok Q:Annuler` |  |
-| 2931 | `Q:Bk C:Share` | `Q:Ret C:Partager` |  |
-| 2935 | `Q:Bk` | `Q:Ret` |  |
-| 2937 | `Tap/Ent:Edit` | `Ent:Éditer` |  |
+| 434 | `Auto All` | `Auto (tous)` |  |
+| 435 | `Custom` | `Personnalisé` |  |
+| 436 | `Manual Only` | `Manuel seul` |  |
+| 941 | `IP: %d.%d.%d.%d` | `IP : %d.%d.%d.%d` | keep %d |
+| 954 | `Could not connect` | `Connexion impossible` |  |
+| 1152 | `File not found on SD` | `Fichier absent de la SD` |  |
+| 1157 | `Bad file size (need 0.5-6MB)` | `Taille invalide (0,5 à 6 Mo)` |  |
+| 1169 | `Not a firmware file (bad magic)` | `Pas un firmware (signature)` |  |
+| 1178 | `Cannot open firmware file` | `Firmware illisible` |  |
+| 1191 | `Out of memory` | `Mémoire insuffisante` |  |
+| 1202 | `Flash write error` | `Erreur d'écriture flash` |  |
+| 1216, 2797 | `Flashing Firmware` | `Écriture du firmware` |  |
+| 1217 | `%d / %d KB` | `%d / %d Ko` | keep %d |
+| 1220, 2799 | `DO NOT POWER OFF` | `NE PAS ÉTEINDRE` |  |
+| 1299 | `Update Complete!` | `Mise à jour terminée !` |  |
+| 1304 | `Firmware: %d KB` | `Firmware : %d Ko` | keep %d |
+| 1307 | `Firmware written` | `Firmware écrit` |  |
+| 1310 | `Rebooting in 3 seconds...` | `Redémarrage dans 3 s...` |  |
+| 1813 | `Welcome! Setup` | `Bienvenue ! Configuration` |  |
+| 1815 | `Settings > Contacts` | `Paramètres > Contacts` |  |
+| 1817 | `Settings > Channels` | `Paramètres > Canaux` |  |
+| 1820 | `Settings > OTA Tools` | `Paramètres > Outils OTA` |  |
+| 1823 | `Settings > Experimental` | `Paramètres > Expérimental` |  |
+| 1825 | `Settings` | `Paramètres` |  |
+| 1873 | `Name: %s_` | `Nom : %s_` | keep %s |
+| 1875 | `Name: %s` | `Nom : %s` | keep %s |
+| 1886 | `< Custom >` | `< Personnalisé >` |  |
+| 1890 | `Preset: %s` | `Profil : %s` | keep %s |
+| 1892 | `Preset: Custom` | `Profil : Personnalisé` |  |
+| 1901 | `Freq: %s_ MHz` | `Fréq : %s_ MHz` | keep %s |
+| 1903 | `Freq: %.3f MHz` | `Fréq : %.3f MHz` | keep %.3f |
+| 1948 | `UTC Offset: %+d` | `Décalage UTC : %+d` | keep %+d |
+| 1955 | `Brightness: %d%% <W/S>` | `Luminosité : %d%% <W/S>` | keep %d |
+| 1957 | `Backlight Brightness: %d%%` | `Rétroéclairage : %d%%` | keep %d |
+| 1964 | `Keyboard LED: %d%% <W/S>` | `LED clavier : %d%% <W/S>` | keep %d |
+| 1966 | `Keyboard LED: %d%%` | `LED clavier : %d%%` | keep %d |
+| 1972 | `Msg LED Flash: %s` | `Flash LED message : %s` | keep %s |
+| 1973, 2020, 2065, 2073, 2170, 2176, 2182, 2188, 2194, 2345, 2352 | `ON` | `OUI` |  |
+| 1973, 2020, 2065, 2073, 2170, 2176, 2182, 2188, 2194, 2345, 2352 | `OFF` | `NON` |  |
+| 1979 | `Path Hash Size: %d-byte <W/S>` | `Taille hash chemin : %d o <W/S>` | keep %d |
+| 1981 | `Path Hash Size: %d-byte` | `Taille hash chemin : %d o` | keep %d |
+| 1988 | `Region: %s_` | `Région : %s_` | keep %s |
+| 1990 | `Default Region: %s` | `Région déf. : %s` | keep %s |
+| 1992 | `Default Region: (none)` | `Région déf. : (aucune)` |  |
+| 2000 | `< GPS Baud: %s > *` | `< Débit GPS : %s > *` | keep %s |
+| 2003 | `GPS Baud: %s *` | `Débit GPS : %s *` | keep %s |
+| 2012 | `LoRa Antenna: %s` | `Antenne LoRa : %s` | keep %s |
+| 2013 | `External` | `Externe` |  |
+| 2013 | `Internal` | `Interne` |  |
+| 2019 | `Dark Mode: %s` | `Mode sombre : %s` | keep %s |
+| 2025 | `Font Size: %s` | `Taille du texte : %s` | keep %s |
+| 2026 | `LARGER` | `GRAND` |  |
+| 2026 | `TINY` | `PETIT` |  |
+| 2032 | `< Font: %s >` | `< Police : %s >` | keep %s |
+| 2035 | `Font: %s` | `Police : %s` | keep %s |
+| 2044 | `< Auto Lock: %s >` | `< Verrou auto : %s >` | keep %s |
+| 2047 | `Auto Lock: %s` | `Verrou auto : %s` | keep %s |
+| 2059 | `WiFi: (not connected)` | `WiFi : (non connecté)` |  |
+| 2064 | `WiFi Radio: %s` | `Radio WiFi : %s` | keep %s |
+| 2072 | `4G Modem: %s` | `Modem 4G : %s` | keep %s |
+| 2092 | `Channels >>` | `Canaux >>` |  |
+| 2097 | `Rx Log >>` | `Journal RX >>` |  |
+| 2103 | `Export/Import >>` | `Exporter/Importer >>` |  |
+| 2108 | `Export to SD >>` | `Exporter vers SD >>` |  |
+| 2112 | `Import from SD` | `Importer depuis SD` |  |
+| 2116 | `  [%c] Identity` | `  [%c] Identité` | keep %c; starts with a space |
+| 2122 | `  [%c] Radio Settings` | `  [%c] Réglages radio` | keep %c; starts with a space |
+| 2128 | `  [%c] Channels` | `  [%c] Canaux` | keep %c; starts with a space |
+| 2140 | `    [%c] Auto-Add Prefs` | `    [%c] Préf. d'ajout auto` | keep %c; starts with a space |
+| 2147 | `>> Export Now` | `>> Exporter maintenant` |  |
+| 2159 | `< Add Mode: %s >` | `< Ajout : %s >` | keep %s |
+| 2162 | `Add Mode: %s` | `Ajout : %s` | keep %s |
+| 2169 | `  Companion: %s` | `  Compagnon : %s` | keep %s; starts with a space |
+| 2175 | `  Repeater: %s` | `  Répéteur : %s` | keep %s; starts with a space |
+| 2181 | `  Room Server: %s` | `  Serveur salon : %s` | keep %s; starts with a space |
+| 2187 | `  Sensor: %s` | `  Capteur : %s` | keep %s; starts with a space |
+| 2193 | `  Overwrite Oldest: %s` | `  Écraser anciens : %s` | keep %s; starts with a space |
+| 2201 | `--- Channels ---` | `--- Canaux ---` |  |
+| 2222 | `Off` | `Non` |  |
+| 2223 | `All` | `Tous` |  |
+| 2227 | `N:%s T:Tone X:Del` | `N:%s T:Son X:Suppr` | keep %s |
+| 2229 | `N:%s T:Tone Ent:Region` | `N:%s T:Son Ent:Région` | keep %s |
+| 2233 | `N:%s Ent:Region X:Del` | `N:%s Ent:Région X:Suppr` | keep %s |
+| 2235 | `N:%s Ent:Region` | `N:%s Ent:Région` | keep %s |
+| 2263 | ` (empty)` | ` (vide)` | starts with a space |
+| 2274 | `+ Add Channel (# = public)` | `+ Ajouter canal (# = public)` |  |
+| 2281 | `Canned Messages >>` | `Messages prédéfinis >>` |  |
+| 2293 | `%u: (empty)` | `%u: (vide)` | keep %u |
+| 2302 | `OTA Tools >>` | `Outils OTA >>` |  |
+| 2306, 2739, 2754 | `Firmware Update` | `Mise à jour du firmware` |  |
+| 2310, 2829, 2846 | `SD File Manager` | `Gestionnaire de fichiers SD` |  |
+| 2316 | `--- Device Info ---` | `--- Infos appareil ---` |  |
+| 2323 | `Node ID: %s` | `ID nœud : %s` | keep %s |
+| 2335 | `Experimental Features >>` | `Expérimental >>` |  |
+| 2339 | `Language: Change to French` | `Langue : Passer à l'anglais` | Language row: shows the other language |
+| 2344 | `Change Backlight to Alt+B: %s` | `Rétroéclairage Alt+B : %s` | keep %s |
+| 2351 | `RX Boosted Gain: %s` | `Gain RX renforcé : %s` | keep %s |
+| 2358 | `AGC Reset Int: %s_ s` | `Reset AGC : %s_ s` | keep %s |
+| 2360 | `AGC Reset Int: %u s` | `Reset AGC : %u s` | keep %u |
+| 2363 | `AGC Reset Int: Off` | `Reset AGC : Arrêt` |  |
+| 2369 | `Delete all contacts` | `Supprimer tous les contacts` |  |
+| 2375 | `(unavailable)` | `(indisponible)` |  |
+| 2385 | `Carrier: %s (%d/5)` | `Opérateur : %s (%d/5)` | keep %s %d |
+| 2387 | `Carrier: (searching)` | `Opérateur : (recherche)` |  |
+| 2411 | `APN: (none)` | `APN : (aucun)` |  |
+| 2456 | `Delete %s?` | `Supprimer %s ?` | keep %s |
+| 2459 | `Apply radio changes?` | `Appliquer réglages radio ?` |  |
+| 2461 | `Region not set.` | `Région non définie.` |  |
+| 2462 | `Leave unset?` | `Laisser non définie ?` |  |
+| 2464, 2495, 2509 | `Enter:Yes  Q:No` | `Entrée:Oui  Q:Non` | double space |
+| 2483 | `Delete all contacts?` | `Supprimer les contacts ?` |  |
+| 2486 | `All %d contact%s, with` | `Les %d contact%s (favoris` | keep %d %s |
+| 2488 | `favourites and custom` | `et chemins manuels inclus)` |  |
+| 2489 | `paths, and the DM history` | `et l'historique des MP` |  |
+| 2490 | `will be deleted. Channel` | `seront effacés. Messages` |  |
+| 2491 | `messages are kept.` | `des canaux conservés.` |  |
+| 2493 | `The device will RESTART.` | `L'appareil va REDÉMARRER.` |  |
+| 2506 | `Are you sure?` | `Êtes-vous sûr ?` |  |
+| 2508 | `This cannot be undone.` | `Action irréversible.` |  |
+| 2513 | `Purging` | `Suppression` |  |
+| 2516 | `Deleting all contacts and` | `Suppression des contacts et` |  |
+| 2517 | `the DM history.` | `de l'historique des MP.` |  |
+| 2518, 2980, 2992, 3002 | `Please wait...` | `Veuillez patienter...` |  |
+| 2520 | `Do not switch off. The` | `Ne pas éteindre. L'appareil` |  |
+| 2521 | `device restarts when done.` | `redémarre à la fin.` |  |
+| 2525 | `Contacts deleted` | `Contacts supprimés` |  |
+| 2525 | `Purge failed` | `Échec de la suppression` |  |
+| 2529 | `Done. %d contact%s and the` | `Fait. %d contact%s et` | keep %d %s |
+| 2531 | `DM history have been` | `l'historique des MP ont été` |  |
+| 2532 | `deleted from this device.` | `supprimés de l'appareil.` |  |
+| 2534 | `Contacts file: %s` | `Fichier contacts : %s` | keep %s |
+| 2534 | `failed` | `échec` |  |
+| 2536 | `DM history: %s` | `Historique MP : %s` | keep %s |
+| 2536 | `SD not ready` | `pas de SD` |  |
+| 2538 | `The restart reloads what` | `Le redémarrage recharge` |  |
+| 2539 | `storage still holds.` | `ce qui reste en mémoire.` |  |
+| 2542 | `RESTARTING NOW...` | `REDÉMARRAGE...` |  |
+| 2563 | `Notification Tone` | `Son de notification` |  |
+| 2599 | `Default (silent)` | `Défaut (silencieux)` |  |
+| 2602 | `Buzzer (vibrate)` | `Buzzer (vibreur)` |  |
+| 2620 | `Enter:Pick  Q:Back` | `Entrée:Choisir  Q:Retour` | double space |
+| 2651 | `Scanning for networks...` | `Recherche des réseaux...` |  |
+| 2657 | `No networks found.` | `Aucun réseau trouvé.` |  |
+| 2660 | `Check your hotspot is on` | `Vérifiez que le partage est` |  |
+| 2663 | `and set to 2.4GHz.` | `actif et en 2,4 GHz.` |  |
+| 2666 | `Press R or Enter to rescan.` | `R ou Entrée pour relancer.` |  |
+| 2669 | `Select network:` | `Choisir un réseau :` |  |
+| 2704 | `Password:` | `Mot de passe :` |  |
+| 2719, 3307 | `Connecting...` | `Connexion...` |  |
+| 2742 | `Start WiFi upload server?` | `Lancer le serveur WiFi ?` |  |
+| 2745 | `You will upload a .bin file` | `Envoyez un fichier .bin` |  |
+| 2748 | `from your device's browser.` | `depuis votre navigateur.` |  |
+| 2751 | `Starting WiFi...` | `Démarrage du WiFi...` |  |
+| 2757, 2849 | `Connect to WiFi network:` | `Connectez-vous au WiFi :` |  |
+| 2765, 2857 | `Then open browser:` | `Puis ouvrez le navigateur :` |  |
+| 2775 | `Waiting for upload...` | `En attente du fichier...` |  |
+| 2781 | `Receiving Firmware` | `Réception du firmware` |  |
+| 2784 | `%d KB received` | `%d Ko reçus` | keep %d |
+| 2788 | `Do not close browser` | `Ne fermez pas la page` |  |
+| 2794 | `Verifying file...` | `Vérification du fichier...` |  |
+| 2804 | `Update Failed` | `Échec de la mise à jour` |  |
+| 2832 | `Start WiFi file server?` | `Lancer le serveur WiFi ?` |  |
+| 2835 | `Upload and download files` | `Envoyer et télécharger des` |  |
+| 2838 | `on SD card via browser.` | `fichiers SD par navigateur.` |  |
+| 2842 | `LoRa paused while active.` | `LoRa mis en pause.` |  |
+| 2867 | `File server active...` | `Serveur de fichiers actif...` |  |
+| 2873 | `File Manager Error` | `Erreur du gestionnaire` |  |
+| 2901 | `Share with contact:` | `Partager avec un contact :` |  |
+| 2906 | `No contacts available` | `Aucun contact disponible` |  |
+| 2957 | `Enter:Send  Q:Cancel` | `Entrée:Envoyer  Q:Annuler` | double space |
+| 2968 | `Type, Enter:Ok Sh+Del:Cancel` | `Entrée:Ok Sh+Del:Annuler` |  |
+| 2973 | `R/Enter:Rescan Q:Back` | `R/Entrée:Relancer Q:Retour` |  |
+| 2975 | `W/S:Pick Enter:Sel R:Rescan` | `W/S:Choix Ent:OK R:Relance` |  |
+| 2978 | `Enter:Connect Sh+Del:Exit` | `Ent:Connexion Sh+Del:Sortir` |  |
+| 2986, 2996 | `Enter:Start  Q:Cancel` | `Entrée:Lancer  Q:Annuler` | double space |
+| 2988 | `Q:Cancel` | `Q:Annuler` |  |
+| 2990, 3000, 3015 | `Q:Back` | `Q:Retour` |  |
+| 2998 | `Q:Stop` | `Q:Arrêter` |  |
+| 3006 | `A/D:Choose Enter:Ok` | `A/D:Choisir Entrée:Ok` |  |
+| 3008 | `W/S:Adj Enter:Ok Q:Cancel` | `W/S:+/- Ent:Ok Q:Annuler` |  |
+| 3013 | `Q:Bk C:Share` | `Q:Ret C:Partager` |  |
+| 3017 | `Q:Bk` | `Q:Ret` |  |
+| 3019 | `Tap/Ent:Edit` | `Ent:Éditer` |  |
 
 ### Channel list
 
@@ -413,63 +429,77 @@ Source: `examples/companion_radio/ui-new/ChannelScreen.h`. All builds.
 
 ### Pop-up alerts and compose screen
 
-Source: `examples/companion_radio/main.cpp`. All builds. Voice and phone call alerts only appear in builds with those features.
+Source: `examples/companion_radio/main.cpp`. All builds. Voice and phone call alerts only appear in builds with those features, WiFi connection alerts only in WiFi builds, and the Switch to WiFi, Switch to Bluetooth and Restarting alerts only in the combined T-Deck Max build (`meck_max_ble_wifi`).
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
-| 1247 | `Favourite! Press again` | `Favori ! Appuyez encore` |  |
-| 1255 | `Removed: %s` | `Retiré : %s` | keep %s |
-| 1265, 5227 | `Added: %s` | `Ajouté : %s` | keep %s |
-| 1272 | `Advert expired, try later` | `Annonce expirée` |  |
-| 1346 | `No canned messages` | `Aucun message prédéfini` |  |
-| 3150 | `Sending voice...` | `Envoi du vocal...` |  |
-| 3186 | `Voice sent!` | `Vocal envoyé !` |  |
-| 3186 | `Send partial` | `Envoi partiel` |  |
-| 3189, 5728 | `Send failed!` | `Échec de l'envoi !` |  |
-| 3200 | `Voice msg received!` | `Vocal reçu !` |  |
-| 3203 | `Voice decode failed` | `Échec décodage vocal` |  |
-| 3281 | `SMS: %s` | `SMS : %s` | keep %s |
-| 3301 | `Call: %s` | `Appel : %s` | keep %s |
-| 3328 | `Call Ended  %lu:%02lu` | `Appel terminé  %lu:%02lu` | keep %lu %02lu; double space |
-| 3332, 4524 | `Call Ended` | `Appel terminé` |  |
-| 3341 | `Missed: %s` | `Manqué : %s` | keep %s |
-| 3346 | `Line busy` | `Ligne occupée` |  |
-| 3350 | `No answer` | `Pas de réponse` |  |
-| 3354 | `Call failed` | `Échec de l'appel` |  |
-| 3984, 5699 | `DM sent!` | `MP envoyé !` |  |
-| 4377 | `No sections selected` | `Aucune section choisie` |  |
-| 4386 | `Exported to %s` | `Exporté vers %s` | keep %s |
-| 4389 | `Export failed (SD?)` | `Échec export (SD ?)` |  |
-| 4399 | `Config imported!` | `Config importée !` |  |
-| 4401 | `No import.json found` | `import.json introuvable` |  |
-| 4403 | `Import failed` | `Échec de l'import` |  |
-| 4434 | `Shared channel: %s` | `Canal partagé : %s` | keep %s |
-| 4439 | `Shared with %s` | `Partagé avec %s` | keep %s |
-| 4442 | `Share failed` | `Échec du partage` |  |
-| 4670, 4700, 4743 | `None selected` | `Aucune sélection` |  |
-| 4675, 4704, 4747 | `Memory error` | `Erreur mémoire` |  |
-| 4680 | `Deleted %d contacts` | `%d contacts supprimés` | keep %d |
-| 4689 | `Delete %d? Shift+Del again` | `Supprimer %d ? Shift+Del` | keep %d |
-| 4710 | `Exported %d to SD (JSON)` | `%d exportés sur SD (JSON)` | keep %d |
-| 4714 | `Export failed` | `Échec de l'export` |  |
-| 4728 | `+%d imported (JSON)` | `+%d importés (JSON)` | keep %d |
-| 4731 | `No new contacts` | `Aucun nouveau contact` |  |
-| 4733, 5292 | `Import failed (no file?)` | `Échec import (fichier ?)` |  |
-| 4752 | `Toggled fav on %d` | `Favoris modifiés : %d` | keep %d |
-| 5189 | `No contact selected` | `Aucun contact choisi` |  |
-| 5224 | `Already in contacts` | `Déjà dans les contacts` |  |
-| 5231 | `Add failed` | `Échec de l'ajout` |  |
-| 5260 | `Exported %d to SD` | `%d exportés sur SD` | keep %d |
-| 5263 | `Export failed (check serial)` | `Échec export (voir série)` |  |
-| 5286 | `+%d imported (%d total)` | `+%d importés (total %d)` | keep %d |
-| 5290 | `No new contacts to add` | `Aucun nouveau contact` |  |
-| 5548 | `DM: %s` | `MP : %s` | keep %s |
-| 5552 | `To: %s` | `À : %s` | keep %s |
-| 5554 | `To: Channel %d` | `À : Canal %d` | keep %d |
-| 5701 | `DM failed!` | `Échec du MP !` |  |
-| 5704 | `No contact!` | `Aucun contact !` |  |
-| 5726 | `Sent!` | `Envoyé !` |  |
-| 5731 | `No channel!` | `Aucun canal !` |  |
+| 915 | `Timed out` | `Délai dépassé` |  |
+| 921 | `Wrong password?` | `Mot de passe erroné ?` |  |
+| 923 | `Network not found` | `Réseau introuvable` |  |
+| 925 | `Signal lost` | `Signal perdu` |  |
+| 929 | `Network refused (%u)` | `Refus du réseau (%u)` | keep %u |
+| 932 | `WiFi error %u` | `Erreur WiFi %u` | keep %u |
+| 955 | `Connecting to Saved Wifi:` | `Connexion au WiFi :` |  |
+| 967 | `Connected\nIP: %d.%d.%d.%d` | `Connecté\nIP : %d.%d.%d.%d` | keep %d; keep the line breaks (\n) |
+| 974 | `Could not connect` | `Connexion impossible` |  |
+| 1258 | `Restarting...` | `Redémarrage...` |  |
+| 1274 | `Switch to WiFi?\nEnter again to restart` | `Passer au WiFi ?\nEntrée encore : redémarrer` | keep the line breaks (\n) |
+| 1275 | `Switch to Bluetooth?\nEnter again to restart` | `Passer au Bluetooth ?\nEntrée encore : redémarrer` | keep the line breaks (\n) |
+| 1396 | `Favourite! Press again` | `Favori ! Appuyez encore` |  |
+| 1404 | `Removed: %s` | `Retiré : %s` | keep %s |
+| 1414, 5431 | `Added: %s` | `Ajouté : %s` | keep %s |
+| 1421 | `Advert expired, try later` | `Annonce expirée` |  |
+| 1495 | `No canned messages` | `Aucun message prédéfini` |  |
+| 2855 | `Exported to %s` | `Exporté vers %s` | keep %s |
+| 2858 | `Export failed (SD?)` | `Échec export (SD ?)` |  |
+| 2873 | `Config imported!` | `Config importée !` |  |
+| 2875 | `No import.json found` | `import.json introuvable` |  |
+| 2877 | `Import failed` | `Échec de l'import` |  |
+| 3359 | `Sending voice...` | `Envoi du vocal...` |  |
+| 3395 | `Voice sent!` | `Vocal envoyé !` |  |
+| 3395 | `Send partial` | `Envoi partiel` |  |
+| 3398, 5932 | `Send failed!` | `Échec de l'envoi !` |  |
+| 3409 | `Voice msg received!` | `Vocal reçu !` |  |
+| 3412 | `Voice decode failed` | `Échec décodage vocal` |  |
+| 3490 | `SMS: %s` | `SMS : %s` | keep %s |
+| 3510 | `Call: %s` | `Appel : %s` | keep %s |
+| 3537 | `Call Ended  %lu:%02lu` | `Appel terminé  %lu:%02lu` | keep %lu %02lu; double space |
+| 3541, 4728 | `Call Ended` | `Appel terminé` |  |
+| 3550 | `Missed: %s` | `Manqué : %s` | keep %s |
+| 3555 | `Line busy` | `Ligne occupée` |  |
+| 3559 | `No answer` | `Pas de réponse` |  |
+| 3563 | `Call failed` | `Échec de l'appel` |  |
+| 4199, 5903 | `DM sent!` | `MP envoyé !` |  |
+| 4592 | `No sections selected` | `Aucune section choisie` |  |
+| 4596 | `Compiling...\nPlease Wait...` | `Compilation...\nVeuillez patienter...` | keep the line breaks (\n) |
+| 4606 | `Importing...\nPlease Wait...` | `Importation...\nVeuillez patienter...` | keep the line breaks (\n) |
+| 4638 | `Shared channel: %s` | `Canal partagé : %s` | keep %s |
+| 4643 | `Shared with %s` | `Partagé avec %s` | keep %s |
+| 4646 | `Share failed` | `Échec du partage` |  |
+| 4874, 4904, 4947 | `None selected` | `Aucune sélection` |  |
+| 4879, 4908, 4951 | `Memory error` | `Erreur mémoire` |  |
+| 4884 | `Deleted %d contacts` | `%d contacts supprimés` | keep %d |
+| 4893 | `Delete %d? Shift+Del again` | `Supprimer %d ? Shift+Del` | keep %d |
+| 4914 | `Exported %d to SD (JSON)` | `%d exportés sur SD (JSON)` | keep %d |
+| 4918 | `Export failed` | `Échec de l'export` |  |
+| 4932 | `+%d imported (JSON)` | `+%d importés (JSON)` | keep %d |
+| 4935 | `No new contacts` | `Aucun nouveau contact` |  |
+| 4937, 5496 | `Import failed (no file?)` | `Échec import (fichier ?)` |  |
+| 4956 | `Toggled fav on %d` | `Favoris modifiés : %d` | keep %d |
+| 5393 | `No contact selected` | `Aucun contact choisi` |  |
+| 5428 | `Already in contacts` | `Déjà dans les contacts` |  |
+| 5435 | `Add failed` | `Échec de l'ajout` |  |
+| 5464 | `Exported %d to SD` | `%d exportés sur SD` | keep %d |
+| 5467 | `Export failed (check serial)` | `Échec export (voir série)` |  |
+| 5490 | `+%d imported (%d total)` | `+%d importés (total %d)` | keep %d |
+| 5494 | `No new contacts to add` | `Aucun nouveau contact` |  |
+| 5752 | `DM: %s` | `MP : %s` | keep %s |
+| 5756 | `To: %s` | `À : %s` | keep %s |
+| 5758 | `To: Channel %d` | `À : Canal %d` | keep %d |
+| 5905 | `DM failed!` | `Échec du MP !` |  |
+| 5908 | `No contact!` | `Aucun contact !` |  |
+| 5930 | `Sent!` | `Envoyé !` |  |
+| 5935 | `No channel!` | `Aucun canal !` |  |
 
 ### Contacts
 
@@ -778,7 +808,7 @@ Source: `examples/companion_radio/ui-new/TextReaderScreen.h`. All builds.
 
 ### Map
 
-Source: `examples/companion_radio/ui-new/MapScreen.h`. Builds with GPS.
+Source: `examples/companion_radio/ui-new/MapScreen.h`. Builds with GPS. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -788,7 +818,7 @@ Source: `examples/companion_radio/ui-new/MapScreen.h`. Builds with GPS.
 
 ### Audiobooks
 
-Source: `examples/companion_radio/ui-new/AudiobookPlayerScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds.
+Source: `examples/companion_radio/ui-new/AudiobookPlayerScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -824,7 +854,7 @@ Source: `examples/companion_radio/ui-new/AudiobookPlayerScreen.h`. T-Deck Pro au
 
 ### Voice messages
 
-Source: `examples/companion_radio/ui-new/VoiceMessageScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds.
+Source: `examples/companion_radio/ui-new/VoiceMessageScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -861,7 +891,7 @@ Source: `examples/companion_radio/ui-new/VoiceMessageScreen.h`. T-Deck Pro audio
 
 ### Alarm clock
 
-Source: `examples/companion_radio/ui-new/AlarmScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds.
+Source: `examples/companion_radio/ui-new/AlarmScreen.h`. T-Deck Pro audio builds and all T-Deck Max builds. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -1000,7 +1030,7 @@ Source: `examples/companion_radio/ui-new/GBCEmulatorScreen.cpp`. All builds exce
 
 ### Web Reader (browser and IRC)
 
-Source: `examples/companion_radio/ui-new/WebReaderScreen.h`. Builds with the Web Reader: T-Deck Pro 4G builds, T-Deck Pro audio builds except the standalone ones, and all T-Deck Max builds.
+Source: `examples/companion_radio/ui-new/WebReaderScreen.h`. Builds with the Web Reader: T-Deck Pro 4G builds, T-Deck Pro audio builds except the standalone ones, and all T-Deck Max builds. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -1127,7 +1157,7 @@ Source: `examples/companion_radio/ui-new/WebReaderScreen.h`. Builds with the Web
 
 ### Phone and SMS
 
-Source: `examples/companion_radio/ui-new/SMSScreen.h`. T-Deck Pro 4G builds and all T-Deck Max builds.
+Source: `examples/companion_radio/ui-new/SMSScreen.h`. T-Deck Pro 4G builds and all T-Deck Max builds. On the 40 MHz builds this screen can't be opened from the keyboard or the home screen.
 
 | Line | English | French | Notes |
 | --- | --- | --- | --- |
@@ -1193,4 +1223,3 @@ Source: `examples/companion_radio/ui-new/SMSScreen.h`. T-Deck Pro 4G builds and 
 | 1486 | `Sh+Del:Reject` | `Sh+Del:Rejet` |  |
 | 1503 | `In Call` | `En appel` |  |
 | 1554 | `Ent:Hang  W/S:Vol 0-9:DTMF` | `Ent:Racc.  W/S:Vol 0-9:DTMF` | double space |
-
