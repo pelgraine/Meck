@@ -8,6 +8,9 @@
 #define TXT_TYPE_SIGNED_PLAIN   2    // plain text, signed by sender
 #define TXT_TYPE_CLI_COMMAND    3    // a CLI command (explictly)
 
+#define DATA_TYPE_RESERVED      0x0000 // reserved for future use
+#define DATA_TYPE_DEV           0xFFFF // developer namespace for experimenting with group/channel datagrams and building apps
+
 class StrHelper {
 public:
   static void strncpy(char* dest, const char* src, size_t buf_sz);

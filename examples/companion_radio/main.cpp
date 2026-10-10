@@ -888,6 +888,93 @@ static uint32_t _atoi(const char* sp) {
   // Lets the Settings WiFi setup (which only forward-declares UITask) show
   // its Connecting / IP / Could not connect popups.
   void meckShowAlert(const char* text, int duration_millis) { ui_task.showAlert(text, duration_millis); }
+
+  // Why the last WiFi connection attempt failed. The WiFi driver reports a
+  // reason code each time a connection attempt drops; it is recorded here so
+  // the "Could not connect" popups and the serial log can say why.
+  static volatile uint8_t meckWifiLastReason = 0;
+  static bool meckWifiReasonHooked = false;
+  static void meckWifiOnDisconnect(arduino_event_id_t event, arduino_event_info_t info) {
+    meckWifiLastReason = info.wifi_sta_disconnected.reason;
+  }
+  // Call just before WiFi.begin(): clears the last reason (and starts
+  // recording reasons the first time).
+  void meckWifiResetReason() {
+    if (!meckWifiReasonHooked) {
+      WiFi.onEvent(meckWifiOnDisconnect, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+      meckWifiReasonHooked = true;
+    }
+    meckWifiLastReason = 0;
+  }
+  // Plain-language reason for the second line of a "Could not connect" popup.
+  const char* meckWifiFailReason() {
+    static char buf[28];
+    uint8_t r = meckWifiLastReason;
+    switch (r) {
+      case 0:
+        return MECK_TR("Timed out", "D\xC3\xA9lai d\xC3\xA9pass\xC3\xA9");
+      case WIFI_REASON_MIC_FAILURE:
+      case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+      case WIFI_REASON_802_1X_AUTH_FAILED:
+      case WIFI_REASON_AUTH_FAIL:
+      case WIFI_REASON_HANDSHAKE_TIMEOUT:
+        return MECK_TR("Wrong password?", "Mot de passe erron\xC3\xA9 ?");
+      case WIFI_REASON_NO_AP_FOUND:
+        return MECK_TR("Network not found", "R\xC3\xA9seau introuvable");
+      case WIFI_REASON_BEACON_TIMEOUT:
+        return MECK_TR("Signal lost", "Signal perdu");
+      case WIFI_REASON_ASSOC_TOOMANY:
+      case WIFI_REASON_ASSOC_FAIL:
+      case WIFI_REASON_CONNECTION_FAIL:
+        snprintf(buf, sizeof(buf), MECK_TR("Network refused (%u)", "Refus du r\xC3\xA9seau (%u)"), (unsigned)r);
+        return buf;
+      default:
+        snprintf(buf, sizeof(buf), MECK_TR("WiFi error %u", "Erreur WiFi %u"), (unsigned)r);
+        return buf;
+    }
+  }
+  // Serial line for a failed attempt, with the driver's reason code and name.
+  void meckWifiLogFail(const char* who) {
+    uint8_t r = meckWifiLastReason;
+    Serial.printf("%s: WiFi connection failed, reason %u (%s)\n", who, (unsigned)r,
+                  r ? WiFi.disconnectReasonName((wifi_err_reason_t)r) : "none reported");
+  }
+
+  // Join the saved network without freezing the screen: a "Connecting to
+  // Saved Wifi:" popup now, then meckWifiConnectPoll() (main loop) shows
+  // "Connected" and the IP, or "Could not connect" and why, after at most
+  // SETTINGS_WIFI_CONNECT_MS.
+  static bool meckWifiConnectPending = false;
+  static unsigned long meckWifiConnectAt = 0;
+  void meckWifiConnectSaved(const char* ssid, const char* pass) {
+    meckWifiResetReason();
+    WiFi.begin(ssid, pass);
+    meckWifiConnectPending = true;
+    meckWifiConnectAt = millis();
+    char msg[80];
+    snprintf(msg, sizeof(msg), "%s\n%s...", MECK_TR("Connecting to Saved Wifi:", "Connexion au WiFi :"), ssid);
+    ui_task.showAlert(msg, SETTINGS_WIFI_CONNECT_MS + 2000);
+  }
+  // WiFi turned off, or WiFi setup started: no result popup for the attempt.
+  void meckWifiConnectCancel() { meckWifiConnectPending = false; }
+  void meckWifiConnectPoll() {
+    if (!meckWifiConnectPending) return;
+    if (WiFi.status() == WL_CONNECTED) {
+      meckWifiConnectPending = false;
+      IPAddress ip = WiFi.localIP();
+      Serial.printf("WiFi: connected to %s, IP: %s\n", WiFi.SSID().c_str(), ip.toString().c_str());
+      char msg[48];
+      snprintf(msg, sizeof(msg), MECK_TR("Connected\nIP: %d.%d.%d.%d", "Connect\xC3\xA9\nIP : %d.%d.%d.%d"),
+               ip[0], ip[1], ip[2], ip[3]);
+      ui_task.showAlert(msg, SETTINGS_WIFI_ALERT_MS);
+    } else if ((long)(millis() - meckWifiConnectAt) >= SETTINGS_WIFI_CONNECT_MS) {
+      meckWifiConnectPending = false;
+      meckWifiLogFail("Saved network");
+      char msg[64];
+      snprintf(msg, sizeof(msg), "%s\n%s", MECK_TR("Could not connect", "Connexion impossible"), meckWifiFailReason());
+      ui_task.showAlert(msg, SETTINGS_WIFI_ALERT_MS);
+    }
+  }
   #endif
 #endif
 
@@ -992,6 +1079,7 @@ static bool meckWifiCfgWrite(const char* ssid, const char* pass) {
 }
 
 static void meckWifiOff() {
+  meckWifiConnectCancel();
   wifi_companion.disable();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
@@ -1021,9 +1109,9 @@ bool meckCompanionUseBLE() {
   return true;
 }
 
-// WiFi on, Bluetooth off. connectSaved joins the network in /web/wifi.cfg,
-// waiting up to 8 s as the Settings WiFi toggle does; WiFi setup passes
-// false because it scans and joins by itself.
+// WiFi on, Bluetooth off. connectSaved joins the network in /web/wifi.cfg
+// without waiting (meckWifiConnectSaved shows the Connecting and result
+// popups); WiFi setup passes false because it scans and joins by itself.
 bool meckCompanionUseWiFi(bool connectSaved) {
   if (meckCompanionIsWiFi()) return true;
   if (meckCompanionIsBLE()) ble_companion.disable();
@@ -1044,17 +1132,8 @@ bool meckCompanionUseWiFi(bool connectSaved) {
   if (connectSaved) {
     char ssid[33], pass[64];
     if (meckWifiCfgRead(ssid, sizeof(ssid), pass, sizeof(pass)) && ssid[0]) {
-      WiFi.begin(ssid, pass);
-      unsigned long timeout = millis() + 8000;
-      while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
-        delay(100);
-      }
-      if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("Companion: WiFi on, connected to %s, IP: %s\n",
-                      ssid, WiFi.localIP().toString().c_str());
-      } else {
-        Serial.println("Companion: WiFi on, but connection failed");
-      }
+      Serial.printf("Companion: WiFi on, connecting to saved network %s\n", ssid);
+      meckWifiConnectSaved(ssid, pass);
     } else {
       Serial.println("Companion: WiFi on, no saved network (set one in Settings)");
     }
@@ -2683,6 +2762,9 @@ void otaResumeRadio() {
 #endif
 
 void loop() {
+  #if defined(DISPLAY_CLASS) && defined(MECK_WIFI_COMPANION)
+  meckWifiConnectPoll();   // saved-network connect: Connected / Could not connect popup
+  #endif
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused) {
   #endif

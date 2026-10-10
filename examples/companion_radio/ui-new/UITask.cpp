@@ -1442,6 +1442,8 @@ public:
 #else
       if (WiFi.getMode() != WIFI_OFF) {
         // Turn WiFi OFF
+        extern void meckWifiConnectCancel();
+        meckWifiConnectCancel();
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
         Serial.println("Home: WiFi radio OFF");
@@ -1456,16 +1458,10 @@ public:
             f.close();
             digitalWrite(SDCARD_CS, HIGH);
             if (ssid.length() > 0) {
-              WiFi.begin(ssid.c_str(), pass.c_str());
-              unsigned long timeout = millis() + 8000;
-              while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
-                delay(100);
-              }
-              if (WiFi.status() == WL_CONNECTED) {
-                Serial.printf("Home: WiFi ON, connected to %s\n", ssid.c_str());
-              } else {
-                Serial.println("Home: WiFi ON, but connection failed");
-              }
+              // No wait: Connecting popup now, result popup from the main loop
+              extern void meckWifiConnectSaved(const char* ssid, const char* pass);
+              Serial.printf("Home: WiFi ON, connecting to %s\n", ssid.c_str());
+              meckWifiConnectSaved(ssid.c_str(), pass.c_str());
             }
           } else {
             digitalWrite(SDCARD_CS, HIGH);
@@ -2379,7 +2375,32 @@ if (curr) curr->poll();
         _display->fillRect(p, y, _display->width() - p*2, y);
         _display->setColor(DisplayDriver::LIGHT);  // draw box border
         _display->drawRect(p, y, _display->width() - p*2, y);
-        _display->drawTextCentered(_display->width() / 2, y + p*3, _alert);
+        const char* nl = strchr(_alert, '\n');
+        if (nl == NULL) {
+          _display->drawTextCentered(_display->width() / 2, y + p*3, _alert);
+        } else {
+          // Two-line popup (WiFi connect results). A line wider than the box
+          // is drawn at the Tiny size; if it is still too wide, it is cut
+          // with an ellipsis.
+          char line[80];
+          int inner = _display->width() - p*2 - 4;
+          for (int ln = 0; ln < 2; ln++) {
+            const char* s = (ln == 0) ? _alert : nl + 1;
+            size_t n = (ln == 0) ? (size_t)(nl - _alert) : strlen(nl + 1);
+            if (n >= sizeof(line)) n = sizeof(line) - 1;
+            memcpy(line, s, n);
+            line[n] = 0;
+            int ly = y + p*2 + ln * 12;
+            _display->setTextSize(1);
+            if (_display->getTextWidth(line) > inner) _display->setTextSize(0);
+            if (_display->getTextWidth(line) > inner) {
+              _display->drawTextEllipsized(p + 2, ly, inner, line);
+            } else {
+              _display->drawTextCentered(_display->width() / 2, ly, line);
+            }
+          }
+          _display->setTextSize(1);
+        }
         _next_refresh = _alert_expiry;   // will need refresh when alert is dismissed
       } else {
         _next_refresh = millis() + delay_millis;

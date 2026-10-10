@@ -901,7 +901,8 @@ public:
       digitalWrite(SDCARD_CS, HIGH);
       if (ssid.length() > 0) {
         Serial.printf("Settings: Reconnecting to saved WiFi '%s'\n", ssid.c_str());
-        WiFi.begin(ssid.c_str(), pass.c_str());
+        extern void meckWifiConnectSaved(const char* ssid, const char* pass);
+        meckWifiConnectSaved(ssid.c_str(), pass.c_str());
       }
     } else {
       digitalWrite(SDCARD_CS, HIGH);
@@ -940,10 +941,14 @@ public:
       if (_onboarding) _onboarding = false;  // Finish onboarding
       meckShowAlert(ipMsg, SETTINGS_WIFI_ALERT_MS);
     } else if ((long)(millis() - _wifiConnectStart) >= SETTINGS_WIFI_CONNECT_MS) {
-      Serial.println("Settings: WiFi connection failed");
+      extern void meckWifiLogFail(const char* who);
+      extern const char* meckWifiFailReason();
+      meckWifiLogFail("Settings");
       // Go back to SSID selection so user can retry
       _wifiPhase = WIFI_PHASE_SELECT;
-      meckShowAlert(MECK_TR("Could not connect", "Connexion impossible"), SETTINGS_WIFI_ALERT_MS);
+      char failMsg[64];
+      snprintf(failMsg, sizeof(failMsg), "%s\n%s", MECK_TR("Could not connect", "Connexion impossible"), meckWifiFailReason());
+      meckShowAlert(failMsg, SETTINGS_WIFI_ALERT_MS);
     }
   }
 
@@ -3268,6 +3273,8 @@ public:
           }
 
           WiFi.disconnect(false);
+          extern void meckWifiResetReason();
+          meckWifiResetReason();
           WiFi.begin(_wifiSSIDs[_wifiSSIDSelected].c_str(), _wifiPassBuf);
 
           // Don't wait here: poll() checks for the result each loop, so the
@@ -3774,6 +3781,10 @@ public:
             meckCompanionUseWiFi(false);
           }
           #endif
+          {
+            extern void meckWifiConnectCancel();
+            meckWifiConnectCancel();   // setup scans and joins by itself
+          }
           _editMode = EDIT_WIFI;
           performWifiScan();
           break;
@@ -3795,6 +3806,8 @@ public:
           #else
           if (WiFi.getMode() != WIFI_OFF) {
             // Turn WiFi OFF
+            extern void meckWifiConnectCancel();
+            meckWifiConnectCancel();
             WiFi.disconnect(true);
             WiFi.mode(WIFI_OFF);
             Serial.println("Settings: WiFi radio OFF");
@@ -3809,16 +3822,10 @@ public:
                 f.close();
                 digitalWrite(SDCARD_CS, HIGH);
                 if (ssid.length() > 0) {
-                  WiFi.begin(ssid.c_str(), pass.c_str());
-                  unsigned long timeout = millis() + 8000;
-                  while (WiFi.status() != WL_CONNECTED && millis() < timeout) {
-                    delay(100);
-                  }
-                  if (WiFi.status() == WL_CONNECTED) {
-                    Serial.printf("Settings: WiFi ON, connected to %s\n", ssid.c_str());
-                  } else {
-                    Serial.println("Settings: WiFi ON, but connection failed");
-                  }
+                  // No wait: Connecting popup now, result popup from the main loop
+                  extern void meckWifiConnectSaved(const char* ssid, const char* pass);
+                  Serial.printf("Settings: WiFi ON, connecting to %s\n", ssid.c_str());
+                  meckWifiConnectSaved(ssid.c_str(), pass.c_str());
                 }
               } else {
                 digitalWrite(SDCARD_CS, HIGH);
