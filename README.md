@@ -4,8 +4,6 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
-**Meck Watch** -- the LilyGo T-Watch S3 and T-Watch S3 Plus firmware -- is a separate, private repository, available to monthly [GitHub sponsors](https://github.com/sponsors/pelgraine) from $2 USD per month.
-
 <img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
 
 ### Contents
@@ -20,11 +18,15 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 - [Region Scope (v1.7+)](#region-scope-v17)
 - [T-Deck Pro](#t-deck-pro)
   - [Build Variants](#t-deck-pro-build-variants)
+    - [Touch chips and the HYN builds](#touch-chips-and-the-hyn-builds)
+    - [40 MHz battery-saver builds](#40-mhz-battery-saver-builds)
   - [Keyboard Controls](#t-deck-pro-keyboard-controls)
   - [Navigation (Home Screen)](#navigation-home-screen)
   - [Bluetooth (BLE)](#bluetooth-ble)
   - [WiFi Companion](#wifi-companion)
+  - [Combined Bluetooth + WiFi build (T-Deck Max)](#combined-bluetooth--wifi-build-t-deck-max)
   - [Clock & Timezone](#clock--timezone)
+  - [Timezones (World Clock) (v1.15+)](#timezones-world-clock-v115)
   - [Channel Message Screen](#channel-message-screen)
   - [Channel Picker](#channel-picker)
   - [Contacts Screen](#contacts-screen)
@@ -42,6 +44,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Channel Sharing via DM (v1.11+)](#channel-sharing-via-dm-v111)
   - [Config Export/Import (v1.11+)](#config-exportimport-v111)
   - [Settings Screen](#settings-screen)
+  - [Experimental Features (v1.15+)](#experimental-features-v115)
   - [Font Styles](#font-styles)
   - [Compose Mode](#compose-mode)
   - [Symbol Entry (Sym Key)](#symbol-entry-sym-key)
@@ -58,16 +61,17 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
   - [Antenna (Internal / External)](#antenna-internal--external)
   - [Buzzer (Vibrate) Notifications](#buzzer-vibrate-notifications)
   - [Capacitive Touch & Buttons](#capacitive-touch--buttons)
+  - [Canned Messages](#canned-messages-t-deck-max)
   - [Frontlight & Backlight Brightness](#frontlight--backlight-brightness)
   - [Keyboard Backlight](#keyboard-backlight)
   - [Multi-Constellation GPS](#multi-constellation-gps)
 - [Remote Repeater (T-Deck Pro 4G)](#remote-repeater-t-deck-pro-4g)
 - [WiFi Repeater](#wifi-repeater)
-- [Serial Settings (USB)](Serial_Settings_Guide.md)
-- [Text & EPUB Reader](TXT___EPUB_Reader_Guide.md)
-- [Web Browser & IRC Guide](Web_App_Guide.md)
-- [SMS & Phone App Guide](SMS___Phone_App_Guide.md)
-- [Audiobook Player Guide](Audiobook_Player_Guide.md)
+- [Serial Settings (USB)](Serial%20Settings%20Guide.md)
+- [Text & EPUB Reader](TXT%20%26%20EPUB%20Reader%20Guide.md)
+- [Web Browser & IRC Guide](Web%20App%20Guide.md)
+- [SMS & Phone App Guide](SMS%20%26%20Phone%20App%20Guide.md)
+- [Audiobook Player Guide](Audiobook%20Player%20Guide.md)
 - [Meck-Mycelium Web App](#meck-mycelium-web-app)
 - [About MeshCore](#about-meshcore)
 - [What is MeshCore?](#what-is-meshcore)
@@ -86,7 +90,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 ## Supported Devices
 
-Meck currently targets three LilyGo devices and also supports the Heltec V3 and V4 as remote repeaters:
+Meck currently targets two LilyGo devices and also supports the Heltec V3 and V4 as remote repeaters:
 
 | Device | Display | Input | LoRa | Battery | GPS | RTC |
 |--------|---------|-------|------|---------|-----|-----|
@@ -129,7 +133,7 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 --baud 921600 \
 
 On macOS the port is typically `/dev/cu.usbmodem*`. On Windows it will be a COM port like `COM3`.
 
-**Using the MeshCore Flasher (web-based, T-Deck Pro only):**
+**Using the MeshCore Flasher (web-based, T-Deck Pro and T-Deck Max):**
 
 1. Go to https://flasher.meshcore.io
 2. Select **Custom Firmware**
@@ -162,7 +166,7 @@ If you're loading firmware from an SD card via the LilyGo Launcher firmware, use
 Once Meck is installed, you can update firmware directly from your phone — no computer or serial cable required. The device creates a temporary WiFi access point and you upload the new `.bin` via your phone's browser.
 
 1. Download the new **non-merged** `.bin` to your phone (from GitHub Releases, Discord, etc.)
-2. On the device: **Settings → OTA Tools → Firmware Update → Enter** (T-Deck Pro)
+2. On the device: **Settings → OTA Tools → Firmware Update → Enter** (T-Deck Pro and T-Deck Max)
 3. The device starts a WiFi network called `Meck-Update-XXXX` and displays connection details
 4. On your phone: connect to the `Meck-Update` WiFi network, open a browser, go to `192.168.4.1`
 5. Tap **Choose File**, select the `.bin`, tap **Upload**
@@ -172,7 +176,7 @@ The partition layout supports dual OTA slots — the old firmware remains on the
 
 > **Note:** Use the **non-merged** `.bin` for OTA updates. The merged binary is only needed for first-time USB flashing.
 
-**OTA Tools (v1.5+):** The firmware update has moved into **Settings → OTA Tools**, a submenu that also contains the new **SD File Manager**. The file manager creates the same WiFi access point and serves a browser-based interface where you can browse, upload, download, and delete files on the SD card from your phone — useful for managing audiobooks, alarm sounds, e-books, and notes without ejecting the SD card. Both OTA tools work on all variants including standalone builds.
+**OTA Tools (v1.5+):** The firmware update has moved into **Settings → OTA Tools**, a submenu that also contains the new **SD File Manager**. The file manager creates the same WiFi access point and serves a browser-based interface where you can browse, upload, download, and delete files on the SD card from your phone — useful for managing audiobooks, alarm sounds, e-books, and notes without ejecting the SD card. Both OTA tools work on all variants including standalone builds, except the [40 MHz battery-saver builds](#40-mhz-battery-saver-builds), where the OTA Tools row does nothing.
 
 ---
 
@@ -180,7 +184,7 @@ The partition layout supports dual OTA slots — the old firmware remains on the
 
 Meck supports multibyte path hash, bringing it in line with MeshCore firmware v1.14. The path hash controls how many bytes each repeater uses to identify itself in forwarded flood packets. Larger hashes reduce the chance of identity collisions at the cost of fewer maximum hops per packet.
 
-You can configure the path hash size in the device settings (press **S** from the home screen on T-Deck Pro) or set it via USB serial:
+You can configure the path hash size in the device settings (press **S** from the home screen on the T-Deck Pro and T-Deck Max) or set it via USB serial:
 
 ```
 set path.hash.mode 1
@@ -208,9 +212,11 @@ Meck does not pre-set any region on a fresh flash. Region names are determined b
 
 **Per-channel region:** In Settings → Channels, select a channel and press Enter to edit its region scope. This overrides the device default for that specific channel only.
 
+**Companion app scope (v1.15+):** When a companion app is connected and has chosen a region (or no region) for sending, channel messages and direct messages use the app's choice first. Direct messages previously always used the device default region.
+
 **Settings nudge:** When exiting settings, if no region is configured anywhere (no device default and no per-channel scopes), a prompt reminds you to consider setting one. You can dismiss it to stay unscoped.
 
-Region scope can also be configured via serial commands — see the [Serial Settings Guide](Serial_Settings_Guide.md) for `set region`, `get region`, `set channel.scope`, and `get channel.scope` commands.
+Region scope can also be configured via serial commands — see the [Serial Settings Guide](Serial%20Settings%20Guide.md) for `set region`, `get region`, `set channel.scope`, and `get channel.scope` commands.
 
 ---
 
@@ -221,15 +227,36 @@ Region scope can also be configured via serial commands — see the [Serial Sett
 | Variant | Environment | BLE | WiFi | 4G Modem | Audio DAC | Web Reader | Max Contacts |
 |---------|------------|-----|------|----------|-----------|------------|-------------|
 | Audio + BLE | `meck_audio_ble` | Yes | Yes (web reader only) | — | PCM5102A | Yes | 2,000 |
+| Audio + BLE, HYN touch | `meck_audio_ble_hyn` | Yes | Yes (web reader only) | — | PCM5102A | Yes | 2,000 |
 | Audio + WiFi | `meck_audio_wifi` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 2,000 |
+| Audio + WiFi, HYN touch | `meck_audio_wifi_hyn` | — | Yes (TCP:5000) | — | PCM5102A | Yes | 2,000 |
 | Audio + Standalone | `meck_audio_standalone` | — | — | — | PCM5102A | No | 2,000 |
+| Audio + Standalone, HYN touch | `meck_audio_standalone_hyn` | — | — | — | PCM5102A | No | 2,000 |
+| Audio + Standalone, 40 MHz | `meck_audio_standalone_40mhz` | — | — | — | PCM5102A (audio features off) | No | 2,000 |
 | 4G + BLE | `meck_4g_ble` | Yes | Yes | A7682E | — | Yes | 2,000 |
 | 4G + WiFi | `meck_4g_wifi` | — | Yes (TCP:5000) | A7682E | — | Yes | 2,000 |
 | 4G + Standalone | `meck_4g_standalone` | — | Yes | A7682E | — | Yes | 2,000 |
+| 4G + Standalone, 40 MHz | `meck_4g_standalone_40mhz` | — | — | A7682E (off at boot) | — | No | 2,000 |
 | Remote Repeater (4G) | `meck_remote_repeater` | — | — | A7682E (MQTT) | — | No | — |
 | WiFi Repeater | `meck_wifi_repeater` | — | Yes (MQTT) | — | — | No | — |
 
 The audio DAC and 4G modem occupy the same hardware slot and are mutually exclusive. (The T-Deck Max lifts this restriction — it runs both at once. See [T-Deck Max](#t-deck-max).) The remote repeater and WiFi repeater variants operate as dedicated MeshCore repeaters — they forward mesh traffic and respond to guest logins as normal, but **admin management is handled remotely via MQTT** through the [Meck-Mycelium dashboard](https://pelgraine.github.io/Meck-Mycelium), not via the standard mesh admin password login. See [Remote Repeater](#remote-repeater-t-deck-pro-4g) and [WiFi Repeater](#wifi-repeater) below.
+
+#### Touch chips and the HYN builds
+
+T-Deck Pro v1.1 units came with a CST328 touch chip, but LilyGo later fitted a CST3530 instead in units still labelled v1.1. Touch does not work on those units with the standard builds. They need the HYN builds (`meck_audio_ble_hyn`, `meck_audio_wifi_hyn` and `meck_audio_standalone_hyn`), which use the same Hynitron touch driver as the T-Deck Max. That driver also works with the CST328, but the standard builds remain the default. There are no HYN versions of the 4G builds.
+
+#### 40 MHz battery-saver builds
+
+`meck_audio_standalone_40mhz`, `meck_4g_standalone_40mhz` and the T-Deck Max's `meck_max_standalone_40mhz` keep the processor at 40 MHz to save battery. Features that need more speed, WiFi, GPS or the audio hardware are switched off on these builds:
+
+- the web browser and OTA Tools
+- GPS (the GPS home page is hidden and GPS stays off) and the map
+- audiobooks, the alarm clock (alarms do not go off), voice messages, and custom notification tones (the default buzzer plays instead)
+- the SMS & Phone app (the 4G modem is off at boot)
+- the Game Boy emulator (Snake and Minesweeper still work)
+
+The home screen tiles for these features are greyed out and do nothing when tapped.
 
 ### T-Deck Pro Keyboard Controls
 
@@ -249,14 +276,14 @@ The T-Deck Pro firmware includes full keyboard support for standalone messaging 
 | S | Open settings |
 | B | Open web browser (BLE, WiFi, and 4G variants -- not standalone audio) |
 | T | Open SMS & Phone app (Pro 4G & Max only) |
-| P | Open audiobook player (audio variant only) |
+| P | Open audiobook player (Pro Audio & Max only) |
 | K | Open alarm clock (Pro Audio & Max only) |
 | F | Open node discovery (search for nearby repeaters/nodes) |
 | H | Open last heard list (passive advert history) |
 | R | Open trace route screen (v1.9+) -- see [Trace Route Screen](#trace-route-screen-v19) |
 | J | Open games menu (v1.10+) -- see [Games](#games-v110) |
 | G | Open map screen (shows contacts with GPS positions) |
-| Mic | Open voice messages (audio variant only) |
+| Mic | Open voice messages (Pro Audio & Max only) |
 | Q | Back to home screen |
 | Double-click Boot | Lock / unlock screen |
 
@@ -270,24 +297,32 @@ To connect to the MeshCore companion app, navigate to the **Bluetooth** home pag
 
 ### WiFi Companion
 
-The WiFi companion variants (`meck_audio_wifi`, `meck_4g_wifi`) connect to the MeshCore web app, meshcore.js, or Python CLI over your local network via TCP on port 5000. WiFi credentials are stored on the SD card at `/web/wifi.cfg`.
+The WiFi companion variants (`meck_audio_wifi`, `meck_audio_wifi_hyn`, `meck_4g_wifi` and the T-Deck Max's `meck_max_wifi`) connect to the MeshCore web app, meshcore.js, or Python CLI over your local network via TCP on port 5000. WiFi credentials are stored on the SD card at `/web/wifi.cfg`.
 
 **Connecting:**
 
-WiFi is off at boot, so it has to be turned on in Settings first.
+On these builds WiFi is on at boot (even if you turned it off before restarting), and the device tries to join your saved network during start-up. The combined `meck_max_ble_wifi` build is different: WiFi is off at boot (see [Combined Bluetooth + WiFi build](#combined-bluetooth--wifi-build-t-deck-max)).
 
-1. Open **Settings** and select the **WiFi Radio** row to turn it **ON**. It takes several seconds before the row shows ON, so please be patient.
+To join a network for the first time, or to change networks:
+
+1. Open **Settings**. If the **WiFi Radio** row shows **OFF**, select it to turn it **ON**. It takes several seconds before the row shows ON, so please be patient.
 2. Select the **WiFi** row (it shows **WiFi: (not connected)** until you have joined a network). The device scans for networks.
 3. Select your network, enter the password and press **Enter**.
 4. A **Connecting...** popup shows while the device joins the network. This can take up to 15 seconds.
 5. Once connected, a popup shows the device's IP address for 2 seconds and you are returned to Settings. The IP address is also displayed on the WiFi home page.
-6. If the device can't connect within 15 seconds, a **Could not connect** popup shows and you are returned to the network list to try again.
+6. If the device can't connect within 15 seconds, a **Could not connect** popup shows and you are returned to the network list to try again. The second line of the popup says why, for example **Wrong password?**, **Network not found**, **Signal lost** or **Timed out**.
+
+**Turning WiFi off and on (v1.15+):** On the **WiFi** home page, press **Enter** (or long press) to turn the WiFi radio off or on, the same as the **WiFi Radio** row in Settings. The bottom of the page shows **Press Enter to Turn Off Wifi** or **Press Enter to Turn On Wifi**. Network setup and passwords stay in Settings.
+
+Turning WiFi on (from the home page or the **WiFi Radio** row) joins your saved network, if you have one. A **Connecting to Saved Wifi:** popup shows the network name, followed by **Connected** and the IP address, or **Could not connect** and the reason.
 
 Connect the MeshCore web app or meshcore.js to `<device IP>:5000`.
 
 WiFi is also used by the web reader and IRC client on WiFi variants. The web reader shares the same connection — no extra setup needed.
 
 ### Combined Bluetooth + WiFi build (T-Deck Max)
+
+The combined BLE & WiFi build is only available for the T-Deck Max in v1.15. The T-Deck Pro combined build will be shipping in a future release.
 
 The `meck_max_ble_wifi` build has both the Bluetooth and the WiFi companion connection, one at a time. Both are off at boot. After a restart, whichever one you turn on first works straight away: from its home page (press **Enter** or long press), or for WiFi from **Settings**.
 
@@ -303,7 +338,7 @@ From the companion app, turning WiFi on or off (`set wifi.enabled`) is applied b
 
 ### Clock & Timezone
 
-The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of these methods:
+The T-Deck Pro and T-Deck Max do not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of these methods:
 
 1. **GPS fix** (standalone) — Once the GPS acquires a satellite fix, the time is automatically synced from the NMEA data. No phone or BLE connection required. Typical time to first fix is 30–90 seconds outdoors with clear sky.
 2. **BLE/WiFi companion app** — If connected to the MeshCore companion app (via BLE or WiFi), the app will push the current time to the device.
@@ -322,6 +357,24 @@ The UTC offset can be set from the **Settings** screen (press **S** from the hom
 The UTC offset is persisted to flash and survives reboots — you only need to set it once. The valid range is UTC-12 to UTC+14. For example, AEST is UTC+10 and AEDT is UTC+11.
 
 The GPS page also shows the current time, satellite count, position, altitude, and your configured UTC offset for reference.
+
+### Timezones (World Clock) (v1.15+)
+
+The last home page is a world clock with three rows: **Home** (your device's UTC offset) and two extra zones, **Zone 1** and **Zone 2**. Each row shows the zone's UTC offset, its local time in large digits, airport-style city codes for that offset (for example `BNE/POM/VLA` for UTC+10), and a day marker such as `+1D` or `-1D` when the zone is on a different calendar day to Home.
+
+To reach it, press **A** from the first home page (the tiles), or **D** from the Shutdown page. Until the clock has been set (by GPS or the companion app), the page shows **Clock not set**.
+
+| Key | Action |
+|-----|--------|
+| W / S | Select Home, Zone 1 or Zone 2 |
+| Enter | Edit the selected row's UTC offset |
+| W / S (editing) | Raise / lower the offset (UTC-12 to UTC+14) |
+| Enter (editing) | Save |
+| Q (editing) | Cancel without saving |
+
+On the touchscreen, long press a row to edit it. The editor's on-screen hint shows the touch controls (**Tap:-/+  Hold:save**).
+
+Editing **Home** changes the device UTC offset, the same setting as **Settings → UTC Offset**. Zone 1 and Zone 2 are saved and survive reboots.
 
 ### Channel Message Screen
 
@@ -417,6 +470,8 @@ Contacts can be added three ways:
 
 Enter select mode (Enter), select the contacts to remove (Enter to toggle, A to select all), then press **Backspace** to delete. You will be returned to the contacts list once the deletion is complete.
 
+To delete every contact at once, use **Settings → Experimental Features → Delete all contacts** (v1.15+). See [Experimental Features](#experimental-features-v115).
+
 **Exporting and importing contacts**
 
 In select mode, press **X** to export. If contacts are selected, only those contacts are exported; if none are selected, all contacts are exported. Contacts are saved as a JSON file to `/meshcore/` on the SD card with a timestamp in the filename. The JSON format is compatible with MeshCore companion apps — you can copy the file from the SD card and import it into the Android, iOS, or web companion app.
@@ -445,7 +500,7 @@ Room server messages are also synced to the companion app when connected via BLE
 
 ### Repeater Admin Screen
 
-Select a **Repeater** contact in the contacts list and press **Enter** to open the repeater admin screen. You'll be prompted for the repeater's admin password. Characters briefly appear as you type them before being masked, making it easier to enter symbols and numbers on the T-Deck Pro keyboard.
+Select a **Repeater** contact in the contacts list and press **Enter** to open the repeater admin screen. You'll be prompted for the repeater's admin password. Characters briefly appear as you type them before being masked, making it easier to enter symbols and numbers on the T-Deck Pro and T-Deck Max keyboard.
 
 After a successful login, you'll see a menu with the following remote administration commands:
 
@@ -667,6 +722,7 @@ The **Export/Import >>** sub-screen in Settings lets you back up and restore you
    - **Contacts** — all contacts with public keys, type, flags, position, and timestamps
    - **Auto-Add Prefs** — contact auto-add mode and per-type toggles
 5. Navigate to **>> Export Now** and press Enter
+6. A **Compiling... Please Wait...** popup shows while the export runs, followed by **Exported to** and the file name, or **Export failed (SD?)** (v1.15+)
 
 The config is saved as a timestamped JSON file in `/meshcore/` on the SD card (e.g. `meshcore_config_20260523_1430.json`). The format is compatible with the MeshCore companion app config export.
 
@@ -676,6 +732,8 @@ Place a file named `import.json` in the `/meshcore/` folder on your SD card. The
 
 - **From settings:** go to **Export/Import >> → Import from SD** and press Enter
 - **On boot:** the firmware automatically checks for `/meshcore/import.json` at startup and imports it if found
+
+Importing from Settings shows an **Importing... Please Wait...** popup while the import runs, followed by **Config imported!**, **No import.json found** or **Import failed** (v1.15+).
 
 If the import includes a different identity (private key), the device reboots after applying the new identity. Channels and contacts are merged into the existing configuration.
 
@@ -694,14 +752,16 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 
 | Setting | Edit Method |
 |---------|-------------|
+| LoRa Antenna | Enter to switch between Internal and External (MAX only) -- see [Antenna](#antenna-internal--external) |
 | Device Name | Text entry — type a name, Enter to confirm |
 | Radio Preset | A / D to cycle region presets, Enter to apply. Includes Australia, Australia (Mid), Australia (Wide), Australia: SA/WA, Australia: QLD, EU/UK (Narrow / Long Range / Medium Range), Czech Republic and others |
 | Frequency | Text entry — type exact value (e.g. 916.575), Enter to confirm |
 | Bandwidth | W / S to cycle standard values (31.25 / 62.5 / 125 / 250 / 500 kHz), Enter to confirm |
 | Spreading Factor | W / S to adjust (5–12), Enter to confirm |
 | Coding Rate | W / S to adjust (5–8), Enter to confirm |
-| TX Power | W / S to adjust (1–20 dBm), Enter to confirm |
+| TX Power | W / S to adjust (1–22 dBm), Enter to confirm |
 | UTC Offset | W / S to adjust (-12 to +14), Enter to confirm |
+| Canned Messages >> | Opens the ten canned message slots (MAX only) -- see [Canned Messages](#canned-messages-t-deck-max) |
 | Msg Rcvd LED Pulse | Toggle keyboard backlight flash on new message (Enter to toggle) |
 | GPS Baud Rate | A / D to cycle (Default 38400 / 4800 / 9600 / 19200 / 38400 / 57600 / 115200), Enter to confirm. **Requires reboot to take effect.** |
 | Path Hash Mode | W / S to cycle (1-byte / 2-byte / 3-byte), Enter to confirm |
@@ -712,11 +772,15 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | Auto Lock | A / D to cycle timeout (None / 2 / 5 / 10 / 15 / 30 min), Enter to confirm |
 | Backlight Brightness | W / S to adjust 5-100% in 5% steps (MAX only) -- e-ink frontlight level |
 | Keyboard LED | W / S to adjust 5-100% in 5% steps, default 50% (MAX only) -- see [Keyboard Backlight](#keyboard-backlight) |
+| WiFi | Enter to scan for networks, then choose one and type its password (WiFi builds) -- see [WiFi Companion](#wifi-companion) |
+| WiFi Radio | Enter to turn WiFi on or off (WiFi builds) |
+| 4G Modem | Enter to turn the 4G modem on or off; the choice is saved (Pro 4G & Max builds) |
 | Contacts >> | Opens the Contacts sub-screen (see below) |
 | Channels >> | Opens the Channels sub-screen (see below) |
 | OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
 | Export/Import >> | Opens the Export/Import sub-screen — export device config to SD or import from `/meshcore/import.json` (see [Config Export/Import](#config-exportimport-v111)) |
 | Rx Log >> | Opens the Rx Log packet sniffer (see [Rx Log](#rx-log)) |
+| Experimental Features >> | Opens the Experimental Features sub-screen: Language, RX Boosted Gain, AGC Reset Int, Delete all contacts, and on the MAX Change Backlight to Alt+B (see [Experimental Features](#experimental-features-v115)) |
 | Device Info | Public key and firmware version (read-only) |
 
 **Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
@@ -742,13 +806,27 @@ Press Q to return to the top-level settings list.
 | X | Delete channel (non-primary channels only) |
 | Q | Back to top-level settings |
 
+When the highlighted channel's name, region tag and hint are too long for one line, the row shows the start of the line and then the end, switching every 2 seconds (v1.15+).
+
 The top-level settings screen also displays your node ID and firmware version. On the 4G variant, IMEI, carrier name, and APN details are shown here as well.
 
 When adding a channel, type the channel name and press Enter. Names starting with `#` create a public hashtag channel (secret derived from the name via SHA-256, matching the standard MeshCore convention). Names without a `#` prefix create a private channel with a random secret — see [Private Channels](#private-channels-v111).
 
 If you've changed radio parameters, pressing Q will prompt you to apply changes before exiting.
 
-> **Tip:** All device settings (plus mesh tuning parameters not available on-screen) can also be configured via USB serial. See the [Serial Settings Guide](Serial_Settings_Guide.md) for complete documentation.
+> **Tip:** All device settings (plus mesh tuning parameters not available on-screen) can also be configured via USB serial. See the [Serial Settings Guide](Serial%20Settings%20Guide.md) for complete documentation.
+
+### Experimental Features (v1.15+)
+
+**Settings → Experimental Features >>** (below Rx Log) holds settings that are still being tried out. Press **Enter** on a row to change it and **Q** to go back.
+
+| Setting | What it does |
+|---------|--------------|
+| Language | **Language: Change to French** switches the interface to French. In French the row reads **Langue : Passer à l'anglais** to switch back to English. Classic has no accented letters, so choosing French while the font style is Classic changes it to Noto Sans. See the [French Language Guide](docs/French_Language_Guide.md). |
+| Change Backlight to Alt+B (MAX only) | When **ON**, the Heart button no longer turns the frontlight on and off, and **Alt+B** turns it on (at the Backlight Brightness level) and off instead. Default **OFF**. |
+| RX Boosted Gain | When **ON** (the default), the LoRa receiver uses its boosted receive gain mode. When **OFF**, it uses the normal gain mode. The change applies within half a second. |
+| AGC Reset Int | How often the LoRa receiver's automatic gain control is reset. Type a time in seconds and press **Enter**: it is rounded down to a multiple of 4, up to 1020 seconds. Leave it empty (or 0) for **Off**, the default. |
+| Delete all contacts | Deletes every contact (favourites and custom paths included) and the DM history. Channel messages are kept. Two confirmations follow, **Delete all contacts?** and then **Are you sure?** (Enter for yes, Q for no). The device shows **Purging**, then the result, and then restarts. Do not switch off while it is purging. |
 
 ### Font Styles
 
@@ -758,7 +836,7 @@ Change the font in **Settings → Font** — use A/D to cycle with a live previe
 
 Font styles are available in both Tiny and Larger text size modes. Custom fonts at Tiny size use 7pt glyphs; at Larger size, 9pt — matching the existing FreeSans layout. The font preference is saved and persists across reboots.
 
-**Accented character support (v1.8+):** All three font styles now display accented and diacritical characters (Czech, Polish, French, German, etc.) instead of dropping them. **Noto Sans at Larger text size** renders diacritical marks natively (carons, accents, cedillas). All other font and size combinations fold accented characters to their ASCII base letter (ě→e, ž→z, ñ→n) — the letter is always visible, just without the diacritic mark.
+**Accented character support (v1.8+, extended in v1.15):** All three font styles display accented and diacritical characters (Czech, Polish, French, German, etc.) instead of dropping them. **Noto Sans at both text sizes** and **Montserrat at Tiny size** render diacritical marks natively (carons, accents, cedillas). **Classic** and **Montserrat at Larger size** fold accented characters to their ASCII base letter (ě→e, ž→z, ñ→n): the letter is always visible, just without the diacritic mark.
 
 ### Compose Mode
 
@@ -826,7 +904,7 @@ The **Contacts** screen lists saved contacts, with A to add a new one and M to s
 
 **Note for US users: the A7682E modem in the T-Deck Pro and T-Deck Pro Max supports very limited US cellular bands, so 4G is almost entirely unusable with US SIMs. For example, the 4G is wholly unusable on T-Mobile and may have very limited use on AT&T, due to the nature of the A7682E and the bands used by it.**
 
-For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS___Phone_App_Guide.md).
+For full documentation including key mappings, dialpad usage, contacts management, and troubleshooting, see the [SMS & Phone App Guide](SMS%20%26%20Phone%20App%20Guide.md).
 
 ### Web Browser & IRC
 
@@ -836,7 +914,7 @@ The web reader home screen provides access to the **IRC client**, the **URL bar*
 
 The browser is a text-centric reader best suited to text-heavy websites. It also includes basic web search via DuckDuckGo Lite, and can download EPUB files — follow a link to an `.epub` and it will be saved to the books folder on your SD card for reading later in the e-book reader.
 
-For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web_App_Guide.md).
+For full documentation including key mappings, WiFi setup, bookmarks, IRC configuration, and SD card structure, see the [Web App Guide](Web%20App%20Guide.md).
 
 ### Alarm Clock (Pro Audio & Max only)
 
@@ -893,7 +971,7 @@ Press the **Microphone key** (the zero key on the keyboard) to open the Voice Me
 
 Record and send voice messages of up to 12 seconds over LoRa. Audio is encoded on-device using Codec2 at 1200 bps, compressing each second of speech into a single 150-byte LoRa packet. Voice notes use very little airtime relative to what they deliver — a 5-second message is just 5 packets.
 
-Voice notes can be sent to another T-Deck Pro Audio device (plays automatically through the headphone jack) or to any MeshCore companion device connected to the [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) (plays through your phone's speaker as a tappable bubble in the DM view).
+Voice notes can be sent to another T-Deck Pro Audio device (plays automatically through the headphone jack), to a T-Deck Max (plays automatically), or to any MeshCore companion device connected to the [Meck-Mycelium web app](https://pelgraine.github.io/Meck-Mycelium) (plays through your phone's speaker as a tappable bubble in the DM view).
 
 **Sending a voice note:**
 
@@ -907,9 +985,10 @@ Packets are sent with staggered 3-second delays to avoid congesting the channel.
 **Receiving voice notes:**
 
 * **On a T-Deck Pro Audio device:** the voice message screen opens automatically and the message plays through the headphone jack. **Headphones are recommended** — the built-in speaker is very quiet.
+* **On a T-Deck Max:** the voice message screen opens automatically and the message plays.
 * **Via Meck-Mycelium:** voice messages appear as "🎙️ Voice message" bubbles in the DM view. Tap to play. Codec2 decoding happens entirely in the browser via WebAssembly.
 
-> **Note:** Voice recording and sending requires the **Audio variant** hardware (PCM5102A DAC). Receiving and playback works on all Audio variants. Non-audio Meck devices can receive and relay voice packets but cannot play them locally — use the Meck-Mycelium web app for playback on those devices.
+> **Note:** Voice recording and sending requires the T-Deck Pro **Audio variant** hardware (PCM5102A DAC) or a T-Deck Max (ES8311 codec). Receiving and playback works on all Audio variants and on the T-Deck Max. Non-audio Meck devices can receive and relay voice packets but cannot play them locally — use the Meck-Mycelium web app for playback on those devices.
 
 | Key | Action |
 |-----|--------|
@@ -949,9 +1028,13 @@ The headline difference is that the MAX carries both an A7682E 4G modem **and** 
 |---------|------------|-----|------|----------|-------------|------------|-------------|
 | MAX + BLE | `meck_max_ble` | Yes | — | A7682E | ES8311 | Yes | 2,000 |
 | MAX + WiFi | `meck_max_wifi` | — | Yes (TCP:5000) | A7682E | ES8311 | Yes | 2,000 |
+| MAX + BLE + WiFi (v1.15+) | `meck_max_ble_wifi` | Yes (one at a time) | Yes (TCP:5000) | A7682E | ES8311 | Yes | 2,000 |
 | MAX + Standalone | `meck_max_standalone` | — | — | A7682E | ES8311 | Yes | 2,000 |
+| MAX + Standalone, 40 MHz | `meck_max_standalone_40mhz` | — | — | A7682E (off at boot) | ES8311 (audio features off) | No | 2,000 |
 
-Unlike the T-Deck Pro, **every** MAX variant includes both the 4G modem and the audio codec — there is no separate "audio" vs "4G" split because the MAX runs both. The web reader is available on all three variants (it has a data path via the 4G modem, plus WiFi on the WiFi build), and all three support up to 2,000 contacts in PSRAM.
+Unlike the T-Deck Pro, **every** MAX variant includes both the 4G modem and the audio codec — there is no separate "audio" vs "4G" split because the MAX runs both. The web reader is available on every variant except the 40 MHz build (it has a data path via the 4G modem, plus WiFi on the WiFi build), and all of them support up to 2,000 contacts in PSRAM. For what the 40 MHz build leaves out, see [40 MHz battery-saver builds](#40-mhz-battery-saver-builds). The combined `meck_max_ble_wifi` build is described in [Combined Bluetooth + WiFi build](#combined-bluetooth--wifi-build-t-deck-max).
+
+**Bluetooth transmit power (v1.15+):** `meck_max_ble` and `meck_max_ble_wifi` set the Bluetooth transmit power to +15 dBm. The other Bluetooth builds, including the T-Deck Pro ones, use +9 dBm.
 
 ### 4G and Audio at the Same Time
 
@@ -978,17 +1061,27 @@ The MAX has a DRV2605 haptic motor, so each channel (and the DM inbox) can be se
 
 ### Capacitive Touch & Buttons
 
-Both the MAX and the T-Deck Pro have a CST328 capacitive touchscreen. What the MAX adds is **three capacitive buttons** along the bottom of the front bezel, which the T-Deck Pro does not have:
+Both the MAX and the T-Deck Pro have a capacitive touchscreen. The MAX uses a CST328 touch chip with the Hynitron touch driver. T-Deck Pro v1.1 units came with a CST328 too, but some later units still labelled v1.1 have a CST3530 and need the HYN builds (see [Touch chips and the HYN builds](#touch-chips-and-the-hyn-builds)). What the MAX adds is **three capacitive buttons** along the bottom of the front bezel, which the T-Deck Pro does not have:
 
 | Button | Action |
 |--------|--------|
 | **Heart** | Toggle the e-ink frontlight on/off (at the brightness configured in settings — see below) |
-| **Speech bubble** | Quick access to the channel picker (same as pressing M) |
+| **Speech bubble** | In an open channel or DM conversation, opens your canned messages (see [Canned Messages](#canned-messages-t-deck-max)); anywhere else, opens the channel picker (same as pressing M) |
 | **Paper plane** | Quick access to the DM inbox |
+
+### Canned Messages (T-Deck Max)
+
+Save up to ten ready-made messages and send one with a single tap.
+
+**Setting them up:** open **Settings → Canned Messages >>** to see the ten slots. Select a slot and press **Enter** to edit it, type the message (up to 133 characters; a counter shows how many you have used) and press **Enter** to save. Saving an empty slot clears it, and **Shift+Backspace** cancels without saving.
+
+**Sending:** with a channel or a DM conversation open, press the **speech bubble** button. A list of your saved messages appears; tap one to send it to that channel or contact. Tapping anywhere else, or pressing any key, closes the list. If every slot is empty, **No canned messages** shows instead.
 
 ### Frontlight & Backlight Brightness
 
 The MAX has an e-ink frontlight. The brightness it turns on to is set in **Settings → Backlight Brightness**, adjustable from **5% to 100%** in 5% steps (default 100%). The Heart capacitive button toggles the frontlight at that level. This setting only appears on the MAX.
+
+**Alt+B** also turns the frontlight on and off. By default Alt+B turns it on at its lowest level. With **Settings → Experimental Features → Change Backlight to Alt+B** on, Alt+B uses the Backlight Brightness level instead and the Heart button no longer toggles the frontlight (see [Experimental Features](#experimental-features-v115)).
 
 ### Keyboard Backlight
 
@@ -1103,9 +1196,9 @@ For developers:
 
 **Companion Firmware**
 
-The companion firmware can be connected to via BLE (T-Deck Pro BLE variants) or WiFi (T-Deck Pro WiFi variants, TCP port 5000).
+The companion firmware can be connected to via BLE (T-Deck Pro and T-Deck Max BLE variants) or WiFi (T-Deck Pro and T-Deck Max WiFi variants, TCP port 5000).
 
-> **Note:** On the T-Deck Pro, BLE and WiFi are disabled by default at boot. On the T-Deck Pro, navigate to the Bluetooth or WiFi home page and press Enter to enable.
+> **Note:** On the T-Deck Pro and T-Deck Max, Bluetooth is off at boot: navigate to the Bluetooth home page and press Enter to turn it on. The WiFi builds turn WiFi on at boot and try to join your saved network (see [WiFi Companion](#wifi-companion)). On the combined `meck_max_ble_wifi` build, Bluetooth and WiFi are both off at boot (see [Combined Bluetooth + WiFi build](#combined-bluetooth--wifi-build-t-deck-max)).
 
 - Web: https://app.meshcore.nz
 - Meck-Mycelium: https://pelgraine.github.io/Meck-Mycelium (voice playback, remote repeater dashboard)
@@ -1113,6 +1206,8 @@ The companion firmware can be connected to via BLE (T-Deck Pro BLE variants) or 
 - iOS: https://apps.apple.com/us/app/meshcore/id6742354151?platform=iphone
 - NodeJS: https://github.com/liamcottle/meshcore.js
 - Python: https://github.com/fdlamotte/meshcore-cli
+
+**Channel data (v1.15+):** companion apps that support it can send and receive channel data packets (MeshCore's `PAYLOAD_TYPE_GRP_DATA`) on your channels. Received channel data is queued for the app to collect. It is not shown on the device.
 
 ## 🛠 Hardware Compatibility
 
@@ -1187,6 +1282,16 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Config export/import to SD card with selectable sections (v1.11)
 - [X] Contact recency fix for nodes with stuck/behind clocks (v1.11)
 - [X] Expanded emoji picker (79 emoji) (v1.11)
+- [X] Timezones world clock home page, Home plus two zones (v1.15)
+- [X] Experimental Features: French interface, RX boosted gain, AGC reset interval, delete all contacts (v1.15)
+- [X] Accented Noto Sans and Montserrat fonts at Tiny size (v1.15)
+- [X] WiFi connect popups with the failure reason; WiFi on/off from the WiFi home page (v1.15)
+- [X] Export and import progress popups (v1.15)
+- [X] Settings channel rows: long rows switch between start and end (v1.15)
+- [X] Channel data packets for the companion app (v1.15)
+- [X] DMs follow the companion app's chosen region (v1.15)
+- [X] MeshCore v1.18 fixes (v1.15)
+- [ ] Combined Bluetooth + WiFi build for the T-Deck Pro
 - [ ] Fix M4B rendering to enable chaptered audiobook playback
 - [ ] Better JPEG and PNG decoding
 - [ ] Improve EPUB rendering and EPUB format handling
@@ -1208,6 +1313,9 @@ There are a number of fairly major features in the pipeline, with no particular 
 - [X] Home-screen e-ink X-offset and word-wrap fixes
 - [X] Voice-note playback (ES8311 output path)
 - [X] Voice-note recording on MAX (ES8311 ADC capture path)
+- [X] Combined Bluetooth + WiFi build, switching restarts the device (`meck_max_ble_wifi`) (v1.15)
+- [X] Change Backlight to Alt+B option in Experimental Features (v1.15)
+- [X] Bluetooth transmit power +15 dBm on `meck_max_ble` and `meck_max_ble_wifi` (v1.15)
 - [ ] BHI260AP gyroscope / IMU support (0x28) -- new on the MAX, not yet used by Meck
 
 **Heltec V4:**
