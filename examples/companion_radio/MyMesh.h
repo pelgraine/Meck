@@ -241,6 +241,9 @@ public:
 
 protected:
   float getAirtimeBudgetFactor() const override;
+  // Settings > Experimental Features > AGC Reset Int (stored as seconds / 4,
+  // 0 = off), as upstream's companion does
+  int getAGCResetInterval() const override { return ((int)_prefs.agc_reset_interval) * 4000; }
   int getInterferenceThreshold() const override;
   uint8_t getTxFailResetThreshold() const override;
   uint8_t getRxFailRebootThreshold() const override;

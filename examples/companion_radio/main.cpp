@@ -2784,11 +2784,31 @@ static void meckExportPoll() {
     ui_task.showAlert(MECK_TR("Export failed (SD?)", "\xC3\x89" "chec export (SD ?)"), 2000);
   }
 }
+
+// Settings import: same as export. If the import replaces the identity,
+// meckImportConfig restarts the device itself and does not return.
+static bool meckImportPending = false;
+static unsigned long meckImportAt = 0;
+static void meckImportPoll() {
+  if (!meckImportPending || (long)(millis() - meckImportAt) < 0) return;
+  meckImportPending = false;
+  int added = meckImportConfig(the_mesh,
+                               sensors.node_lat, sensors.node_lon,
+                               sdCardReady);
+  if (added > 0) {
+    ui_task.showAlert(MECK_TR("Config imported!", "Config import\xC3\xA9" "e !"), 2500);
+  } else if (added == 0) {
+    ui_task.showAlert(MECK_TR("No import.json found", "import.json introuvable"), 2000);
+  } else {
+    ui_task.showAlert(MECK_TR("Import failed", "\xC3\x89" "chec de l'import"), 2000);
+  }
+}
 #endif
 
 void loop() {
   #ifdef HAS_SDCARD
   meckExportPoll();        // Settings export: runs once its popup is on screen
+  meckImportPoll();        // Settings import: same
   #endif
   #if defined(DISPLAY_CLASS) && defined(MECK_WIFI_COMPANION)
   meckWifiConnectPoll();   // saved-network connect: Connected / Could not connect popup
@@ -3578,12 +3598,18 @@ void loop() {
   #endif
 #endif
   rtc_clock.tick();
-  // Periodic AGC reset - re-assert boosted RX gain to prevent sensitivity drift
+  // Periodic AGC reset - re-assert the RX gain mode to prevent sensitivity
+  // drift: boosted unless Settings > Experimental Features > RX Boosted Gain
+  // is off
   #ifdef MECK_OTA_UPDATE
   if (!otaRadioPaused)
   #endif
   if ((millis() - lastAGCReset) >= AGC_RESET_INTERVAL_MS) {
-    radio_reset_agc();
+    if (the_mesh.getNodePrefs()->rx_boosted_gain) {
+      radio_reset_agc();
+    } else {
+      radio.setRxBoostedGainMode(false);
+    }
     lastAGCReset = millis();
   }
   // Handle T-Deck Pro keyboard input
@@ -4501,16 +4527,11 @@ void handleKeyboardInput() {
     }
     if (settings->isImportRequested()) {
       settings->clearImportRequest();
-      int added = meckImportConfig(the_mesh,
-                                   sensors.node_lat, sensors.node_lon,
-                                   sdCardReady);
-      if (added > 0) {
-        ui_task.showAlert(MECK_TR("Config imported!", "Config import\xC3\xA9" "e !"), 2500);
-      } else if (added == 0) {
-        ui_task.showAlert(MECK_TR("No import.json found", "import.json introuvable"), 2000);
-      } else {
-        ui_task.showAlert(MECK_TR("Import failed", "\xC3\x89" "chec de l'import"), 2000);
-      }
+      // Show the popup first; the import itself runs from loop()
+      // (meckImportPoll) once the popup has reached the e-ink.
+      ui_task.showAlert(MECK_TR("Importing...\nPlease Wait...", "Importation...\nVeuillez patienter..."), 10000);
+      meckImportAt = millis() + 1500;  // let the popup reach the e-ink first
+      meckImportPending = true;
     }
     #endif
     // Check for Rx Log open request from the settings screen

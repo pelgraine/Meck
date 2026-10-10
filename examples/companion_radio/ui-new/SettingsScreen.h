@@ -202,6 +202,8 @@ enum SettingsRowType : uint8_t {
   ROW_ALT_B_BACKLIGHT,  // Toggle: heart touch key off, Alt+B only toggles the backlight (MAX only)
 #endif
   ROW_PURGE_CONTACTS,   // "Delete all contacts": confirm, purge, restart
+  ROW_RX_BOOSTED_GAIN,  // Toggle: SX126x boosted RX gain (default on)
+  ROW_AGC_RESET_INT,    // Text entry: AGC reset interval in seconds (0 = off)
 };
 
 // ---------------------------------------------------------------------------
@@ -520,6 +522,8 @@ private:
 #if defined(LilyGo_TDeck_Pro_Max)
       addRow(ROW_ALT_B_BACKLIGHT);
 #endif
+      addRow(ROW_RX_BOOSTED_GAIN);
+      addRow(ROW_AGC_RESET_INT);
       addRow(ROW_PURGE_CONTACTS);
     } else {
       // --- Top-level settings list ---
@@ -2343,6 +2347,24 @@ public:
           break;
 #endif
 
+        case ROW_RX_BOOSTED_GAIN:
+          snprintf(tmp, sizeof(tmp), MECK_TR("RX Boosted Gain: %s", "Gain RX renforc\xC3\xA9 : %s"),
+                   _prefs->rx_boosted_gain ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+          display.print(tmp);
+          break;
+
+        case ROW_AGC_RESET_INT:
+          if (editing && _editMode == EDIT_TEXT) {
+            snprintf(tmp, sizeof(tmp), MECK_TR("AGC Reset Int: %s_ s", "Reset AGC : %s_ s"), _editBuf);
+          } else if (_prefs->agc_reset_interval) {
+            snprintf(tmp, sizeof(tmp), MECK_TR("AGC Reset Int: %u s", "Reset AGC : %u s"),
+                     (unsigned)_prefs->agc_reset_interval * 4);
+          } else {
+            strcpy(tmp, MECK_TR("AGC Reset Int: Off", "Reset AGC : Arr\xC3\xAAt"));
+          }
+          display.print(tmp);
+          break;
+
         case ROW_PURGE_CONTACTS:
           display.print(MECK_TR("Delete all contacts", "Supprimer tous les contacts"));
           break;
@@ -3368,6 +3390,17 @@ public:
                           chIdx, _editBuf[0] ? _editBuf : "(device default)");
           }
           _editMode = EDIT_NONE;
+        } else if (type == ROW_AGC_RESET_INT) {
+          // Seconds, stored / 4 in one byte as upstream does: rounds down to
+          // a multiple of 4, 0 or empty = off, capped at 1020 s
+          long secs = atol(_editBuf);
+          if (secs < 0) secs = 0;
+          if (secs > 1020) secs = 1020;
+          _prefs->agc_reset_interval = (uint8_t)(secs / 4);
+          the_mesh.savePrefs();
+          Serial.printf("Settings: AGC reset interval = %u s\n",
+                        (unsigned)_prefs->agc_reset_interval * 4);
+          _editMode = EDIT_NONE;
         }
         #ifdef HAS_4G_MODEM
         else if (type == ROW_APN) {
@@ -3967,6 +4000,19 @@ public:
                         _prefs->backlight_alt_b_only ? "ON" : "OFF");
           break;
 #endif
+        case ROW_RX_BOOSTED_GAIN:
+          _prefs->rx_boosted_gain = _prefs->rx_boosted_gain ? 0 : 1;
+          the_mesh.savePrefs();   // the main loop applies it within 500 ms
+          Serial.printf("Settings: RX Boosted Gain = %s\n",
+                        _prefs->rx_boosted_gain ? "ON" : "OFF");
+          break;
+        case ROW_AGC_RESET_INT: {
+          // Type the interval in seconds, as channel regions are typed
+          char secStr[8];
+          snprintf(secStr, sizeof(secStr), "%u", (unsigned)_prefs->agc_reset_interval * 4);
+          startEditText(_prefs->agc_reset_interval ? secStr : "");
+          break;
+        }
         case ROW_PURGE_CONTACTS:
           _purgeContacts = the_mesh.getNumContacts();
           _purgePhase = PURGE_CONFIRM;

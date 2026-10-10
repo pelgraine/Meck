@@ -104,9 +104,19 @@ struct NodePrefs {  // persisted to file
   uint8_t backlight_alt_b_only;    // default 0
 
   // UI language (Experimental Features): 0 = English, 1 = French
-  // (ui-new/MeckLang.h). Older prefs files short-read this final field
+  // (ui-new/MeckLang.h). Older prefs files short-read this field
   // and keep the default 0 (English).
   uint8_t ui_lang;                 // default 0
+
+  // RX boosted gain (Experimental Features): 1 = boosted (SX126x boosted
+  // gain mode), 0 = power-saving gain. Re-applied every 500 ms by the main
+  // loop. Older prefs files short-read this field and keep the default 1.
+  uint8_t rx_boosted_gain;         // default 1
+
+  // AGC reset interval (Experimental Features), in seconds / 4 as upstream
+  // stores it (0 = off, max 255 = 1020 s). Older prefs files short-read this
+  // final field and keep the default 0 (off).
+  uint8_t agc_reset_interval;      // default 0
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.

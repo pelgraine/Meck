@@ -2519,7 +2519,7 @@ if (curr) curr->poll();
     static unsigned long nextChargerDump = 0;
     if ((long)(millis() - nextChargerDump) >= 0) {
       nextChargerDump = millis() + 10000;
-      board.chargerDebugPrint();
+      // board.chargerDebugPrint();  // paused: clogs serial while debugging BLE/WiFi
     }
   }
 #endif
