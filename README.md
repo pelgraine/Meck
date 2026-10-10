@@ -6,7 +6,7 @@ A fork created specifically to focus on enabling BLE & WiFi companion firmware f
 
 [Check out the Meck discussion channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
-<img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
+<img src="https://github.com/user-attachments/assets/2cf48a91-807c-4e45-8260-291e637d9868" alt="IMG_4500-EDIT" width="325" height="650">
 
 ### Contents
 - [Supported Devices](#supported-devices)
