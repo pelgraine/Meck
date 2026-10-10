@@ -35,6 +35,9 @@
   extern bool meckCompanionIsBLE();
   extern bool meckCompanionUseBLE();
   extern void meckCompanionUseNone();
+  extern bool meckCompanionBLENeedsRestart();
+  extern bool meckCompanionWiFiNeedsRestart();
+  extern void meckCompanionSwitchPress(bool toWifi);
 #endif
 
 #ifndef AUTO_OFF_MILLIS
@@ -983,8 +986,14 @@ public:
       }
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(1);
-      display.drawTextCentered(display.width() / 2, 68, MECK_TR("toggle: " PRESS_LABEL, "basculer : appui long"));
-      display.drawTextCentered(display.width() / 2, 78, MECK_TR("or press Enter key", "ou touche Entr\xC3\xA9" "e"));
+      if (meckCompanionBLENeedsRestart()) {
+        // WiFi has been used since the last restart: switching needs one
+        display.drawTextCentered(display.width() / 2, 68, MECK_TR("restart into Bluetooth:", "red\xC3\xA9marrer en Bluetooth :"));
+        display.drawTextCentered(display.width() / 2, 78, MECK_TR("long press or Enter", "appui long ou Entr\xC3\xA9" "e"));
+      } else {
+        display.drawTextCentered(display.width() / 2, 68, MECK_TR("toggle: " PRESS_LABEL, "basculer : appui long"));
+        display.drawTextCentered(display.width() / 2, 78, MECK_TR("or press Enter key", "ou touche Entr\xC3\xA9" "e"));
+      }
 #elif defined(BLE_PIN_CODE)
     } else if (_page == HomePage::BLUETOOTH) {
       display.setColor(DisplayDriver::GREEN);
@@ -1048,10 +1057,17 @@ public:
       // wider than the screen in Montserrat (130 of 128).
       display.setColor(DisplayDriver::GREEN);
       display.setTextSize(0);
-      display.drawTextCentered(display.width() / 2, 90,
-          (WiFi.getMode() != WIFI_OFF)
+      const char* wifiHint = (WiFi.getMode() != WIFI_OFF)
             ? MECK_TR("Press Enter to Turn Off Wifi", "Entr\xC3\xA9" "e : couper le WiFi")
-            : MECK_TR("Press Enter to Turn On Wifi", "Entr\xC3\xA9" "e : activer le WiFi"));
+            : MECK_TR("Press Enter to Turn On Wifi", "Entr\xC3\xA9" "e : activer le WiFi");
+#if defined(BLE_PIN_CODE) && defined(MECK_WIFI_COMPANION)
+      // Combined build: Bluetooth has been used since the last restart, so
+      // turning WiFi on restarts the device
+      if (WiFi.getMode() == WIFI_OFF && meckCompanionWiFiNeedsRestart()) {
+        wifiHint = MECK_TR("Press Enter to Restart into Wifi", "Entr\xC3\xA9" "e : red\xC3\xA9marrer en WiFi");
+      }
+#endif
+      display.drawTextCentered(display.width() / 2, 90, wifiHint);
       display.setTextSize(1);
 #endif
     } else if (_page == HomePage::ADVERT) {
@@ -1406,10 +1422,13 @@ public:
     }
 #if defined(BLE_PIN_CODE) && defined(MECK_WIFI_COMPANION)
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
-      // Combined build: Bluetooth on turns WiFi off; Bluetooth off leaves
-      // neither on. Once the Web Reader has freed Bluetooth, it needs a reboot.
+      // Combined build: Bluetooth off leaves neither on. Turning it on after
+      // WiFi has been used since the last restart (or after the Web Reader
+      // freed Bluetooth) asks to restart into Bluetooth.
       if (meckCompanionIsBLE()) {
         meckCompanionUseNone();
+      } else if (meckCompanionBLENeedsRestart()) {
+        meckCompanionSwitchPress(false);
       } else if (!meckCompanionUseBLE()) {
         _task->showAlert(MECK_TR("Reboot for Bluetooth", "Red\xC3\xA9marrer (Bluetooth)"), 1500);
       }
@@ -1436,6 +1455,8 @@ public:
       extern bool meckCompanionUseWiFi(bool connectSaved);
       if (meckCompanionIsWiFi()) {
         meckCompanionUseNone();
+      } else if (meckCompanionWiFiNeedsRestart()) {
+        meckCompanionSwitchPress(true);   // Bluetooth used since the last restart
       } else if (!meckCompanionUseWiFi(true)) {
         _task->showAlert(MECK_TR("WiFi failed to start", "\xC3\x89" "chec du WiFi"), 1500);
       }

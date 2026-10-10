@@ -287,6 +287,20 @@ Connect the MeshCore web app or meshcore.js to `<device IP>:5000`.
 
 WiFi is also used by the web reader and IRC client on WiFi variants. The web reader shares the same connection — no extra setup needed.
 
+### Combined Bluetooth + WiFi build (T-Deck Max)
+
+The `meck_max_ble_wifi` build has both the Bluetooth and the WiFi companion connection, one at a time. Both are off at boot. After a restart, whichever one you turn on first works straight away: from its home page (press **Enter** or long press), or for WiFi from **Settings**.
+
+**Switching between Bluetooth and WiFi restarts the device, every time.** Bluetooth only gives its memory back when the device restarts, and WiFi needs that memory to start. So once you have used one connection since the last restart, turning on the other one works like this:
+
+1. The other connection's home page shows a restart hint: **Press Enter to Restart into Wifi** on the WiFi page, or **restart into Bluetooth** on the Bluetooth page.
+2. Press **Enter** (or long press). A popup asks **Switch to WiFi?** (or **Switch to Bluetooth?**). Press **Enter** again within 5 seconds to restart.
+3. The device restarts and turns on the connection you chose by itself. WiFi joins your saved network, with the Connecting popup.
+
+After a normal restart or power-on, both connections are off again.
+
+From the companion app, turning WiFi on or off (`set wifi.enabled`) is applied by the app's reboot in the same way.
+
 ### Clock & Timezone
 
 The T-Deck Pro does not include a dedicated RTC chip, so after each reboot the device clock starts unset. The clock will appear in the nav bar (between node name and battery) once the time has been synced by one of these methods:

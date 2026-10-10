@@ -1020,8 +1020,24 @@ void meckPurgeAllContacts(int* contactsRemoved, bool* contactsOk, int* dmsRemove
 // ---------------------------------------------------------------------------
 static bool meckBtReleased = false;          // Web Reader has freed Bluetooth's memory
 static bool meckWifiServerStarted = false;   // app server (TCP_PORT) started once
-static int8_t meckPendingWifi = -1;          // app's "set wifi.enabled": -1 none, 0 off, 1 on
-static unsigned long meckPendingWifiAt = 0;
+
+// Switching between Bluetooth and WiFi needs a restart: Bluetooth only gives
+// its memory back on restart, and WiFi cannot start without it. Whichever is
+// turned on first after a restart works directly; turning on the other one
+// asks to restart, and the chosen connection then starts by itself. The
+// choice survives the restart in RTC memory (kept across a restart, lost at
+// power-off), so a normal start-up still has both off.
+static bool meckBleUsed = false;             // Bluetooth has been on since this restart
+static bool meckWifiUsed = false;            // WiFi companion has been on since this restart
+#define MECK_SWITCH_MAGIC  0x4D45434BUL      // "MECK": meckSwitchTarget is valid
+#define MECK_SWITCH_BLE    1
+#define MECK_SWITCH_WIFI   2
+RTC_NOINIT_ATTR uint32_t meckSwitchMagic;
+RTC_NOINIT_ATTR uint8_t meckSwitchTarget;    // MECK_SWITCH_BLE / MECK_SWITCH_WIFI
+static uint8_t meckBootStart = 0;            // target read at start-up; started once home shows
+static uint8_t meckConfirmTarget = 0;        // first press of a switch, awaiting the second
+static unsigned long meckConfirmUntil = 0;
+static unsigned long meckRestartAt = 0;      // restart once the "Restarting..." popup is shown
 
 static void meckLogMemory(const char* when) {
   Serial.printf("MEM %s: heap free=%u largest=%u, PSRAM free=%u\n", when,
@@ -1104,6 +1120,7 @@ bool meckCompanionUseBLE() {
   if (meckCompanionIsWiFi()) meckWifiOff();
   serial_interface.setMode(DualCompanionInterface::MODE_BLE);
   ble_companion.enable();
+  meckBleUsed = true;
   Serial.println("Companion: Bluetooth on");
   meckLogMemory("Bluetooth on");
   return true;
@@ -1123,6 +1140,7 @@ bool meckCompanionUseWiFi(bool connectSaved) {
     meckLogMemory("WiFi init failed");
     return false;
   }
+  meckWifiUsed = true;
   if (!meckWifiServerStarted) {
     wifi_companion.begin(TCP_PORT);
     meckWifiServerStarted = true;
@@ -1190,11 +1208,16 @@ bool meckCompanionCommand(const char* command, char* reply) {
   }
   if (memcmp(command, "set wifi.enabled ", 17) == 0) {
     int en = atoi(&command[17]) ? 1 : 0;
-    // Both are off at boot in this build, so this switches WiFi now: one
-    // second after the reply, so the reply still reaches the app. WiFi on
-    // turns Bluetooth off.
-    meckPendingWifi = en;
-    meckPendingWifiAt = millis() + 1000;
+    // Switching connection needs a restart in this build, so the choice is
+    // kept for the next restart (as upstream applies it at boot): the app's
+    // reboot command then brings the device up on WiFi (1) or Bluetooth (0).
+    if (en == 1 && !meckCompanionIsWiFi()) {
+      meckSwitchTarget = MECK_SWITCH_WIFI;
+      meckSwitchMagic = MECK_SWITCH_MAGIC;
+    } else if (en == 0 && meckCompanionIsWiFi()) {
+      meckSwitchTarget = MECK_SWITCH_BLE;
+      meckSwitchMagic = MECK_SWITCH_MAGIC;
+    }
     sprintf(reply, "> wifi.enabled is now %d (reboot to apply)", en);
     return true;
   }
@@ -1217,17 +1240,59 @@ bool meckCompanionCommand(const char* command, char* reply) {
   return false;
 }
 
-// Called from MyMesh::loop(): runs the app's "set wifi.enabled" switch once
-// its reply has had time to go out.
+// True when turning this connection on needs a restart first: the other
+// one has been on since the last restart (or, for Bluetooth, the Web Reader
+// has freed Bluetooth's memory).
+bool meckCompanionWiFiNeedsRestart() {
+  return !meckCompanionIsWiFi() && meckBleUsed && !meckBtReleased;
+}
+bool meckCompanionBLENeedsRestart() {
+  return !meckCompanionIsBLE() && (meckWifiUsed || meckBtReleased);
+}
+
+// Restart and turn this connection on after the restart.
+static void meckCompanionRestartInto(bool toWifi) {
+  meckSwitchTarget = toWifi ? MECK_SWITCH_WIFI : MECK_SWITCH_BLE;
+  meckSwitchMagic = MECK_SWITCH_MAGIC;
+  Serial.printf("Companion: restarting into %s\n", toWifi ? "WiFi" : "Bluetooth");
+  ui_task.showAlert(MECK_TR("Restarting...", "Red\xC3\xA9marrage..."), 5000);
+  meckRestartAt = millis() + 1500;   // let the popup reach the e-ink first
+}
+
+// Home pages and Settings rows, when a switch needs a restart: the first
+// press asks, a second press within 5 s restarts into that connection.
+void meckCompanionSwitchPress(bool toWifi) {
+  uint8_t target = toWifi ? MECK_SWITCH_WIFI : MECK_SWITCH_BLE;
+  if (meckConfirmTarget == target && (long)(millis() - meckConfirmUntil) < 0) {
+    meckConfirmTarget = 0;
+    meckCompanionRestartInto(toWifi);
+    return;
+  }
+  meckConfirmTarget = target;
+  meckConfirmUntil = millis() + 5000;
+  ui_task.showAlert(toWifi
+      ? MECK_TR("Switch to WiFi?\nEnter again to restart", "Passer au WiFi ?\nEntr\xC3\xA9" "e encore : red\xC3\xA9marrer")
+      : MECK_TR("Switch to Bluetooth?\nEnter again to restart", "Passer au Bluetooth ?\nEntr\xC3\xA9" "e encore : red\xC3\xA9marrer"),
+      5000);
+}
+
+// Called from MyMesh::loop(): the switch restart, and after it, turning the
+// chosen connection on once the home screen shows (a screen change clears
+// popups, so the WiFi Connecting popup must come after the splash).
 void meckCompanionPoll() {
-  if (meckPendingWifi < 0) return;
-  if ((long)(millis() - meckPendingWifiAt) < 0) return;
-  int8_t want = meckPendingWifi;
-  meckPendingWifi = -1;
-  if (want == 1 && !meckCompanionIsWiFi()) {
-    meckCompanionUseWiFi(true);
-  } else if (want == 0 && meckCompanionIsWiFi()) {
-    meckCompanionUseNone();
+  if (meckRestartAt && (long)(millis() - meckRestartAt) >= 0) {
+    meckRestartAt = 0;
+    the_mesh.saveContactsIfDirty();   // as the app's reboot command does
+    board.reboot();
+  }
+  if (meckBootStart && ui_task.isOnHomeScreen()) {
+    uint8_t target = meckBootStart;
+    meckBootStart = 0;
+    if (target == MECK_SWITCH_WIFI) {
+      meckCompanionUseWiFi(true);
+    } else {
+      meckCompanionUseBLE();
+    }
   }
 }
 #endif
@@ -2398,6 +2463,15 @@ void setup() {
   // server start when the user turns WiFi on.
   MESH_DEBUG_PRINTLN("setup() - combined BLE + WiFi companion, both off at boot");
   ble_companion.begin(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+  // After a switch restart, turn the chosen connection on (once, from
+  // meckCompanionPoll when the home screen shows)
+  if (meckSwitchMagic == MECK_SWITCH_MAGIC &&
+      (meckSwitchTarget == MECK_SWITCH_BLE || meckSwitchTarget == MECK_SWITCH_WIFI)) {
+    meckBootStart = meckSwitchTarget;
+    Serial.printf("Companion: switch restart, turning %s on\n",
+                  meckBootStart == MECK_SWITCH_WIFI ? "WiFi" : "Bluetooth");
+  }
+  meckSwitchMagic = 0;   // one-off: the next normal start-up has both off
 #elif defined(MECK_WIFI_COMPANION)
   {
     // WiFi companion: load credentials from SD at runtime.

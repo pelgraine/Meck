@@ -316,6 +316,11 @@ public:
   void saveContacts() {
     _store->saveContacts(this);
   }
+  // Before a restart other than the app's reboot command: save contacts
+  // still waiting for their delayed write, as CMD_REBOOT does
+  void saveContactsIfDirty() {
+    if (dirty_contacts_expiry) saveContacts();
+  }
   // Settings > Experimental Features > Delete all contacts (Meck-P4 port).
   // Empties the in-RAM contact table (BaseChatMesh::resetContacts is
   // protected) and saves the empty set. A chunked background save still in
