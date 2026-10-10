@@ -2761,7 +2761,35 @@ void otaResumeRadio() {
 }
 #endif
 
+#ifdef HAS_SDCARD
+// Settings export: the key handler shows the "Compiling... Please Wait..."
+// popup and sets these; the export runs from loop() 1.5 s later, so the popup
+// is on the e-ink while the export blocks (it can take tens of seconds).
+static bool meckExportPending = false;
+static uint8_t meckExportPendingFlags = 0;
+static unsigned long meckExportAt = 0;
+static void meckExportPoll() {
+  if (!meckExportPending || (long)(millis() - meckExportAt) < 0) return;
+  meckExportPending = false;
+  char exportedPath[64];
+  int result = meckExportConfig(the_mesh, meckExportPendingFlags,
+                                sensors.node_lat, sensors.node_lon,
+                                rtc_clock, sdCardReady,
+                                exportedPath, sizeof(exportedPath));
+  if (result >= 0) {
+    char buf[96];
+    snprintf(buf, sizeof(buf), MECK_TR("Exported to %s", "Export\xC3\xA9 vers %s"), exportedPath);
+    ui_task.showAlert(buf, 3500);
+  } else {
+    ui_task.showAlert(MECK_TR("Export failed (SD?)", "\xC3\x89" "chec export (SD ?)"), 2000);
+  }
+}
+#endif
+
 void loop() {
+  #ifdef HAS_SDCARD
+  meckExportPoll();        // Settings export: runs once its popup is on screen
+  #endif
   #if defined(DISPLAY_CLASS) && defined(MECK_WIFI_COMPANION)
   meckWifiConnectPoll();   // saved-network connect: Connected / Could not connect popup
   #endif
@@ -4463,18 +4491,12 @@ void handleKeyboardInput() {
       if (flags == 0) {
         ui_task.showAlert(MECK_TR("No sections selected", "Aucune section choisie"), 1500);
       } else {
-        char exportedPath[64];
-        int result = meckExportConfig(the_mesh, flags,
-                                      sensors.node_lat, sensors.node_lon,
-                                      rtc_clock, sdCardReady,
-                                      exportedPath, sizeof(exportedPath));
-        if (result >= 0) {
-          char buf[96];
-          snprintf(buf, sizeof(buf), MECK_TR("Exported to %s", "Export\xC3\xA9 vers %s"), exportedPath);
-          ui_task.showAlert(buf, 3500);
-        } else {
-          ui_task.showAlert(MECK_TR("Export failed (SD?)", "\xC3\x89" "chec export (SD ?)"), 2000);
-        }
+        // Show the popup first; the export itself runs from loop()
+        // (meckExportPoll) once the popup has reached the e-ink.
+        ui_task.showAlert(MECK_TR("Compiling...\nPlease Wait...", "Compilation...\nVeuillez patienter..."), 10000);
+        meckExportPendingFlags = flags;
+        meckExportAt = millis() + 1500;  // let the popup reach the e-ink first
+        meckExportPending = true;
       }
     }
     if (settings->isImportRequested()) {
