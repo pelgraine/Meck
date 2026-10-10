@@ -2,7 +2,7 @@
 >
 > **Note:** The developer of Meck does not speak French. This French version of the README is entirely AI-translated. Please submit suggested alternative translations to the [Meck channel on the MeshCore Discord](https://discord.com/channels/1495203904898728149/1496789639556501614) or to the [issues page on the repo](https://github.com/pelgraine/Meck/issues).
 
-[English version / Version anglaise](README.md)
+🇬🇧[English version / Version anglaise](README.md)🇬🇧
 
 ## Meshcore + Fork = Meck
 
@@ -10,7 +10,7 @@ Un fork créé spécifiquement pour proposer un firmware compagnon BLE et WiFi p
 
 [Découvrez le canal de discussion Meck sur le Discord MeshCore](https://discord.com/channels/1495203904898728149/1496789639556501614)
 
-<img src="https://github.com/user-attachments/assets/b30ce6bd-79af-44d3-93c4-f5e7e21e5621" alt="IMG_1453" width="300" height="650">
+<img src="https://github.com/user-attachments/assets/2cf48a91-807c-4e45-8260-291e637d9868" alt="IMG_4500-EDIT" width="325" height="650">
 
 ### Sommaire
 - [Appareils pris en charge](#appareils-pris-en-charge)
