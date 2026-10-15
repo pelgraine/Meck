@@ -33,6 +33,20 @@
   #include <DNSServer.h>
   #include <Update.h>
   #include <esp_ota_ops.h>
+
+  // Board identity embedded in every image so OTA can refuse a firmware that
+  // was built for a different board (a wrong pinout can leave the device
+  // unresponsive). verifyFirmwareFile() scans the uploaded image for
+  // MECK_OTA_ID_PREFIX followed by the id and compares it with ours.
+  #define MECK_OTA_ID_PREFIX "MECKBRD:"
+  #if defined(LilyGo_TDeck_Pro_Max)
+    #define MECK_OTA_BOARD "tdeck_max"
+  #elif defined(LilyGo_TDeck_Pro)
+    #define MECK_OTA_BOARD "tdeck_pro"
+  #else
+    #define MECK_OTA_BOARD "other"
+  #endif
+  static const char kMeckOtaBoardMarker[] __attribute__((used)) = MECK_OTA_ID_PREFIX MECK_OTA_BOARD;
 #endif
 
 // Forward declarations
@@ -1020,12 +1034,30 @@ public:
       "</body></html>";
   }
 
+  // A firmware write takes about a minute; losing power part-way is recoverable
+  // thanks to the two OTA slots but wastes the update, so refuse on a weak battery.
+  #ifndef MECK_OTA_MIN_BATT_MV
+    #define MECK_OTA_MIN_BATT_MV 3500
+  #endif
+  bool otaBatteryTooLow() {
+    #if defined(LilyGo_TDeck_Pro_Max)
+    uint16_t mv = board.getBattMilliVolts();
+    if (mv > 0 && mv < MECK_OTA_MIN_BATT_MV) {
+      Serial.printf("OTA: Battery too low for update (%u mV < %d mV)\n", (unsigned)mv, MECK_OTA_MIN_BATT_MV);
+      _otaError = MECK_TR("Battery too low - charge first", "Batterie trop faible - rechargez");
+      return true;
+    }
+    #endif
+    return false;
+  }
+
   void startOTA() {
     _editMode = EDIT_OTA;
     _otaPhase = OTA_PHASE_CONFIRM;
     _otaBytesReceived = 0;
     _otaUploadOk = false;
     _otaError = nullptr;
+    if (otaBatteryTooLow()) _otaPhase = OTA_PHASE_ERROR;
   }
 
   void startOTAServer() {
@@ -1162,6 +1194,10 @@ public:
     // Check ESP32 image magic byte
     uint8_t magic;
     f.read(&magic, 1);
+
+    // Board id embedded in the image (empty if the image predates the marker)
+    char imageBoard[24] = {0};
+    bool hasBoardId = (magic == 0xE9) && findImageBoardId(f, imageBoard, sizeof(imageBoard));
     f.close();
     digitalWrite(SDCARD_CS, HIGH);
 
@@ -1170,7 +1206,61 @@ public:
       Serial.printf("OTA: Bad magic: 0x%02X\n", magic);
       return false;
     }
+    // Compare against the marker array itself so it is kept in the image
+    const char* ownBoard = kMeckOtaBoardMarker;
+    asm volatile("" : "+r"(ownBoard));   // force the array to be emitted, not constant-folded away
+    ownBoard += sizeof(MECK_OTA_ID_PREFIX) - 1;
+    if (hasBoardId && strcmp(imageBoard, ownBoard) != 0) {
+      _otaError = MECK_TR("Firmware is for another board", "Firmware pour une autre carte");
+      Serial.printf("OTA: Board mismatch: image '%s', this device '%s'\n", imageBoard, ownBoard);
+      return false;
+    }
+    #ifdef MECK_OTA_REQUIRE_BOARD_ID
+    if (!hasBoardId) {
+      _otaError = MECK_TR("No board id in firmware", "Identifiant de carte absent");
+      Serial.println("OTA: Image has no board id marker");
+      return false;
+    }
+    #endif
     return true;
+  }
+
+  // Scan an image for MECK_OTA_ID_PREFIX<id> and copy <id> to out. Returns
+  // false if the image carries no (non-empty) id, e.g. a build from before the
+  // marker existed. The bare prefix literal inside verify code is skipped
+  // because its id is empty.
+  bool findImageBoardId(File& f, char* out, size_t outLen) {
+    const char* prefix = MECK_OTA_ID_PREFIX;
+    const size_t pl = strlen(prefix);
+    const size_t CHUNK = 2048;
+    const size_t OVERLAP = pl + 32;   // longest id we accept follows the prefix
+    uint8_t* buf = (uint8_t*)malloc(CHUNK + OVERLAP);
+    if (!buf) return false;
+
+    bool found = false;
+    size_t have = 0;
+    bool eof = false;
+    f.seek(0);
+    while (!eof && !found) {
+      int n = f.read(buf + have, CHUNK);
+      if (n <= 0) eof = true; else have += n;
+      // Only start matches early enough that their id is fully in the buffer,
+      // until the final pass.
+      size_t limit = eof ? have : (have > OVERLAP ? have - OVERLAP : 0);
+      for (size_t i = 0; i < limit && i + pl < have && !found; i++) {
+        if (buf[i] != (uint8_t)prefix[0] || memcmp(buf + i, prefix, pl) != 0) continue;
+        size_t j = i + pl, k = 0;
+        while (j < have && k < outLen - 1 && buf[j] >= 0x21 && buf[j] < 0x7F) out[k++] = (char)buf[j++];
+        out[k] = '\0';
+        if (k > 0) found = true;
+      }
+      if (!eof && !found) {
+        memmove(buf, buf + limit, have - limit);
+        have -= limit;
+      }
+    }
+    free(buf);
+    return found;
   }
 
   bool flashFirmwareFromSD(DisplayDriver& display) {
@@ -1272,6 +1362,13 @@ public:
 
     _otaPhase = OTA_PHASE_VERIFY;
     if (!verifyFirmwareFile()) {
+      _otaPhase = OTA_PHASE_ERROR;
+      return;
+    }
+
+    // Re-check now that WiFi is off: the radio load during the upload can mask
+    // how low the battery really is.
+    if (otaBatteryTooLow()) {
       _otaPhase = OTA_PHASE_ERROR;
       return;
     }
@@ -1399,6 +1496,7 @@ public:
       String path = _otaServer->arg("path");
       if (path.isEmpty()) path = "/";
       String msg = _otaServer->arg("msg");
+      if (!fmPathAllowed(path)) { path = "/"; msg = "Path not allowed"; }
       Serial.printf("FM: page request path='%s'\n", path.c_str());
       String html = fmBuildPage(path, msg);
       _otaServer->send(200, "text/html", html);
@@ -1407,6 +1505,10 @@ public:
     // --- File download: GET /dl?path=/file.txt ---
     _otaServer->on("/dl", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
+      if (!fmPathAllowed(path)) {
+        _otaServer->send(403, "text/plain", "Forbidden");
+        return;
+      }
       File f = SD.open(path, FILE_READ);
       if (!f || f.isDirectory()) {
         if (f) f.close();
@@ -1436,11 +1538,13 @@ public:
     });
 
     // --- File upload: POST /upload?dir=/ → redirect back to listing ---
+    static bool fmUploadOk = false;
     _otaServer->on("/upload", HTTP_POST,
       [this]() {
         String dir = _otaServer->arg("dir");
-        if (dir.isEmpty()) dir = "/";
-        _otaServer->sendHeader("Location", "/?path=" + dir + "&msg=Upload+complete");
+        if (dir.isEmpty() || !fmPathAllowed(dir)) dir = "/";
+        _otaServer->sendHeader("Location", "/?path=" + fmUrlEncode(dir) +
+          (fmUploadOk ? "&msg=Upload+complete" : "&msg=Upload+rejected"));
         _otaServer->send(303, "text/plain", "Redirecting...");
       },
       [this]() {
@@ -1453,8 +1557,14 @@ public:
           if (!dir.endsWith("/")) dir += "/";
           String fullPath = dir + upload.filename;
           Serial.printf("FM: Upload start: %s\n", fullPath.c_str());
-          fmUploadFile = SD.open(fullPath, FILE_WRITE);
-          if (!fmUploadFile) Serial.println("FM: Failed to open file for write");
+          fmUploadOk = false;
+          if (upload.filename.indexOf('/') >= 0 || !fmPathAllowed(fullPath)) {
+            Serial.println("FM: Upload rejected (path not allowed)");
+          } else {
+            fmUploadFile = SD.open(fullPath, FILE_WRITE);
+            if (!fmUploadFile) Serial.println("FM: Failed to open file for write");
+            else fmUploadOk = true;
+          }
 
         } else if (upload.status == UPLOAD_FILE_WRITE) {
           if (fmUploadFile) fmUploadFile.write(upload.buf, upload.currentSize);
@@ -1479,18 +1589,18 @@ public:
     _otaServer->on("/mkdir", HTTP_GET, [this]() {
       String dir = _otaServer->arg("dir");
       String name = _otaServer->arg("name");
-      if (dir.isEmpty()) dir = "/";
+      if (dir.isEmpty() || !fmPathAllowed(dir)) dir = "/";
       if (name.isEmpty()) {
-        _otaServer->sendHeader("Location", "/?path=" + dir + "&msg=No+name");
+        _otaServer->sendHeader("Location", "/?path=" + fmUrlEncode(dir) + "&msg=No+name");
         _otaServer->send(303);
         return;
       }
       String full = dir + (dir.endsWith("/") ? "" : "/") + name;
-      bool ok = SD.mkdir(full);
+      bool ok = name.indexOf('/') < 0 && fmPathAllowed(full) && SD.mkdir(full);
       digitalWrite(SDCARD_CS, HIGH);
       Serial.printf("FM: mkdir '%s' %s\n", full.c_str(), ok ? "OK" : "FAIL");
       _otaServer->sendHeader("Location",
-        "/?path=" + dir + "&msg=" + (ok ? "Folder+created" : "mkdir+failed"));
+        "/?path=" + fmUrlEncode(dir) + "&msg=" + (ok ? "Folder+created" : "mkdir+failed"));
       _otaServer->send(303);
     });
 
@@ -1498,9 +1608,9 @@ public:
     _otaServer->on("/rm", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
       String ret = _otaServer->arg("ret");
-      if (ret.isEmpty()) ret = "/";
-      if (path.isEmpty() || path == "/") {
-        _otaServer->sendHeader("Location", "/?path=" + ret + "&msg=Bad+path");
+      if (ret.isEmpty() || !fmPathAllowed(ret)) ret = "/";
+      if (path.isEmpty() || path == "/" || !fmPathAllowed(path)) {
+        _otaServer->sendHeader("Location", "/?path=" + fmUrlEncode(ret) + "&msg=Bad+path");
         _otaServer->send(303);
         return;
       }
@@ -1514,7 +1624,7 @@ public:
       digitalWrite(SDCARD_CS, HIGH);
       Serial.printf("FM: rm '%s' %s\n", path.c_str(), ok ? "OK" : "FAIL");
       _otaServer->sendHeader("Location",
-        "/?path=" + ret + "&msg=" + (ok ? "Deleted" : "Delete+failed"));
+        "/?path=" + fmUrlEncode(ret) + "&msg=" + (ok ? "Deleted" : "Delete+failed"));
       _otaServer->send(303);
     });
 
@@ -1522,7 +1632,12 @@ public:
     _otaServer->on("/confirm-rm", HTTP_GET, [this]() {
       String path = _otaServer->arg("path");
       String ret = _otaServer->arg("ret");
-      if (ret.isEmpty()) ret = "/";
+      if (ret.isEmpty() || !fmPathAllowed(ret)) ret = "/";
+      if (!fmPathAllowed(path)) {
+        _otaServer->sendHeader("Location", "/?path=" + fmUrlEncode(ret) + "&msg=Bad+path");
+        _otaServer->send(303);
+        return;
+      }
       String name = path;
       int sl = name.lastIndexOf('/');
       if (sl >= 0) name = name.substring(sl + 1);
@@ -1596,6 +1711,38 @@ public:
       else r += c;
     }
     return r;
+  }
+
+  static bool fmIsOrUnder(const String& lowerPath, const char* prefix) {
+    size_t n = strlen(prefix);
+    return lowerPath.startsWith(prefix) && (lowerPath.length() == n || lowerPath[n] == '/');
+  }
+
+  // Paths coming from the browser are untrusted. Reject traversal and the
+  // aliases FAT accepts for the same file (case, 8.3 short names such as
+  // MESHCO~1, trailing dots/spaces), then refuse the files that hold secrets:
+  // the node identity (private key) and the saved WiFi password.
+  static bool fmPathAllowed(const String& path) {
+    size_t len = path.length();
+    if (len == 0 || len > 200 || path[0] != '/') return false;
+    for (size_t i = 0; i < len; i++) {
+      char c = path[i];
+      if ((uint8_t)c < 0x20 || c == 0x7F || c == '\\' || c == '~' || c == ':' ||
+          c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') return false;
+      if (c == '/' && i + 1 < len) {
+        char n = path[i + 1];
+        if (n == '/' || n == ' ' || n == '.') return false;   // "//", hidden/dot names, "/.."
+      }
+      if (c == '/' && i > 0 && (path[i - 1] == ' ' || path[i - 1] == '.')) return false;
+    }
+    if (len > 1 && (path[len - 1] == ' ' || path[len - 1] == '.')) return false;
+
+    String lower = path;
+    lower.toLowerCase();
+    while (lower.length() > 1 && lower.endsWith("/")) lower.remove(lower.length() - 1);
+    if (fmIsOrUnder(lower, "/meshcore/identity")) return false;
+    if (lower == "/web/wifi.cfg") return false;
+    return true;
   }
 
   static String fmUrlEncode(const String& s) {
