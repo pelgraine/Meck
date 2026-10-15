@@ -1486,8 +1486,12 @@ void ModemManager::pollIncomingSMS() {
     incoming.body[bodyLen] = '\0';
     incoming.timestamp = (uint32_t)time(nullptr);
 
-    // Queue for main loop
-    xQueueSend(_recvQueue, &incoming, 0);
+    // Queue for main loop. If the queue is full, do not delete the message
+    // from the SIM so it is not lost (it can still be read from the SIM).
+    if (xQueueSend(_recvQueue, &incoming, 0) != pdTRUE) {
+      MESH_DEBUG_PRINTLN("[Modem] SMS queue full, keeping message %d on SIM", idx);
+      break;
+    }
 
     // Delete the message from SIM
     char delCmd[20];

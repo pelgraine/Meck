@@ -38,13 +38,6 @@ void TDeckProMaxBoard::begin() {
   // BQ25896, BHI260AP) share SDA=13, SCL=14.
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);  // 100kHz — safe for all devices on the bus
-  // --- TEMP: charger chip probe (BQ25896 @ 0x6B vs SY6970 @ 0x6A) ---
-for (uint8_t a = 0x6A; a <= 0x6B; a++) {
-  Wire.beginTransmission(a);
-  uint8_t e = Wire.endTransmission();
-  Serial.printf("Charger probe 0x%02X -> %s\n", a,
-                e == 0 ? (a == 0x6A ? "ACK (SY6970)" : "ACK (BQ25896)") : "no response");
-}
   MESH_DEBUG_PRINTLN("  I2C initialized (SDA=%d SCL=%d)", I2C_SDA, I2C_SCL);
 
   // ------ Step 2: XL9555 I/O Expander ------

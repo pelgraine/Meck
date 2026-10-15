@@ -3063,7 +3063,6 @@ void MyMesh::handleCmdFrame(size_t len) {
     // as upstream replies to a command it does not have.
     char *text = (char *)&cmd_frame[1];
     text[len - 1] = 0;  // ensure null
-    Serial.printf("APP CLI: %s\n", text);  // TEMPORARY test print: each command the app sends
     while (*text == ' ') text++;  // skip leading spaces
     char reply_buf[166];
     char *reply = reply_buf;

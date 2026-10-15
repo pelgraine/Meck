@@ -19,7 +19,7 @@
 //   - Touch RST via XL9555 IO07 (was GPIO 38)
 //   - Modem power/PWRKEY via XL9555 (was direct GPIO 41/40)
 //   - No PIN_PERF_POWERON (IO10 is now modem UART RX)
-//   - Battery: 1500 mAh (was 1400 mAh)
+//   - Battery: 1400 mAh (BQ27220_DESIGN_CAPACITY_MAH)
 //   - LoRa antenna switch (SKY13453) controlled by XL9555 IO04
 //   - Audio output mux (A7682E vs ES8311) controlled by XL9555 IO12
 //   - Speaker amplifier (NS4150B) enable via XL9555 IO06
