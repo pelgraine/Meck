@@ -318,10 +318,18 @@ void TDeckProMaxBoard::keyboardReset() {
 void TDeckProMaxBoard::gpsPowerOn() {
   xl9555_digitalWrite(XL_PIN_GPS_EN, HIGH);
   delay(100);
+  // Route the UART back to the pins released by gpsPowerOff()
+  Serial2.setPins(GPS_RX_PIN, GPS_TX_PIN);
 }
 
 void TDeckProMaxBoard::gpsPowerOff() {
   xl9555_digitalWrite(XL_PIN_GPS_EN, LOW);
+  // Release the UART pins. The TX line idles high, and an output held high
+  // into the unpowered GPS back-powers it through its input protection:
+  // about 21 mA measured on the battery with the GPS "off". RX loses its
+  // pull-up for the same reason.
+  pinMode(GPS_TX_PIN, INPUT);
+  pinMode(GPS_RX_PIN, INPUT);
 }
 
 // ---- LoRa power ----
