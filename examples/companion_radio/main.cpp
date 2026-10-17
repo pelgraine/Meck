@@ -2142,6 +2142,12 @@ void setup() {
   board.begin();
   MESH_DEBUG_PRINTLN("setup() - board.begin() done");
 
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+  // The ES8311 keeps its configuration across ESP32 resets; audio used before
+  // a reboot would leave it powered (~16 mA). Start from standby.
+  es8311_standby();
+#endif
+
   // Initialize touch input (CST328) HERE, immediately after board.begin(),
   // while the I2C bus is freshly initialised and quiet -- mirroring LilyGo's
   // working example, which calls touch.begin() first thing. Running it later
@@ -2879,6 +2885,120 @@ static void meckImportPoll() {
 }
 #endif
 
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+// ============================================================================
+// Power saving when locked (T-Deck MAX)
+//
+// While the lock screen is up the ESP32 light-sleeps. It wakes on a LoRa
+// packet (SX1262 DIO1, ext1), on the user button (double click unlocks) and
+// at each minute boundary for the clock; after a wake it stays up long
+// enough to handle the packet or the click. Measured on the battery: about
+// 35 mA locked and awake, 13 mA asleep.
+//
+// BLE advertising stops while the device may sleep (the Bluetooth controller
+// cannot sleep on this framework, so a phone could not connect anyway) and
+// restarts on unlock. Sleep is skipped entirely while one of
+// meckLockSleepBlocker()'s conditions holds. Settings > "Power saving when
+// locked" turns it off.
+// ============================================================================
+#include <WiFi.h>
+#include <esp_sleep.h>
+
+// Why the device stays awake while locked
+enum {
+  MECK_SLEEP_OK = 0, MECK_SLEEP_OFF, MECK_SLEEP_USB, MECK_SLEEP_PHONE,
+  MECK_SLEEP_GPS, MECK_SLEEP_MODEM, MECK_SLEEP_WIFI, MECK_SLEEP_AUDIO
+};
+
+static bool meckBleStoppedForSleep = false;
+static unsigned long meckAwakeUntil = 0;     // stay awake until (after a wake)
+static int meckRxPasses = -1;                // loop passes since a LoRa wake (-1: none)
+
+// After a LoRa wake the device only needs to stay up until the packet is
+// handled: the SX1262 receives on its own while the ESP32 sleeps, so all
+// that matters is that the packet was read (DIO1 back low), the radio is
+// listening again, and nothing waits to be sent or drawn. meckAwakeUntil
+// (2 s) stays as the upper bound.
+static bool meckRxHandled() {
+  if (meckRxPasses < 0) return true;
+  if (++meckRxPasses < 2) return false;               // one full loop pass first
+  if (digitalRead(P_LORA_DIO_1) == HIGH) return false; // IRQ not serviced yet
+  if (!radio_driver.isInRecvMode()) return false;     // not listening again yet
+  if (ui_task.needsAwake()) return false;             // redraw / kb flash due
+  meckRxPasses = -1;
+  return true;
+}
+
+static int meckLockSleepBlocker() {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  if (!p->lock_sleep) return MECK_SLEEP_OFF;
+  if (p->gps_enabled) return MECK_SLEEP_GPS;
+#ifdef HAS_4G_MODEM
+  if (modemManager.getState() != ModemState::OFF) return MECK_SLEEP_MODEM;
+#endif
+  if (WiFi.getMode() != WIFI_MODE_NULL) return MECK_SLEEP_WIFI;
+  if (board.isUsbPowered()) return MECK_SLEEP_USB;
+  if (serial_interface.isConnected()) return MECK_SLEEP_PHONE;
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+  if (es8311_active()) return MECK_SLEEP_AUDIO;
+#endif
+  return MECK_SLEEP_OK;
+}
+
+// Called at the end of loop() instead of the plain locked-loop delay
+static void meckLockSleepStep() {
+  bool locked = ui_task.isLocked();
+  bool canSleep = locked && meckLockSleepBlocker() == MECK_SLEEP_OK;
+
+  // BLE advertising off while sleep is possible, back on otherwise
+  if (canSleep && !meckBleStoppedForSleep && serial_interface.isEnabled()) {
+    serial_interface.disable();
+    meckBleStoppedForSleep = true;
+    Serial.println("[Power] Locked: BLE advertising paused for power saving");
+  } else if (!canSleep && meckBleStoppedForSleep) {
+    serial_interface.enable();
+    meckBleStoppedForSleep = false;
+    Serial.println("[Power] BLE advertising resumed");
+  }
+
+  if (!locked) return;
+  bool inWindow = (long)(millis() - meckAwakeUntil) < 0;
+  if (inWindow && meckRxPasses >= 0 && meckRxHandled()) inWindow = false;   // packet done early
+  if (!canSleep || the_mesh.hasPendingWork() || inWindow) {
+    delay(50);   // locked but awake: yield as before
+    return;
+  }
+  meckRxPasses = -1;
+
+  // Sleep until just after the next minute boundary, a LoRa packet or the button
+  uint32_t secs = rtc_clock.getCurrentTime() % 60;
+  uint64_t us = (uint64_t)(60 - secs) * 1000000ULL + 300000ULL;
+  esp_sleep_enable_timer_wakeup(us);
+  esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);
+  gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+  Serial.flush();
+  esp_light_sleep_start();
+  gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+  switch (esp_sleep_get_wakeup_cause()) {
+    case ESP_SLEEP_WAKEUP_EXT1:
+      meckAwakeUntil = millis() + 2000;   // at most: receive, maybe ACK / forward
+      meckRxPasses = 0;                    // usually ends early (meckRxHandled)
+      break;
+    case ESP_SLEEP_WAKEUP_GPIO:
+      meckAwakeUntil = millis() + 3000;   // let the button handler see a double click
+      ui_task.keepAlive();
+      break;
+    default:                               // timer: redraw the clock
+      meckAwakeUntil = millis() + 300;
+      ui_task.forceRefresh();
+      break;
+  }
+}
+#endif
+
 void loop() {
   #ifdef HAS_SDCARD
   meckExportPoll();        // Settings export: runs once its popup is on screen
@@ -3245,12 +3365,11 @@ void loop() {
 
         // I2S clocks are now running (connecttoFS started the channel and the
         // loop above has pushed samples). NOW bring up the ES8311 over I2C, so
-        // it can lock to the live BCLK/LRCK. Done once per boot.
+        // it can lock to the live BCLK/LRCK. Again after each codec standby.
         #ifdef HAS_ES8311_AUDIO
-          static bool es8311_ready = false;
-          if (!es8311_ready) {
-            es8311_ready = es8311_init_44100_16bit();
-            Serial.printf("NotifTone: ES8311 init (post-I2S) %s\n", es8311_ready ? "OK" : "FAILED");
+          if (!es8311_active()) {
+            bool ok = es8311_init_44100_16bit();
+            Serial.printf("NotifTone: ES8311 init (post-I2S) %s\n", ok ? "OK" : "FAILED");
           }
         #endif
 
@@ -3272,6 +3391,36 @@ void loop() {
       }
       notifSounds.clearPending();
     }
+
+    #ifdef HAS_ES8311_AUDIO
+    // Codec standby after audio: once nothing has used the ES8311 for 10 s
+    // (no tone, ringing alarm, open audiobook, voice playback or recording,
+    // running game) it goes to standby, saving about 16 mA. Every audio
+    // start brings it back through meck_audio_codec_init() / the init calls.
+    {
+      static unsigned long codecIdleSince = 0;
+      static unsigned long lastCodecCheck = 0;
+      if (millis() - lastCodecCheck >= 1000) {
+        lastCodecCheck = millis();
+        bool inUse = notifTonePlaying;
+        AudiobookPlayerScreen* ab = (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+        if (ab && ab->isBookOpen()) inUse = true;
+        AlarmScreen* al = (AlarmScreen*)ui_task.getAlarmScreen();
+        if (al && al->isRinging()) inUse = true;
+        VoiceMessageScreen* vs = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+        if (vs && (vs->isAudioActive() || vs->isRecording() ||
+                   vs->getMode() == VoiceMessageScreen::RECORDING)) inUse = true;
+        GBCEmulatorScreen* gb = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gb && gb->isRunning()) inUse = true;
+        if (inUse || !es8311_active()) {
+          codecIdleSince = millis();
+        } else if (millis() - codecIdleSince >= 10000) {
+          es8311_standby();
+          Serial.println("Audio: ES8311 standby (idle)");
+        }
+      }
+    }
+    #endif
   }
   #endif
 
@@ -4014,7 +4163,9 @@ void loop() {
   // The RTOS idle task executes WFI (wait-for-interrupt) during delay(),
   // dramatically reducing CPU power draw.  50 ms gives 20 loop cycles/sec
   // which is ample for LoRa packet reception (radio has hardware FIFO).
-#if defined(LilyGo_TDeck_Pro)
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+  meckLockSleepStep();   // light sleep while locked (MAX)
+#elif defined(LilyGo_TDeck_Pro)
   if (ui_task.isLocked()) {
     delay(50);
   }

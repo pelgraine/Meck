@@ -146,6 +146,9 @@ enum SettingsRowType : uint8_t {
 #if defined(LilyGo_TDeck_Pro)
   ROW_AUTO_LOCK,      // Auto-lock timeout picker (None/2/5/10/15/30 min)
 #endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+  ROW_LOCK_SLEEP,     // Power saving (light sleep) while locked
+#endif
   ROW_GPS_BAUD,       // GPS baud rate picker (requires reboot)
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
   ROW_DEFAULT_SCOPE,  // Device-wide default region (text editor)
@@ -559,6 +562,9 @@ private:
       addRow(ROW_FONT_STYLE);
 #if defined(LilyGo_TDeck_Pro)
       addRow(ROW_AUTO_LOCK);
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+      addRow(ROW_LOCK_SLEEP);
 #endif
       #ifdef MECK_WIFI_COMPANION
       addRow(ROW_WIFI_SETUP);
@@ -2047,6 +2053,13 @@ public:
             snprintf(tmp, sizeof(tmp), MECK_TR("Auto Lock: %s", "Verrou auto : %s"),
                      autoLockLabel(_prefs->auto_lock_minutes));
           }
+          display.print(tmp);
+          break;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        case ROW_LOCK_SLEEP:
+          snprintf(tmp, sizeof(tmp), MECK_TR("Power saving when locked: %s", "\xC3\x89" "conomie si verrouill\xC3\xA9 : %s"),
+                   _prefs->lock_sleep ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
           display.print(tmp);
           break;
 #endif
@@ -3801,6 +3814,14 @@ public:
 #if defined(LilyGo_TDeck_Pro)
         case ROW_AUTO_LOCK:
           startEditPicker(findAutoLockIndex(_prefs->auto_lock_minutes));
+          break;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        case ROW_LOCK_SLEEP:
+          _prefs->lock_sleep = _prefs->lock_sleep ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: Lock power saving = %s\n",
+                        _prefs->lock_sleep ? "ON" : "OFF");
           break;
 #endif
         #ifdef MECK_WIFI_COMPANION

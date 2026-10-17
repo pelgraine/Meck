@@ -134,6 +134,10 @@ public:
   void begin(bool has_display);
   void startInterface(BaseSerialInterface &serial);
 
+  // True while packets are queued for sending (retries, forwards, ACKs):
+  // power saving waits for the queue to drain before sleeping
+  bool hasPendingWork() const { return _mgr->getOutboundCount(0xFFFFFFFF) > 0; }
+
   const char *getNodeName();
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();

@@ -268,6 +268,13 @@ public:
   bool isOnMapScreen() const { return curr == map_screen; }
 #if defined(LilyGo_TDeck_Pro)
   bool isLocked() const { return _locked; }
+  // True while the UI has work the CPU must stay awake for right now: a
+  // redraw that is already due, or the keyboard notification flash.
+  // Power saving when locked (main.cpp) checks it after a LoRa wake.
+  bool needsAwake() {
+    if (_kb_flash_off_at != 0) return true;
+    return _display != NULL && _display->isOn() && (long)(_next_refresh - millis()) <= 0;
+  }
   void lockScreen();
   void unlockScreen();
 #endif

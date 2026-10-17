@@ -118,6 +118,11 @@ struct NodePrefs {  // persisted to file
   // final field and keep the default 0 (off).
   uint8_t agc_reset_interval;      // default 0
 
+  // Power saving when locked: 1 = the device light-sleeps while the lock
+  // screen is up (woken by LoRa, the button and the clock), 0 = never.
+  // Older prefs files short-read this final field and keep the default 1.
+  uint8_t lock_sleep;              // default 1
+
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
   // T-Deck Pro: 0 = built-in 6×8 (or 7pt with custom fonts), 1 = 9pt.

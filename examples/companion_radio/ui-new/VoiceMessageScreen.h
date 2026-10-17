@@ -37,6 +37,7 @@
 // ES8311.h self-guards on HAS_ES8311_AUDIO, so this is a no-op on the Pro V1.1.
 #if defined(HAS_ES8311_AUDIO)
 #include "ES8311.h"
+void meck_audio_codec_init();   // target.cpp: DAC init when the codec is in standby
 #endif
 
 // Codec2 low-bitrate voice codec
@@ -696,6 +697,10 @@ private:
       return false;
     }
 
+#if defined(HAS_ES8311_AUDIO)
+    // The I2S clocks run now; bring the codec out of standby if needed
+    meck_audio_codec_init();
+#endif
     Serial.printf("Voice: Playing %s\n", fullPath);
     return true;
   }

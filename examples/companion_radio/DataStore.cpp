@@ -303,6 +303,9 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (file.read((uint8_t *)&_prefs.agc_reset_interval, sizeof(_prefs.agc_reset_interval)) != sizeof(_prefs.agc_reset_interval)) {
       _prefs.agc_reset_interval = 0;  // default: off
     }
+    if (file.read((uint8_t *)&_prefs.lock_sleep, sizeof(_prefs.lock_sleep)) != sizeof(_prefs.lock_sleep)) {
+      _prefs.lock_sleep = 1;  // default: power saving on
+    }
 
     // Clamp to valid ranges
     if (_prefs.dark_mode > 1) _prefs.dark_mode = 0;
@@ -323,6 +326,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     if (_prefs.backlight_alt_b_only > 1) _prefs.backlight_alt_b_only = 0;
     if (_prefs.ui_lang > 1) _prefs.ui_lang = 0;
     if (_prefs.rx_boosted_gain > 1) _prefs.rx_boosted_gain = 1;
+    if (_prefs.lock_sleep > 1) _prefs.lock_sleep = 1;
     // Force NUL termination on each canned message slot in case of garbage
     for (int i = 0; i < (int)(sizeof(_prefs.canned_msgs) / sizeof(_prefs.canned_msgs[0])); i++) {
       _prefs.canned_msgs[i][sizeof(_prefs.canned_msgs[0]) - 1] = '\0';
@@ -397,6 +401,7 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.ui_lang, sizeof(_prefs.ui_lang));                              // 1523
     file.write((uint8_t *)&_prefs.rx_boosted_gain, sizeof(_prefs.rx_boosted_gain));              // 1524
     file.write((uint8_t *)&_prefs.agc_reset_interval, sizeof(_prefs.agc_reset_interval));        // 1525
+    file.write((uint8_t *)&_prefs.lock_sleep, sizeof(_prefs.lock_sleep));                        // 1526
 
     file.close();
   }
