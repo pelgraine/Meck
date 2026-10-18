@@ -1739,6 +1739,18 @@ private:
     decoded[di] = '\0';
     strncpy(filename, decoded, sizeof(filename) - 1);
 
+    // The name comes from the server (Content-Disposition or URL) and is
+    // used as a path under /books. Refuse anything that could leave that
+    // directory or is not a plain file name, and fall back to a generated one.
+    bool unsafeName = (filename[0] == '\0' || filename[0] == '.' || strstr(filename, "..") != nullptr);
+    for (const char* c = filename; *c && !unsafeName; c++) {
+      if (*c == '/' || *c == '\\' || (uint8_t)*c < 0x20 || *c == 0x7F) unsafeName = true;
+    }
+    if (unsafeName) {
+      Serial.println("WebReader: Unsafe download filename, using generated name");
+      snprintf(filename, sizeof(filename), "download_%lu.epub", millis());
+    }
+
     // Replace underscores with spaces for friendlier names
     // (AO3 uses underscores in download filenames)
     // Actually, keep as-is — filesystem is happier without spaces
