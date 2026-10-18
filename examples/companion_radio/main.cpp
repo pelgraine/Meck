@@ -2142,6 +2142,12 @@ void setup() {
   board.begin();
   MESH_DEBUG_PRINTLN("setup() - board.begin() done");
 
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+  // The ES8311 keeps its configuration across ESP32 resets; audio used before
+  // a reboot would leave it powered (~16 mA). Start from standby.
+  es8311_standby();
+#endif
+
   // Initialize touch input (CST328) HERE, immediately after board.begin(),
   // while the I2C bus is freshly initialised and quiet -- mirroring LilyGo's
   // working example, which calls touch.begin() first thing. Running it later
@@ -3245,12 +3251,11 @@ void loop() {
 
         // I2S clocks are now running (connecttoFS started the channel and the
         // loop above has pushed samples). NOW bring up the ES8311 over I2C, so
-        // it can lock to the live BCLK/LRCK. Done once per boot.
+        // it can lock to the live BCLK/LRCK. Again after each codec standby.
         #ifdef HAS_ES8311_AUDIO
-          static bool es8311_ready = false;
-          if (!es8311_ready) {
-            es8311_ready = es8311_init_44100_16bit();
-            Serial.printf("NotifTone: ES8311 init (post-I2S) %s\n", es8311_ready ? "OK" : "FAILED");
+          if (!es8311_active()) {
+            bool ok = es8311_init_44100_16bit();
+            Serial.printf("NotifTone: ES8311 init (post-I2S) %s\n", ok ? "OK" : "FAILED");
           }
         #endif
 
@@ -3272,6 +3277,36 @@ void loop() {
       }
       notifSounds.clearPending();
     }
+
+    #ifdef HAS_ES8311_AUDIO
+    // Codec standby after audio: once nothing has used the ES8311 for 10 s
+    // (no tone, ringing alarm, open audiobook, voice playback or recording,
+    // running game) it goes to standby, saving about 16 mA. Every audio
+    // start brings it back through meck_audio_codec_init() / the init calls.
+    {
+      static unsigned long codecIdleSince = 0;
+      static unsigned long lastCodecCheck = 0;
+      if (millis() - lastCodecCheck >= 1000) {
+        lastCodecCheck = millis();
+        bool inUse = notifTonePlaying;
+        AudiobookPlayerScreen* ab = (AudiobookPlayerScreen*)ui_task.getAudiobookScreen();
+        if (ab && ab->isBookOpen()) inUse = true;
+        AlarmScreen* al = (AlarmScreen*)ui_task.getAlarmScreen();
+        if (al && al->isRinging()) inUse = true;
+        VoiceMessageScreen* vs = (VoiceMessageScreen*)ui_task.getVoiceScreen();
+        if (vs && (vs->isAudioActive() || vs->isRecording() ||
+                   vs->getMode() == VoiceMessageScreen::RECORDING)) inUse = true;
+        GBCEmulatorScreen* gb = (GBCEmulatorScreen*)ui_task.getGBCScreen();
+        if (gb && gb->isRunning()) inUse = true;
+        if (inUse || !es8311_active()) {
+          codecIdleSince = millis();
+        } else if (millis() - codecIdleSince >= 10000) {
+          es8311_standby();
+          Serial.println("Audio: ES8311 standby (idle)");
+        }
+      }
+    }
+    #endif
   }
   #endif
 

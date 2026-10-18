@@ -106,12 +106,11 @@ void meck_audio_route_amp() {
   board.amplifierEnable();     // XL9555 AMPLIFIER high -> NS4150B on
 }
 
-// One-time ES8311 codec init. Must be called after the I2S clocks are running
-// (after connecttoFS) so the codec can lock to MCLK/BCLK. Idempotent: the
-// static guard means the register init runs at most once per boot.
+// ES8311 codec init. Must be called after the I2S clocks are running (after
+// connecttoFS) so the codec can lock to MCLK/BCLK. Runs only while the codec
+// is not active, i.e. once after boot and again after each es8311_standby().
 void meck_audio_codec_init() {
-  static bool es8311_ready = false;
-  if (!es8311_ready) es8311_ready = es8311_init_44100_16bit();
+  if (!es8311_active()) es8311_init_44100_16bit();
 }
 #endif
 

@@ -78,6 +78,14 @@
 #define I2C_ADDR_ES8311 0x18
 #endif
 
+// True while the codec is configured and powered: set by the init functions,
+// cleared by es8311_standby(). One flag shared by every translation unit
+// (plain inline, not static), so all audio users see the same state.
+inline bool& es8311_active() {
+  static bool active = false;
+  return active;
+}
+
 // --- low-level I2C register access over Wire ---
 
 static inline bool es8311_write(uint8_t reg, uint8_t val) {
@@ -253,6 +261,7 @@ static inline bool es8311_init_44100_16bit() {
                 es8311_read(ES8311_REG31_DAC),
                 es8311_read(ES8311_REG32_DAC));
 
+  es8311_active() = (id == 0x83);
   return id == 0x83;
 }
 
@@ -444,7 +453,23 @@ static inline bool es8311_init_capture_16k(uint8_t mic_gain = 0x05) {
                 es8311_read(ES8311_REG16_ADC),
                 es8311_read(ES8311_REG17_ADC));
 
+  es8311_active() = (id == 0x83);
   return id == 0x83;
+}
+
+// Standby: ADC, DAC, analog and internal clocks down (sequence from the
+// Everest / Espressif reference driver). The codec keeps its configuration
+// across ESP32 resets, and left powered after playback or recording it draws
+// about 16 mA (measured on the T-Deck MAX battery). Any audio user brings it
+// back with one of the init functions, which program every register again.
+static inline void es8311_standby() {
+  static const uint8_t seq[][2] = {
+    {0x32, 0x00}, {0x17, 0x00}, {0x0E, 0xFF}, {0x12, 0x02}, {0x14, 0x00}, {0x0D, 0xFA},
+    {0x15, 0x00}, {0x37, 0x08}, {0x02, 0x10}, {0x00, 0x00}, {0x00, 0x1F}, {0x01, 0x30},
+    {0x01, 0x00}, {0x45, 0x00}, {0x0D, 0xFC}, {0x02, 0x00},
+  };
+  for (auto& w : seq) es8311_write(w[0], w[1]);
+  es8311_active() = false;
 }
 
 // DAC volume, 0..255 (0 = mute-ish, 191 = 0 dB, 255 = +32 dB).
