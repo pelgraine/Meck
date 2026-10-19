@@ -4,6 +4,96 @@
 #include <Mesh.h>
 #include "RadioPresets.h"        // Shared radio presets (serial CLI + settings screen)
 
+#ifdef MECK_LORAFISH
+// ---- LoRaGotchi DX fish: DX visit state and radio samples (from LoRaGotchi DX's MyMesh.cpp) ----
+#include "LoRaFish.h"
+#ifdef ESP32
+#include <Preferences.h>
+#endif
+
+#ifndef LORAFISH_MONO_PIXEL_TINT_RGB565
+#if defined(HELTEC_LORA_V4_OLED)
+#define LORAFISH_MONO_PIXEL_TINT_RGB565 0x03B0
+#else
+#define LORAFISH_MONO_PIXEL_TINT_RGB565 0xFFFF
+#endif
+#endif
+
+LoRaGotchiDXHomeState loragotchiDXHome;
+LoRaGotchiDXGuestState loragotchiDXGuest;
+bool loragotchiDXLocalColorCapable = false;
+bool loragotchiDXLocalHasColorGenes = false;
+uint8_t loragotchiDXLocalColorIndex = 0;
+uint8_t loragotchiDXLocalScalesColorIndex = 0;
+uint8_t loragotchiDXLocalEyesColorIndex = 0;
+bool loragotchiDXReturnedFromMonochrome = false;
+
+static constexpr uint32_t LORAFISH_DX_STATE_MAGIC = 0x4C464732UL; // "LFG2"
+static constexpr uint16_t LORAFISH_DX_STATE_VERSION = 3;
+
+static void loragotchiDXResetTravelStateForMigration() {
+  // Keep the local fish identity, but never inherit travel/session state from
+  // an older firmware layout. This brings the local fish safely HOME.
+  loragotchiDXHome.pending = false;
+  loragotchiDXHome.committing = false;
+  loragotchiDXHome.away = false;
+  loragotchiDXHome.returned = false;
+  loragotchiDXHome.txid = 0;
+  loragotchiDXHome.destinationIndex = 0;
+  loragotchiDXHome.destinationName[0] = '\0';
+
+  // Old reservations/visitors cannot be trusted across a schema migration.
+  loragotchiDXGuest = LoRaGotchiDXGuestState{};
+}
+
+void loragotchiDXSave() {
+#ifdef ESP32
+  Preferences p;
+  if(p.begin("lfgdx",false)) {
+    p.putUInt("magic", LORAFISH_DX_STATE_MAGIC);
+    p.putUShort("ver", LORAFISH_DX_STATE_VERSION);
+    p.putBytes("home",&loragotchiDXHome,sizeof(loragotchiDXHome));
+    p.putBytes("guest",&loragotchiDXGuest,sizeof(loragotchiDXGuest));
+    p.end();
+  }
+#endif
+}
+
+void loragotchiDXLoad() {
+  // DX travel is deliberately SESSION-ONLY state.
+  // We load the previous home record only to retain the stable fishid, then
+  // every boot repatriates the local fish and empties the guest slot.
+  uint32_t savedFishId = 0;
+#ifdef ESP32
+  Preferences p;
+  if(p.begin("lfgdx",true)) {
+    LoRaGotchiDXHomeState savedHome{};
+    if(p.getBytesLength("home")==sizeof(savedHome)) {
+      p.getBytes("home",&savedHome,sizeof(savedHome));
+      savedFishId = savedHome.fishid;
+    }
+    p.end();
+  }
+#endif
+
+  loragotchiDXHome = LoRaGotchiDXHomeState{};
+  loragotchiDXHome.fishid = savedFishId;
+  loragotchiDXGuest = LoRaGotchiDXGuestState{};
+  loragotchiDXReturnedFromMonochrome = false;
+
+  Serial.println("[LFG1 PEER] BOOT: DX session cleared; local fish HOME; guest slot EMPTY");
+
+  // Persist the clean baseline. This also upgrades older NVS layouts to the
+  // current magic/version without ever restoring stale travel state.
+  loragotchiDXSave();
+}
+
+float lorafish_last_rssi = -127.0f;
+float lorafish_last_snr = 0.0f;
+unsigned long lorafish_last_rf_ms = 0;
+uint32_t lorafish_rf_sample_seq = 0;
+#endif  // MECK_LORAFISH
+
 #ifdef HAS_4G_MODEM
   #include "ModemManager.h"      // Serial CLI modem commands
 #endif
@@ -350,6 +440,12 @@ uint8_t MyMesh::getAutoAddMaxHops() const {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+#ifdef MECK_LORAFISH
+  lorafish_last_rssi = rssi;
+  lorafish_last_snr = snr;
+  lorafish_last_rf_ms = millis();
+  lorafish_rf_sample_seq++;
+#endif
 #ifdef MECK_WATCH_EXT
   if (_meck_client) return;   // the watch does not want the raw packet log
 #endif
@@ -471,6 +567,11 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
 #ifdef DISPLAY_CLASS
   if (_ui && !_prefs.buzzer_quiet) _ui->notify(UIEventType::newContactMessage); //buzz if enabled
 #endif
+#ifdef MECK_LORAFISH
+  // The fish grows on adverts heard while no app is connected (as LoRaGotchi
+  // DX's UITask::onDiscoveredContact).
+  if (!_serial->isConnected()) loRaFishOnContactAdvert();
+#endif
 
   // add inbound-path to mem cache
   if (path && mesh::Packet::isValidPathLen(path_len)) {  // check path is valid
@@ -581,6 +682,123 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
+#ifdef MECK_LORAFISH
+  // LoRaGotchi DX visit messages (LFG1|...) are handled here and kept out of
+  // the inbox and the app, as in LoRaGotchi DX.
+  if (text && strncmp(text,"LFG1|",5)==0) {
+    unsigned long tx=0,fid=0;
+    Serial.printf("[LFG1 PEER] RX from='%s' text=%s\n",from.name,text);
+
+    if (strncmp(text,"LFG1|REQ|",9)==0) {
+      unsigned st=2; char nm[24]="DX Fish";
+      int n=sscanf(text+9,"%lu|%lu|%u|%23[^\n]",&tx,&fid,&st,nm);
+      if(n>=3) {
+        const bool sameTx=(loragotchiDXGuest.txid==tx && loragotchiDXGuest.fishid==fid);
+        char reply[80];
+        if((!loragotchiDXGuest.present && !loragotchiDXGuest.reserved) || sameTx) {
+          if(!sameTx) {
+            loragotchiDXGuest.txid=tx; loragotchiDXGuest.fishid=fid;
+            loragotchiDXGuest.stage=(uint8_t)st;
+            strncpy(loragotchiDXGuest.guestName,nm,sizeof(loragotchiDXGuest.guestName)-1);
+            loragotchiDXGuest.guestName[sizeof(loragotchiDXGuest.guestName)-1]=0;
+            strncpy(loragotchiDXGuest.homeName,from.name,sizeof(loragotchiDXGuest.homeName)-1);
+            loragotchiDXGuest.homeName[sizeof(loragotchiDXGuest.homeName)-1]=0;
+            loragotchiDXGuest.reserved=true;
+            loragotchiDXSave();
+          }
+          snprintf(reply,sizeof(reply),"LFG1|ACK|%lu|%lu",tx,fid);
+        } else {
+          snprintf(reply,sizeof(reply),"LFG1|BUSY|%lu|%lu",tx,fid);
+        }
+        uint32_t ack=0,to=0;
+        int r=sendMessage(from,getRTCClock()->getCurrentTime(),0,reply,ack,to);
+        Serial.printf("[LFG1 PEER] %s TX result=%d\n", sameTx || (!loragotchiDXGuest.present && loragotchiDXGuest.reserved) ? "ACK" : "BUSY",r);
+      }
+    } else if (strncmp(text,"LFG1|ACK|",9)==0 &&
+        sscanf(text+9,"%lu|%lu",&tx,&fid)==2 &&
+        loragotchiDXHome.pending && tx==loragotchiDXHome.txid && fid==loragotchiDXHome.fishid) {
+      char msg[96]; snprintf(msg,sizeof(msg),"LFG1|COMMIT|%lu|%lu|%c|%u|%u|%u|%u",tx,fid,
+        loragotchiDXLocalHasColorGenes ? 'C' : 'M',
+        (unsigned)loragotchiDXLocalColorIndex,
+        (unsigned)loragotchiDXLocalScalesColorIndex,
+        (unsigned)loragotchiDXLocalEyesColorIndex,
+        (unsigned)LORAFISH_MONO_PIXEL_TINT_RGB565);
+      uint32_t ack=0,to=0;
+      int r=sendMessage(from,getRTCClock()->getCurrentTime(),0,msg,ack,to);
+      if(r>=0) {
+        // Do NOT mark the fish away until the destination confirms ARRIVED.
+        loragotchiDXHome.pending=false;
+        loragotchiDXHome.committing=true;
+        strncpy(loragotchiDXHome.destinationName,from.name,sizeof(loragotchiDXHome.destinationName)-1);
+        loragotchiDXHome.destinationName[sizeof(loragotchiDXHome.destinationName)-1]=0;
+        loragotchiDXSave();
+      }
+      Serial.printf("[LFG1 PEER] COMMIT TX result=%d; waiting for ARRIVED\n",r);
+    } else if (strncmp(text,"LFG1|ARRIVED|",13)==0 &&
+               sscanf(text+13,"%lu|%lu",&tx,&fid)==2 &&
+               loragotchiDXHome.committing && tx==loragotchiDXHome.txid && fid==loragotchiDXHome.fishid) {
+      loragotchiDXHome.pending=false;
+      loragotchiDXHome.committing=false;
+      loragotchiDXHome.away=true;
+      loragotchiDXHome.returned=false;
+      strncpy(loragotchiDXHome.destinationName,from.name,sizeof(loragotchiDXHome.destinationName)-1);
+      loragotchiDXHome.destinationName[sizeof(loragotchiDXHome.destinationName)-1]=0;
+      loragotchiDXSave();
+      Serial.println("*** DX FISH CONFIRMED ARRIVED ***");
+    } else if (strncmp(text,"LFG1|COMMIT|",12)==0 &&
+           sscanf(text+12,"%lu|%lu",&tx,&fid)==2) {
+      if((loragotchiDXGuest.reserved || loragotchiDXGuest.present) &&
+         tx==loragotchiDXGuest.txid && fid==loragotchiDXGuest.fishid) {
+            char colorMode='M'; unsigned bodyColor=0,scalesColor=0,eyesColor=0,monoPixelTint=0xFFFF;
+            const int fields=sscanf(text+12,"%lu|%lu|%c|%u|%u|%u|%u",
+              &tx,&fid,&colorMode,&bodyColor,&scalesColor,&eyesColor,&monoPixelTint);
+      loragotchiDXGuest.colorCapable=(fields>=4 && colorMode=='C');
+      loragotchiDXGuest.color=(fields>=4 && bodyColor<=6) ? (uint8_t)bodyColor : 6;
+      loragotchiDXGuest.scalesColor=(fields>=5 && scalesColor<=6) ? (uint8_t)scalesColor : loragotchiDXGuest.color;
+      loragotchiDXGuest.eyesColor=(fields>=6 && eyesColor<=6) ? (uint8_t)eyesColor : loragotchiDXGuest.color;
+            loragotchiDXGuest.monoPixelTint=(fields>=7 && monoPixelTint<=0xFFFF) ? (uint16_t)monoPixelTint : 0xFFFF;
+        const bool firstArrival = !loragotchiDXGuest.present;
+        loragotchiDXGuest.reserved=false;
+        loragotchiDXGuest.present=true;
+        loragotchiDXSave();
+        if(firstArrival)
+          Serial.printf("*** DX FISH ARRIVED: %s from %s ***\n",loragotchiDXGuest.guestName,loragotchiDXGuest.homeName);
+        else
+          Serial.println("[LFG1 PEER] duplicate COMMIT; re-confirming arrival");
+
+        // COMMIT is idempotent. Every matching COMMIT gets ARRIVED so a lost
+        // confirmation can be recovered by a retry from the sender.
+        char reply[80]; snprintf(reply,sizeof(reply),"LFG1|ARRIVED|%lu|%lu",tx,fid);
+        uint32_t ack=0,to=0;
+        int r=sendMessage(from,getRTCClock()->getCurrentTime(),0,reply,ack,to);
+        Serial.printf("[LFG1 PEER] ARRIVED TX result=%d\n",r);
+      }
+    } else if (strncmp(text,"LFG1|BUSY|",10)==0) {
+      loragotchiDXHome.pending=false; loragotchiDXHome.committing=false; loragotchiDXHome.away=false; loragotchiDXSave();
+      Serial.println("[LFG1 PEER] destination busy");
+    } else if (strncmp(text,"LFG1|RECALL|",12)==0 &&
+               sscanf(text+12,"%lu|%lu",&tx,&fid)==2) {
+      if(fid==loragotchiDXGuest.fishid &&
+         (loragotchiDXGuest.present || loragotchiDXGuest.reserved)) {
+        loragotchiDXGuest.present=false; loragotchiDXGuest.reserved=false; loragotchiDXSave();
+        char reply[80]; snprintf(reply,sizeof(reply),"LFG1|RETURN|%lu|%lu|%c",tx,fid,
+          loragotchiDXLocalColorCapable ? 'C' : 'M');
+        uint32_t ack=0,to=0; int r=sendMessage(from,getRTCClock()->getCurrentTime(),0,reply,ack,to);
+        Serial.printf("[LFG1 PEER] RETURN TX result=%d\n",r);
+      }
+    } else if (strncmp(text,"LFG1|RETURN|",12)==0 &&
+               sscanf(text+12,"%lu|%lu",&tx,&fid)==2 &&
+               tx==loragotchiDXHome.txid && fid==loragotchiDXHome.fishid) {
+      char returnMode=0;
+      const bool hasReturnMode=sscanf(text+12,"%lu|%lu|%c",&tx,&fid,&returnMode)==3;
+      loragotchiDXReturnedFromMonochrome=hasReturnMode && returnMode=='M';
+      loragotchiDXHome.pending=false; loragotchiDXHome.committing=false; loragotchiDXHome.away=false; loragotchiDXHome.returned=true; loragotchiDXSave();
+      Serial.println("*** DX FISH RETURNED HOME ***");
+    }
+    return;
+  }
+#endif
+
   int i = 0;
   if (app_target_ver >= 3) {
     out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;

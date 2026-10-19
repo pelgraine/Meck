@@ -4,6 +4,46 @@
 #include <Mesh.h>
 #include "AbstractUITask.h"
 
+#ifdef MECK_LORAFISH
+// LoRaGotchi DX fish (ui-new/LoRaFish.cpp): DX visit state and radio samples,
+// as in LoRaGotchi DX's MyMesh.h.
+extern float lorafish_last_rssi;
+extern float lorafish_last_snr;
+extern unsigned long lorafish_last_rf_ms;
+extern uint32_t lorafish_rf_sample_seq;
+
+struct LoRaGotchiDXHomeState {
+  bool pending=false, committing=false, away=false, returned=false;
+  uint32_t txid=0, fishid=0, destinationIndex=0;
+  char destinationName[32]="";
+};
+
+// Independent visitor slot. A node can have its own fish away while hosting one guest.
+struct LoRaGotchiDXGuestState {
+  bool reserved=false, present=false;
+  uint32_t txid=0, fishid=0;
+  uint8_t stage=2;
+  uint8_t color=0;
+  uint8_t scalesColor=0;
+  uint8_t eyesColor=0;
+  uint16_t monoPixelTint=0xFFFF;
+  bool colorCapable=false;
+  char guestName[24]="DX Fish";
+  char homeName[32]="";
+};
+
+extern LoRaGotchiDXHomeState loragotchiDXHome;
+extern LoRaGotchiDXGuestState loragotchiDXGuest;
+extern bool loragotchiDXLocalColorCapable;
+extern bool loragotchiDXLocalHasColorGenes;
+extern uint8_t loragotchiDXLocalColorIndex;
+extern uint8_t loragotchiDXLocalScalesColorIndex;
+extern uint8_t loragotchiDXLocalEyesColorIndex;
+extern bool loragotchiDXReturnedFromMonochrome;
+void loragotchiDXLoad();
+void loragotchiDXSave();
+#endif
+
 /*------------ Frame Protocol --------------*/
 #define FIRMWARE_VER_CODE 11
 

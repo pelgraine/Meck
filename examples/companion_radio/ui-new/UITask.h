@@ -104,6 +104,9 @@ class UITask : public AbstractUITask {
 #if defined(LilyGo_TDeck_Pro)
   UIScreen* gbc_screen;        // Game Boy / Game Boy Color emulator (ROM list + game)
 #endif
+#ifdef MECK_LORAFISH
+  UIScreen* lorafish_screen;   // LoRaGotchi fish menus (Games menu)
+#endif
 #ifdef MECK_WEB_READER
   UIScreen* web_reader;       // Web reader screen (lazy-init, WiFi required)
 #endif
@@ -191,6 +194,13 @@ public:
   void gotoMinesweeperScreen();            // Navigate to minesweeper game
 #if defined(LilyGo_TDeck_Pro)
   void gotoGBCScreen();                    // Navigate to Game Boy emulator ROM list
+#endif
+#ifdef MECK_LORAFISH
+  void gotoLoRaFishScreen();               // LoRaGotchi fish menus
+  void gotoAquarium();                     // Home screen, aquarium page
+  void handleLoRaFishResult(int result);   // after a gesture or key on the fish screen
+  bool isOnLoRaFishScreen() const { return curr == lorafish_screen; }
+  bool isOnAquariumPage() const;           // home screen showing the aquarium
 #endif
 #if HAS_GPS
   void gotoMapScreen();         // Navigate to map tile screen

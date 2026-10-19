@@ -23,6 +23,9 @@ enum GameID {
   GAME_SNAKE,
   GAME_MINESWEEPER,
   GAME_GBC,          // Game Boy / Game Boy Color emulator (T-Deck Pro and Max)
+#ifdef MECK_LORAFISH
+  GAME_LORAFISH,     // LoRaGotchi fish menus (meck_max_ble_fish)
+#endif
   // GAME_2048,
   GAME_COUNT   // Must be last -- used for array sizing
 };
@@ -46,7 +49,11 @@ private:
 // The Game Boy emulator entry is present on the T-Deck Pro and Max, except on
 // the 40 MHz battery-saver builds where it needs a clock they do not run at.
 #if defined(LilyGo_TDeck_Pro) && !defined(MECK_40MHZ_TEST)
+#ifdef MECK_LORAFISH
+  static constexpr int NUM_GAMES = 4;  // + LoRaGotchi
+#else
   static constexpr int NUM_GAMES = 3;
+#endif
 #else
   static constexpr int NUM_GAMES = 2;
 #endif
@@ -57,6 +64,9 @@ private:
       { GAME_MINESWEEPER, "Minesweeper", "Find the mines", "D\xC3\xA9mineur" },
 #if defined(LilyGo_TDeck_Pro) && !defined(MECK_40MHZ_TEST)
       { GAME_GBC,         "Game Boy",    "GB / GBC emulator", "Game Boy" },
+#ifdef MECK_LORAFISH
+      { GAME_LORAFISH,    "LoRaGotchi",  "Your LoRa fish", "LoRaGotchi" },
+#endif
 #endif
       // { GAME_2048,        "2048",        "Slide and merge" },
     };

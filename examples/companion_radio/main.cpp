@@ -37,6 +37,9 @@
 #if defined(LilyGo_TDeck_Pro)
   #include "GBCEmulatorScreen.h"
 #endif
+#ifdef MECK_LORAFISH
+  #include "LoRaFish.h"
+#endif
   #ifdef MECK_WEB_READER
     #include "WebReaderScreen.h"
   #endif
@@ -1533,6 +1536,16 @@ static void openMapScreen() {
       }
     }
 
+#ifdef MECK_LORAFISH
+    // LoRaGotchi fish screen: top of the fish frame = back one level, right
+    // half = next, left half = previous (handled in LoRaFish.cpp, before the
+    // status-bar go-home rule below, as on the watch).
+    if (ui_task.isOnLoRaFishScreen()) {
+      ui_task.handleLoRaFishResult(loRaFishMenuTap(x, y));
+      return 0;
+    }
+#endif
+
     // --- Status bar tap (top ~18 virtual units) → go home from any non-home screen ---
     // Exception: text reader reading mode uses full screen for content (no header)
     if (vy < 18 && !ui_task.isOnHomeScreen()) {
@@ -1863,6 +1876,14 @@ static void openMapScreen() {
   static char mapTouchSwipe(int16_t dx, int16_t dy) {
     bool horizontal = abs(dx) > abs(dy);
 
+#ifdef MECK_LORAFISH
+    // LoRaGotchi fish screen: swipe left/right = page, up/down = list item/field.
+    if (ui_task.isOnLoRaFishScreen()) {
+      ui_task.handleLoRaFishResult(loRaFishMenuSwipe(dx, dy));
+      return 0;
+    }
+#endif
+
     // SMS screen: dedicated touch handler covers all interaction
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
@@ -1962,6 +1983,14 @@ static void openMapScreen() {
 
   // Map a long press to a key
   static char mapTouchLongPress(int16_t x, int16_t y) {
+#ifdef MECK_LORAFISH
+    // LoRaGotchi fish screen: hold = the page's long-press action.
+    if (ui_task.isOnLoRaFishScreen()) {
+      ui_task.handleLoRaFishResult(loRaFishMenuHold());
+      return 0;
+    }
+#endif
+
     // SMS screen: dedicated touch handler covers all interaction
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
@@ -2432,6 +2461,9 @@ void setup() {
     #endif
   );
   MESH_DEBUG_PRINTLN("setup() - the_mesh.begin() done");
+#ifdef MECK_LORAFISH
+  loragotchiDXLoad();   // LoRaGotchi fish: DX visit state (every boot brings the fish home)
+#endif
 
 #if defined(LilyGo_TDeck_Pro_Max)
   // Restore saved LoRa antenna selection (XL9555 boots to internal by default)
@@ -3875,6 +3907,9 @@ void loop() {
 #if defined(LilyGo_TDeck_Pro)
                   case GAME_GBC: ui_task.gotoGBCScreen(); break;
 #endif
+#ifdef MECK_LORAFISH
+                  case GAME_LORAFISH: ui_task.gotoLoRaFishScreen(); break;
+#endif
                   default: break;
                 }
               }
@@ -3938,6 +3973,9 @@ void loop() {
                   case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
 #if defined(LilyGo_TDeck_Pro)
                   case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
+#ifdef MECK_LORAFISH
+                  case GAME_LORAFISH: ui_task.gotoLoRaFishScreen(); break;
 #endif
                   default: break;
                 }
@@ -4967,6 +5005,18 @@ void handleKeyboardInput() {
     }
   }
 
+#ifdef MECK_LORAFISH
+  // LoRaGotchi fish screen: Q / Shift+Del = back, A / D = previous / next,
+  // W / S = up / down, Enter = long press (LoRaFishScreen::handleInput).
+  // Other keys (the letter shortcuts) work as on any other screen.
+  if (ui_task.isOnLoRaFishScreen() &&
+      (key == 'q' || key == KEY_CANCEL || key == 'a' || key == 'd' ||
+       key == 'w' || key == 's' || key == '\r')) {
+    ui_task.injectKey(key);
+    return;
+  }
+#endif
+
   switch (key) {
     case 'c':
       // Open contacts list
@@ -5302,6 +5352,9 @@ void handleKeyboardInput() {
             case GAME_MINESWEEPER: ui_task.gotoMinesweeperScreen(); break;
 #if defined(LilyGo_TDeck_Pro)
             case GAME_GBC: ui_task.gotoGBCScreen(); break;
+#endif
+#ifdef MECK_LORAFISH
+            case GAME_LORAFISH: ui_task.gotoLoRaFishScreen(); break;
 #endif
             // case GAME_2048: ui_task.goto2048Screen(); break;
             default: break;

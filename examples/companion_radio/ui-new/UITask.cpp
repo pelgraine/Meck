@@ -14,6 +14,9 @@
 #if defined(LilyGo_TDeck_Pro)
 #include "GBCEmulatorScreen.h"
 #endif
+#ifdef MECK_LORAFISH
+  #include "LoRaFish.h"
+#endif
 #ifdef MECK_WEB_READER
   #include "WebReaderScreen.h"
 #endif
@@ -173,6 +176,9 @@ class HomeScreen : public UIScreen {
 #endif
     SHUTDOWN,
     TIMEZONES,  // world clock; last page, so A or a right swipe from the tiles reaches it
+#ifdef MECK_LORAFISH
+    AQUARIUM,   // LoRaGotchi fish tank (fish builds): after the world clock, so it is the last page there
+#endif
     Count    // keep as last
   };
 
@@ -490,6 +496,10 @@ public:
   bool isOnRecentPage() const { return _page == HomePage::RECENT; }
   bool isOnShutdownPage() const { return _page == HomePage::SHUTDOWN; }
   bool isOnTimezonesPage() const { return _page == HomePage::TIMEZONES; }
+#ifdef MECK_LORAFISH
+  bool isOnAquariumPage() const { return _page == HomePage::AQUARIUM; }
+  void showAquarium() { _page = HomePage::AQUARIUM; }
+#endif
   bool isEditingTimezone() const { return _tz_editing; }
   // Touch long-press on the Timezones page (main.cpp mapTouchLongPress):
   // select the zone row under the finger before the Enter that opens its
@@ -1329,6 +1339,13 @@ public:
     else if (_page == HomePage::TIMEZONES) {
       renderTimezonesPage(display);
     }
+#ifdef MECK_LORAFISH
+    else if (_page == HomePage::AQUARIUM) {
+      // The fish draws its tank in physical pixels under the header above
+      // and says when it wants the next frame.
+      return loRaFishRenderAquarium(static_cast<GxEPDDisplay&>(display));
+    }
+#endif
     return (_editing_utc || _tz_editing) ? 700 : 5000;
   }
 
@@ -1420,6 +1437,14 @@ public:
       }
       return true;
     }
+#ifdef MECK_LORAFISH
+    // Aquarium: Enter or a long press cleans the tank (or, on a colour
+    // display only, opens the new fish colour setup).
+    if (c == KEY_ENTER && _page == HomePage::AQUARIUM) {
+      if (loRaFishAquariumHold()) _task->gotoLoRaFishScreen();
+      return true;
+    }
+#endif
 #if defined(BLE_PIN_CODE) && defined(MECK_WIFI_COMPANION)
     if (c == KEY_ENTER && _page == HomePage::BLUETOOTH) {
       // Combined build: Bluetooth off leaves neither on. Turning it on after
@@ -1524,6 +1549,29 @@ public:
     return false;
   }
 };
+
+#ifdef MECK_LORAFISH
+// LoRaGotchi fish menus (Stats, DX visit, Options), opened from the Games menu.
+// Keys arrive through injectKey (main.cpp passes Q, Shift+Del, A, D, W, S and
+// Enter here); touch is routed from main.cpp to the loRaFishMenu* functions.
+class LoRaFishScreen : public UIScreen {
+  UITask* _task;
+public:
+  LoRaFishScreen(UITask* task) : _task(task) {}
+  int render(DisplayDriver& display) override {
+    return loRaFishRenderMenu(static_cast<GxEPDDisplay&>(display));
+  }
+  bool handleInput(char c) override {
+    switch (c) {
+      case 'q': case KEY_CANCEL: case 'a': case 'd': case 'w': case 's': case '\r':
+        _task->handleLoRaFishResult(loRaFishMenuKey(c));
+        return true;
+      default:
+        return false;
+    }
+  }
+};
+#endif
 
 // MsgPreviewScreen removed — all platforms now use toast alerts for new messages
 
@@ -1713,6 +1761,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(LilyGo_TDeck_Pro)
   gbc_screen = new GBCEmulatorScreen(this);
 #endif
+#ifdef MECK_LORAFISH
+  lorafish_screen = new LoRaFishScreen(this);
+  loRaFishBegin(this, node_prefs, &rtc_clock);
+#endif
 #if defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
 #endif
@@ -1780,6 +1832,9 @@ void UITask::dismissBootHint() {
 }
 
 void UITask::notify(UIEventType t) {
+#ifdef MECK_LORAFISH
+  if (t == UIEventType::ack) loRaFishOnAck();
+#endif
   // Per-channel notification gating: if the last message was from a
   // muted channel (or mentions-only without an @mention), suppress
   // buzzer and vibration.  Ack events are never suppressed.
@@ -1825,6 +1880,9 @@ void UITask::msgRead(int msgcount) {
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount,
                     const uint8_t* path, int8_t snr, uint8_t scope_idx) {
   _msgcount = msgcount;
+#ifdef MECK_LORAFISH
+  loRaFishOnMessage();   // the fish reacts to every received message
+#endif
 
   // --- Dedup: suppress retry spam (same sender + text within 60s) ---
   uint32_t nameH = simpleHash(from_name);
@@ -2206,6 +2264,9 @@ bool UITask::isButtonPressed() const {
 
 void UITask::loop() {
   char c = 0;
+#ifdef MECK_LORAFISH
+  loRaFishLoop(isOnAquariumPage());
+#endif
 #if (defined(PIN_USER_BTN))
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
@@ -2422,7 +2483,13 @@ if (curr) curr->poll();
           }
           _display->setTextSize(1);
         }
+#ifdef MECK_LORAFISH
+        // Aquarium: keep animating under the toast; the check further down
+        // still wakes the loop when the toast is due to clear.
+        _next_refresh = isOnAquariumPage() ? millis() + delay_millis : _alert_expiry;
+#else
         _next_refresh = _alert_expiry;   // will need refresh when alert is dismissed
+#endif
       } else {
         _next_refresh = millis() + delay_millis;
       }
@@ -2442,6 +2509,11 @@ if (curr) curr->poll();
       // every frame, so the panel should refresh back-to-back at its own
       // partial-refresh rate rather than pause 800 ms between pictures.
       if (isOnGBCScreen() && ((GBCEmulatorScreen*)gbc_screen)->isRunning()) minNext = millis();
+#ifdef MECK_LORAFISH
+      // Aquarium: no floor either, so the tank refreshes back-to-back at the
+      // panel's own partial-refresh rate.
+      if (isOnAquariumPage()) minNext = millis();
+#endif
 #endif
       if (_next_refresh < minNext) _next_refresh = minNext;
 
@@ -3180,6 +3252,48 @@ void UITask::gotoGBCScreen() {
   }
   _auto_off = millis() + AUTO_OFF_MILLIS;
   _next_refresh = 100;
+}
+#endif
+
+#ifdef MECK_LORAFISH
+void UITask::gotoLoRaFishScreen() {
+  loRaFishOpenMenu();
+  setCurrScreen(lorafish_screen);
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();
+  }
+  _auto_off = millis() + AUTO_OFF_MILLIS;
+  _next_refresh = 100;
+}
+
+void UITask::gotoAquarium() {
+  ((HomeScreen*)home)->showAquarium();
+  gotoHomeScreen();
+}
+
+void UITask::handleLoRaFishResult(int result) {
+  keepAlive();        // touch gestures don't pass through injectKey
+  resetIdleTimer();   // ...nor its auto-lock idle reset
+  if (result == LORAFISH_MENU_EXIT) {
+    gotoGamesMenu();
+  } else if (result == LORAFISH_MENU_HOME) {
+    // Keep a toast raised by the fish (for example "New egg!") across the
+    // screen change, which clears alerts.
+    char keepAlert[sizeof(_alert)];
+    strcpy(keepAlert, _alert);
+    const unsigned long keepExpiry = _alert_expiry;
+    gotoAquarium();
+    if (keepExpiry > millis()) {
+      strcpy(_alert, keepAlert);
+      _alert_expiry = keepExpiry;
+    }
+  } else {
+    forceRefresh();
+  }
+}
+
+bool UITask::isOnAquariumPage() const {
+  return curr == home && home != NULL && ((HomeScreen*)home)->isOnAquariumPage();
 }
 #endif
 
