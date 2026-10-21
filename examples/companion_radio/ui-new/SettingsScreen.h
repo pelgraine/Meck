@@ -2153,6 +2153,19 @@ public:
   // Rendering
   // ---------------------------------------------------------------------------
 
+  // What a message on this channel (0xFF = DMs) does besides the default:
+  // "-" nothing, "vib", "Bell-01" or "Bell-01+vib". Short enough for a hint.
+  static void toneStateLabel(uint8_t ch, char* out, size_t len) {
+    const char* tone = notifSounds.getSoundForChannel(ch);
+    const bool vib = notifSounds.isVibrateForChannel(ch);
+    if (!tone[0]) { snprintf(out, len, "%s", vib ? "vib" : "-"); return; }
+    char name[12];
+    snprintf(name, sizeof(name), "%.9s", tone);
+    char* dot = strrchr(name, '.');
+    if (dot) *dot = '\0';
+    snprintf(out, len, "%s%s", name, vib ? "+vib" : "");
+  }
+
   // Draw the text of settings row i at (0, y): label, value and, on some
   // rows, a right-aligned hint. Used by the classic layout and, with a
   // text-capturing display, by the UI v2 layout.
@@ -2588,12 +2601,14 @@ public:
               uint8_t nPref = _prefs->channel_notif[chIdx];
               const char* nTag = (nPref == NOTIF_NONE) ? MECK_TR("Off", "Non") :
                                  (nPref == NOTIF_MENTIONS) ? "@" : MECK_TR("All", "Tous");
-              char hintBuf[40];
+              char hintBuf[48];
             #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
+              char toneTag[20];
+              toneStateLabel(chIdx, toneTag, sizeof(toneTag));
               if (chIdx > 0) {
-                snprintf(hintBuf, sizeof(hintBuf), MECK_TR("N:%s T:Tone X:Del", "N:%s T:Son X:Suppr"), nTag);
+                snprintf(hintBuf, sizeof(hintBuf), MECK_TR("N:%s T:%s X:Del", "N:%s T:%s X:Suppr"), nTag, toneTag);
               } else {
-                snprintf(hintBuf, sizeof(hintBuf), MECK_TR("N:%s T:Tone Ent:Region", "N:%s T:Son Ent:R\xC3\xA9gion"), nTag);
+                snprintf(hintBuf, sizeof(hintBuf), MECK_TR("N:%s T:%s Ent:Region", "N:%s T:%s Ent:R\xC3\xA9gion"), nTag, toneTag);
               }
             #else
               if (chIdx > 0) {
@@ -2639,7 +2654,9 @@ public:
                            (nPref == NOTIF_MENTIONS) ? "@" : MECK_TR("All", "Tous");
         if (selected) {
         #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
-          snprintf(tmp, sizeof(tmp), MECK_TR(" Direct msgs   N:%s T:Tone", " Messages priv\xC3\xA9s   N:%s T:Son"), nTag);
+          char toneTag[20];
+          toneStateLabel(0xFF, toneTag, sizeof(toneTag));
+          snprintf(tmp, sizeof(tmp), MECK_TR(" Direct msgs   N:%s T:%s", " Messages priv\xC3\xA9s   N:%s T:%s"), nTag, toneTag);
         #else
           snprintf(tmp, sizeof(tmp), MECK_TR(" Direct msgs   N:%s", " Messages priv\xC3\xA9s   N:%s"), nTag);
         #endif
@@ -3088,22 +3105,24 @@ public:
       }
   #if defined(LilyGo_TDeck_Pro_Max)
       char vibLabel[16];
-      snprintf(vibLabel, sizeof(vibLabel), MECK_TR("Vibrate %s", "Vibreur %s"),
+      snprintf(vibLabel, sizeof(vibLabel), MECK_TR("Vib %s", "Vib %s"),
                notifSounds.isVibrateForChannel(_notifSoundChannel) ? MECK_TR("on", "oui") : MECK_TR("off", "non"));
       const Ui2Key keys[] = {
         ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Pick", "Choisir")),
         ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
+        ui2Key("P", MECK_TR("Play", "Test")),
         ui2Key("V", vibLabel),
         ui2Key("Q", MECK_TR("Back", "Retour")),
       };
-      Ui2Chrome::footer(c, keys, 4);
+      Ui2Chrome::footer(c, keys, 5);
   #else
       const Ui2Key keys[] = {
         ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Pick", "Choisir")),
         ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
+        ui2Key("P", MECK_TR("Play", "Test")),
         ui2Key("Q", MECK_TR("Back", "Retour")),
       };
-      Ui2Chrome::footer(c, keys, 3);
+      Ui2Chrome::footer(c, keys, 4);
   #endif
       return 700;
     }
@@ -3632,12 +3651,12 @@ public:
 #if defined(LilyGo_TDeck_Pro_Max)
       {
         char foot[40];
-        snprintf(foot, sizeof(foot), MECK_TR("Enter:Pick V:Vib %s Q:Back", "Entr\xC3\xA9" "e:Choisir V:Vib %s Q:Retour"),
+        snprintf(foot, sizeof(foot), MECK_TR("Ent:Pick P:Play V:Vib %s Q:Back", "Ent:Choisir P:Test V:Vib %s Q:Retour"),
                  notifSounds.isVibrateForChannel(_notifSoundChannel) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
         display.print(foot);
       }
 #else
-      display.print(MECK_TR("Enter:Pick  Q:Back", "Entr\xC3\xA9" "e:Choisir  Q:Retour"));
+      display.print(MECK_TR("Enter:Pick  P:Play  Q:Back", "Entr\xC3\xA9" "e:Choisir  P:Test  Q:Retour"));
 #endif
 
       // Scroll indicator
@@ -4159,6 +4178,34 @@ public:
         return true;
       }
 #endif
+      // P: try out the highlighted item: its tone, plus the motor where a
+      // message would use it (the vibrate row, or a tone with V on)
+      if (c == 'p' || c == 'P') {
+        bool buzz = false;
+        const int fileIdx = _notifSoundSelected - kFileBase;
+        if (fileIdx >= 0 && fileIdx < (int)files.size()) {
+        #ifdef MECK_AUDIO_VARIANT
+          char path[48];
+          snprintf(path, sizeof(path), "/alarms/%s", files[fileIdx].c_str());
+          notifSounds.requestPlay(path);
+        #elif defined(HAS_4G_MODEM)
+          int8_t toneIdx = ModemManager::findToneByName(files[fileIdx].c_str());
+          if (toneIdx >= 0) modemManager.requestNotifTone(toneIdx);
+        #endif
+        #if defined(LilyGo_TDeck_Pro_Max)
+          buzz = notifSounds.isVibrateForChannel(_notifSoundChannel);
+        #endif
+        }
+      #if defined(LilyGo_TDeck_Pro_Max)
+        if (_notifSoundSelected == 1) buzz = true;
+        if (buzz) {
+          extern void meckNotifVibrate();
+          meckNotifVibrate();
+        }
+      #endif
+        (void)buzz;
+        return true;
+      }
 #if defined(LilyGo_TDeck_Pro_Max)
       // V: vibrate as well as the chosen tone (or on its own, with no tone)
       if (c == 'v' || c == 'V') {

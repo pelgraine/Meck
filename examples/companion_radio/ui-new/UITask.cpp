@@ -175,6 +175,9 @@ static void meckHapticBuzz() {
   if (meckHapticReady()) s_haptic.buzz(14);
 }
 
+// The same buzz a message gets, for the tone picker's preview key
+void meckNotifVibrate() { meckHapticBuzz(); }
+
 #ifdef MECK_UI_SCREENDUMP
 // Debug CLI "sos vib e <effect>" / "sos vib rtp <ms>": compare vibrations
 void meckHapticTest(const char* arg) {
