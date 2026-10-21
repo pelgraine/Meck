@@ -156,7 +156,9 @@ public:
   void scanSoundFiles() {
     _soundFiles.clear();
 
-#ifdef HAS_4G_MODEM
+// The MAX has both: its tones are MP3s on the SD card, played through the
+// ES8311 like playback does (the modem's embedded WAVs would not be found).
+#if defined(HAS_4G_MODEM) && !defined(MECK_AUDIO_VARIANT)
     // 4G variant: available tones are embedded in firmware
     for (int i = 0; i < MODEM_BUNDLED_TONE_COUNT; i++) {
       _soundFiles.push_back(String(modemBundledTones[i].filename));
