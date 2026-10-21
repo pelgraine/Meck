@@ -247,6 +247,7 @@ enum SettingsRowType : uint8_t {
   ROW_CHANNELS_SUBMENU,  // Folder row → enters Channels sub-screen
   ROW_CH_HEADER,      // "--- Channels ---" separator
   ROW_CHANNEL,        // A channel entry (dynamic, index stored separately)
+  ROW_DM_NOTIFY,      // Notification settings for direct messages (the DM slot)
   ROW_ADD_CHANNEL,    // "+ Add Channel (# = public)"
   #ifdef HAS_SDCARD
   ROW_EXPORT_IMPORT_SUBMENU, // Folder row: "Export/Import >>"
@@ -579,6 +580,7 @@ private:
           addRow(ROW_CHANNEL, i);
         }
       }
+      addRow(ROW_DM_NOTIFY);
       addRow(ROW_ADD_CHANNEL);
     } else if (_subScreen == SUB_CANNED) {
       // --- Canned Messages sub-screen: ten editable slots ---
@@ -2631,6 +2633,37 @@ public:
         break;
       }
 
+      case ROW_DM_NOTIFY: {
+        uint8_t nPref = _prefs->channel_notif[MAX_GROUP_CHANNELS];
+        const char* nTag = (nPref == NOTIF_NONE) ? MECK_TR("Off", "Non") :
+                           (nPref == NOTIF_MENTIONS) ? "@" : MECK_TR("All", "Tous");
+        if (selected) {
+        #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
+          snprintf(tmp, sizeof(tmp), MECK_TR(" Direct msgs   N:%s T:Tone", " Messages priv\xC3\xA9s   N:%s T:Son"), nTag);
+        #else
+          snprintf(tmp, sizeof(tmp), MECK_TR(" Direct msgs   N:%s", " Messages priv\xC3\xA9s   N:%s"), nTag);
+        #endif
+        } else {
+          // What a DM does now: nothing, or a tone and/or the motor
+          const char* tone = notifSounds.getSoundForChannel(0xFF);
+          char what[24];
+          if (nPref == NOTIF_NONE) {
+            snprintf(what, sizeof(what), "%s", MECK_TR("muted", "muet"));
+          } else if (tone[0] && notifSounds.isVibrateForChannel(0xFF)) {
+            snprintf(what, sizeof(what), "%s", MECK_TR("tone + vibrate", "son + vibreur"));
+          } else if (tone[0]) {
+            snprintf(what, sizeof(what), "%s", MECK_TR("tone", "son"));
+          } else if (notifSounds.isVibrateForChannel(0xFF)) {
+            snprintf(what, sizeof(what), "%s", MECK_TR("vibrate", "vibreur"));
+          } else {
+            snprintf(what, sizeof(what), "%s", MECK_TR("default", "d\xC3\xA9" "faut"));
+          }
+          snprintf(tmp, sizeof(tmp), MECK_TR(" Direct messages: %s", " Messages priv\xC3\xA9s : %s"), what);
+        }
+        display.print(tmp);
+        break;
+      }
+
       case ROW_ADD_CHANNEL:
         if (editing && _editMode == EDIT_TEXT) {
           snprintf(tmp, sizeof(tmp), "> %s_", _editBuf);
@@ -3053,12 +3086,25 @@ public:
         r.selected = (i == _notifSoundSelected);
         Ui2List::drawRow(c, BODY_Y + (i - start) * ROW_H, r);
       }
+  #if defined(LilyGo_TDeck_Pro_Max)
+      char vibLabel[16];
+      snprintf(vibLabel, sizeof(vibLabel), MECK_TR("Vibrate %s", "Vibreur %s"),
+               notifSounds.isVibrateForChannel(_notifSoundChannel) ? MECK_TR("on", "oui") : MECK_TR("off", "non"));
+      const Ui2Key keys[] = {
+        ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Pick", "Choisir")),
+        ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
+        ui2Key("V", vibLabel),
+        ui2Key("Q", MECK_TR("Back", "Retour")),
+      };
+      Ui2Chrome::footer(c, keys, 4);
+  #else
       const Ui2Key keys[] = {
         ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Pick", "Choisir")),
         ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
         ui2Key("Q", MECK_TR("Back", "Retour")),
       };
       Ui2Chrome::footer(c, keys, 3);
+  #endif
       return 700;
     }
   #endif
@@ -3583,7 +3629,16 @@ public:
       display.setColor(DisplayDriver::YELLOW);
       int fy = by + bh - 11;
       display.setCursor(bx + 4, fy);
+#if defined(LilyGo_TDeck_Pro_Max)
+      {
+        char foot[40];
+        snprintf(foot, sizeof(foot), MECK_TR("Enter:Pick V:Vib %s Q:Back", "Entr\xC3\xA9" "e:Choisir V:Vib %s Q:Retour"),
+                 notifSounds.isVibrateForChannel(_notifSoundChannel) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+        display.print(foot);
+      }
+#else
       display.print(MECK_TR("Enter:Pick  Q:Back", "Entr\xC3\xA9" "e:Choisir  Q:Retour"));
+#endif
 
       // Scroll indicator
       if (totalItems > maxVisible) {
@@ -4104,8 +4159,17 @@ public:
         return true;
       }
 #endif
+#if defined(LilyGo_TDeck_Pro_Max)
+      // V: vibrate as well as the chosen tone (or on its own, with no tone)
+      if (c == 'v' || c == 'V') {
+        notifSounds.setVibrateEnabled(_notifSoundChannel,
+                                      !notifSounds.isVibrateForChannel(_notifSoundChannel));
+        return true;
+      }
+#endif
       if (c == '\r' || c == 13) {
-        // Select: 0 = clear (default silent), [MAX: 1 = vibrate], rest = file
+        // Select: 0 = clear (default silent), [MAX: 1 = vibrate], rest = file.
+        // A file keeps the vibrate setting; the other two rows replace it.
         if (_notifSoundSelected == 0) {
           notifSounds.clearSoundForChannel(_notifSoundChannel);
 #if defined(LilyGo_TDeck_Pro_Max)
@@ -5236,8 +5300,8 @@ public:
 
     // N: cycle notification preference (All -> Mentions -> None -> All)
     if (c == 'n' || c == 'N') {
-      if (_rows[_cursor].type == ROW_CHANNEL) {
-        uint8_t chIdx = _rows[_cursor].param;
+      if (_rows[_cursor].type == ROW_CHANNEL || _rows[_cursor].type == ROW_DM_NOTIFY) {
+        uint8_t chIdx = (_rows[_cursor].type == ROW_DM_NOTIFY) ? MAX_GROUP_CHANNELS : _rows[_cursor].param;
         uint8_t cur = _prefs->channel_notif[chIdx];
         _prefs->channel_notif[chIdx] = (cur + 1) % 3;
         the_mesh.savePrefs();
@@ -5301,8 +5365,8 @@ public:
     // T: open notification tone picker
     #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
     if (c == 't' || c == 'T') {
-      if (_rows[_cursor].type == ROW_CHANNEL) {
-        _notifSoundChannel = _rows[_cursor].param;
+      if (_rows[_cursor].type == ROW_CHANNEL || _rows[_cursor].type == ROW_DM_NOTIFY) {
+        _notifSoundChannel = (_rows[_cursor].type == ROW_DM_NOTIFY) ? 0xFF : _rows[_cursor].param;
         notifSounds.scanSoundFiles();
         _notifSoundSelected = 0;  // 0 = "Default (silent)"
         _notifSoundScroll = 0;
@@ -5311,14 +5375,15 @@ public:
 #else
         const int kFileBase = 1;   // 0=Default, 1+=files
 #endif
-        // Pre-select current assignment
+        // Pre-select current assignment: the tone if there is one, else the
+        // vibrate-only row
+        const char* current = notifSounds.getSoundForChannel(_notifSoundChannel);
 #if defined(LilyGo_TDeck_Pro_Max)
-        if (notifSounds.isVibrateForChannel(_notifSoundChannel)) {
+        if ((!current || !current[0]) && notifSounds.isVibrateForChannel(_notifSoundChannel)) {
           _notifSoundSelected = 1;  // 1 = "Buzzer (vibrate)"
         } else
 #endif
         {
-          const char* current = notifSounds.getSoundForChannel(_notifSoundChannel);
           if (current && current[0] != '\0') {
             const auto& files = notifSounds.getSoundFiles();
             for (int i = 0; i < (int)files.size(); i++) {

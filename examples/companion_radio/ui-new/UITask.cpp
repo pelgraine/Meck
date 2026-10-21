@@ -2750,24 +2750,40 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     meckBleWindowOnMessage();
   }
 #endif
+  // A room server sends its backlog as DMs when you sync: no tone or
+  // vibration for those, like the keyboard flash below.
+  bool isRoomMsg = false;
+  if (channel_idx == 0xFF) {
+    uint32_t numContacts = the_mesh.getNumContacts();
+    ContactInfo senderContact;
+    for (uint32_t ci = 0; ci < numContacts; ci++) {
+      if (the_mesh.getContactByIdx(ci, senderContact) && strcmp(senderContact.name, from_name) == 0) {
+        if (senderContact.type == ADV_TYPE_ROOM) isRoomMsg = true;
+        break;
+      }
+    }
+  }
+  const bool alert = !suppressNotif && !isRoomMsg;
+
   // Set the flag for notify() which is called immediately after newMsg().
   // If a custom notification tone is assigned and notifications are active,
   // request MP3 playback and suppress the RTTTL buzzer so they don't overlap.
+  bool vibrateOnly = false;
 #if defined(LilyGo_TDeck_Pro_Max)
-  // Channel set to "Buzzer (vibrate)": pulse the motor instead of a tone.
-  if (!suppressNotif && notifSounds.isVibrateForChannel(channel_idx)) {
+  // Channel (or DM) set to vibrate: pulse the motor, with or without a tone.
+  if (alert && notifSounds.isVibrateForChannel(channel_idx)) {
     if (vibrationAllowed()) meckHapticBuzz();
-    s_lastMsgSuppressed = true;  // suppress the default RTTTL buzzer
-  } else
+    vibrateOnly = !notifSounds.hasSoundForChannel(channel_idx);
+  }
   // Tones switched off (quick settings): no tone. The MAX has no buzzer
   // and no other vibration, so nothing is lost by suppressing notify().
-  if (!suppressNotif && !tonesAllowed()) {
+  if (alert && !tonesAllowed()) {
     s_lastMsgSuppressed = true;
   } else
 #endif
   {
   #ifdef MECK_AUDIO_VARIANT
-  if (!suppressNotif) {
+  if (alert) {
   #ifdef MECK_40MHZ_TEST
     const char* customSound = NULL;  // MP3 tones gated -- default buzzer path runs
   #else
@@ -2785,7 +2801,7 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     s_lastMsgSuppressed = suppressNotif;
   }
   #elif defined(HAS_4G_MODEM)
-  if (!suppressNotif) {
+  if (alert) {
     const char* customSound = notifSounds.getSoundForChannel(channel_idx);
     if (customSound && customSound[0] != '\0') {
       int8_t toneIdx = ModemManager::findToneByName(customSound);
@@ -2803,24 +2819,14 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   s_lastMsgSuppressed = suppressNotif;
   #endif
   }
+  if (vibrateOnly) s_lastMsgSuppressed = true;  // the motor replaces the default buzzer
 
   // Add to channel history screen with channel index, path data, and SNR
   // For DMs (channel_idx == 0xFF):
   //   - Regular DMs: prefix text with sender name ("NodeName: hello")
   //   - Room server messages: text already contains "OriginalSender: message",
   //     don't double-prefix. Tag with room server name for conversation filtering.
-  bool isRoomMsg = false;
   if (channel_idx == 0xFF) {
-    // Check if sender is a room server
-    uint32_t numContacts = the_mesh.getNumContacts();
-    ContactInfo senderContact;
-    for (uint32_t ci = 0; ci < numContacts; ci++) {
-      if (the_mesh.getContactByIdx(ci, senderContact) && strcmp(senderContact.name, from_name) == 0) {
-        if (senderContact.type == ADV_TYPE_ROOM) isRoomMsg = true;
-        break;
-      }
-    }
-
     if (isRoomMsg) {
       // Room server: text already has "Poster: message" format — store as-is
       // Tag with room server name for conversation filtering
