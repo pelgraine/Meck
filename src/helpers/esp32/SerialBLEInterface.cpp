@@ -11,6 +11,25 @@
 
 #define ADVERT_RESTART_DELAY  1000   // millis
 
+#ifdef MECK_BLE_SENSOR_ADVERT
+// Experiment (2026-10-26): make the node look like a Bluetooth heart-rate
+// sensor as well as a MeshCore node, so a Garmin watch's Sensors & Accessories
+// search lists it and the watch firmware runs its own pairing, which can ask
+// for a PIN (Connect IQ apps cannot). The Heart Rate characteristics carry the
+// same MITM permissions as UART, so the watch has to pair before it can
+// subscribe. No heart-rate data is ever sent.
+//
+// Advertising packet (31 bytes max): flags, 16-bit Heart Rate service UUID,
+// appearance "Heart Rate Belt", and the device name (shortened to fit).
+// Scan response: the 128-bit UART service UUID, so phone apps that filter on
+// it still find the node.
+#define SENSOR_SVC_UUID        0x180D   // Heart Rate
+#define SENSOR_CHR_HRM_UUID    0x2A37   // Heart Rate Measurement (notify)
+#define SENSOR_CHR_LOC_UUID    0x2A38   // Body Sensor Location (read)
+#define SENSOR_APPEARANCE      0x0341   // Heart Rate Belt
+#define ADV_NAME_MAX_BYTES     18       // 31 - flags(3) - 16-bit svc(4) - appearance(4) - name header(2)
+#endif
+
 // BLE transmit power for connections, advertising and scanning: +9 dBm unless
 // a build sets another esp_power_level_t level with a flag, for example
 //   -D MECK_BLE_TX_POWER=ESP_PWR_LVL_P15
@@ -107,7 +126,52 @@ void SerialBLEInterface::_realBegin() {
 #endif
   pRxCharacteristic->setCallbacks(this);
 
+#ifdef MECK_BLE_SENSOR_ADVERT
+  // Heart Rate service: notify-only measurement plus body sensor location,
+  // with the same link requirement as the UART characteristics (encrypted
+  // under MECK_BLE_JUST_WORKS, authenticated/MITM otherwise).
+#ifdef MECK_BLE_JUST_WORKS
+  const esp_gatt_perm_t sensorRead  = ESP_GATT_PERM_READ_ENCRYPTED;
+  const esp_gatt_perm_t sensorWrite = ESP_GATT_PERM_WRITE_ENCRYPTED;
+#else
+  const esp_gatt_perm_t sensorRead  = ESP_GATT_PERM_READ_ENC_MITM;
+  const esp_gatt_perm_t sensorWrite = ESP_GATT_PERM_WRITE_ENC_MITM;
+#endif
+  pSensorService = pServer->createService(BLEUUID((uint16_t)SENSOR_SVC_UUID));
+  BLECharacteristic* pHrm = pSensorService->createCharacteristic(BLEUUID((uint16_t)SENSOR_CHR_HRM_UUID), BLECharacteristic::PROPERTY_NOTIFY);
+  pHrm->setAccessPermissions(sensorRead);
+  BLE2902* pHrmCccd = new BLE2902();
+  pHrmCccd->setAccessPermissions(sensorRead | sensorWrite);
+  pHrm->addDescriptor(pHrmCccd);
+  uint8_t hrmInit[2] = { 0x00, 0x00 };   // flags byte + 8-bit value 0
+  pHrm->setValue(hrmInit, 2);
+  BLECharacteristic* pLoc = pSensorService->createCharacteristic(BLEUUID((uint16_t)SENSOR_CHR_LOC_UUID), BLECharacteristic::PROPERTY_READ);
+  pLoc->setAccessPermissions(sensorRead);
+  uint8_t locChest = 1;
+  pLoc->setValue(&locChest, 1);
+
+  // Advertising data: flags, Heart Rate UUID, appearance, name (shortened to
+  // ADV_NAME_MAX_BYTES at a UTF-8 character boundary if needed).
+  BLEAdvertisementData adv;
+  adv.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
+  adv.setCompleteServices(BLEUUID((uint16_t)SENSOR_SVC_UUID));
+  adv.setAppearance(SENSOR_APPEARANCE);
+  size_t nameLen = strlen(_dev_name);
+  if (nameLen <= ADV_NAME_MAX_BYTES) {
+    adv.setName(std::string(_dev_name, nameLen));
+  } else {
+    size_t cut = ADV_NAME_MAX_BYTES;
+    while (cut > 0 && (((uint8_t)_dev_name[cut]) & 0xC0) == 0x80) cut--;   // do not split a UTF-8 sequence
+    adv.setShortName(std::string(_dev_name, cut));
+  }
+  BLEAdvertisementData rsp;
+  rsp.setCompleteServices(BLEUUID(SERVICE_UUID));
+  pServer->getAdvertising()->setAdvertisementData(adv);
+  pServer->getAdvertising()->setScanResponseData(rsp);
+  BLE_DEBUG_PRINTLN("sensor advert: HR service + UART in scan response, name bytes=%u", (unsigned)nameLen);
+#else
   pServer->getAdvertising()->addServiceUUID(SERVICE_UUID);
+#endif
 }
 
 // -------- BLESecurityCallbacks methods
@@ -166,6 +230,13 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
 #endif
 
+#ifdef MECK_BLE_NO_PHY_UPDATE
+    // A Garmin watch paired through its sensor menu answers the 2M PHY request
+    // in a way the ESP32-S3 controller does not survive (assert in
+    // lld_con.c during the PHY update procedure, 2026-10-26). The watch keeps
+    // a 23-byte MTU anyway, so neither request gains anything: skip both.
+    BLE_DEBUG_PRINTLN(" - PHY/DLE requests skipped (MECK_BLE_NO_PHY_UPDATE)");
+#else
     // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
     // Note: ESP-IDF misspells "preferred" as "prefered" in their API
     esp_ble_gap_set_prefered_phy(_remote_bda,
@@ -175,6 +246,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
                                   ESP_BLE_GAP_PHY_OPTIONS_NO_PREF);
     esp_ble_gap_set_pkt_data_len(_remote_bda, 251);   // Request DLE (max link-layer PDU)
     BLE_DEBUG_PRINTLN(" - Requested 2M PHY and DLE (251 bytes)");
+#endif
   } else {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Failure*");
     _auth_ok = false;
@@ -197,7 +269,25 @@ void SerialBLEInterface::onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t 
 }
 
 void SerialBLEInterface::onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
-  BLE_DEBUG_PRINTLN("onMtuChanged(), mtu=%d", pServer->getPeerMTU(param->mtu.conn_id));
+  uint16_t mtu = pServer->getPeerMTU(param->mtu.conn_id);
+  BLE_DEBUG_PRINTLN("onMtuChanged(), mtu=%d", mtu);
+#ifdef MECK_BLE_SLOW_INTERVAL
+  // The relaxed interval requested at authentication suits a watch, which
+  // never raises its MTU above 23. A peer that negotiates a larger MTU is a
+  // phone about to sync contacts; at 100-200 ms the notify buffer overflows
+  // and contact frames are dropped (2026-10-26), so give phones the fast
+  // interval they have always had.
+  if (mtu > 23) {
+    esp_ble_conn_update_params_t conn_params;
+    memcpy(conn_params.bda, _remote_bda, 6);
+    conn_params.min_int = 12;   // 15ms   (12 x 1.25ms)
+    conn_params.max_int = 16;   // 20ms   (16 x 1.25ms)
+    conn_params.latency = 0;    // no skipped intervals
+    conn_params.timeout = 400;  // 4 seconds supervision timeout
+    esp_ble_gap_update_conn_params(&conn_params);
+    BLE_DEBUG_PRINTLN(" - Large-MTU peer: requested fast connection interval (15-20ms)");
+  }
+#endif
 }
 
 void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
@@ -267,6 +357,9 @@ void SerialBLEInterface::enable() {
 
   // Start the service
   pService->start();
+#ifdef MECK_BLE_SENSOR_ADVERT
+  pSensorService->start();
+#endif
 
   // Start advertising
 
@@ -289,6 +382,9 @@ void SerialBLEInterface::disable() {
     pServer->getAdvertising()->stop();
     pServer->disconnect(last_conn_id);
     pService->stop();
+#ifdef MECK_BLE_SENSOR_ADVERT
+    pSensorService->stop();
+#endif
   }
   oldDeviceConnected = deviceConnected = false;
   adv_restart_time = 0;

@@ -12,6 +12,12 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   BLEServer *pServer;
   BLEService *pService;
   BLECharacteristic * pTxCharacteristic;
+#ifdef MECK_BLE_SENSOR_ADVERT
+  // Experiment: a Heart Rate service alongside UART so a Garmin watch lists
+  // the node under Sensors & Accessories and runs its own (PIN) pairing. See
+  // the .cpp for the advertising layout.
+  BLEService *pSensorService;
+#endif
   bool deviceConnected;
   bool oldDeviceConnected;
   bool _isEnabled;
@@ -74,6 +80,9 @@ public:
   SerialBLEInterface() {
     pServer = NULL;
     pService = NULL;
+#ifdef MECK_BLE_SENSOR_ADVERT
+    pSensorService = NULL;
+#endif
     deviceConnected = false;
     oldDeviceConnected = false;
     adv_restart_time = 0;
