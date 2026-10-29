@@ -1799,6 +1799,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.rx_boosted_gain = 1;  // boosted RX gain on by default (agc_reset_interval 0 = off)
   _prefs.lock_sleep = 1;       // power saving when locked on by default
   _prefs.sos_btn = 1;          // SOS on a 3 s hold of the top button
+  _prefs.notif_vibrate = 1;    // quick settings: vibration on
+  _prefs.lock_keep = LOCK_KEEP_DEFAULT;   // what keeps running while locked
   _prefs.multi_acks = 1;      // redundant ACKs on by default
   strcpy(_prefs.node_name, "NONAME");
   _prefs.freq = LORA_FREQ;
@@ -3976,11 +3978,13 @@ void MyMesh::checkCLIRescueCmd() {
     } else if (memcmp(cli_command, "key ", 4) == 0) {
       // Debug: press a key as if typed: "key s", "key enter", "key esc", "key bs",
       // "key mic" / "key micup" (Mic key press / release, KB_KEY_MIC / KB_KEY_MIC_RELEASE)
+      // "key quick" (Alt+Space, KB_KEY_QUICK: quick settings)
       extern void meckDebugKey(char k);
       const char* k = &cli_command[4];
       char kc = (strcmp(k, "enter") == 0) ? '\r' : (strcmp(k, "esc") == 0) ? 27
               : (strcmp(k, "bs") == 0) ? '\b' : (strcmp(k, "space") == 0) ? ' '
-              : (strcmp(k, "mic") == 0) ? 0x02 : (strcmp(k, "micup") == 0) ? 0x03 : k[0];
+              : (strcmp(k, "mic") == 0) ? 0x02 : (strcmp(k, "micup") == 0) ? 0x03
+              : (strcmp(k, "quick") == 0) ? 0x06 : k[0];
       meckDebugKey(kc);
     } else if (memcmp(cli_command, "uimsg ", 6) == 0) {
       // Debug: add a local test message to the Public channel history

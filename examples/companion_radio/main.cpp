@@ -902,6 +902,9 @@ static uint32_t _atoi(const char* sp) {
   #if   HAS_GPS
     #include "MapScreen.h"  // After BLE -- PNGdec headers conflict with BLE if included earlier
   #endif
+  #ifdef MECK_QUICK_SETTINGS
+    #include "QuickSettingsScreen.h"
+  #endif
   UITask ui_task(&board, &serial_interface);
   #ifdef MECK_AUDIO_VARIANT
   // Lets the alarm ringing screen (which only forward-declares UITask) query
@@ -1237,6 +1240,9 @@ static uint32_t _atoi(const char* sp) {
     else if (strcmp(name, "gps") == 0)      ui_task.toggleGPS();   // same as Enter on the GPS page
 #endif
     else if (strcmp(name, "lock") == 0)     ui_task.requestLock();   // warns like a double click
+#ifdef MECK_QUICK_SETTINGS
+    else if (strcmp(name, "quick") == 0)    { if (ui_task.canOpenQuickSettings()) ui_task.gotoQuickSettings(); }
+#endif
     else if (strcmp(name, "unlock") == 0)   ui_task.unlockScreen();
     else if (strcmp(name, "chatclr") == 0) {
       // Remove test messages: clears the whole Public history (channel 0),
@@ -1941,6 +1947,100 @@ static void meckLaunchHomeTile(Ui2Tile t) {
 }
 #endif
 
+#if defined(LilyGo_TDeck_Pro_Max)
+// Frontlight on at the Backlight Brightness setting, or off: the heart pad
+// and the quick settings Light tile
+static void meckFrontlightToggle() {
+  if (board.isBacklightOn()) {
+    board.backlightOff();
+  } else {
+    uint8_t pct = the_mesh.getNodePrefs()->backlight_brightness_pct;
+    board.backlightSetBrightness((uint8_t)((pct * 255 + 50) / 100));
+  }
+}
+#endif
+
+#ifdef MECK_QUICK_SETTINGS
+// ---------------------------------------------------------------------------
+// Quick settings: opening, closing and "More" (the tile's own page). The
+// screen goes over anything, text entry included, which is drawn again
+// when it closes (as after the SOS screen).
+// ---------------------------------------------------------------------------
+static void meckQsLeave() {
+  ui_task.leaveQuickSettings();
+  composeNeedsRefresh = true;
+  #ifdef MECK_WEB_READER
+  if (webReaderTextEntry) webReaderNeedsRefresh = true;
+  #endif
+}
+
+// Text being typed under the quick settings: "More" would leave it half done
+static bool meckQsOverTextEntry() {
+  if (composeMode || emojiPickerMode) return true;
+  #ifdef MECK_WEB_READER
+  if (webReaderTextEntry) return true;
+  #endif
+  NotesScreen* ns = (NotesScreen*)ui_task.getNotesScreen();
+  if (ns && (ns->isEditing() || ns->isRenaming())) return true;
+  #ifdef HAS_4G_MODEM
+  SMSScreen* sms = ui_task.getSMSScreen();
+  if (sms && sms->isComposing()) return true;
+  #endif
+  return false;
+}
+
+static void meckQsOpenMore(int item) {
+  if (meckQsOverTextEntry()) {
+    ui_task.showAlert(MECK_TR("Finish the text first", "Terminez d'abord le texte"), 1200);
+    return;
+  }
+  int row = -1;
+  switch (item) {
+    case QS_WIFI:                       row = ROW_WIFI_SETUP; break;
+    case QS_MODEM:                      row = ROW_MODEM_TOGGLE; break;
+    case QS_TONES: case QS_VIBRATE:
+    case QS_L_TONES: case QS_L_VIBRATE: row = ROW_CHANNELS_SUBMENU; break;   // per-channel sounds
+    case QS_LIGHT:                      row = ROW_BACKLIGHT_BRIGHTNESS; break;
+    case QS_KEYS:                       row = ROW_KB_BACKLIGHT; break;
+    case QS_L_WIFI: case QS_L_GPS: case QS_L_MODEM:
+    case QS_L_SAVING: case QS_L_USB:    row = ROW_LOCK_SLEEP; break;
+  #ifdef MECK_BLE_LOCK_WINDOWS
+    case QS_L_BLE:                      row = ROW_LOCK_BLE; break;
+  #endif
+  #if HAS_GPS
+    case QS_GPS:
+      ui_task.leaveQuickSettings();
+      openMapScreen();
+      return;
+  #endif
+    default:
+      ui_task.showAlert(MECK_TR("Nothing more to set", "Rien de plus \xC3\xA0 r\xC3\xA9gler"), 1000);
+      return;
+  }
+  ui_task.leaveQuickSettings();
+  ui_task.gotoSettingsScreen();
+  SettingsScreen* ss = (SettingsScreen*)ui_task.getSettingsScreen();
+  if (!ss->selectRowType((SettingsRowType)row)) ss->selectRowType(ROW_LOCK_SLEEP);   // a row shown only sometimes
+}
+
+// After a key or touch on the quick settings: close, or open a tile's page
+static void meckQsAfterInput() {
+  QuickSettingsScreen* qs = (QuickSettingsScreen*)ui_task.getQuickSettings();
+  if (qs->wantsExit()) {
+    qs->clearExit();
+    meckQsLeave();
+    return;
+  }
+  int more = qs->takeMore();
+  if (more >= 0) meckQsOpenMore(more);
+}
+
+static void meckQsToggleOpen() {
+  if (ui_task.isOnQuickSettings()) meckQsLeave();
+  else if (ui_task.canOpenQuickSettings()) ui_task.gotoQuickSettings();
+}
+#endif
+
 #ifdef MECK_TOUCH_ENABLED
   #if defined(LilyGo_TDeck_Pro_Max)
   // T-Deck Pro MAX: the three capacitive pads below the screen are CST328 keys,
@@ -1949,19 +2049,37 @@ static void meckLaunchHomeTile(Ui2Tile t) {
   // in a different order.
   static void meckHynKeyEvent(uint8_t key_id, bool pressed, void* /*user_data*/) {
     Serial.printf("[key] id=%u pressed=%u\n", key_id, pressed ? 1u : 0u);  // TEMP: confirm mapping
+#ifdef MECK_QUICK_SETTINGS
+    // Heart held 600 ms: quick settings. The press has already switched the
+    // frontlight (a lost release must not cost the short press), so the
+    // release switches it back first.
+    static unsigned long heartDownAt = 0;
+    static bool heartToggled = false;
+    if (key_id == 0 && !pressed) {
+      if (heartDownAt && millis() - heartDownAt >= 600) {
+        if (heartToggled) meckFrontlightToggle();
+        meckQsToggleOpen();
+        ui_task.forceRefresh();
+      }
+      heartDownAt = 0;
+      return;
+    }
+#endif
     if (!pressed) return;
     if (meckSosCancelInput()) return;   // SOS countdown: any pad cancels it
     switch (key_id) {
       case 0:  // heart -- toggle frontlight at the user-set brightness
+#ifdef MECK_QUICK_SETTINGS
+        heartDownAt = millis();
+        heartToggled = false;
+#endif
         // Settings > Experimental Features "Change Backlight to Alt+B" turns
         // the heart key off, leaving Alt+B as the backlight toggle.
         if (the_mesh.getNodePrefs()->backlight_alt_b_only) break;
-        if (board.isBacklightOn()) {
-          board.backlightOff();
-        } else {
-          uint8_t _blPct = the_mesh.getNodePrefs()->backlight_brightness_pct;
-          board.backlightSetBrightness((uint8_t)((_blPct * 255 + 50) / 100));
-        }
+        meckFrontlightToggle();
+#ifdef MECK_QUICK_SETTINGS
+        heartToggled = true;
+#endif
         break;
       case 1:  // speech bubble -- canned messages when a channel or DM
                // conversation is open; otherwise channel picker (same as 'M')
@@ -1999,6 +2117,15 @@ static void meckLaunchHomeTile(Ui2Tile t) {
       return 0;
     }
 
+#ifdef MECK_QUICK_SETTINGS
+    if (ui_task.isOnQuickSettings()) {
+      ((QuickSettingsScreen*)ui_task.getQuickSettings())->tapAt(x, y);
+      meckQsAfterInput();
+      ui_task.forceRefresh();
+      return 0;
+    }
+#endif
+
     // Canned messages overlay open on the channel screen: it owns every tap.
     // This must run before the status-bar go-home rule below -- the overlay's
     // first row starts at vy 14 and straddles the vy<18 band, so a row tap
@@ -2034,6 +2161,13 @@ static void meckLaunchHomeTile(Ui2Tile t) {
       ui_task.gotoHomeScreen();
       return 0;
     }
+#ifdef MECK_QUICK_SETTINGS
+    // On home the status header opens quick settings
+    if (headerTap && ui2FrameHasChrome && ui_task.canOpenQuickSettings()) {
+      ui_task.gotoQuickSettings();
+      return 0;
+    }
+#endif
 
     // Games menu: tap to select game entry
     if (ui_task.isOnGamesMenu()) {
@@ -2386,6 +2520,19 @@ static void meckLaunchHomeTile(Ui2Tile t) {
   static char mapTouchSwipe(int16_t dx, int16_t dy) {
     bool horizontal = abs(dx) > abs(dy);
 
+#ifdef MECK_QUICK_SETTINGS
+    // Quick settings: a swipe down that starts on the status header opens
+    // it, a swipe up closes it
+    if (ui_task.isOnQuickSettings()) {
+      if (!horizontal && dy < 0) meckQsLeave();
+      return 0;
+    }
+    if (!horizontal && dy > 0 && ui2FrameHasChrome && touchDownY < ui2::HDR_H && ui_task.canOpenQuickSettings()) {
+      ui_task.gotoQuickSettings();
+      return 0;
+    }
+#endif
+
     // SMS screen: dedicated touch handler covers all interaction
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
@@ -2485,6 +2632,14 @@ static void meckLaunchHomeTile(Ui2Tile t) {
 
   // Map a long press to a key
   static char mapTouchLongPress(int16_t x, int16_t y) {
+#ifdef MECK_QUICK_SETTINGS
+    if (ui_task.isOnQuickSettings()) {
+      ((QuickSettingsScreen*)ui_task.getQuickSettings())->longPressAt(x, y);
+      meckQsAfterInput();
+      ui_task.forceRefresh();
+      return 0;
+    }
+#endif
     // SMS screen: dedicated touch handler covers all interaction
     #ifdef HAS_4G_MODEM
     if (ui_task.isOnSMSScreen()) return 0;
@@ -3613,7 +3768,11 @@ static void meckGpsDutyAcquire() {
 static bool meckGpsDutyStep(bool locked, int blocker) {
   NodePrefs* p = the_mesh.getNodePrefs();
   bool sleeps = blocker == MECK_SLEEP_OK || blocker == MECK_SLEEP_SYNC;
-  bool want = locked && sleeps && p->gps_enabled && p->gps_lock_interval && !meckSos.running();
+  bool want = locked && sleeps && p->gps_enabled && p->gps_lock_interval && !meckSos.running()
+#ifdef MECK_QUICK_SETTINGS
+              && (p->lock_keep & LOCK_KEEP_GPS)   // quick settings: GPS paused while locked
+#endif
+              ;
   if (!want) {
     if (meckGpsDuty != MECK_GPS_DUTY_IDLE) {
       meckGpsDuty = MECK_GPS_DUTY_IDLE;
@@ -3691,15 +3850,24 @@ int meckLockSleepBlocker() {
   // SOS: awake only while it counts down, its GPS looks for a fix or a send
   // is due
   if (meckSos.running() && meckSos.wantsAwake(millis())) return MECK_SLEEP_SOS;
+  // Before locking (the lock warning, quick settings) the radios set to
+  // pause while locked are still on; locked, they are already off
+#ifdef MECK_QUICK_SETTINGS
+  const bool unlocked = !ui_task.isLocked();
+  const bool modemPauses = unlocked && !(p->lock_keep & LOCK_KEEP_MODEM);
+  const bool wifiPauses = unlocked && !(p->lock_keep & LOCK_KEEP_WIFI) && meckCompanionIsWiFi();
+#else
+  const bool modemPauses = false, wifiPauses = false;
+#endif
   // Radios the user switched on come first: they still drain the battery
   // once the cable is out, so the lock warning names them even on USB.
 #ifdef HAS_4G_MODEM
   // With UART sleep the modem only blocks while it has something to do
   // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
-  if (modemManager.getState() != ModemState::OFF && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
+  if (modemManager.getState() != ModemState::OFF && !modemPauses && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
-  if (WiFi.getMode() != WIFI_MODE_NULL) return MECK_SLEEP_WIFI;
-  if (board.isUsbPowered()) return MECK_SLEEP_USB;
+  if (WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) return MECK_SLEEP_WIFI;
+  if (board.isUsbPowered() && (p->lock_keep & LOCK_KEEP_USB)) return MECK_SLEEP_USB;
 #ifdef MECK_BLE_LOCK_WINDOWS
   if (meckBleWindowed()) {
     // A connected phone does not count: once locked, the windows decide
@@ -3716,6 +3884,245 @@ int meckLockSleepBlocker() {
 #endif
   return MECK_SLEEP_OK;
 }
+
+#ifdef MECK_QUICK_SETTINGS
+// ============================================================================
+// Quick settings (docs/ui2-quick-settings.md): the tiles' state and actions
+// for QuickSettingsScreen, and the "When locked" switches, applied by
+// meckLockPolicy() on lock and unlock.
+// ============================================================================
+void toggleKeyboardBacklight();
+bool keyboardBacklightIsOn();
+void meckGpsConfigureSoon();
+
+static void meckQsModemSet(bool on) {
+  // Kept like Settings > 4G Modem does, so it holds over a restart
+  ModemManager::saveEnabledConfig(on);
+  if (on) modemManager.begin();
+  else modemManager.shutdown();
+}
+
+void meckQsState(QsItem item, QsTileState& st) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  const char* off = MECK_TR("Off", "D\xC3\xA9sactiv\xC3\xA9");
+  const char* offNow = MECK_TR("Off now", "D\xC3\xA9sactiv\xC3\xA9");
+  const char* pauses = MECK_TR("Pauses", "En pause");
+  const char* keeps = MECK_TR("Keeps running", "Reste actif");
+  auto line = [&](const char* text) { snprintf(st.line, sizeof(st.line), "%s", text); };
+  // When locked view: the switch is the setting, the line what it does
+  auto policy = [&](uint8_t bit, bool runningNow, const char* keepText) {
+    st.on = p->lock_keep & bit;
+    line(!runningNow ? offNow : st.on ? keepText : pauses);
+  };
+
+  switch (item) {
+    case QS_BLE:
+      st.on = meckCompanionIsBLE();
+      if (!st.on) line(off);
+      else if (meckCompanionBleConnected()) line(MECK_TR("App connected", "Appli connect\xC3\xA9" "e"));
+      else if (the_mesh.getBLEPin() != 0) snprintf(st.line, sizeof(st.line), "PIN %d", (int)the_mesh.getBLEPin());
+      else line(MECK_TR("Waiting for app", "Attente de l'appli"));
+      break;
+    case QS_WIFI:
+      st.on = meckCompanionIsWiFi();
+      if (!st.on) line(off);
+      else if (WiFi.status() == WL_CONNECTED)
+        line(meckCompanionWifiConnected() ? MECK_TR("App connected", "Appli connect\xC3\xA9" "e") : WiFi.SSID().c_str());
+      else if (meckWifiConnectPending) { st.pending = true; line(MECK_TR("Joining\xE2\x80\xA6", "Connexion\xE2\x80\xA6")); }
+      else line(MECK_TR("No network", "Pas de r\xC3\xA9seau"));
+      break;
+    case QS_GPS: {
+      st.on = ui_task.getGPSState();
+      LocationProvider* loc = sensors.getLocationProvider();
+      if (!st.on) line(off);
+      else if (loc && loc->isValid()) snprintf(st.line, sizeof(st.line), MECK_TR("Fix, %ld sat.", "Position, %ld sat."), loc->satellitesCount());
+      else line(MECK_TR("Searching\xE2\x80\xA6", "Recherche\xE2\x80\xA6"));
+      break;
+    }
+    case QS_MODEM: {
+      ModemState ms = modemManager.getState();
+      st.on = ms != ModemState::OFF;
+      switch (ms) {
+        case ModemState::OFF:          line(off); break;
+        case ModemState::POWERING_ON:
+        case ModemState::INITIALIZING: st.pending = true; line(MECK_TR("Starting\xE2\x80\xA6", "D\xC3\xA9marrage\xE2\x80\xA6")); break;
+        case ModemState::REGISTERING:  st.pending = true; line(MECK_TR("Searching\xE2\x80\xA6", "Recherche\xE2\x80\xA6")); break;
+        case ModemState::ERROR:        line(MECK_TR("Error", "Erreur")); break;
+        case ModemState::DIALING:
+        case ModemState::RINGING_IN:
+        case ModemState::IN_CALL:      line(MECK_TR("Call", "Appel")); break;
+        default:
+          if (modemManager.getOperator()[0])
+            snprintf(st.line, sizeof(st.line), "%s %d/5", modemManager.getOperator(), modemManager.getSignalBars());
+          else line(MECK_TR("Ready", "Pr\xC3\xAAt"));
+          break;
+      }
+      break;
+    }
+    case QS_TONES:
+      st.on = !p->buzzer_quiet;
+      line(st.on ? MECK_TR("On", "Activ\xC3\xA9") : off);
+      break;
+    case QS_VIBRATE:
+      st.on = p->notif_vibrate;
+      line(st.on ? MECK_TR("On", "Activ\xC3\xA9") : off);
+      break;
+    case QS_LIGHT:
+      st.on = board.isBacklightOn();
+      if (st.on) snprintf(st.line, sizeof(st.line), "%d %%", (int)p->backlight_brightness_pct);
+      else line(off);
+      break;
+    case QS_KEYS:
+      st.on = keyboardBacklightIsOn();
+      if (st.on) snprintf(st.line, sizeof(st.line), "%d %%", (int)p->kb_backlight_pct);
+      else line(off);
+      break;
+
+    case QS_L_BLE:
+      // The phone when locked (ble_lock_window): stay connected, or sync
+      // windows every few minutes
+#ifdef MECK_BLE_LOCK_WINDOWS
+      st.on = !p->ble_lock_window;
+      if (!meckCompanionIsBLE()) line(offNow);
+      else if (st.on) line(MECK_TR("Stay connected", "Reste connect\xC3\xA9"));
+      else snprintf(st.line, sizeof(st.line), MECK_TR("Sync every %d min", "Synchro %d min"), (int)p->ble_lock_window);
+#else
+      st.available = false;
+#endif
+      break;
+    case QS_L_WIFI:    policy(LOCK_KEEP_WIFI, meckCompanionIsWiFi(), keeps); break;
+    case QS_L_GPS:
+      policy(LOCK_KEEP_GPS, ui_task.getGPSState(), MECK_TR("Keeps tracking", "Reste actif"));
+      // Experimental Features "GPS when locked": a fix every few minutes
+      if (st.on && ui_task.getGPSState() && p->gps_lock_interval)
+        snprintf(st.line, sizeof(st.line), MECK_TR("Fix every %d min", "Position %d min"), (int)p->gps_lock_interval);
+      break;
+    case QS_L_MODEM:   policy(LOCK_KEEP_MODEM, modemManager.getState() != ModemState::OFF,
+                              MECK_TR("Calls, SMS arrive", "Appels, SMS")); break;
+    case QS_L_TONES:
+      st.on = p->lock_keep & LOCK_KEEP_TONES;
+      line(p->buzzer_quiet ? offNow : st.on ? MECK_TR("Sound", "Son") : MECK_TR("Silent", "Silencieux"));
+      break;
+    case QS_L_VIBRATE:
+      st.on = p->lock_keep & LOCK_KEEP_VIB;
+      line(!p->notif_vibrate ? offNow : st.on ? MECK_TR("Vibrates", "Vibre") : MECK_TR("Still", "Immobile"));
+      break;
+    case QS_L_SAVING:
+      st.on = p->lock_sleep;
+      line(st.on ? MECK_TR("Light sleep", "Veille l\xC3\xA9g\xC3\xA8re") : MECK_TR("Never sleeps", "Jamais en veille"));
+      break;
+    case QS_L_USB:
+      st.on = p->lock_keep & LOCK_KEEP_USB;
+      line(st.on ? MECK_TR("Stays awake", "Reste \xC3\xA9veill\xC3\xA9") : MECK_TR("Sleeps too", "En veille aussi"));
+      break;
+    default:
+      st.available = false;
+      break;
+  }
+}
+
+void meckQsSwitch(QsItem item) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  auto flip = [&](uint8_t bit) { p->lock_keep ^= bit; the_mesh.savePrefs(); };
+  switch (item) {
+    case QS_BLE:      if (meckCompanionIsBLE()) meckCompanionBleOff(); else meckCompanionUseBLE(); break;
+    case QS_WIFI:     if (meckCompanionIsWiFi()) meckCompanionWifiOff(); else meckCompanionUseWiFi(true); break;
+    case QS_GPS:      ui_task.setGPS(!ui_task.getGPSState(), false); break;
+    case QS_MODEM:    meckQsModemSet(modemManager.getState() == ModemState::OFF); break;
+    case QS_TONES:    ui_task.setTonesOn(p->buzzer_quiet); break;
+    case QS_VIBRATE:  p->notif_vibrate = !p->notif_vibrate; the_mesh.savePrefs(); break;
+    case QS_LIGHT:    meckFrontlightToggle(); break;
+    case QS_KEYS:     toggleKeyboardBacklight(); break;
+    case QS_L_BLE: {
+#ifdef MECK_BLE_LOCK_WINDOWS
+      // Off: sync windows at the last interval used (5 min at first)
+      static uint8_t lastWindow = 5;
+      if (p->ble_lock_window) { lastWindow = p->ble_lock_window; p->ble_lock_window = 0; }
+      else p->ble_lock_window = lastWindow;
+      the_mesh.savePrefs();
+#endif
+      break;
+    }
+    case QS_L_WIFI:   flip(LOCK_KEEP_WIFI); break;
+    case QS_L_GPS:    flip(LOCK_KEEP_GPS); break;
+    case QS_L_MODEM:  flip(LOCK_KEEP_MODEM); break;
+    case QS_L_TONES:  flip(LOCK_KEEP_TONES); break;
+    case QS_L_VIBRATE: flip(LOCK_KEEP_VIB); break;
+    case QS_L_USB:    flip(LOCK_KEEP_USB); break;
+    case QS_L_SAVING: p->lock_sleep = !p->lock_sleep; the_mesh.savePrefs(); break;
+    default: break;
+  }
+  ui_task.forceRefresh();
+}
+
+// What a lock would do now. Currents are the battery measurements in
+// docs/power-saving-ideas.md.
+void meckQsLockVerdict(char* buf, size_t len) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  const char* locked = MECK_TR("Locked", "Verrouill\xC3\xA9");
+  if (!p->lock_sleep) {
+    snprintf(buf, len, "%s: %s", locked, MECK_TR("never sleeps, ~35 mA", "jamais en veille, ~35 mA"));
+    return;
+  }
+  char what[48] = "";
+  auto add = [&](const char* name) {
+    if (what[0]) strlcat(what, ", ", sizeof(what));
+    strlcat(what, name, sizeof(what));
+  };
+  if ((p->lock_keep & LOCK_KEEP_WIFI) && WiFi.getMode() != WIFI_MODE_NULL) add("WiFi");
+  if ((p->lock_keep & LOCK_KEEP_MODEM) && modemManager.getState() != ModemState::OFF) add("4G");
+  // With sync windows a connected phone does not keep it awake
+  if (serial_interface.isConnected() && !p->ble_lock_window) add(MECK_TR("app", "appli"));
+  if ((p->lock_keep & LOCK_KEEP_USB) && board.isUsbPowered()) add("USB");
+  if (what[0]) {
+    snprintf(buf, len, "%s: %s %s", locked, MECK_TR("awake for", "\xC3\xA9veill\xC3\xA9 pour"), what);
+  } else if ((p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState() && p->gps_lock_interval) {
+    snprintf(buf, len, MECK_TR("%s: sleeps, GPS every %d min", "%s : veille, GPS %d min"), locked, (int)p->gps_lock_interval);
+  } else if ((p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState()) {
+    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, GPS on, ~32 mA", "veille, GPS actif, ~32 mA"));
+  } else {
+    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, ~17 mA", "veille, ~17 mA"));
+  }
+}
+
+// Radios whose "When locked" switch is off go off on lock and come back on
+// unlock. Only what this switched off comes back; the saved settings
+// (GPS, modem) are not touched.
+static bool meckPausedWifi = false;
+static bool meckPausedGps = false;
+static bool meckPausedModem = false;
+
+void meckLockPolicy(bool locking) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  if (locking) {
+    if (!(p->lock_keep & LOCK_KEEP_WIFI) && meckCompanionIsWiFi()) {
+      meckCompanionWifiOff();
+      meckPausedWifi = true;
+    }
+    // A running SOS switches the GPS itself
+    if (!(p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState() && !meckSos.running()) {
+      sensors.setSettingValue("gps", "0");
+      board.gpsPowerOff();
+      meckPausedGps = true;
+    }
+    if (!(p->lock_keep & LOCK_KEEP_MODEM) && modemManager.getState() != ModemState::OFF && !modemManager.isCallActive()) {
+      modemManager.shutdown();
+      meckPausedModem = true;
+    }
+    Serial.printf("[Power] Locked: paused%s%s%s\n", meckPausedWifi ? " WiFi" : "",
+                  meckPausedGps ? " GPS" : "", meckPausedModem ? " 4G" : "");
+  } else {
+    if (meckPausedWifi) meckCompanionUseWiFi(true);
+    if (meckPausedGps && ui_task.getGPSState()) {
+      sensors.setSettingValue("gps", "1");
+      board.gpsPowerOn();
+      meckGpsConfigureSoon();   // the module may have forgotten it with the power
+    }
+    if (meckPausedModem) modemManager.begin();
+    meckPausedWifi = meckPausedGps = meckPausedModem = false;
+  }
+}
+#endif
 
 // Called at the end of loop() instead of the plain locked-loop delay
 static void meckLockSleepStep() {
@@ -5053,6 +5460,9 @@ void loop() {
   // The SOS countdown and screen show over compose and the other text
   // entry modes, which are left as they were for when the SOS screen closes
   bool sosOnTop = meckSos.state() == MeckSos::COUNTDOWN || ui_task.isOnSosScreen();
+  #ifdef MECK_QUICK_SETTINGS
+  if (ui_task.isOnQuickSettings()) sosOnTop = true;   // quick settings show over them the same way
+  #endif
   if (sosOnTop || (!composeMode && !notesSuppressLoop && !smsSuppressLoop && !dialerNeedsRefresh
   #ifdef MECK_WEB_READER
       && !webReaderTextEntry
@@ -5525,8 +5935,9 @@ void initKeyboard() {
 // normal key path below and by the Game Boy emulator, whose raw joypad mode
 // reads the keyboard itself, so the on/off state lives here rather than in
 // handleKeyboardInput().
+static bool kbdBacklightOn = false;
+bool keyboardBacklightIsOn() { return kbdBacklightOn; }
 void toggleKeyboardBacklight() {
-  static bool kbdBacklightOn = false;
   kbdBacklightOn = !kbdBacklightOn;
   uint8_t kbPct = the_mesh.getNodePrefs()->kb_backlight_pct;
   analogWrite(KB_BL_PIN, kbdBacklightOn ? (uint8_t)((kbPct * 255 + 50) / 100) : 0);
@@ -5589,6 +6000,22 @@ void handleKeyboardInput() {
     }
     return;
   }
+
+#ifdef MECK_QUICK_SETTINGS
+  // Quick settings: Alt+Space opens and closes it over any screen, text
+  // entry included; while it is up it takes every key
+  if (key == KB_KEY_QUICK) {
+    meckQsToggleOpen();
+    return;
+  }
+  if (ui_task.isOnQuickSettings()) {
+    ui_task.injectKey(key);
+    meckQsAfterInput();
+    return;
+  }
+#elif defined(KB_KEY_QUICK)
+  if (key == KB_KEY_QUICK) key = ' ';   // no quick settings here: Alt+Space types a space, as before
+#endif
 
   // Telemetry request prompt (experimental): Enter allows, Q denies
   if (ui_task.isTelemetryPromptActive()) {

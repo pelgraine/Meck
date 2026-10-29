@@ -186,8 +186,9 @@ public:
         ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
         ui2Key("X", MECK_TR("Clear", "Vider")),
         ui2Key("Q", MECK_TR("Back", "Retour")),
+        ui2Key("A/D", MECK_TR("Page", "Page"), true),
       };
-      Ui2Chrome::footer(c, keys, 4);
+      Ui2Chrome::footer(c, keys, _itemCount > ROWS_PER_PAGE ? 5 : 4);
     }
     return 5000;
   }
@@ -407,11 +408,15 @@ public:
       return false;
     }
 
-    // A / D -- consumed (no channel cycling from picker)
-    if (c == 'a' || c == 'A' || c == KEY_LEFT) {
-      return true;
-    }
-    if (c == 'd' || c == 'D' || c == KEY_RIGHT) {
+    // A / D -- a page back / forward in UI v2; consumed otherwise (no
+    // channel cycling from the picker)
+    if (c == 'a' || c == 'A' || c == KEY_LEFT || c == 'd' || c == 'D' || c == KEY_RIGHT) {
+#ifdef MECK_UI_V2
+      if (_itemCount > 0) {
+        bool back = (c == 'a' || c == 'A' || c == KEY_LEFT);
+        _cursor = Ui2List::pageJump(_cursor, _itemCount, ui2::ROWS_PER_PAGE, back ? -1 : 1);
+      }
+#endif
       return true;
     }
 

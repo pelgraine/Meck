@@ -398,5 +398,13 @@
  "wifi2": {
   "stroke": "M4 9.5A5.5 5.5 0 0 1 12 9.5",
   "fill": "M7 12H9V14H7Z"
+ },
+ "vibrate": {
+  "stroke": "M5.5 2.5H10.5V13.5H5.5ZM3 5V11M13 5V11M1 6.5V9.5M15 6.5V9.5",
+  "fill": ""
+ },
+ "keyboard": {
+  "stroke": "M1 4H15V12H1ZM4.5 9.5H11.5",
+  "fill": "M3 6H4.5V7.5H3ZM5.75 6H7.25V7.5H5.75ZM8.75 6H10.25V7.5H8.75ZM11.5 6H13V7.5H11.5Z"
  }
 }

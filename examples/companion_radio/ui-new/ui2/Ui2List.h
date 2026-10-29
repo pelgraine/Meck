@@ -56,6 +56,13 @@ namespace Ui2List {
   inline int pageOf(int index, int perPage) { return perPage > 0 ? index / perPage : 0; }
   inline int pageCount(int count, int perPage) { return perPage > 0 ? (count + perPage - 1) / perPage : 1; }
   inline int pageStart(int index, int perPage) { return pageOf(index, perPage) * perPage; }
+  // A/D paging: the first row of the page before (dir -1) or after (+1) the
+  // one holding index; past either end, the first or last row
+  inline int pageJump(int index, int count, int perPage, int dir) {
+    int i = pageStart(index, perPage) + dir * perPage;
+    if (i > count - 1) i = count - 1;
+    return i < 0 ? 0 : i;
+  }
   // Writes "p / n" (1-based) into buf; empty when everything fits one page
   void pageLabel(char* buf, size_t len, int index, int count, int perPage);
   // Row under a physical y in a list whose first row starts at `top`; -1 if none
