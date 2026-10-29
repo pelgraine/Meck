@@ -4094,11 +4094,13 @@ public:
         if (_notifSoundSelected < totalItems - 1) _notifSoundSelected++;
         return true;
       }
+#ifdef MECK_UI_V2
       if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {   // a page back / forward
         _notifSoundSelected = Ui2List::pageJump(_notifSoundSelected, totalItems, ui2::ROWS_PER_PAGE,
                                                 (c == 'a' || c == 'A') ? -1 : 1);
         return true;
       }
+#endif
       if (c == '\r' || c == 13) {
         // Select: 0 = clear (default silent), [MAX: 1 = vibrate], rest = file
         if (_notifSoundSelected == 0) {
@@ -4134,11 +4136,13 @@ public:
         if (_sharePickerIdx < _shareContactCount - 1) _sharePickerIdx++;
         return true;
       }
+#ifdef MECK_UI_V2
       if ((c == 'a' || c == 'A' || c == 'd' || c == 'D') && _shareContactCount > 0) {   // a page back / forward
         _sharePickerIdx = Ui2List::pageJump(_sharePickerIdx, _shareContactCount, ui2::ROWS_PER_PAGE,
                                             (c == 'a' || c == 'A') ? -1 : 1);
         return true;
       }
+#endif
       if (c == '\r' || c == 13) {
         if (_shareContactCount > 0) {
           _shareContactIdx = _shareContacts[_sharePickerIdx];
@@ -4227,11 +4231,13 @@ public:
           if (_wifiSSIDSelected < _wifiSSIDCount - 1) _wifiSSIDSelected++;
           return true;
         }
+#ifdef MECK_UI_V2
         if ((c == 'a' || c == 'A' || c == 'd' || c == 'D') && _wifiSSIDCount > 0) {   // a page back / forward
           _wifiSSIDSelected = Ui2List::pageJump(_wifiSSIDSelected, _wifiSSIDCount, ui2::ROWS_PER_PAGE,
                                                 (c == 'a' || c == 'A') ? -1 : 1);
           return true;
         }
+#endif
         if (c == 'r' || c == 'R') {
           // Rescan — lets user toggle hotspot on then retry
           requestWifiScan();
