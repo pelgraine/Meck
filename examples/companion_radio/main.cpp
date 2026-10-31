@@ -5856,14 +5856,16 @@ void loop() {
   #endif // MECK_TOUCH_ENABLED
 
   // Poll touch input for phone dialer numpad
-  // Hybrid debounce: finger-up detection + 150ms minimum between accepted taps.
-  // The CST328 INT pin is pulse-based (not level), so getPoint() can return
-  // false intermittently during a hold. Time guard prevents that from
-  // causing repeat fires.
+  // Debounce: one key per finger-down. The touch INT is pulse-based (not
+  // level), so a held finger reads as "no point" on most loop passes between
+  // reports. The finger counts as lifted only after 150 ms without any
+  // report; timing that from the accepted tap instead re-armed mid-hold and
+  // typed every tapped digit twice.
   #if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
   {
     static bool touchFingerDown = false;
     static unsigned long lastTouchAccepted = 0;
+    static unsigned long lastTouchSeen = 0;
 
     if (smsMode) {
       SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
@@ -5879,6 +5881,7 @@ void loop() {
         if (touchInput.getPoint(tx, ty)) {
         #endif
           unsigned long now = millis();
+          lastTouchSeen = now;
           if (!touchFingerDown && (now - lastTouchAccepted >= 150)) {
             touchFingerDown = true;
             lastTouchAccepted = now;
@@ -5891,9 +5894,7 @@ void loop() {
             }
           }
         } else {
-          // Only allow finger-up after 100ms from last acceptance
-          // (prevents INT pulse misses from resetting state mid-hold)
-          if (touchFingerDown && (millis() - lastTouchAccepted >= 100)) {
+          if (touchFingerDown && (millis() - lastTouchSeen >= 150)) {
             touchFingerDown = false;
           }
         }
