@@ -229,6 +229,16 @@ public:
   void printPowerStats();
   bool isUartAsleep() const { return _uartAsleep; }
 
+  // ESP32 light sleep with the modem on (MODEM_UART_SLEEP, main loop).
+  // canEspSleep(): the modem is in UART sleep with nothing to do, so the
+  // ESP32 may sleep too; RI wakes it. prepareEspSleep() right before
+  // esp_light_sleep_start(), afterEspSleep() right after it, before the
+  // other GPIO wakes are looked at; gpioWake: a GPIO wake that was not the
+  // button.
+  bool canEspSleep() const;
+  void prepareEspSleep();
+  void afterEspSleep(bool gpioWake);
+
   static const char* stateToString(ModemState s);
 
   // Persistent enable/disable config (SD file /sms/modem.cfg)
@@ -251,6 +261,7 @@ private:
   unsigned long _readySince = 0;
   uint32_t _asleepMs = 0;               // DTR high since READY, completed spans
   uint32_t _riCount = 0, _dtrWakes = 0;
+  uint32_t _espSleeps = 0, _espRiWakes = 0;   // ESP32 light sleeps with the modem on
   uint32_t _smsPollsUrc = 0, _smsPollsSafety = 0;
   char _operator[24] = {0};
 

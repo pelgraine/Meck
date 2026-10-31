@@ -3673,7 +3673,9 @@ int meckLockSleepBlocker() {
   // Radios the user switched on come first: they still drain the battery
   // once the cable is out, so the lock warning names them even on USB.
 #ifdef HAS_4G_MODEM
-  if (modemManager.getState() != ModemState::OFF) return MECK_SLEEP_MODEM;
+  // With UART sleep the modem only blocks while it has something to do
+  // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
+  if (modemManager.getState() != ModemState::OFF && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
   if (WiFi.getMode() != WIFI_MODE_NULL) return MECK_SLEEP_WIFI;
   if (board.isUsbPowered()) return MECK_SLEEP_USB;
@@ -3762,15 +3764,39 @@ static void meckLockSleepStep() {
   esp_sleep_enable_timer_wakeup(us);
   esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);
   gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+#ifdef MODEM_UART_SLEEP
+  // Got here with the modem on only if it is idle in UART sleep: RI is a
+  // second GPIO wake (calls, SMS, other URCs)
+  bool modemOn = modemManager.getState() != ModemState::OFF;
+  if (modemOn) modemManager.prepareEspSleep();
+#endif
   esp_sleep_enable_gpio_wakeup();
   Serial.flush();
   int64_t sleepStart = esp_timer_get_time();   // esp_timer keeps counting through light sleep
   esp_light_sleep_start();
   meckSleptUs += (uint64_t)(esp_timer_get_time() - sleepStart);
+  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
+  // A GPIO wake with the button up was RI (it pulses for 60-120 ms, a
+  // click lasts longer than the wake-up)
+  bool riWake = false;
+#ifdef MODEM_UART_SLEEP
+  if (modemOn) {
+    bool gpioNotBtn = wakeCause == ESP_SLEEP_WAKEUP_GPIO && digitalRead(PIN_USER_BTN) != LOW;
+    modemManager.afterEspSleep(gpioNotBtn);
+    riWake = gpioNotBtn;
+  }
+#endif
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
-  switch (esp_sleep_get_wakeup_cause()) {
+  if (riWake) {
+    // The modem task reads the SMS or sees the call; the modem blocker
+    // keeps the deck awake while it does
+    meckAwakeUntil = millis() + 300;
+    return;
+  }
+
+  switch (wakeCause) {
     case ESP_SLEEP_WAKEUP_EXT1:
       meckAwakeUntil = millis() + 2000;   // at most: receive, maybe ACK / forward
       meckRxPasses = 0;                    // usually ends early (meckRxHandled)

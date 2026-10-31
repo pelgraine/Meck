@@ -5,6 +5,7 @@
 #include <SD.h>     // For modem config persistence
 #include <time.h>
 #include <sys/time.h>
+#include <driver/gpio.h>
 
 #if defined(LilyGo_TDeck_Pro_Max)
   #include <TDeckProMaxBoard.h>   // MAX: XL9555-routed modem power/PWRKEY
@@ -54,6 +55,7 @@ void ModemManager::begin() {
   _readySince = 0;
   _asleepMs = 0;
   _riCount = _dtrWakes = 0;
+  _espSleeps = _espRiWakes = 0;
   _smsPollsUrc = _smsPollsSafety = 0;
   _imei[0] = '\0';
   _imsi[0] = '\0';
@@ -1520,8 +1522,8 @@ bool ModemManager::waitResponse(const char* expect, uint32_t timeout_ms,
 bool ModemManager::wakeUart() {
 #ifdef MODEM_UART_SLEEP
   if (!_uartAsleep) return false;
+  _uartAsleep = false;   // first: canEspSleep() on the other core reads it
   digitalWrite(MODEM_DTR, LOW);
-  _uartAsleep = false;
   _asleepMs += millis() - _sleepStart;
   _dtrWakes++;
   vTaskDelay(pdMS_TO_TICKS(MODEM_DTR_WAKE_MS));
@@ -1552,6 +1554,60 @@ void IRAM_ATTR ModemManager::riIsr() {
   if (woken) portYIELD_FROM_ISR();
 }
 
+// ---------------------------------------------------------------------------
+// ESP32 light sleep with the modem on (MODEM_UART_SLEEP). Called from the
+// main loop (core 1) while the modem task runs on core 0.
+// ---------------------------------------------------------------------------
+
+bool ModemManager::canEspSleep() const {
+#ifdef MODEM_UART_SLEEP
+  // DTR high means the task found nothing to do; anything since then (a
+  // URC, a queued SMS, call or tone) keeps the ESP32 up until it is done
+  if (!_sleepEnabled || !_uartAsleep || _riFlag) return false;
+  if (_state != ModemState::READY || _ringing || _toneActive || _notifTonePlaying) return false;
+  if (_smsPending || _pendingToneIdx >= 0 || _urcPos > 0) return false;
+  if (uxQueueMessagesWaiting(_sendQueue) || uxQueueMessagesWaiting(_callCmdQueue)) return false;
+  if (uxQueueMessagesWaiting(_recvQueue) || uxQueueMessagesWaiting(_callEvtQueue)) return false;
+  if (digitalRead(MODEM_RI) == LOW) return false;
+  if (millis() - _lastActivity < MODEM_IDLE_BEFORE_SLEEP_MS) return false;
+  return true;
+#else
+  return false;
+#endif
+}
+
+void ModemManager::prepareEspSleep() {
+#ifdef MODEM_UART_SLEEP
+  // DTR stays high through the sleep, or the modem would wake with it
+  gpio_hold_en((gpio_num_t)MODEM_DTR);
+  // The level wake below changes the pin's interrupt type: keep the edge
+  // ISR off meanwhile, or a low RI after the wake would retrigger it
+  // until afterEspSleep()
+  gpio_intr_disable((gpio_num_t)MODEM_RI);
+  gpio_wakeup_enable((gpio_num_t)MODEM_RI, GPIO_INTR_LOW_LEVEL);
+  _espSleeps++;
+#endif
+}
+
+void ModemManager::afterEspSleep(bool gpioWake) {
+#ifdef MODEM_UART_SLEEP
+  bool riLow = digitalRead(MODEM_RI) == LOW;
+  gpio_wakeup_disable((gpio_num_t)MODEM_RI);
+  gpio_set_intr_type((gpio_num_t)MODEM_RI, GPIO_INTR_NEGEDGE);
+  gpio_intr_enable((gpio_num_t)MODEM_RI);
+  gpio_hold_dis((gpio_num_t)MODEM_DTR);
+  // The URC that came with RI may have been cut short while the ESP32 woke
+  // up: the task looks for SMS (and sees a call by RI staying low) itself.
+  // A GPIO wake with RI already high again is also taken as RI: the button
+  // is checked by the caller first.
+  if (riLow || gpioWake) {
+    _espRiWakes++;
+    _riFlag = true;
+    if (_taskHandle) xTaskNotifyGive(_taskHandle);
+  }
+#endif
+}
+
 void ModemManager::printPowerStats() {
   Serial.printf("modem: state=%s locked=%d csq=%d sms_polls urc=%lu safety=%lu\n",
                 stateToString(_state), (int)_locked, _csq,
@@ -1567,6 +1623,8 @@ void ModemManager::printPowerStats() {
                 (unsigned long)(total ? (uint64_t)asleep * 100 / total : 0),
                 (unsigned long)_riCount, (unsigned long)_dtrWakes,
                 digitalRead(MODEM_RI), digitalRead(MODEM_DTR));
+  Serial.printf("modem: esp32 may sleep %d, light sleeps %lu, ri wakes %lu\n",
+                (int)canEspSleep(), (unsigned long)_espSleeps, (unsigned long)_espRiWakes);
 #else
   Serial.println("modem: uart sleep not built");
 #endif

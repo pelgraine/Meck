@@ -365,10 +365,32 @@ rings in (until ATA or the caller hangs up).
    low after the modem power is off and releases RI. `-D
    MODEM_NO_UART_SLEEP` builds without it.
 
-The modem is still a sleep blocker for the ESP32, so this only saves on
-the modem side: expected from about 12 mA to 2-3 mA plus the wakes. The
-power log flag shows the modem on; `pwrmodem` on the debug CLI shows the
-state, the time asleep since READY, RI falls, DTR wakes and SMS reads.
+3. **The ESP32 sleeps with the modem on (MAX, branch
+   `modem-light-sleep`).** The modem is the sleep blocker MODEM only
+   while it has something to do: not READY, a call, a tone, an SMS or
+   call queued or not yet handed to the main loop, an SMS to read, RI
+   low, a URC half read, or less than 2 s since the last byte or AT
+   command. Idle, DTR is high (UART sleep) and the deck light-sleeps as
+   without the modem. DTR is held high through the sleep
+   (`gpio_hold_en`), RI is a second GPIO wake source (low level) next to
+   the button; its edge interrupt is off during the sleep and set back
+   after it. A GPIO wake with the button up is taken as RI: the task is
+   woken and reads SMS (the URC itself may have been lost while the ESP32
+   woke up), and a call ringing in keeps RI low, so the modem stays awake
+   and the RING repeats. No wake window beyond 300 ms: the modem blocker
+   keeps the deck up while the task works. The modem task's 500 ms wait
+   needs no change: with the explicit sleep it simply does not run while
+   the ESP32 sleeps.
+
+The power log flag shows the modem on; `pwrmodem` on the debug CLI shows
+the state, the time asleep since READY, RI falls, DTR wakes, SMS reads,
+whether the ESP32 may sleep now, its light sleeps with the modem on and
+the RI wakes among them.
+
+Known gap: the main loop checks the modem (core 1) a moment before it
+sleeps, and the modem task (core 0) could start an AT command in
+between, e.g. the 10 min safety poll. That command then times out and
+fails once; the next poll repeats it.
 
 To check on the device (needs a SIM, and a test SMS and call from the
 user):
@@ -383,6 +405,13 @@ user):
    command after a wake).
 5. `pwrlog`: locked with the modem on, an hour before and after, ideally
    in the same place (the signal changes the current a lot).
+6. ESP32 light sleep with the modem on (step 3): locked on battery,
+   blocker "can sleep" with the modem on, `pwrmodem` shows light sleeps
+   going up. Then an SMS and a call to the locked, sleeping deck: does it
+   wake (`ri wakes`), does the SMS arrive, does the call ring. If it never
+   sleeps: `pwrmodem` "esp32 may sleep 0" and the reason (state, uart
+   asleep, ri pin). If the modem wakes by itself in each sleep (`dtr
+   wakes` with no command), DTR is not held high.
 
 ### Measured (2026-10-31, T-Deck MAX, T-Mobile CZ LTE, CSQ 17-19)
 
@@ -438,15 +467,9 @@ reset: the charger had just redone its input detection (charging current
 
 ### Next steps
 
-3. **Let the ESP32 sleep with the modem on.** With UART sleep working,
-   the modem need not block light sleep in READY: RI (IO7 is an RTC GPIO)
-   as a light sleep wake source (`gpio_wakeup_enable`, low level), DTR
-   kept high through sleep, blocker MODEM only for calls, tones, SMS
-   being sent and AT commands in flight. After an RI wake the first bytes
-   of the URC can be lost, so the task asks the modem (CMGL, CLCC)
-   instead of relying on the URC text. The modem task's 500 ms wait
-   would have to become a wait for RI or work queued. Expected: the
-   locked deck with 4G near today's sleep plus the modem's 2-3 mA.
+Expected with step 3: the locked deck with 4G near the sleep without it
+(about 13 mA) plus the modem's 2-3 mA and its wakes.
+
 4. **Network settings.** LTE only (`AT+CNMP=38`) stops searching 2G/3G
    with a weak signal, but calls then need VoLTE on the A7682E with the
    user's operator. eDRX (`AT+CEDRX`) with a short cycle would save more
@@ -473,5 +496,5 @@ CPU stays awake. So for now: WiFi off when not needed.
 3. Find the rest of the 13 mA floor (4).
 4. Automatic light sleep with BLE modem sleep (2.3): the big one, needs the
    custom sdkconfig.
-5. 4G: UART sleep first (implemented), then light sleep with RI as a wake
-   source (see "4G modem while locked").
+5. 4G: UART sleep, then light sleep with RI as a wake source (both
+   implemented, not yet tried on a device; see "4G modem while locked").
