@@ -384,44 +384,57 @@ user):
 5. `pwrlog`: locked with the modem on, an hour before and after, ideally
    in the same place (the signal changes the current a lot).
 
-### Measured (2026-10-31, partial: low cell, deck lost USB)
+### Measured (2026-10-31, T-Deck MAX, T-Mobile CZ LTE, CSQ 17-19)
 
 Built: `meck_max_ui2`, `meck_max_ble_wifi` and `meck_4g_ble_wifi`, no
 errors. "UART sleep enabled" was a MESH_DEBUG line (off in these builds),
-now a plain serial line. Flashed `meck_max_ui2`, hash verified.
+now a plain serial line.
 
-The deck had just been run flat; the cell was at 3.60-3.66 V on the PC's
-USB port, which charges it with only about 85 mA while the modem is on.
-At that voltage the A7682E restarts by itself every 20-25 s (`*ATREADY`,
-`+CREG: 0,0`, CSQ 99, "no network service"). It did the same on the old
-firmware just before flashing, so it is the supply, not this branch. The
-firmware does not notice a modem restart: CSCLK, ATE0 and CNMI are gone
-afterwards while `_sleepEnabled` stays true. So the numbers below show the
-firmware side only, not a modem that sleeps on a network.
+First try on a cell run flat (3.60-3.66 V, on the PC's USB port): the
+A7682E restarted by itself every 20-25 s (`*ATREADY`, `+CREG: 0,0`, CSQ
+99), on the old firmware as well. At 3.75 V it registered within 7 s of
+`*ATREADY`. The firmware does not notice a modem restart: CSCLK, ATE0 and
+CNMI are gone afterwards while `_sleepEnabled` stays true.
 
-- Init: the seven tones go over with `AT+CFTRANRX` (each `AT+FSDEL`
-  before it answers ERROR, one timed out; the per-tone result is a
-  MESH_DEBUG line). `AT+CSCLK=1` answered OK both times, then "UART sleep
-  enabled".
-- SMS: one `AT+CMGL` right after READY, no 10 s polling. The other reads
-  came from RI falls, which the modem restarts cause (8 in 4 min).
-- `pwrmodem`: "uart sleep on", asleep 196 of 244 s (80 %) and 43 of
-  54 s (79 %); dtr wakes 10 in 244 s (2.5 a minute, restarts included);
-  ri pin 1 and dtr pin 0 while awake. "TX (after wake)" never appeared,
-  but with CSCLK lost at each restart the 50 ms wake is not really tested.
-- Unlocked: `AT+CSQ` every 30-31 s (6 in a row). Locked: none. Unlock:
-  `AT+CMGL` at once and `AT+CSQ` 5 s later.
-- 4G off in settings (twice): `AT+CPOF` OK the first time (no answer the
-  second, the modem was restarting), GPIO8 output LOW, `pwrmodem` OFF,
-  XL9555 modem=0. Charging current went from 85 to 133 mA, so the modem
-  really draws nothing once off.
-- 4G on again: init to READY and "UART sleep enabled", but the modem kept
-  restarting (cell 3.65 V).
-- Not done: 10 min of `pwrmodem`, the locked test with screenshots, and
-  the battery comparison with and without `MODEM_NO_UART_SLEEP` (`pwrhiz`
-  runs). After 36 min locked on USB with 4G off the deck dropped off USB
-  (21:50) and needs the reset button; the power log should show whether
-  it slept. Charge the deck above about 3.75 V before trying again.
+On a working network (3.75 V):
+- Boot: `AT+CSCLK=1` OK, "UART sleep enabled" 30 s after `*ATREADY`; the
+  seven tones go over with `AT+CFTRANRX` with no timeout (each `AT+FSDEL`
+  before it answers ERROR; the per-tone result is a MESH_DEBUG line). One
+  `AT+CMGL` after READY, then none until the 10 min safety poll.
+- `pwrmodem` every minute for 10.7 min: "uart sleep on", "asleep" every
+  time, asleep 98 % (630 of 640 s), 3 DTR wakes (2 CSQ while still
+  unlocked, 1 safety poll), ri falls 0, ri pin 1, dtr pin 1. Over the
+  15 min locked battery run: asleep 99 %, 2 DTR wakes.
+- Unlocked: `AT+CSQ` every 30-31 s, each answered at once. "TX (after
+  wake)" never appeared, so 50 ms after DTR low is enough.
+- Locked: no CSQ. Unlock: one `AT+CMGL` and one `AT+CSQ` at once. SMS
+  screen and settings show T-Mobile CZ 4/5 as before.
+- Battery (locked, 4G on, `pwrhiz 1` for 15 min, same place, GPS off, no
+  BLE): **112.6 mA** with UART sleep, **144.7 mA** with
+  `-D MODEM_NO_UART_SLEEP` (gauge avgI every 30 s; 27 vs 35 mAh by the
+  gauge's remaining capacity). UART sleep saves about 32 mA, more than
+  the 10 mA the hardware design guide suggests. The deck stays awake in
+  both (the modem is the sleep blocker); the rest is the ESP32 awake.
+- `pwrhiz` used to end after about 40 s: setting EN_HIZ puts the SY6970
+  in host mode and its I2C watchdog then restores the defaults. The
+  watchdog is now off during HIZ and back to 40 s after it; the run ended
+  by itself after 15 min and charging resumed.
+- 4G off in settings: `AT+CPOF` OK, GPIO8 output LOW, `pwrmodem` OFF,
+  XL9555 modem=0; the charging current rose by 48 mA, so the modem draws
+  nothing once off. 4G on again: READY after 14 s, "UART sleep enabled"
+  after 36 s.
+
+Still to test with someone at the deck: an SMS in (locked and unlocked:
+does RI fall, does it arrive at once), a call in while the modem sleeps
+(ring, answer, audio), an SMS and a call out right after the modem fell
+asleep, and an hour locked in `pwrlog`.
+
+Seen on the way, not from this branch: modem init sends `AT+CMGD=1,4`,
+which deletes SMS that arrived while the deck was off before they are
+read; `_state` is READY before the tones and CSCLK. And once, locked on
+USB with 4G off, the deck light-slept for 30 s and USB was gone until
+reset: the charger had just redone its input detection (charging current
+145 -> 450 mA), and one PG_STAT read of 0 was enough to let it sleep.
 
 ### Next steps
 
