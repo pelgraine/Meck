@@ -108,6 +108,12 @@ void ModemManager::shutdown() {
     vTaskDelay(pdMS_TO_TICKS(2000));  // Give time for AT+CHUP
   }
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  // The pulse leaves PWRKEY held down, which makes the A7682E power itself
+  // back on after AT+CPOF (auto power-on wiring)
+  board.modemPwrkeyRelease();
+#endif
+
   // Tell modem to power off gracefully
   if (xSemaphoreTake(_uartMutex, pdMS_TO_TICKS(2000))) {
     sendAT("AT+CPOF", "OK", 5000);
