@@ -503,6 +503,43 @@ asleep 59.3 s a minute before each): both came through at once.
 - RI wakes have no column of their own in the power log (they are not
   LoRa, button or timer wakes), only the shorter sleep in that minute.
 
+### Low battery (MAX)
+
+On 2026-10-31 the deck ran flat with 4G on and the modem kept running
+after the ESP32 died: the SGM6609 boost takes the cell directly and the
+XL9555 keeps 6609_EN high. Below about 3.65 V the A7682E also restarts by
+itself under load, and the 2.8 V shutdown was never reached.
+- **4G off first.** Below `MODEM_MIN_MILLIVOLTS` (3650, three readings
+  8 s apart, one wake apart while asleep) the modem is shut down, and
+  `begin()` refuses to start it until the cell is above
+  `MODEM_RESUME_MILLIVOLTS` (3800). Then it starts again by itself if 4G
+  is on in settings; the saved setting is never changed. The deck runs
+  on for LoRa. A low cell at boot keeps the modem off from the start.
+- **What the user sees.** An alert "Battery low: 4G off. Charge the
+  deck."; on the lock screen "Battery low, 4G off: charge now" (on USB
+  "4G off until charged") instead of the time estimate; in settings 4G
+  shows OFF with "Battery low: charge first", and turning it on is
+  refused with an alert.
+- **Shutdown at 3400 mV** instead of 2800, and PWRKEY is released before
+  `AT+CPOF` (the power-on pulse left it held down, which with the
+  auto power-on wiring can switch the A7682E back on).
+- Debug CLI `pwrmodemmv <mV>` makes the check see that voltage (0 = the
+  gauge), to test without draining the cell.
+
+Tried on the deck (2026-11-01, on USB, `pwrmodemmv`): at 3600 mV the
+modem went off 21 s later (`AT+CPOF` OK, state OFF, XL9555 modem=0,
+DTR low), the alert showed over the lock screen, the lock screen read
+"4G off until charged", the settings row and the refusal as above. At
+3800 mV it came back by itself: READY 16 s later, "UART sleep enabled"
+after 38 s, settings 4G ON. Not tried: the lock screen text on battery
+(a locked deck on battery sleeps and USB goes), a low cell at boot, the
+3400 mV shutdown.
+
+Also fixed on the way: with the charger watchdog off during `pwrhiz 1`,
+a reset in the 15 min window left the SY6970 in HIZ for good (the deck
+did not charge for 1.5 h). The first loop after boot now switches a
+leftover HIZ off.
+
 ### Next steps
 
 Expected with step 3: the locked deck with 4G near the sleep without it
