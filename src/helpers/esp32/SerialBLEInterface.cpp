@@ -91,10 +91,18 @@ static void onGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
       BLE_DEBUG_PRINTLN("phy update: status %d, tx %d, rx %d", param->phy_update.status,
                         param->phy_update.tx_phy, param->phy_update.rx_phy);
       break;
-    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT:
-      BLE_DEBUG_PRINTLN("data length: status %d, rx %u, tx %u", param->pkt_data_lenth_cmpl.status,
-                        param->pkt_data_lenth_cmpl.params.rx_len, param->pkt_data_lenth_cmpl.params.tx_len);
+    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT: {
+      // IDF 5 fixed the "lenth" misspelling of IDF 4
+#if ESP_IDF_VERSION_MAJOR >= 5
+      auto& dl = param->pkt_data_length_cmpl;
+#else
+      auto& dl = param->pkt_data_lenth_cmpl;
+#endif
+      BLE_DEBUG_PRINTLN("data length: status %d, rx %u, tx %u", dl.status,
+                        dl.params.rx_len, dl.params.tx_len);
+      (void)dl;
       break;
+    }
     default:
       break;
   }
