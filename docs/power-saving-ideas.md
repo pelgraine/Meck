@@ -490,9 +490,18 @@ OK, "UART sleep enabled", T-Mobile CZ CSQ 18.
   the reset; worth watching.
 
 About 22 mA is 6-9 mA above the expected 13 mA floor plus the modem's
-2-3 mA. Still to test with someone at the deck: an SMS and a call to the
-locked, sleeping deck (does RI wake it, does the SMS arrive, does the
-call ring and can it be answered).
+2-3 mA.
+
+SMS and call into the sleeping deck (2026-11-01, locked, `pwrhiz 1`,
+asleep 59.3 s a minute before each): both came through at once.
+- SMS: the RI pulse woke the deck, it was awake 3.4 s of that minute (no
+  LoRa or button wake in it) and the SMS was there right away; then back
+  to 59.3 s asleep a minute.
+- Call: it rang at once, answering worked and both sides heard each
+  other. The deck stayed awake from the first ring (blocker MODEM),
+  about 270 mA while ringing and 200 mA in the call.
+- RI wakes have no column of their own in the power log (they are not
+  LoRa, button or timer wakes), only the shorter sleep in that minute.
 
 ### Next steps
 
@@ -526,5 +535,5 @@ CPU stays awake. So for now: WiFi off when not needed.
 4. Automatic light sleep with BLE modem sleep (2.3): the big one, needs the
    custom sdkconfig.
 5. 4G: UART sleep, then light sleep with RI as a wake source (both
-   implemented; locked with 4G on 145 -> 113 -> 22 mA on the device, SMS
-   and call wakes not yet tried; see "4G modem while locked").
+   implemented; locked with 4G on 145 -> 113 -> 22 mA on the device, an
+   SMS and a call wake the sleeping deck; see "4G modem while locked").
