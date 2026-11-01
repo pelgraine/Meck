@@ -974,6 +974,17 @@ static uint32_t _atoi(const char* sp) {
   }
 
   void meckPowerTick() {
+    static bool bootChecked = false;
+    if (!bootChecked) {
+      // A reset during "pwrhiz 1" leaves the charger in HIZ with its
+      // watchdog off: nothing would end it and the deck would never charge
+      bootChecked = true;
+      int r0 = meckChgRead(0x00);
+      if (r0 >= 0 && (r0 & 0x80)) {
+        meckSetHiz(false);
+        Serial.println("pwr: HIZ was still on from before the reset, now off");
+      }
+    }
     if (meckHizUntil && (long)(millis() - meckHizUntil) >= 0) {
       meckSetHiz(false);
       Serial.println("pwr: HIZ timeout, USB input back on");
