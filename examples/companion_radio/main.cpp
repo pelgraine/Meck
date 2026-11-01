@@ -952,19 +952,39 @@ static uint32_t _atoi(const char* sp) {
     return Wire.read();
   }
 
+  static bool meckChgWrite(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(I2C_ADDR_SY6970);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+  }
+
   static bool meckSetHiz(bool on) {
     int r0 = meckChgRead(0x00);
     if (r0 < 0) return false;
-    uint8_t v = on ? (r0 | 0x80) : (r0 & 0x7F);
-    Wire.beginTransmission(I2C_ADDR_SY6970);
-    Wire.write((uint8_t)0x00);
-    Wire.write(v);
-    bool ok = Wire.endTransmission() == 0;
+    // Writing EN_HIZ puts the SY6970 in host mode: 40 s later its I2C
+    // watchdog would restore the default registers and charge again. Off
+    // while HIZ is on (also through a light sleep), back to 40 s after.
+    int r7 = meckChgRead(0x07);
+    if (on && r7 >= 0) meckChgWrite(0x07, (uint8_t)(r7 & ~0x30));
+    bool ok = meckChgWrite(0x00, on ? (r0 | 0x80) : (r0 & 0x7F));
+    if (!on && r7 >= 0) meckChgWrite(0x07, (uint8_t)((r7 & ~0x30) | 0x10));
     meckHizUntil = (ok && on) ? millis() + 15UL * 60 * 1000 : 0;
     return ok;
   }
 
   void meckPowerTick() {
+    static bool bootChecked = false;
+    if (!bootChecked) {
+      // A reset during "pwrhiz 1" leaves the charger in HIZ with its
+      // watchdog off: nothing would end it and the deck would never charge
+      bootChecked = true;
+      int r0 = meckChgRead(0x00);
+      if (r0 >= 0 && (r0 & 0x80)) {
+        meckSetHiz(false);
+        Serial.println("pwr: HIZ was still on from before the reset, now off");
+      }
+    }
     if (meckHizUntil && (long)(millis() - meckHizUntil) >= 0) {
       meckSetHiz(false);
       Serial.println("pwr: HIZ timeout, USB input back on");
@@ -980,6 +1000,15 @@ static uint32_t _atoi(const char* sp) {
     extern bool meckTxLogFlush();
     if (strcmp(cmd, "pwrlog") == 0) { meckPwrLogPrint(); return; }
     if (strcmp(cmd, "pwrchg") == 0) { board.chargerDebugPrint(); return; }   // charger + gauge, read-only
+#ifdef HAS_4G_MODEM
+    if (strcmp(cmd, "pwrmodem") == 0) { modemManager.printPowerStats(); return; }   // UART sleep, read-only
+    if (strncmp(cmd, "pwrmodemmv ", 11) == 0) {
+      // Test the low-battery 4G cut-off without draining the cell
+      modemManager.setTestMilliVolts((uint16_t)atoi(cmd + 11));
+      Serial.printf("pwr: modem battery check uses %s\n", atoi(cmd + 11) ? cmd + 11 : "the gauge");
+      return;
+    }
+#endif
     if (strcmp(cmd, "pwrcal") == 0) {
       // RC slow clock: the calibration in use vs fresh measurements
       // (values are the RC period in microseconds, Q13.19 fixed point)
@@ -3190,7 +3219,11 @@ void setup() {
 #else
       bool modemEnabled = ModemManager::loadEnabledConfig();
 #endif
-      if (modemEnabled) {
+#ifdef MODEM_MIN_MILLIVOLTS
+      // A low cell keeps 4G off from the start (it comes on after charging)
+      modemManager.checkBattery(board.getBattMilliVolts(), true);
+#endif
+      if (modemEnabled && !modemManager.isBatteryLow()) {
         modemManager.begin();
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
       } else {
@@ -3661,7 +3694,9 @@ int meckLockSleepBlocker() {
   // Radios the user switched on come first: they still drain the battery
   // once the cable is out, so the lock warning names them even on USB.
 #ifdef HAS_4G_MODEM
-  if (modemManager.getState() != ModemState::OFF) return MECK_SLEEP_MODEM;
+  // With UART sleep the modem only blocks while it has something to do
+  // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
+  if (modemManager.getState() != ModemState::OFF && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
   if (WiFi.getMode() != WIFI_MODE_NULL) return MECK_SLEEP_WIFI;
   if (board.isUsbPowered()) return MECK_SLEEP_USB;
@@ -3750,15 +3785,39 @@ static void meckLockSleepStep() {
   esp_sleep_enable_timer_wakeup(us);
   esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);
   gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+#ifdef MODEM_UART_SLEEP
+  // Got here with the modem on only if it is idle in UART sleep: RI is a
+  // second GPIO wake (calls, SMS, other URCs)
+  bool modemOn = modemManager.getState() != ModemState::OFF;
+  if (modemOn) modemManager.prepareEspSleep();
+#endif
   esp_sleep_enable_gpio_wakeup();
   Serial.flush();
   int64_t sleepStart = esp_timer_get_time();   // esp_timer keeps counting through light sleep
   esp_light_sleep_start();
   meckSleptUs += (uint64_t)(esp_timer_get_time() - sleepStart);
+  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
+  // A GPIO wake with the button up was RI (it pulses for 60-120 ms, a
+  // click lasts longer than the wake-up)
+  bool riWake = false;
+#ifdef MODEM_UART_SLEEP
+  if (modemOn) {
+    bool gpioNotBtn = wakeCause == ESP_SLEEP_WAKEUP_GPIO && digitalRead(PIN_USER_BTN) != LOW;
+    modemManager.afterEspSleep(gpioNotBtn);
+    riWake = gpioNotBtn;
+  }
+#endif
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
-  switch (esp_sleep_get_wakeup_cause()) {
+  if (riWake) {
+    // The modem task reads the SMS or sees the call; the modem blocker
+    // keeps the deck awake while it does
+    meckAwakeUntil = millis() + 300;
+    return;
+  }
+
+  switch (wakeCause) {
     case ESP_SLEEP_WAKEUP_EXT1:
       meckAwakeUntil = millis() + 2000;   // at most: receive, maybe ACK / forward
       meckRxPasses = 0;                    // usually ends early (meckRxHandled)
@@ -4880,6 +4939,8 @@ void loop() {
   // SMS: poll for incoming messages from modem
   #ifdef HAS_4G_MODEM
   {
+    modemManager.setScreenLocked(ui_task.isLocked());
+
     SMSIncoming incoming;
     while (modemManager.recvSMS(incoming)) {
       // Save to store and notify UI

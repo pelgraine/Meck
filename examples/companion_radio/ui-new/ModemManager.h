@@ -52,6 +52,22 @@
 #define MODEM_CALL_CMD_QUEUE_SIZE  4
 #define MODEM_CALL_EVT_QUEUE_SIZE  4
 
+// SMS arrive as +CMTI URCs (and an RI pulse); this slow poll only catches
+// one whose URC got lost, e.g. inside an AT response
+#define MODEM_SMS_SAFETY_POLL_MS   (10UL * 60 * 1000)
+#define MODEM_CSQ_POLL_MS          30000   // only while the screen is unlocked
+
+// UART sleep (AT+CSCLK=1): with DTR high the A7682E sleeps between paging
+// slots (about 2 mA instead of 12 mA in LTE idle, per the hardware design
+// guide) and still receives calls and SMS; RI goes low to tell us. MAX only
+// for now: RI (IO7) and DTR (IO8) reach the ESP32 through the U17 level
+// shifter, verified on the schematic; the Pro is untested.
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MODEM_NO_UART_SLEEP)
+  #define MODEM_UART_SLEEP 1
+#endif
+#define MODEM_IDLE_BEFORE_SLEEP_MS 2000    // late URCs (RING + CLIP, +CMTI) come in pairs
+#define MODEM_DTR_WAKE_MS          50      // DTR low until the modem UART listens
+
 // Notification tone auto-stop timeout (ms) -- stop playback after this
 // even if no +AUDIOSTATE URC received, to avoid stuck audio
 #define NOTIF_TONE_TIMEOUT_MS  4000
@@ -205,6 +221,35 @@ public:
   void resumePolling() { _paused = false; }
   bool isPaused() const { return _paused; }
 
+  // The lock screen shows no signal, so CSQ is not polled while locked;
+  // unlocking refreshes it (and checks for SMS) at once. Main loop, each pass.
+  void setScreenLocked(bool locked) { _locked = locked; }
+
+  // UART sleep counters for the debug CLI (pwrmodem)
+  void printPowerStats();
+  bool isUartAsleep() const { return _uartAsleep; }
+
+  // ESP32 light sleep with the modem on (MODEM_UART_SLEEP, main loop).
+  // canEspSleep(): the modem is in UART sleep with nothing to do, so the
+  // ESP32 may sleep too; RI wakes it. prepareEspSleep() right before
+  // esp_light_sleep_start(), afterEspSleep() right after it, before the
+  // other GPIO wakes are looked at; gpioWake: a GPIO wake that was not the
+  // button.
+  bool canEspSleep() const;
+  void prepareEspSleep();
+  void afterEspSleep(bool gpioWake);
+
+  // Low cell (MODEM_MIN_MILLIVOLTS): below it the modem is switched off and
+  // begin() refuses to start it until the cell is back above
+  // MODEM_RESUME_MILLIVOLTS. The saved on/off setting is kept, so 4G comes
+  // back by itself after charging. Main loop, with each battery reading;
+  // true when the modem was just switched off for it. immediate: one
+  // reading is enough (boot, before the modem draws anything).
+  bool checkBattery(uint16_t milliVolts, bool immediate = false);
+  bool isBatteryLow() const { return _battLow; }
+  // Debug CLI "pwrmodemmv": pretend the cell is at this voltage, 0 = real
+  void setTestMilliVolts(uint16_t mv) { _testMv = mv; }
+
   static const char* stateToString(ModemState s);
 
   // Persistent enable/disable config (SD file /sms/modem.cfg)
@@ -213,8 +258,25 @@ public:
 
 private:
   volatile ModemState _state = ModemState::OFF;
+  bool _battLow = false;
+  uint8_t _battLowCount = 0;
+  uint16_t _testMv = 0;
   volatile int _csq = 99;    // 99 = unknown
   volatile bool _paused = false;  // Suppresses AT polling when true
+  volatile bool _locked = false;  // Screen locked (set by main loop)
+  volatile bool _smsPending = false;  // +CMTI or an RI pulse: read SMS soon
+
+  // UART sleep (MODEM_UART_SLEEP)
+  volatile bool _sleepEnabled = false;  // AT+CSCLK=1 accepted
+  volatile bool _uartAsleep = false;    // DTR high, modem may sleep
+  volatile bool _riFlag = false;        // RI fell since the task last looked
+  unsigned long _lastActivity = 0;      // last AT command or UART byte
+  unsigned long _sleepStart = 0;
+  unsigned long _readySince = 0;
+  uint32_t _asleepMs = 0;               // DTR high since READY, completed spans
+  uint32_t _riCount = 0, _dtrWakes = 0;
+  uint32_t _espSleeps = 0, _espRiWakes = 0;   // ESP32 light sleeps with the modem on
+  uint32_t _smsPollsUrc = 0, _smsPollsSafety = 0;
   char _operator[24] = {0};
 
   // Device identity (populated during Phase 2 init)
@@ -259,6 +321,9 @@ private:
   // UART AT command helpers (called only from modem task)
   bool modemPowerOn();
   bool sendAT(const char* cmd, const char* expect, uint32_t timeout_ms = 2000);
+  bool wakeUart();                // DTR low; true if the modem was asleep
+  void sleepUartIfIdle();         // DTR high once nothing is going on
+  static void riIsr();            // RI falling edge
   bool waitResponse(const char* expect, uint32_t timeout_ms, char* buf = nullptr, size_t bufLen = 0);
   void pollCSQ();
   void pollIncomingSMS();

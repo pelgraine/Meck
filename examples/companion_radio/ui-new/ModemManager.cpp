@@ -5,6 +5,7 @@
 #include <SD.h>     // For modem config persistence
 #include <time.h>
 #include <sys/time.h>
+#include <driver/gpio.h>
 
 #if defined(LilyGo_TDeck_Pro_Max)
   #include <TDeckProMaxBoard.h>   // MAX: XL9555-routed modem power/PWRKEY
@@ -32,6 +33,10 @@ static char _atBuf[AT_BUF_SIZE];
 
 void ModemManager::begin() {
   MESH_DEBUG_PRINTLN("[Modem] begin()");
+  if (_battLow) {
+    Serial.println("[Modem] battery low, not starting");
+    return;
+  }
 
   _state = ModemState::OFF;
   _csq = 99;
@@ -47,6 +52,15 @@ void ModemManager::begin() {
   _notifTonePlaying = false;
   _notifToneStartTime = 0;
   _urcPos = 0;
+  _smsPending = false;
+  _sleepEnabled = false;
+  _uartAsleep = false;
+  _riFlag = false;
+  _readySince = 0;
+  _asleepMs = 0;
+  _riCount = _dtrWakes = 0;
+  _espSleeps = _espRiWakes = 0;
+  _smsPollsUrc = _smsPollsSafety = 0;
   _imei[0] = '\0';
   _imsi[0] = '\0';
   _apn[0] = '\0';
@@ -76,6 +90,13 @@ void ModemManager::shutdown() {
 
   MESH_DEBUG_PRINTLN("[Modem] shutdown()");
 
+#ifdef MODEM_UART_SLEEP
+  // Keep the task from putting the modem back to sleep; sendAT() below
+  // wakes it for CPOF
+  _sleepEnabled = false;
+  detachInterrupt(digitalPinToInterrupt(MODEM_RI));
+#endif
+
   // Stop any playing notification tone
   if (_notifTonePlaying) {
     // Best-effort stop -- task is about to be deleted
@@ -91,6 +112,12 @@ void ModemManager::shutdown() {
     vTaskDelay(pdMS_TO_TICKS(2000));  // Give time for AT+CHUP
   }
 
+#if defined(LilyGo_TDeck_Pro_Max)
+  // The pulse leaves PWRKEY held down, which makes the A7682E power itself
+  // back on after AT+CPOF (auto power-on wiring)
+  board.modemPwrkeyRelease();
+#endif
+
   // Tell modem to power off gracefully
   if (xSemaphoreTake(_uartMutex, pdMS_TO_TICKS(2000))) {
     sendAT("AT+CPOF", "OK", 5000);
@@ -100,6 +127,11 @@ void ModemManager::shutdown() {
   // Cut modem power
 #if defined(LilyGo_TDeck_Pro_Max)
   board.modemPowerOff();             // XL9555 6609_EN LOW
+  // DTR may have been left high for UART sleep: never hold a logic 1
+  // towards the switched-off modem
+  digitalWrite(MODEM_DTR, LOW);
+  pinMode(MODEM_RI, INPUT);
+  _uartAsleep = false;
 #else
   digitalWrite(MODEM_POWER_EN, LOW);
 #endif
@@ -108,6 +140,31 @@ void ModemManager::shutdown() {
   vTaskDelete(_taskHandle);
   _taskHandle = nullptr;
   _state = ModemState::OFF;
+}
+
+bool ModemManager::checkBattery(uint16_t milliVolts, bool immediate) {
+#ifdef MODEM_MIN_MILLIVOLTS
+  if (_testMv) milliVolts = _testMv;
+  if (milliVolts == 0) return false;
+  if (!_battLow) {
+    // Three readings in a row, as for the shutdown: a TX burst sags the cell
+    if (milliVolts >= MODEM_MIN_MILLIVOLTS) { _battLowCount = 0; return false; }
+    if (++_battLowCount < 3 && !immediate) return false;
+    _battLow = true;
+    Serial.printf("[Modem] battery %u mV < %u mV, 4G off until charged\n",
+                  milliVolts, (unsigned)MODEM_MIN_MILLIVOLTS);
+    if (!_taskHandle) return false;
+    shutdown();
+    return true;
+  }
+  if (milliVolts >= MODEM_RESUME_MILLIVOLTS) {
+    _battLow = false;
+    _battLowCount = 0;
+    Serial.printf("[Modem] battery %u mV, 4G allowed again\n", milliVolts);
+    if (!_taskHandle && loadEnabledConfig()) begin();
+  }
+#endif
+  return false;
 }
 
 bool ModemManager::sendSMS(const char* phone, const char* body) {
@@ -403,6 +460,7 @@ void ModemManager::resolveAPN() {
 void ModemManager::drainURCs() {
   while (MODEM_SERIAL.available()) {
     char c = MODEM_SERIAL.read();
+    _lastActivity = millis();
 
     // Accumulate into line buffer
     if (c == '\n') {
@@ -509,11 +567,10 @@ void ModemManager::processURCLine(const char* line) {
 
   // --- +CMTI: new SMS indication ---
   // +CMTI: "SM",<index>
-  // We don't need to act on this immediately since we poll for SMS,
-  // but we can trigger an early poll
+  // SMS are read on this URC; the slow safety poll only catches lost ones
   if (strncmp(line, "+CMTI:", 6) == 0) {
     MESH_DEBUG_PRINTLN("[Modem] URC: CMTI (new SMS)");
-    // Next SMS poll will pick it up; we just log it
+    _smsPending = true;
     return;
   }
 
@@ -1146,13 +1203,29 @@ restart:
   // mesh -- runs on Core 0 modem task.  Uses AT+FSDEL + AT+CFTRANRX.
   transferTonesToModem();
 
+#ifdef MODEM_UART_SLEEP
+  // ---- Phase 3c: UART sleep ----
+  // From here the modem sleeps whenever DTR is high (sleepUartIfIdle) and
+  // pulls RI low for calls, SMS and other URCs.
+  pinMode(MODEM_RI, INPUT_PULLUP);
+  _riFlag = false;
+  attachInterrupt(digitalPinToInterrupt(MODEM_RI), riIsr, FALLING);
+  _sleepEnabled = sendAT("AT+CSCLK=1", "OK", 2000);
+  _readySince = millis();
+  _asleepMs = 0;
+  // Always on serial (MESH_DEBUG is off in the normal builds): the one line
+  // that says whether the modem accepted UART sleep
+  Serial.printf("[Modem] UART sleep %s\n", _sleepEnabled ? "enabled" : "NOT accepted");
+#endif
+
   // ---- Phase 4: Main loop ----
-  unsigned long lastCSQPoll = 0;
+  unsigned long lastCSQPoll = millis();   // pollCSQ() ran during init
   unsigned long lastSMSPoll = 0;
   unsigned long lastCLCCPoll = 0;
-  const unsigned long CSQ_POLL_INTERVAL = 30000;   // 30s
-  const unsigned long SMS_POLL_INTERVAL = 10000;   // 10s
   const unsigned long CLCC_POLL_INTERVAL = 2000;   // 2s (during dialing only)
+  bool wasLocked = _locked;
+  bool csqDue = false;
+  _smsPending = true;   // SMS that came in before READY
 
   while (true) {
     // ================================================================
@@ -1161,6 +1234,28 @@ restart:
     // events like incoming calls or call-ended notifications.
     // ================================================================
     drainURCs();
+
+#ifdef MODEM_UART_SLEEP
+    if (_riFlag) {
+      // RI is held low while a call rings in and pulsed for SMS and other
+      // URCs: wake the UART so what follows is not cut short, and look for
+      // an SMS in case its +CMTI was lost
+      _riFlag = false;
+      _riCount++;
+      wakeUart();
+      _smsPending = true;
+    }
+#endif
+
+    // Unlocked: the signal and SMS screens can be looked at again
+    {
+      bool locked = _locked;
+      if (wasLocked && !locked) {
+        csqDue = true;
+        _smsPending = true;
+      }
+      wasLocked = locked;
+    }
 
     // ================================================================
     // Step 1b: Ringtone -- play tone bursts while incoming call rings
@@ -1264,27 +1359,44 @@ restart:
         _state = ModemState::READY;
       }
 
-      // Poll for incoming SMS periodically
-      if (millis() - lastSMSPoll > SMS_POLL_INTERVAL) {
+      // Read SMS on +CMTI / RI / unlock; a slow poll catches lost URCs.
+      // RI still low means a call is ringing in: read them after it.
+      bool riLow = false;
+#ifdef MODEM_UART_SLEEP
+      riLow = digitalRead(MODEM_RI) == LOW;
+#endif
+      if (_smsPending && !riLow) {
+        _smsPending = false;
+        _smsPollsUrc++;
+        pollIncomingSMS();
+        lastSMSPoll = millis();
+      } else if (millis() - lastSMSPoll > MODEM_SMS_SAFETY_POLL_MS) {
+        _smsPollsSafety++;
         pollIncomingSMS();
         lastSMSPoll = millis();
       }
     }
 
-    // Periodic signal strength update (always, even during calls)
-    if (!_paused && millis() - lastCSQPoll > CSQ_POLL_INTERVAL) {
+    // Signal strength: only shown on unlocked screens, so not polled while
+    // locked (each poll wakes the modem from UART sleep)
+    if (!_paused && (csqDue || (!_locked && millis() - lastCSQPoll > MODEM_CSQ_POLL_MS))) {
       // Only poll CSQ if not actively in a call (avoid interrupting audio)
       if (!isCallActive()) {
         pollCSQ();
+        csqDue = false;
       }
       lastCSQPoll = millis();
     }
+
+#ifdef MODEM_UART_SLEEP
+    sleepUartIfIdle();
+#endif
 
     // Shorter delay during active call states for responsive URC handling
     if (isCallActive()) {
       vTaskDelay(pdMS_TO_TICKS(100));  // 100ms -- responsive to URCs
     } else {
-      vTaskDelay(pdMS_TO_TICKS(500));  // 500ms -- normal idle
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(500));  // RI ends it early
     }
   }
 }
@@ -1371,12 +1483,21 @@ bool ModemManager::modemPowerOn() {
 // ---------------------------------------------------------------------------
 
 bool ModemManager::sendAT(const char* cmd, const char* expect, uint32_t timeout_ms) {
+  bool woke = wakeUart();
+
   // Before flushing, drain any pending URCs so we don't lose them
   drainURCs();
 
   Serial.printf("[Modem] TX: %s\n", cmd);
   MODEM_SERIAL.println(cmd);
   bool ok = waitResponse(expect, timeout_ms, _atBuf, AT_BUF_SIZE);
+  if (!ok && woke && !_atBuf[0]) {
+    // Not a byte back: the modem missed the command while waking up
+    Serial.printf("[Modem] TX (after wake): %s\n", cmd);
+    MODEM_SERIAL.println(cmd);
+    ok = waitResponse(expect, timeout_ms, _atBuf, AT_BUF_SIZE);
+  }
+  _lastActivity = millis();
   if (_atBuf[0]) {
     int len = strlen(_atBuf);
     while (len > 0 && (_atBuf[len-1] == '\r' || _atBuf[len-1] == '\n')) _atBuf[--len] = '\0';
@@ -1410,6 +1531,10 @@ bool ModemManager::waitResponse(const char* expect, uint32_t timeout_ms,
       if (buf && strstr(buf, "NO CARRIER")) {
         processURCLine("NO CARRIER");
       }
+      // A +CMTI inside a response never reaches processURCLine()
+      if (buf && c == ':' && strstr(buf, "+CMTI:")) {
+        _smsPending = true;
+      }
       if (buf && strstr(buf, "BUSY")) {
         // Only process if we're in a call-related state
         if (_state == ModemState::DIALING) {
@@ -1423,6 +1548,121 @@ bool ModemManager::waitResponse(const char* expect, uint32_t timeout_ms,
   // Timeout -- check one more time
   if (buf && expect && strstr(buf, expect)) return true;
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// UART sleep (AT+CSCLK=1, DTR high = may sleep)
+// ---------------------------------------------------------------------------
+
+bool ModemManager::wakeUart() {
+#ifdef MODEM_UART_SLEEP
+  if (!_uartAsleep) return false;
+  _uartAsleep = false;   // first: canEspSleep() on the other core reads it
+  digitalWrite(MODEM_DTR, LOW);
+  _asleepMs += millis() - _sleepStart;
+  _dtrWakes++;
+  vTaskDelay(pdMS_TO_TICKS(MODEM_DTR_WAKE_MS));
+  return true;
+#else
+  return false;
+#endif
+}
+
+void ModemManager::sleepUartIfIdle() {
+#ifdef MODEM_UART_SLEEP
+  if (!_sleepEnabled || _uartAsleep) return;
+  if (_state != ModemState::READY || _ringing || _toneActive || _notifTonePlaying) return;
+  if (_smsPending || _pendingToneIdx >= 0 || _urcPos > 0) return;
+  if (uxQueueMessagesWaiting(_sendQueue) || uxQueueMessagesWaiting(_callCmdQueue)) return;
+  if (digitalRead(MODEM_RI) == LOW) return;   // a call is ringing in
+  if (millis() - _lastActivity < MODEM_IDLE_BEFORE_SLEEP_MS) return;
+  digitalWrite(MODEM_DTR, HIGH);
+  _uartAsleep = true;
+  _sleepStart = millis();
+#endif
+}
+
+void IRAM_ATTR ModemManager::riIsr() {
+  modemManager._riFlag = true;
+  BaseType_t woken = pdFALSE;
+  if (modemManager._taskHandle) vTaskNotifyGiveFromISR(modemManager._taskHandle, &woken);
+  if (woken) portYIELD_FROM_ISR();
+}
+
+// ---------------------------------------------------------------------------
+// ESP32 light sleep with the modem on (MODEM_UART_SLEEP). Called from the
+// main loop (core 1) while the modem task runs on core 0.
+// ---------------------------------------------------------------------------
+
+bool ModemManager::canEspSleep() const {
+#ifdef MODEM_UART_SLEEP
+  // DTR high means the task found nothing to do; anything since then (a
+  // URC, a queued SMS, call or tone) keeps the ESP32 up until it is done
+  if (!_sleepEnabled || !_uartAsleep || _riFlag) return false;
+  if (_state != ModemState::READY || _ringing || _toneActive || _notifTonePlaying) return false;
+  if (_smsPending || _pendingToneIdx >= 0 || _urcPos > 0) return false;
+  if (uxQueueMessagesWaiting(_sendQueue) || uxQueueMessagesWaiting(_callCmdQueue)) return false;
+  if (uxQueueMessagesWaiting(_recvQueue) || uxQueueMessagesWaiting(_callEvtQueue)) return false;
+  if (digitalRead(MODEM_RI) == LOW) return false;
+  if (millis() - _lastActivity < MODEM_IDLE_BEFORE_SLEEP_MS) return false;
+  return true;
+#else
+  return false;
+#endif
+}
+
+void ModemManager::prepareEspSleep() {
+#ifdef MODEM_UART_SLEEP
+  // DTR stays high through the sleep, or the modem would wake with it
+  gpio_hold_en((gpio_num_t)MODEM_DTR);
+  // The level wake below changes the pin's interrupt type: keep the edge
+  // ISR off meanwhile, or a low RI after the wake would retrigger it
+  // until afterEspSleep()
+  gpio_intr_disable((gpio_num_t)MODEM_RI);
+  gpio_wakeup_enable((gpio_num_t)MODEM_RI, GPIO_INTR_LOW_LEVEL);
+  _espSleeps++;
+#endif
+}
+
+void ModemManager::afterEspSleep(bool gpioWake) {
+#ifdef MODEM_UART_SLEEP
+  bool riLow = digitalRead(MODEM_RI) == LOW;
+  gpio_wakeup_disable((gpio_num_t)MODEM_RI);
+  gpio_set_intr_type((gpio_num_t)MODEM_RI, GPIO_INTR_NEGEDGE);
+  gpio_intr_enable((gpio_num_t)MODEM_RI);
+  gpio_hold_dis((gpio_num_t)MODEM_DTR);
+  // The URC that came with RI may have been cut short while the ESP32 woke
+  // up: the task looks for SMS (and sees a call by RI staying low) itself.
+  // A GPIO wake with RI already high again is also taken as RI: the button
+  // is checked by the caller first.
+  if (riLow || gpioWake) {
+    _espRiWakes++;
+    _riFlag = true;
+    if (_taskHandle) xTaskNotifyGive(_taskHandle);
+  }
+#endif
+}
+
+void ModemManager::printPowerStats() {
+  Serial.printf("modem: state=%s locked=%d csq=%d sms_polls urc=%lu safety=%lu\n",
+                stateToString(_state), (int)_locked, _csq,
+                (unsigned long)_smsPollsUrc, (unsigned long)_smsPollsSafety);
+#ifdef MODEM_UART_SLEEP
+  unsigned long now = millis();
+  uint32_t asleep = _asleepMs + (_uartAsleep ? now - _sleepStart : 0);
+  uint32_t total = _readySince ? now - _readySince : 0;
+  Serial.printf("modem: uart sleep %s, now %s, asleep %lu of %lu s (%lu%%), "
+                "ri falls %lu, dtr wakes %lu, ri pin %d, dtr pin %d\n",
+                _sleepEnabled ? "on" : "off", _uartAsleep ? "asleep" : "awake",
+                (unsigned long)(asleep / 1000), (unsigned long)(total / 1000),
+                (unsigned long)(total ? (uint64_t)asleep * 100 / total : 0),
+                (unsigned long)_riCount, (unsigned long)_dtrWakes,
+                digitalRead(MODEM_RI), digitalRead(MODEM_DTR));
+  Serial.printf("modem: esp32 may sleep %d, light sleeps %lu, ri wakes %lu\n",
+                (int)canEspSleep(), (unsigned long)_espSleeps, (unsigned long)_espRiWakes);
+#else
+  Serial.println("modem: uart sleep not built");
+#endif
 }
 
 void ModemManager::pollCSQ() {
@@ -1490,8 +1730,11 @@ void ModemManager::pollIncomingSMS() {
     // from the SIM so it is not lost (it can still be read from the SIM).
     if (xQueueSend(_recvQueue, &incoming, 0) != pdTRUE) {
       MESH_DEBUG_PRINTLN("[Modem] SMS queue full, keeping message %d on SIM", idx);
+      _smsPending = true;   // again once the main loop has taken some
       break;
     }
+    // More may not have fit in the response buffer: list again until empty
+    _smsPending = true;
 
     // Delete the message from SIM
     char delCmd[20];

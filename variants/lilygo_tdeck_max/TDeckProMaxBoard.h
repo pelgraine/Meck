@@ -81,6 +81,7 @@ public:
   void modemPowerOn();       // Enable SGM6609 boost (6609_EN HIGH)
   void modemPowerOff();      // Disable SGM6609 boost (6609_EN LOW)
   void modemPwrkeyPulse();   // Toggle PWRKEY: HIGH 100ms → LOW 1200ms → HIGH
+  void modemPwrkeyRelease(); // PWRKEY_EN LOW: key no longer held down
 
   // Audio output selection
   void selectAudioES8311();  // AUDIO_SEL LOW → ES8311 output to speaker/headphones
