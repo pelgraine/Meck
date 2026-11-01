@@ -29,6 +29,16 @@
 #define SOS_CHANNELS_MAX    8
 #define SOS_CHANNEL_ID_LEN  8
 
+// NodePrefs::lock_keep bits
+// 0x01 is unused: the phone when locked is ble_lock_window
+#define LOCK_KEEP_WIFI   0x02
+#define LOCK_KEEP_GPS    0x04   // GPS on while locked, as gps_lock_interval says
+#define LOCK_KEEP_MODEM  0x08
+#define LOCK_KEEP_TONES  0x10   // notification tones while locked
+#define LOCK_KEEP_VIB    0x20   // vibration while locked
+#define LOCK_KEEP_USB    0x40   // stays awake on USB power
+#define LOCK_KEEP_DEFAULT (LOCK_KEEP_WIFI | LOCK_KEEP_GPS | LOCK_KEEP_MODEM | LOCK_KEEP_TONES | LOCK_KEEP_VIB | LOCK_KEEP_USB)
+
 struct NodePrefs {  // persisted to file
   float airtime_factor;
   char node_name[32];
@@ -161,6 +171,17 @@ struct NodePrefs {  // persisted to file
   // 0 = the GPS stays on. Older prefs files short-read this final field and
   // keep the default 0.
   uint8_t gps_lock_interval;       // default 0
+
+  // Quick settings (UI v2): 0 = message and call notifications do not use
+  // the haptic motor. Older prefs files short-read this field and keep the
+  // default 1.
+  uint8_t notif_vibrate;           // default 1
+  // Quick settings "When locked": what keeps running while the lock screen
+  // is up, one LOCK_KEEP_* bit each. A radio whose bit is clear is switched
+  // off on lock and back on at unlock. Older prefs files short-read this
+  // final field and keep the default, which is the behaviour from before
+  // the setting (everything kept).
+  uint8_t lock_keep;               // default LOCK_KEEP_DEFAULT
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.

@@ -26,6 +26,7 @@
 #define KB_KEY_MIC_RELEASE 0x03   // Mic key release (PTT stop)
 #define KB_KEY_BACKLIGHT   0x04   // Alt+B backlight toggle (T-Deck Pro MAX only)
 #define KB_KEY_KBD_BACKLIGHT 0x05 // Both shifts together: keyboard backlight toggle (MAX)
+#define KB_KEY_QUICK       0x06   // Alt+Space: open / close quick settings (UI v2)
 
 class TCA8418Keyboard {
 private:
@@ -405,6 +406,13 @@ public:
       _altActive = false;
       Serial.println("KB: Alt+B -> backlight toggle");
       return KB_KEY_BACKLIGHT;
+    }
+
+    // Alt+Space -> quick settings. Alt+Space typed a plain space before.
+    if (_altActive && keyCode == 33) {  // keyCode 33 = Space
+      _altActive = false;
+      Serial.println("KB: Alt+Space -> quick settings");
+      return KB_KEY_QUICK;
     }
 
     // Get the character

@@ -951,6 +951,14 @@ public:
   }
 
   bool isOnboarding() const { return _onboarding; }
+  // Quick settings "More": the cursor on the first row of this type in the
+  // current list (gotoSettingsScreen() shows the main list)
+  bool selectRowType(SettingsRowType t) {
+    for (int r = 0; r < _numRows; r++) {
+      if (_rows[r].type == t) { _cursor = r; return true; }
+    }
+    return false;
+  }
   bool isEditing() const { return _editMode != EDIT_NONE; }
   bool isPurgeBoxOpen() const { return _editMode == EDIT_PURGE; }  // main.cpp ignores touch while open
   bool hasRadioChanges() const { return _radioChanged; }
@@ -3268,12 +3276,13 @@ public:
       Ui2Chrome::footer(c, keys, 3);
     } else if (_subScreen == SUB_CHANNELS) {
       const Ui2Key keys[] = { ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Change", "Modifier")), ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
-                              ui2Key("C", MECK_TR("Share", "Partager")), ui2Key("Q", MECK_TR("Back", "Retour")) };
-      Ui2Chrome::footer(c, keys, 4);
+                              ui2Key("C", MECK_TR("Share", "Partager")), ui2Key("Q", MECK_TR("Back", "Retour")),
+                              ui2Key("A/D", MECK_TR("Page", "Page"), true) };
+      Ui2Chrome::footer(c, keys, pages > 1 ? 5 : 4);
     } else {
       const Ui2Key keys[] = { ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Change", "Modifier")), ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
-                              ui2Key("Q", MECK_TR("Back", "Retour")) };
-      Ui2Chrome::footer(c, keys, 3);
+                              ui2Key("Q", MECK_TR("Back", "Retour")), ui2Key("A/D", MECK_TR("Page", "Page"), true) };
+      Ui2Chrome::footer(c, keys, pages > 1 ? 4 : 3);
     }
     return _editMode != EDIT_NONE ? 700 : 1000;
   }
@@ -4085,6 +4094,13 @@ public:
         if (_notifSoundSelected < totalItems - 1) _notifSoundSelected++;
         return true;
       }
+#ifdef MECK_UI_V2
+      if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {   // a page back / forward
+        _notifSoundSelected = Ui2List::pageJump(_notifSoundSelected, totalItems, ui2::ROWS_PER_PAGE,
+                                                (c == 'a' || c == 'A') ? -1 : 1);
+        return true;
+      }
+#endif
       if (c == '\r' || c == 13) {
         // Select: 0 = clear (default silent), [MAX: 1 = vibrate], rest = file
         if (_notifSoundSelected == 0) {
@@ -4120,6 +4136,13 @@ public:
         if (_sharePickerIdx < _shareContactCount - 1) _sharePickerIdx++;
         return true;
       }
+#ifdef MECK_UI_V2
+      if ((c == 'a' || c == 'A' || c == 'd' || c == 'D') && _shareContactCount > 0) {   // a page back / forward
+        _sharePickerIdx = Ui2List::pageJump(_sharePickerIdx, _shareContactCount, ui2::ROWS_PER_PAGE,
+                                            (c == 'a' || c == 'A') ? -1 : 1);
+        return true;
+      }
+#endif
       if (c == '\r' || c == 13) {
         if (_shareContactCount > 0) {
           _shareContactIdx = _shareContacts[_sharePickerIdx];
@@ -4208,6 +4231,13 @@ public:
           if (_wifiSSIDSelected < _wifiSSIDCount - 1) _wifiSSIDSelected++;
           return true;
         }
+#ifdef MECK_UI_V2
+        if ((c == 'a' || c == 'A' || c == 'd' || c == 'D') && _wifiSSIDCount > 0) {   // a page back / forward
+          _wifiSSIDSelected = Ui2List::pageJump(_wifiSSIDSelected, _wifiSSIDCount, ui2::ROWS_PER_PAGE,
+                                                (c == 'a' || c == 'A') ? -1 : 1);
+          return true;
+        }
+#endif
         if (c == 'r' || c == 'R') {
           // Rescan — lets user toggle hotspot on then retry
           requestWifiScan();
@@ -4689,6 +4719,26 @@ public:
     }
 
     // --- Normal browsing mode ---
+
+#ifdef MECK_UI_V2
+    // A/D: a page back / forward, as the "1 / 7" pages of the list are cut
+    if (c == 'a' || c == 'A' || c == 'd' || c == 'D') {
+      int start, end, page, pages;
+      v2Page(_cursor, start, end, page, pages);
+      if (c == 'a' || c == 'A') {
+        if (page > 0) v2Page(start - 1, start, end, page, pages);
+        _cursor = start;
+        skipNonSelectable(1);
+      } else if (end < _numRows) {
+        _cursor = end;
+        skipNonSelectable(1);
+      } else {
+        _cursor = _numRows - 1;
+        skipNonSelectable(-1);
+      }
+      return true;
+    }
+#endif
 
     // W/S: navigate, Shift+W/S: page scroll
     if (c == 'W') {
