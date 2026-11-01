@@ -73,10 +73,17 @@ Steps, in order of effort:
    pioarduino (Arduino core 3.3, ESP-IDF 5.5) with `custom_sdkconfig`. Core
    3.x ships the S3 libraries with NimBLE, so the sdkconfig switches back to
    Bluedroid with the 4.2 and 5.0 features of core 2.x; the T-Deck Pro envs
-   stay on core 2.x. `pioarduino_fixes.py` works around two problems of the
-   two-pass build. Not yet tried on the device: BLE pairing and existing
-   bonds, WiFi with BLE, audio and voice messages (legacy I2S driver on
-   IDF 5), the modem. Next: the modem sleep and power management options.
+   stay on core 2.x. `pioarduino_fixes.py` works around problems of the
+   two-pass build. On Windows, build from PowerShell (idf_tools.py refuses
+   MSys) with a short `PLATFORMIO_CACHE_DIR` (the core libraries hit the
+   260-character path limit while unpacking). On core 3.x the radio must
+   share the display's SPIClass: a second SPIClass on the same host resets
+   the bus and the first radio transfer hangs. Tried on the device: boot,
+   display, radio init, UI, modem registration. Not yet: BLE pairing and
+   existing bonds, WiFi with BLE, audio and voice messages (legacy I2S
+   driver on IDF 5), receiving packets, the modem's `AT+CLVL` and ringtone
+   upload errors (not compared with core 2.x). Next: the modem sleep and
+   power management options.
 4. **NimBLE instead of Bluedroid.** Less RAM (helps WiFi + BLE too) and
    better tested with modem sleep. A large change (see the WiFi + BLE
    analysis).

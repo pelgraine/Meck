@@ -1,6 +1,6 @@
 """
 PlatformIO pre-build script for the envs built with pioarduino and
-custom_sdkconfig (the T-Deck MAX). Works around two problems of that setup.
+custom_sdkconfig (the T-Deck MAX). Works around problems of that setup.
 
 1. pioarduino builds such an env in two passes: first it rebuilds the Arduino
    ESP-IDF libraries around a dummy sketch in .dummy/ (PROJECT_SRC_DIR points
@@ -14,6 +14,9 @@ custom_sdkconfig (the T-Deck MAX). Works around two problems of that setup.
    environment (penv). A fresh penv gets pioarduino 6.2.0.post1, which reads
    its own version as the pre-release 6.2.0-post.1 and so rejects the platform
    (it needs >= 6.2.0) and uninstalls it. Pin the release it is a post of.
+
+3. The rebuilt libraries need the Bluedroid API headers, which the stock
+   include paths lack (see add_bluedroid_api).
 """
 import os
 import re
@@ -59,4 +62,16 @@ def pin_penv_core():
                     "pioarduino==" + m.group(1)])
 
 
+def add_bluedroid_api():
+    # The hybrid build copies the rebuilt libraries but keeps the stock include
+    # paths, which have no Bluedroid API: take it from the ESP-IDF they came
+    # from. Not as -I in build_flags, which parses the backslashes of a
+    # Windows packages_dir as escapes.
+    api = (Path(env.subst("$PROJECT_PACKAGES_DIR")) / "framework-espidf" / "components"
+           / "bt" / "host" / "bluedroid" / "api" / "include" / "api")
+    if api.is_dir():
+        env.Append(CPPPATH=[api.as_posix()])
+
+
 pin_penv_core()
+add_bluedroid_api()
