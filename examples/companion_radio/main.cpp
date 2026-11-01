@@ -2813,8 +2813,40 @@ void halt() {
   while (1) ;
 }
 
+#if defined(ESP32) && ESP_IDF_VERSION_MAJOR >= 5 && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+  // Core 3.x keeps the USB serial "connected" once a host has read from it,
+  // and from then on blocks every write for up to 2 s (20 x the TX timeout)
+  // while nothing reads the port, e.g. the deck on a PC with no terminal
+  // open: the UI then takes seconds per key. Core 2.x dropped the output
+  // instead. Write without waiting, except for a few seconds after the host
+  // sent something: it is reading then, and CLI replies must not be cut.
+  #define MECK_SERIAL_PACING 1
+  static volatile uint32_t meckSerialRxAt = 0;
+  static volatile bool meckSerialWaits = false;
+
+  // Runs in the HWCDC event task, before loop() reads the command
+  static void meckSerialRx(void*, esp_event_base_t, int32_t, void*) {
+    meckSerialRxAt = millis();
+    if (!meckSerialWaits) {
+      Serial.setTxTimeoutMs(100);
+      meckSerialWaits = true;
+    }
+  }
+
+  static void meckSerialPace() {
+    if (meckSerialWaits && millis() - meckSerialRxAt >= 3000) {
+      meckSerialWaits = false;
+      Serial.setTxTimeoutMs(0);
+    }
+  }
+#endif
+
 void setup() {
   Serial.begin(115200);
+#ifdef MECK_SERIAL_PACING
+  Serial.setTxTimeoutMs(0);
+  Serial.onEvent(ARDUINO_HW_CDC_RX_EVENT, meckSerialRx);
+#endif
   delay(100);  // Give serial time to initialize
   MESH_DEBUG_PRINTLN("=== setup() - STARTING ===");
 
@@ -4817,6 +4849,9 @@ static void dialerBusyPoll(const void*) {
 #endif // HAS_TOUCHSCREEN && HAS_4G_MODEM
 
 void loop() {
+  #ifdef MECK_SERIAL_PACING
+  meckSerialPace();
+  #endif
   #ifdef HAS_SDCARD
   meckExportPoll();        // Settings export: runs once its popup is on screen
   meckImportPoll();        // Settings import: same
