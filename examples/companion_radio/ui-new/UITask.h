@@ -26,6 +26,13 @@
 #include "../AbstractUITask.h"
 #include "../NodePrefs.h"
 
+// Quick settings (UI v2, T-Deck MAX): QuickSettingsScreen.h
+// It drives the combined Bluetooth + WiFi companion and the 4G modem.
+#if defined(MECK_UI_V2) && defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST) \
+    && defined(BLE_PIN_CODE) && defined(MECK_WIFI_COMPANION) && defined(HAS_4G_MODEM)
+  #define MECK_QUICK_SETTINGS 1
+#endif
+
 // Power saving when locked (T-Deck MAX): why the device stays awake.
 // main.cpp's meckLockSleepBlocker() returns one of these.
 enum MeckSleepBlock {
@@ -149,6 +156,10 @@ class UITask : public AbstractUITask {
   bool _sosDeferredEnter = false;      // the 1 s long press: Enter on release
   unsigned long _sosVibOffAt = 0;      // countdown vibration ends at (0 = none)
   UIScreen* _screenBeforeSos = nullptr; // where Q on the SOS screen goes back to
+#endif
+#ifdef MECK_QUICK_SETTINGS
+  UIScreen* quick_settings;            // QuickSettingsScreen
+  UIScreen* _screenBeforeQuick = nullptr; // where Q on it goes back to
 #endif
 
   // --- Message dedup ring buffer (suppress retry spam at UI level) ---
@@ -325,6 +336,15 @@ public:
   // Countdown over: motor rail off, for the battery
   void sosPulsesDone();
 #endif
+#ifdef MECK_QUICK_SETTINGS
+  // Quick settings (docs/ui2-quick-settings.md): opened over the current
+  // screen, which leaveQuickSettings() goes back to
+  bool canOpenQuickSettings() const;
+  void gotoQuickSettings();
+  void leaveQuickSettings();
+  bool isOnQuickSettings() const { return curr == quick_settings; }
+  UIScreen* getQuickSettings() const { return quick_settings; }
+#endif
 #ifdef MECK_WEB_READER
   bool isOnWebReader() const { return curr == web_reader; }
 #endif
@@ -348,6 +368,15 @@ public:
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
+  // GPS on or off; feedback = the toast and the ack sound of toggleGPS()
+  void setGPS(bool on, bool feedback);
+  // Notification tones and vibration: the quick settings switches, and
+  // while locked the "When locked" ones too. Alarms are not affected.
+  bool tonesAllowed() const;
+  bool vibrationAllowed() const;
+  void setTonesOn(bool on);
+  // Call ringtone follows the tones switches (4G)
+  void applyRingtone();
 
   // Check if home screen is in an editing mode (e.g. UTC offset editor)
   bool isEditingHomeScreen() const;

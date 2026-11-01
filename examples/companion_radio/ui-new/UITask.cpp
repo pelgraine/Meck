@@ -24,6 +24,10 @@
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
+#ifdef MECK_QUICK_SETTINGS
+  #include "QuickSettingsScreen.h"
+  extern void meckLockPolicy(bool locking);   // main.cpp: pause / resume what does not keep running
+#endif
 #if defined(LilyGo_TDeck_Pro)
   #include "SosScreen.h"
   extern void meckSosHold();            // main.cpp: the top button was held 3 s
@@ -2507,10 +2511,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   digitalWrite(KB_BL_PIN, LOW);
 #endif
 
-#ifdef HAS_4G_MODEM
   // Sync ringtone enabled state to modem manager
-  modemManager.setRingtoneEnabled(node_prefs->ringtone_enabled);
-#endif
+  applyRingtone();
 
   ui_started_at = millis();
   _alert_expiry = 0;
@@ -2544,6 +2546,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
   sos_screen = new SosScreen(&rtc_clock, node_prefs);
+#endif
+#ifdef MECK_QUICK_SETTINGS
+  quick_settings = new QuickSettingsScreen();
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef MECK_AUDIO_VARIANT
@@ -2619,6 +2624,7 @@ void UITask::notify(UIEventType t) {
   s_lastMsgSuppressed = false;
 
 #if defined(PIN_BUZZER)
+if (tonesAllowed() || t == UIEventType::ack)
 switch(t){
   case UIEventType::contactMessage:
     // gemini's pick
@@ -2640,7 +2646,7 @@ switch(t){
 
 #ifdef PIN_VIBRATION
   // Trigger vibration for all UI events except none
-  if (t != UIEventType::none) {
+  if (t != UIEventType::none && vibrationAllowed()) {
     vibration.trigger();
   }
 #endif
@@ -2733,8 +2739,13 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
 #if defined(LilyGo_TDeck_Pro_Max)
   // Channel set to "Buzzer (vibrate)": pulse the motor instead of a tone.
   if (!suppressNotif && notifSounds.isVibrateForChannel(channel_idx)) {
-    meckHapticBuzz();
+    if (vibrationAllowed()) meckHapticBuzz();
     s_lastMsgSuppressed = true;  // suppress the default RTTTL buzzer
+  } else
+  // Tones switched off (quick settings): no tone. The MAX has no buzzer
+  // and no other vibration, so nothing is lost by suppressing notify().
+  if (!suppressNotif && !tonesAllowed()) {
+    s_lastMsgSuppressed = true;
   } else
 #endif
   {
@@ -3566,6 +3577,10 @@ void UITask::lockScreen() {
   if (_locked) return;
   _locked = true;
   _screenBeforeLock = curr;
+#ifdef MECK_QUICK_SETTINGS
+  meckLockPolicy(true);   // radios set to pause while locked go off
+#endif
+  applyRingtone();
   setCurrScreen(lock_screen);
   // Ensure display is on so lock screen renders (auto-off may have turned it off)
   if (_display != NULL && !_display->isOn()) {
@@ -3616,6 +3631,10 @@ void UITask::lockPromptKey(char c) {
 void UITask::unlockScreen() {
   if (!_locked) return;
   _locked = false;
+#ifdef MECK_QUICK_SETTINGS
+  meckLockPolicy(false);  // and come back
+#endif
+  applyRingtone();
   if (meckSos.running()) {
     ((SosScreen*)sos_screen)->resetMenu();   // SOS running: straight to its menu
     if (_screenBeforeLock != sos_screen) _screenBeforeSos = _screenBeforeLock;
@@ -3691,6 +3710,37 @@ void UITask::leaveSosScreen() {
   _next_refresh = 0;
 }
 
+#ifdef MECK_QUICK_SETTINGS
+bool UITask::canOpenQuickSettings() const {
+  if (_locked || _lockPromptUntil || curr == lock_screen || curr == sos_screen) return false;
+  // A running game owns the keyboard and the screen
+  if (isOnGBCScreen() && ((GBCEmulatorScreen*)gbc_screen)->isRunning()) return false;
+  if (curr == settings_screen && ((SettingsScreen*)settings_screen)->isOnboarding()) return false;
+#ifdef HAS_4G_MODEM
+  if (modemManager.isCallActive() || modemManager.isRinging()) return false;
+#endif
+  return true;
+}
+
+void UITask::gotoQuickSettings() {
+  ((QuickSettingsScreen*)quick_settings)->open();
+  if (curr != quick_settings) _screenBeforeQuick = curr;
+  setCurrScreen(quick_settings);
+  keepAlive();
+  _lastInputMillis = millis();
+  _next_refresh = 0;
+}
+
+void UITask::leaveQuickSettings() {
+  UIScreen* back = _screenBeforeQuick;
+  _screenBeforeQuick = nullptr;
+  if (back) setCurrScreen(back);
+  else gotoHomeScreen();
+  keepAlive();
+  _next_refresh = 0;
+}
+#endif
+
 void UITask::sosPulse() {
   keepAlive();
   _next_refresh = 0;
@@ -3725,9 +3775,13 @@ bool UITask::getGPSState() {
 }
 
 void UITask::toggleGPS() {
+  setGPS(!getGPSState(), true);
+}
+
+void UITask::setGPS(bool on, bool feedback) {
   #if ENV_INCLUDE_GPS == 1
     if (_sensors != NULL) {
-      if (_node_prefs->gps_enabled) {
+      if (!on) {
         // Disable GPS — cut hardware power
         _sensors->setSettingValue("gps", "0");
         _node_prefs->gps_enabled = 0;
@@ -3737,7 +3791,6 @@ void UITask::toggleGPS() {
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOff();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
         #endif
-        notify(UIEventType::ack);
       } else {
 #ifdef MECK_40MHZ_TEST
         // 40 MHz test build: GPS is gated -- refuse the enable, leave rail off
@@ -3755,13 +3808,49 @@ void UITask::toggleGPS() {
           extern void meckGpsConfigureSoon();
           meckGpsConfigureSoon();   // the module may have forgotten it with the power
         #endif
-        notify(UIEventType::ack);
       }
       the_mesh.savePrefs();
-      showAlert(_node_prefs->gps_enabled ? MECK_TR("GPS: Enabled", "GPS : activ\xC3\xA9") : MECK_TR("GPS: Disabled", "GPS : d\xC3\xA9sactiv\xC3\xA9"), 800);
+      if (feedback) {
+        notify(UIEventType::ack);
+        showAlert(_node_prefs->gps_enabled ? MECK_TR("GPS: Enabled", "GPS : activ\xC3\xA9") : MECK_TR("GPS: Disabled", "GPS : d\xC3\xA9sactiv\xC3\xA9"), 800);
+      }
       _next_refresh = 0;
     }
   #endif
+}
+
+bool UITask::tonesAllowed() const {
+  if (_node_prefs == NULL) return true;
+  if (_node_prefs->buzzer_quiet) return false;
+#if defined(LilyGo_TDeck_Pro)
+  if (_locked && !(_node_prefs->lock_keep & LOCK_KEEP_TONES)) return false;
+#endif
+  return true;
+}
+
+bool UITask::vibrationAllowed() const {
+  if (_node_prefs == NULL) return true;
+  if (!_node_prefs->notif_vibrate) return false;
+#if defined(LilyGo_TDeck_Pro)
+  if (_locked && !(_node_prefs->lock_keep & LOCK_KEEP_VIB)) return false;
+#endif
+  return true;
+}
+
+void UITask::setTonesOn(bool on) {
+  _node_prefs->buzzer_quiet = on ? 0 : 1;
+#ifdef PIN_BUZZER
+  buzzer.quiet(!on);
+#endif
+  the_mesh.savePrefs();
+  applyRingtone();
+  _next_refresh = 0;
+}
+
+void UITask::applyRingtone() {
+#ifdef HAS_4G_MODEM
+  modemManager.setRingtoneEnabled(_node_prefs->ringtone_enabled && tonesAllowed());
+#endif
 }
 
 void UITask::toggleBuzzer() {
