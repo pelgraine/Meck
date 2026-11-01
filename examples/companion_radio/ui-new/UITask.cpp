@@ -50,6 +50,12 @@
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
 // Power saving when locked: the reason the device stays awake (main.cpp)
 extern int meckLockSleepBlocker();
+extern bool meckPhoneSleeps();
+
+// A connected phone that does not keep the device awake (automatic sleep)
+const char* meckPhoneSleepText() {
+  return MECK_TR("Power saving with phone", "\xC3\x89" "conomie avec t\xC3\xA9l\xC3\xA9phone");
+}
 
 const char* meckSleepBlockText(int code) {
   switch (code) {
@@ -2332,14 +2338,17 @@ public:
     // then the gauge's battery estimate (time to empty at the average draw)
     {
       int reason = meckLockSleepBlocker();
+      bool phoneSleeps = reason == MECK_SLEEP_PHONE && meckPhoneSleeps();
       const char* status = reason == MECK_SLEEP_OK ? MECK_TR("Power saving", "\xC3\x89" "conomie d'\xC3\xA9nergie")
-                                                   : meckSleepBlockText(reason);
+                         : phoneSleeps ? meckPhoneSleepText()
+                                       : meckSleepBlockText(reason);
       char line[48];
-      if (reason == MECK_SLEEP_OK || reason == MECK_SLEEP_OFF || reason == MECK_SLEEP_USB)
+      if (reason == MECK_SLEEP_OK || reason == MECK_SLEEP_OFF || reason == MECK_SLEEP_USB || phoneSleeps)
         snprintf(line, sizeof(line), "%s", status);
       else
         snprintf(line, sizeof(line), MECK_TR("Awake: %s", "\xC3\x89veill\xC3\xA9 : %s"), status);
-      Ui2Icon ic = reason == MECK_SLEEP_OK ? UI2_IC_MOON : reason == MECK_SLEEP_USB ? UI2_IC_BOLT : UI2_IC_WARN;
+      Ui2Icon ic = reason == MECK_SLEEP_OK || phoneSleeps ? UI2_IC_MOON
+                 : reason == MECK_SLEEP_USB ? UI2_IC_BOLT : UI2_IC_WARN;
       int16_t tw = Ui2Canvas::textWidth(line, UI2_F_SMALL);
       int16_t lx = (SCREEN_W - tw - 16) / 2;
       c.icon(lx, 262, ic, 12);
@@ -3607,8 +3616,9 @@ void UITask::requestLock() {
   if (_locked || _lockPromptUntil) return;
   int reason = meckLockSleepBlocker();
   // Warn only about things the user may have forgotten; "power saving off"
-  // is their choice, USB power and recent audio are fine.
-  if (reason == MECK_SLEEP_PHONE || reason == MECK_SLEEP_MODEM || reason == MECK_SLEEP_WIFI) {
+  // is their choice, USB power and recent audio are fine, and so is a phone
+  // the device can sleep with.
+  if ((reason == MECK_SLEEP_PHONE && !meckPhoneSleeps()) || reason == MECK_SLEEP_MODEM || reason == MECK_SLEEP_WIFI) {
     _lockPromptReason = reason;
     _lockPromptUntil = millis() + 6000;   // then it locks anyway
     _next_refresh = 0;

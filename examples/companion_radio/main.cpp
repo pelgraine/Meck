@@ -4244,6 +4244,29 @@ static bool meckAutoSleepWanted(bool locked, int blocker) {
 }
 #endif
 
+// Whether a connected phone still lets the locked deck sleep (automatically),
+// so the lock warning and the lock screen need not blame it. Locked: whether
+// it does now; before locking: whether it will once the modem and the GPS
+// set to pause while locked are off.
+bool meckPhoneSleeps() {
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  if (meckLockSleepBlocker() != MECK_SLEEP_PHONE) return false;
+  if (ui_task.isLocked()) return meckAutoSleepOn;
+  #ifdef MECK_QUICK_SETTINGS
+  const uint8_t keep = the_mesh.getNodePrefs()->lock_keep;
+  #else
+  const uint8_t keep = 0xFF;
+  #endif
+  #ifdef HAS_4G_MODEM
+  if (modemManager.getState() != ModemState::OFF && (keep & LOCK_KEEP_MODEM)) return false;
+  #endif
+  if (ui_task.getGPSState() && (keep & LOCK_KEEP_GPS)) return false;
+  return true;
+#else
+  return false;
+#endif
+}
+
 // Called at the end of loop() instead of the plain locked-loop delay
 static void meckLockSleepStep() {
   bool locked = ui_task.isLocked();

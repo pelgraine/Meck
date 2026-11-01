@@ -13,6 +13,8 @@
 // Power saving when locked (main.cpp / UITask.cpp); codes are MeckSleepBlock
 extern int meckLockSleepBlocker();
 extern const char* meckSleepBlockText(int code);
+extern bool meckPhoneSleeps();
+extern const char* meckPhoneSleepText();
 #endif
 #ifdef MECK_UI_V2
   #include "ui2/Ui2Chrome.h"
@@ -2350,6 +2352,8 @@ public:
         int why = meckLockSleepBlocker();
         if (!_prefs->lock_sleep) {
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone stays reachable", "T\xC3\xA9l\xC3\xA9phone joignable"));
+        } else if (why == 3 /* MECK_SLEEP_PHONE */ && meckPhoneSleeps()) {
+          snprintf(hint, sizeof(hint), "%s", meckPhoneSleepText());
         } else if (why != 0 /* MECK_SLEEP_OK */) {
           snprintf(hint, sizeof(hint), MECK_TR("Awake now: %s", "\xC3\x89veill\xC3\xA9 : %s"), meckSleepBlockText(why));
     #ifdef MECK_BLE_LOCK_WINDOWS
