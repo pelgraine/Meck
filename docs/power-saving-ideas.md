@@ -82,8 +82,26 @@ Steps, in order of effort:
    display, radio init, UI, modem registration. Not yet: BLE pairing and
    existing bonds, WiFi with BLE, audio and voice messages (legacy I2S
    driver on IDF 5), receiving packets, the modem's `AT+CLVL` and ringtone
-   upload errors (not compared with core 2.x). Next: the modem sleep and
-   power management options.
+   upload errors (not compared with core 2.x).
+
+   Second part on branch `ble-modem-sleep`: `custom_sdkconfig` turns on power
+   management, tickless idle and the controller's modem sleep with the main
+   crystal as its low-power clock (kept powered in light sleep). When the
+   locked deck is kept awake only by a connected phone (blocker PHONE) and
+   the modem and the GPS are off, `meckAutoSleep()` enables automatic light
+   sleep at the current CPU frequency (80 MHz, no frequency scaling: the SPI
+   and I2C set-ups assume the APB clock). The CPU then sleeps whenever every
+   task waits, and wakes on the LoRa DIO1 (ext1), the button and task timers.
+   With the modem or the GPS on it stays awake as before: their UART data
+   would be lost and the modem's RI edge interrupt cannot wake it. Because
+   the controller keeps the crystal on in every light sleep once Bluetooth
+   has been enabled, the lock sleep without a link powers it down around
+   `esp_light_sleep_start()`. The power log's `auto_sleep_s` column has the
+   time in automatic light sleep. To check on the device: the current
+   locked with the phone connected (was about 100 mA), that the link holds
+   and the app still syncs, LoRa packets and the button while it sleeps,
+   the lock sleep floor without a link (13 mA before), and that unlocking
+   brings the CPU back to normal.
 4. **NimBLE instead of Bluedroid.** Less RAM (helps WiFi + BLE too) and
    better tested with modem sleep. A large change (see the WiFi + BLE
    analysis).

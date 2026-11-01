@@ -16,21 +16,23 @@ import datetime
 HEADER = ("utc,local_date,local_time,secs,asleep_s,wake_lora,wake_btn,wake_timer,"
           "pct,mv,avg_ma,temp_c,usb,charge,locked,blocker,saving,gps,modem,wifi,"
           "phone,ble,audio,light,rx,tx,refresh,full_refresh,clock_jump_s,utc_offset,rc_ppm,fix,"
-          "ble_win,sync_win,sync_link,sync_s,link_ms,app_rx,ble_drop")
+          "ble_win,sync_win,sync_link,sync_s,link_ms,app_rx,ble_drop,auto_sleep_s")
 FIELDS = HEADER.split(",")
 # The first firmware with the log (6eb18730) had no rc_ppm column, the next ones no fix column,
 # then none of the Bluetooth sync window columns (ble_win .. link_ms), then
-# no app_rx / ble_drop
+# no app_rx / ble_drop, then no auto_sleep_s (time in automatic light sleep
+# with a phone connected; it adds to asleep_s, the lock sleep)
 SYNC_FIELDS = ["ble_win", "sync_win", "sync_link", "sync_s", "link_ms"]
 APP_FIELDS = ["app_rx", "ble_drop"]
-HEADER_V4 = HEADER.rsplit(",", len(APP_FIELDS))[0]
+HEADER_V5 = HEADER.rsplit(",", 1)[0]
+HEADER_V4 = HEADER_V5.rsplit(",", len(APP_FIELDS))[0]
 HEADER_V3 = HEADER_V4.rsplit(",", len(SYNC_FIELDS))[0]
 HEADER_V2 = HEADER_V3.rsplit(",", 1)[0]
 HEADER_V1 = HEADER_V2.rsplit(",", 1)[0]
 # In column order, the last ones; 0 when the column is missing
 OPTIONAL = {"rc_ppm": 0, "fix": 0, "ble_win": 0, "sync_win": 0, "sync_link": 0, "sync_s": 0.0, "link_ms": 0.0,
-            "app_rx": 0, "ble_drop": 0}
-FLOAT_FIELDS = {"asleep_s", "temp_c", "sync_s", "link_ms"}
+            "app_rx": 0, "ble_drop": 0, "auto_sleep_s": 0.0}
+FLOAT_FIELDS = {"asleep_s", "temp_c", "sync_s", "link_ms", "auto_sleep_s"}
 TEXT_FIELDS = {"local_date", "local_time"}
 
 # 0/1 columns, in the order the viewer shows them
@@ -66,8 +68,8 @@ def parse_line(line):
         warnings.append("blocker=%d unknown" % rec["blocker"])
     if not 0 <= rec["pct"] <= 100:
         warnings.append("pct=%d out of range" % rec["pct"])
-    if rec["asleep_s"] > rec["secs"] + 1:
-        warnings.append("asleep %.1f s > interval %d s" % (rec["asleep_s"], rec["secs"]))
+    if rec["asleep_s"] + rec["auto_sleep_s"] > rec["secs"] + 1:
+        warnings.append("asleep %.1f s > interval %d s" % (rec["asleep_s"] + rec["auto_sleep_s"], rec["secs"]))
     date, hm = local_date_time(rec["utc"], rec["utc_offset"])
     if (date, hm) != (rec["local_date"], rec["local_time"]):
         warnings.append("local time %s %s, expected %s %s" % (rec["local_date"], rec["local_time"], date, hm))
@@ -95,7 +97,7 @@ def parse_fw(line):
 def classify(line):
     """'header', 'fw', 'record', 'bad' (looks like a record but does not parse) or 'noise'."""
     s = line.strip()
-    if s in (HEADER, HEADER_V4, HEADER_V3, HEADER_V2, HEADER_V1):
+    if s in (HEADER, HEADER_V5, HEADER_V4, HEADER_V3, HEADER_V2, HEADER_V1):
         return "header"
     if s.startswith("#fw,"):
         return "fw" if parse_fw(s) else "noise"
@@ -255,7 +257,8 @@ def build_timeline(recs, capacity=DESIGN_CAPACITY_MAH, now=None, anchors=()):
         r["t"] = r["utc_fixed"]
         r["ma"] = -r["avg_ma"]          # consumption, positive while discharging
         r["drain_pct_h"] = round(r["ma"] / capacity * 100, 2)
-        r["awake"] = round(max(0.0, 1 - r["asleep_s"] / r["secs"]) if r["secs"] else 1.0, 3)
+        slept = r["asleep_s"] + r["auto_sleep_s"]
+        r["awake"] = round(max(0.0, 1 - slept / r["secs"]) if r["secs"] else 1.0, 3)
     mark_gaps(timeline)
     gauge_slope(timeline)
     return timeline, unknown
