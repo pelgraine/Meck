@@ -487,7 +487,7 @@ void DecodeTNSInfo(int winSequence, TNSInfo_t *ti, int8_t *tnsCoef);
 void DecodeGainControlInfo(int winSequence, GainControlInfo_t *gi);
 void DecodeICS(int ch);
 int DecodeNoiselessData(uint8_t **buf, int *bitOffset, int *bitsAvail, int ch);
-int DecodeHuffmanScalar(const signed short *huffTab, const HuffInfo_t *huffTabInfo, unsigned int bitBuf, int32_t *val);
+int DecodeHuffmanScalar(const signed short *huffTab, const HuffInfo_t *huffTabInfo, unsigned int bitBuf, int *val);
 int UnpackADTSHeader(uint8_t **buf, int *bitOffset, int *bitsAvail);
 int GetADTSChannelMapping(uint8_t *buf, int bitOffset, int bitsAvail);
 int GetNumChannelsADIF(int nPCE);

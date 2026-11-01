@@ -2,6 +2,7 @@
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatt_common_api.h"
+#include <esp_mac.h>
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -118,7 +119,16 @@ void SerialBLEInterface::_realBegin() {
   esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, MECK_BLE_TX_POWER);
 
   BLESecurity  sec;
+#if ESP_IDF_VERSION_MAJOR >= 5
+  // Core 3.x dropped setStaticPIN(); this is what it did on core 2.x (its
+  // SC-only auth mode is replaced right below anyway)
+  sec.setPassKey(true, _pin_code);
+  sec.setCapability(ESP_IO_CAP_OUT);
+  sec.setKeySize();
+  sec.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+#else
   sec.setStaticPIN(_pin_code);
+#endif
 #ifdef MECK_BLE_JUST_WORKS
   // Garmin Connect IQ has no way to enter a PIN, so a watch can only reach an
   // encrypted-but-unverified ("just works") link. Drop the MITM requirement so
@@ -215,8 +225,12 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
 #endif
 
     // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
-    // Note: ESP-IDF misspells "preferred" as "prefered" in their API
+    // ESP-IDF 4 misspelled "preferred" as "prefered"; IDF 5 fixed the name
+#if ESP_IDF_VERSION_MAJOR >= 5
+    esp_ble_gap_set_preferred_phy(_remote_bda,
+#else
     esp_ble_gap_set_prefered_phy(_remote_bda,
+#endif
                                   0,   // all_phys: no preference flags, use tx/rx masks
                                   ESP_BLE_GAP_PHY_2M_PREF_MASK,
                                   ESP_BLE_GAP_PHY_2M_PREF_MASK,

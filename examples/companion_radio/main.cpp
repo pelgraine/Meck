@@ -924,6 +924,7 @@ static uint32_t _atoi(const char* sp) {
   #include <Preferences.h>
   #include <soc/rtc.h>                 // RC slow clock calibration ("pwrcal")
   #include <esp_private/esp_clk.h>
+  #include <soc/gpio_struct.h>         // GPIO.enable for "pwrpins" (not pulled in on IDF 5)
   // Gauge avgI at the end of the awake and the sleep phase of "pwrsleep",
   // kept in NVS: the reset button that USB recovery needs clears RTC memory
   static int meckAwakeResult = 0;
@@ -4385,10 +4386,10 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
 
   uint32_t rx, tx, ref, full;
   meckPwrCounters(rx, tx, ref, full);
-  r.rx = (uint8_t)min(rx - meckPwrRx0, 255U);
-  r.tx = (uint8_t)min(tx - meckPwrTx0, 255U);
-  r.refresh = (uint8_t)min(ref - meckPwrRef0, 255U);
-  r.full = (uint8_t)min(full - meckPwrFull0, 255U);
+  r.rx = (uint8_t)min(rx - meckPwrRx0, (uint32_t)255);
+  r.tx = (uint8_t)min(tx - meckPwrTx0, (uint32_t)255);
+  r.refresh = (uint8_t)min(ref - meckPwrRef0, (uint32_t)255);
+  r.full = (uint8_t)min(full - meckPwrFull0, (uint32_t)255);
   meckPwrRx0 = rx; meckPwrTx0 = tx; meckPwrRef0 = ref; meckPwrFull0 = full;
   if (meckBootSlowCal) {
     int64_t d = ((int64_t)(meckLastSlowCal ? meckLastSlowCal : esp_clk_slowclk_cal_get()) - meckBootSlowCal) * 1000000LL / meckBootSlowCal;
@@ -4408,7 +4409,7 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
 #if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
   r.linkIv = MECK_BLE_IFACE.isConnected() ? SerialBLEInterface::linkInterval() : 0;
   uint32_t appRx = MECK_BLE_IFACE.rxFrames();
-  r.appRx = (uint8_t)min(appRx - meckPwrAppRx0, 255U);
+  r.appRx = (uint8_t)min(appRx - meckPwrAppRx0, (uint32_t)255);
   meckPwrAppRx0 = appRx;
   uint16_t drops = MECK_BLE_IFACE.drops();
   if (drops != meckPwrDrops0) r.drop = MECK_BLE_IFACE.lastDropReason();

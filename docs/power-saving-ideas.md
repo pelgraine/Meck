@@ -68,6 +68,15 @@ Steps, in order of effort:
    a custom sdkconfig, i.e. an ESP-IDF build of the Arduino core or
    pioarduino with `custom_sdkconfig`. Expected: the deck with a phone
    connected near the sleep floor, maybe 20-25 mA. High effort.
+
+   First part done on branch `pioarduino-s3`: the MAX envs build on
+   pioarduino (Arduino core 3.3, ESP-IDF 5.5) with `custom_sdkconfig`. Core
+   3.x ships the S3 libraries with NimBLE, so the sdkconfig switches back to
+   Bluedroid with the 4.2 and 5.0 features of core 2.x; the T-Deck Pro envs
+   stay on core 2.x. `pioarduino_fixes.py` works around two problems of the
+   two-pass build. Not yet tried on the device: BLE pairing and existing
+   bonds, WiFi with BLE, audio and voice messages (legacy I2S driver on
+   IDF 5), the modem. Next: the modem sleep and power management options.
 4. **NimBLE instead of Bluedroid.** Less RAM (helps WiFi + BLE too) and
    better tested with modem sleep. A large change (see the WiFi + BLE
    analysis).
