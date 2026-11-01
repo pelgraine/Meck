@@ -24,7 +24,7 @@ class GPSStreamCounter : public Stream {
 public:
   GPSStreamCounter(Stream& inner)
     : _inner(inner), _sentences(0), _sentences_snapshot(0),
-      _last_snapshot(0), _sentences_per_sec(0), _line_len(0), _gsv_n(0) {}
+      _last_snapshot(0), _sentences_per_sec(0), _gga(0), _line_len(0), _gsv_n(0) {}
 
   // --- Stream read interface (passes through) ---
   int available() override { return _inner.available(); }
@@ -40,7 +40,11 @@ public:
       _line_len = 0;
       _line[_line_len++] = (char)c;
     } else if (c == '\n') {
-      if (_line_len > 0) { _line[_line_len] = '\0'; parseGSV(_line); }
+      if (_line_len > 0) {
+        _line[_line_len] = '\0';
+        parseGSV(_line);
+        if (_line[0] == '$' && _line_len >= 6 && !strncmp(_line + 3, "GGA", 3)) _gga++;
+      }
       _sentences++;
       _line_len = 0;
     } else if (c != '\r' && _line_len < (int)sizeof(_line) - 1) {
@@ -56,6 +60,10 @@ public:
 
   // Total sentences received since boot (or last reset)
   uint32_t getSentenceCount() const { return _sentences; }
+
+  // $xxGGA sentences received (the lock sleep waits for one after each
+  // minute wake: by then the RMC of the same fix has been read too)
+  uint32_t getGgaCount() const { return _gga; }
 
   // Sentences received per second (updated each time you call it,
   // with a 1-second rolling window)
@@ -116,6 +124,7 @@ private:
   uint32_t _sentences_snapshot;
   unsigned long _last_snapshot;
   uint16_t _sentences_per_sec;
+  uint32_t _gga;
 
   // Current sentence accumulation (for the GSV tap)
   char _line[100];

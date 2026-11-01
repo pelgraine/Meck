@@ -20,7 +20,7 @@ void statusHeader(Ui2Canvas& c) {
   int16_t xl = HDR_CLOCK_X - 2;
   const Ui2Icon wifiIcons[] = { UI2_IC_WIFIOFF, UI2_IC_WIFI1, UI2_IC_WIFI2, UI2_IC_WIFI };
   const Ui2Icon conn[] = {
-    st.gpsOn ? UI2_IC_GPS : UI2_NO_ICON,
+    st.gpsOn ? (st.gpsFix ? UI2_IC_GPS : UI2_IC_GPSNOFIX) : UI2_NO_ICON,
     st.wifiOn ? wifiIcons[st.wifiLevel > 3 ? 3 : st.wifiLevel] : UI2_NO_ICON,
     st.bleConnected ? UI2_IC_BLE : UI2_NO_ICON,
   };
@@ -58,6 +58,7 @@ void statusHeader(Ui2Canvas& c) {
   if (st.charging) { x -= 12; c.icon(x, 6, UI2_IC_BOLT, 12); x -= 1; }
 
   const Ui2Icon order[] = {
+    st.sosActive ? UI2_IC_WARN : UI2_NO_ICON,
     st.unread ? UI2_IC_MSGDOT : UI2_NO_ICON,
     st.alarmOn ? UI2_IC_ALARM : UI2_NO_ICON,
     st.audioPlaying ? UI2_IC_PLAY : UI2_NO_ICON,

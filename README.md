@@ -376,7 +376,7 @@ From the companion app, `set wifi.enabled 0|1` turns WiFi off or on without touc
 
 Replies from the device go to every connected app, so with two apps at once each can see replies meant for the other (as in MeshCore).
 
-With power saving when locked on, a locked device pauses Bluetooth advertising and light-sleeps; WiFi being on keeps it awake (the lock warning says so).
+With power saving when locked on, a locked device pauses Bluetooth advertising and light-sleeps; WiFi being on keeps it awake (the lock warning says so). The GPS can stay on: it keeps tracking while the device sleeps, and the position is updated once a minute (or, with **Experimental Features → GPS when locked**, the GPS is only switched on for a fix every few minutes).
 
 ### Clock & Timezone
 
@@ -822,7 +822,7 @@ Press **S** from the home screen to open settings. On first boot (when the devic
 | OTA Tools >> | Opens the OTA sub-screen — Firmware Update and SD File Manager (see [OTA Firmware Update](#ota-firmware-update-v13)) |
 | Export/Import >> | Opens the Export/Import sub-screen — export device config to SD or import from `/meshcore/import.json` (see [Config Export/Import](#config-exportimport-v111)) |
 | Rx Log >> | Opens the Rx Log packet sniffer (see [Rx Log](#rx-log)) |
-| Experimental Features >> | Opens the Experimental Features sub-screen: Language, RX Boosted Gain, AGC Reset Int, Delete all contacts, and on the MAX Change Backlight to Alt+B (see [Experimental Features](#experimental-features-v115)) |
+| Experimental Features >> | Opens the Experimental Features sub-screen: Language, RX Boosted Gain, AGC Reset Int, Delete all contacts, and on the MAX Change Backlight to Alt+B and GPS when locked (see [Experimental Features](#experimental-features-v115)) |
 | Device Info | Public key and firmware version (read-only) |
 
 **Contacts sub-screen** — press Enter on the `Contacts >>` row to open. Contains the contact auto-add mode picker and, when set to Custom, per-type toggles:
@@ -867,6 +867,7 @@ If you've changed radio parameters, pressing Q will prompt you to apply changes 
 | Language | **Language: Change to French** switches the interface to French. In French the row reads **Langue : Passer à l'anglais** to switch back to English. Classic has no accented letters, so choosing French while the font style is Classic changes it to Noto Sans. See the [French Language Guide](docs/French_Language_Guide.md). |
 | Change Backlight to Alt+B (MAX only) | When **ON**, the Heart button no longer turns the frontlight on and off, and **Alt+B** turns it on (at the Backlight Brightness level) and off instead. Default **OFF**. |
 | RX Boosted Gain | When **ON** (the default), the LoRa receiver uses its boosted receive gain mode. When **OFF**, it uses the normal gain mode. The change applies within half a second. |
+| GPS when locked (MAX only) | What the GPS does while the device sleeps locked (with Power saving when locked on and the GPS on). **Stays on**, the default: the GPS keeps tracking and the position is updated once a minute. **Every 2/5/10/15/30/60 min**: the GPS is switched off and only switched on for a fix at that interval, which takes about 10 seconds and uses far less battery; the position can be that old. Without a fix within a minute (no view of the sky) the next try waits twice, then four times as long. Unlocking switches the GPS back on. Press **Enter**, choose with **A**/**D**, **Enter** to save. |
 | AGC Reset Int | How often the LoRa receiver's automatic gain control is reset. Type a time in seconds and press **Enter**: it is rounded down to a multiple of 4, up to 1020 seconds. Leave it empty (or 0) for **Off**, the default. |
 | Delete all contacts | Deletes every contact (favourites and custom paths included) and the DM history. Channel messages are kept. Two confirmations follow, **Delete all contacts?** and then **Are you sure?** (Enter for yes, Q for no). The device shows **Purging**, then the result, and then restarts. Do not switch off while it is purging. |
 

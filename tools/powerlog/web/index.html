@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T-Deck power log</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --band: #f0efec; --ink: #0b0b0b; --ink-2: #52514e;
+  --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --hatch: #c3c2b7; --bad: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --band: #262624; --ink: #f0efec; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --band: #262624; --ink: #f0efec; --ink-2: #c3c2b7;
+  --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 24px 0 8px; }
+#meta { color: var(--ink-2); font-size: 13px; }
+.pull { display: flex; gap: 10px; align-items: center; }
+button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis);
+  border-radius: 6px; padding: 5px 12px; cursor: pointer; }
+button:hover { background: var(--band); }
+button.primary { background: var(--s1); color: #fff; border-color: var(--s1); }
+button.on { background: var(--band); border-color: var(--ink-2); font-weight: 600; }
+button:disabled { opacity: 0.55; cursor: default; }
+#pullstatus { color: var(--ink-2); font-size: 13px; max-width: 520px; }
+#pullstatus.err { color: var(--bad); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 14px 0 10px; }
+.toolbar .grp { display: flex; gap: 4px; flex-wrap: wrap; }
+.toolbar label { color: var(--ink-2); display: flex; gap: 5px; align-items: center; cursor: pointer; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+.tile .k { color: var(--ink-2); font-size: 12px; }
+.tile .v { font-size: 20px; font-weight: 600; }
+.tile .s { color: var(--muted); font-size: 12px; }
+.chart { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  user-select: none; touch-action: pan-y; }
+.chart svg { display: block; width: 100%; }
+.chart text { fill: var(--ink-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .title { fill: var(--ink); font-weight: 600; font-size: 12px; }
+.chart .lane { fill: var(--ink-2); font-size: 11px; }
+.chart .band-label { fill: var(--muted); font-size: 10px; }
+.chart .qband { cursor: pointer; }
+.tip { position: absolute; pointer-events: none; display: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--axis); border-radius: 6px; padding: 7px 9px; font-size: 12px; line-height: 1.4;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15); min-width: 210px; max-width: 300px; z-index: 2; }
+.tip b { font-weight: 600; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tip .row span:first-child { color: var(--ink-2); }
+.tip .on { color: var(--ink); }
+.hint { color: var(--muted); font-size: 12px; margin: 6px 2px 0; }
+.legend { display: inline-flex; gap: 12px; color: var(--ink-2); font-size: 12px; }
+.sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; font-size: 13px; }
+th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; cursor: pointer; background: var(--band); }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+td.wrap { white-space: normal; }
+tbody tr:hover { background: var(--band); }
+#segs tbody tr, #fwtab tbody tr { cursor: pointer; }
+#fwtab tr.sel td { background: var(--band); font-weight: 600; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+.scroll { overflow-x: auto; max-height: 460px; overflow-y: auto; border-radius: 8px; }
+details { margin-top: 16px; }
+summary { cursor: pointer; color: var(--ink-2); }
+.empty { padding: 40px 16px; text-align: center; color: var(--ink-2); }
+@media (max-width: 640px) { .tile .v { font-size: 17px; } h1 { font-size: 18px; } }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>T-Deck power log</h1>
+    <div id="meta">Loading…</div>
+  </div>
+  <div class="pull" id="pullbox">
+    <span id="pullstatus"></span>
+    <button class="primary" id="pull">Pull from deck</button>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="grp" id="ranges">
+    <button data-r="all" class="on">All</button>
+    <button data-r="pull">Last pull</button>
+    <button data-r="24h">Last 24 h</button>
+    <button data-r="7d">Last 7 days</button>
+  </div>
+  <label><input type="checkbox" id="real"> Real time scale (no compression)</label>
+  <label><input type="checkbox" id="log"> Log scale for current</label>
+</div>
+
+<section class="tiles" id="tiles"></section>
+<div class="chart" id="chart"><svg id="svg"></svg><div class="tip" id="tip"></div></div>
+<p class="hint">Scroll or drag across the chart to zoom, Shift+drag or Shift+scroll to pan, double-click to see everything.
+Hatched columns: no data (deck off, reset or flat). Shaded columns: long quiet stretches drawn narrow — click one to expand it.
+Times are the deck's local time.</p>
+
+<h2>Firmware versions <span style="font-weight:400;color:var(--muted)">(click a row to show only its runs below)</span></h2>
+<div class="scroll"><table id="fwtab"></table></div>
+<div class="toolbar"><label>Tables below for <select id="fwsel"></select></label></div>
+<h2>Time per state</h2>
+<div class="scroll"><table id="bystate"></table></div>
+<h2>Runs <span style="font-weight:400;color:var(--muted)">(click a row to zoom to it)</span></h2>
+<div class="scroll"><table id="segs"></table></div>
+<details id="unk"><summary></summary><div class="scroll"><table></table></div></details>
+<details id="bad"><summary></summary><div class="scroll"><table></table></div></details>
+</main>
+
+<script>
+const EMBED = /*PWR_DATA*/null;
+const $ = id => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+
+let D = null, N = 0, C = null, T = [], S = [], RUN = [], DRAIN15 = [];
+let P = [], U = 1, view = { u0: 0, u1: 1 }, expanded = new Set();
+let lanes = [], layout = null;
+const opt = { real: false, log: false };
+
+// ---------- formatting ----------
+const pad2 = n => String(n).padStart(2, "0");
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DAY = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function local(t, off) { return new Date((t + (off == null ? OFF : off) * 3600) * 1000); }
+function hm(t, off) { const d = local(t, off); return pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()); }
+function dateLabel(t, off) { const d = local(t, off); return DAY[d.getUTCDay()] + " " + d.getUTCDate() + " " + MON[d.getUTCMonth()]; }
+function full(t, off) { const d = local(t, off); return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate()) + " " + hm(t, off); }
+function dur(s) {
+  s = Math.round(s);
+  if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min";
+  if (s < 86400) return Math.floor(s / 3600) + " h " + pad2(Math.floor(s % 3600 / 60)) + " min";
+  return Math.floor(s / 86400) + " d " + Math.floor(s % 86400 / 3600) + " h";
+}
+function runtime(pctH) {
+  if (!(pctH > 0.01)) return "–";
+  const h = 100 / pctH;
+  return h < 48 ? h.toFixed(h < 10 ? 1 : 0) + " h" : (h / 24).toFixed(1) + " days";
+}
+const f1 = v => v == null ? "–" : (Math.round(v * 10) / 10).toFixed(1);
+const f2 = v => v == null ? "–" : v.toFixed(2);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let OFF = 0;
+
+// ---------- data ----------
+function load(data) {
+  D = data; C = data.cols; N = C.t.length;
+  T = C.t; S = T.map((t, i) => t - C.secs[i]);
+  OFF = N ? C.utc_offset[N - 1] : 0;
+  RUN = []; let run = 0;
+  for (let i = 0; i < N; i++) { if (C.gap[i]) run++; RUN.push(run); }
+  drain15();
+  buildLanes();
+  $("pullbox").style.display = D.static ? "none" : "";
+  renderMeta();
+  buildPieces();
+  setRange(currentRange || "all");
+  if (fwFilter !== "all" && !D.by_firmware.some(f => f.fw === fwFilter)) fwFilter = "all";
+  renderFirmware();
+  renderTables();
+}
+
+// current-based %/h averaged over 15 minutes, not across gaps
+function drain15() {
+  DRAIN15 = new Array(N);
+  let lo = 0, hi = -1, sum = 0, w = 0;
+  for (let i = 0; i < N; i++) {
+    while (hi + 1 < N && T[hi + 1] <= T[i] + 450 && RUN[hi + 1] === RUN[i]) { hi++; sum += C.drain_pct_h[hi] * C.secs[hi]; w += C.secs[hi]; }
+    while (lo < i && (T[lo] < T[i] - 450 || RUN[lo] !== RUN[i])) { sum -= C.drain_pct_h[lo] * C.secs[lo]; w -= C.secs[lo]; lo++; }
+    DRAIN15[i] = w > 0 ? sum / w : null;
+  }
+}
+
+function flag(i, name) { return (C.flags[i] >> D.flags.indexOf(name)) & 1; }
+
+// Runs of equal value per lane: {a, b, v, label}
+function buildLanes() {
+  const defs = [
+    { name: "Locked", get: i => flag(i, "locked") },
+    { name: "Asleep", get: i => Math.round((1 - C.awake[i]) * 4) / 4, shade: true },
+    { name: "USB power", get: i => flag(i, "usb") },
+    { name: "Charging", get: i => C.charge[i], label: v => D.charge[v] },
+    { name: "Power saving", get: i => flag(i, "saving") },
+    { name: "Kept awake by", get: i => flag(i, "locked") && C.blocker[i] > 1 ? C.blocker[i] : 0, label: v => D.blockers[v] },
+    { name: "GPS", get: i => flag(i, "gps") },
+    { name: "GPS fix", get: i => flag(i, "fix") },
+    { name: "4G modem", get: i => flag(i, "modem") },
+    { name: "WiFi", get: i => flag(i, "wifi") },
+    { name: "Phone (BLE)", get: i => flag(i, "phone") },
+    { name: "Bluetooth", get: i => flag(i, "ble") },
+    { name: "Phone when locked", get: i => C.ble_win[i], label: v => "sync every " + v + " min" },
+    { name: "Sync window", get: i => C.sync_win[i] ? (C.sync_link[i] ? 2 : 1) : 0,
+      label: v => v == 2 ? "app reconnected" : "no reconnect" },
+    { name: "Audio", get: i => flag(i, "audio") },
+    { name: "Backlight", get: i => flag(i, "light") },
+  ];
+  defs.unshift({ name: "Firmware", get: i => C.fw[i] + 1, label: v => fwName(v - 1), alt: true });
+  lanes = defs.map(d => {
+    const runs = []; let cur = null;
+    for (let i = 0; i < N; i++) {
+      const v = d.get(i);
+      if (cur && cur.v === v && !C.gap[i]) { cur.b = T[i]; continue; }
+      cur = { a: S[i], b: T[i], v }; runs.push(cur);
+    }
+    return Object.assign({}, d, { runs: runs.filter(r => r.v) });
+  });
+}
+
+// ---------- the broken time axis ----------
+// Pieces of real time [a, b] laid end to end in "u" units. Data keeps its
+// length; gaps get a fixed narrow width; quiet stretches are squeezed unless
+// expanded or the real time scale is on.
+function buildPieces() {
+  P = [];
+  if (!N) { U = 1; return; }
+  const breaks = [];
+  for (let i = 1; i < N; i++) if (C.gap[i] && S[i] > T[i - 1]) breaks.push({ a: T[i - 1], b: S[i], kind: "gap" });
+  D.quiet.forEach((q, k) => breaks.push({ a: q.t0, b: q.t1, kind: "quiet", q, k }));
+  breaks.sort((x, y) => x.a - y.a);
+  let cur = S[0];
+  for (const br of breaks) {
+    if (br.a > cur) P.push({ a: cur, b: br.a, kind: "data" });
+    if (br.b > Math.max(cur, br.a)) P.push(br);
+    cur = Math.max(cur, br.b);
+  }
+  if (T[N - 1] > cur) P.push({ a: cur, b: T[N - 1], kind: "data" });
+  let dataSecs = 0;
+  for (const p of P) if (p.kind === "data") dataSecs += p.b - p.a;
+  // all gaps together take at most 12 % of the data's width, quiet stretches 30 %
+  const base = Math.max(dataSecs, 3600);
+  const nGap = breaks.filter(b => b.kind === "gap").length || 1, nQuiet = D.quiet.length || 1;
+  const G = Math.max(Math.min(base * 0.012, base * 0.12 / nGap), base * 0.002);
+  const Q = Math.max(Math.min(base * 0.04, base * 0.30 / nQuiet), base * 0.004);
+  let u = 0;
+  for (const p of P) {
+    const real = p.b - p.a;
+    p.w = p.kind === "data" || opt.real ? real
+        : p.kind === "gap" ? G
+        : expanded.has(p.k) ? real : Math.min(Q, real);
+    p.u0 = u; u += p.w;
+  }
+  U = Math.max(u, 1);
+}
+function tu(t) {
+  if (!P.length) return 0;
+  let lo = 0, hi = P.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (P[m].a <= t) lo = m; else hi = m - 1; }
+  const p = P[lo];
+  if (t <= p.a) return p.u0;
+  if (t >= p.b) return p.u0 + p.w;
+  return p.u0 + (t - p.a) / (p.b - p.a) * p.w;
+}
+function ut(u) {
+  if (!P.length) return 0;
+  let lo = 0, hi = P.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (P[m].u0 <= u) lo = m; else hi = m - 1; }
+  const p = P[lo];
+  if (u <= p.u0) return p.a;
+  if (u >= p.u0 + p.w) return p.b;
+  return p.a + (u - p.u0) / p.w * (p.b - p.a);
+}
+function pieceAt(u) { return P.find(p => u >= p.u0 && u < p.u0 + p.w); }
+const X = u => layout.L + (u - view.u0) / (view.u1 - view.u0) * layout.W;
+const XT = t => X(tu(t));
+const UX = x => view.u0 + (x - layout.L) / layout.W * (view.u1 - view.u0);
+
+function firstIdx(t) { let lo = 0, hi = N; while (lo < hi) { const m = (lo + hi) >> 1; if (T[m] < t) lo = m + 1; else hi = m; } return lo; }
+function visible() {
+  const t0 = ut(view.u0), t1 = ut(view.u1);
+  return [Math.max(0, firstIdx(t0)), Math.min(N - 1, firstIdx(t1 + 1) )];
+}
+
+// ---------- ranges and zoom ----------
+let currentRange = null;
+function setRange(r) {
+  currentRange = r;
+  document.querySelectorAll("#ranges button").forEach(b => b.classList.toggle("on", b.dataset.r === r));
+  if (!N) { view = { u0: 0, u1: 1 }; render(); return; }
+  let t0 = S[0];
+  if (r === "24h") t0 = T[N - 1] - 86400;
+  if (r === "7d") t0 = T[N - 1] - 7 * 86400;
+  if (r === "pull" && D.last_pull_t0) t0 = D.last_pull_t0 - 3600;
+  view = { u0: Math.max(0, tu(t0)), u1: U };
+  if (view.u1 - view.u0 < 60) view.u0 = Math.max(0, view.u1 - 3600);
+  render();
+}
+function zoomTo(u0, u1) {
+  const minW = Math.min(U, 600);
+  if (u1 - u0 < minW) { const c = (u0 + u1) / 2; u0 = c - minW / 2; u1 = c + minW / 2; }
+  if (u0 < 0) { u1 -= u0; u0 = 0; }
+  if (u1 > U) { u0 -= u1 - U; u1 = U; }
+  view = { u0: Math.max(0, u0), u1: Math.min(U, u1) };
+  currentRange = null;
+  document.querySelectorAll("#ranges button").forEach(b => b.classList.remove("on"));
+  render();
+}
+function rebuildKeepingView() {
+  const t0 = ut(view.u0), t1 = ut(view.u1);
+  buildPieces();
+  view = { u0: tu(t0), u1: tu(t1) };
+  render();
+}
+
+// ---------- drawing ----------
+function el(tag, attrs, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+}
+function niceTicks(lo, hi, n) {
+  const span = hi - lo || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6));
+  return { ticks: out, top: Math.ceil(hi / step) * step };
+}
+
+// One value per record drawn as steps over its interval; when records are
+// denser than pixels, a min-max envelope with the time-weighted mean.
+function seriesPaths(get, i0, i1, y) {
+  const lines = [], env = [];
+  const dense = (i1 - i0 + 1) > layout.W * 0.6;
+  let line = "", top = [], bot = [], bucket = null;
+  const flushB = () => {
+    if (!bucket) return;
+    const m = bucket.sum / bucket.w, x = bucket.x + 0.5;
+    line += (line ? "L" : "M") + x.toFixed(1) + "," + y(m).toFixed(1);
+    top.push(x.toFixed(1) + "," + y(bucket.max).toFixed(1));
+    bot.push(x.toFixed(1) + "," + y(bucket.min).toFixed(1));
+    bucket = null;
+  };
+  const endPath = () => {
+    flushB();
+    if (line) lines.push(line);
+    if (top.length > 1) env.push("M" + top.join("L") + "L" + bot.reverse().join("L") + "Z");
+    line = ""; top = []; bot = [];
+  };
+  for (let i = i0; i <= i1; i++) {
+    const v = get(i);
+    if (C.gap[i] || v == null) endPath();
+    if (v == null) continue;
+    const xa = XT(S[i]), xb = XT(T[i]);
+    if (dense) {
+      const px = Math.floor(xb);
+      if (bucket && bucket.x !== px) flushB();
+      if (!bucket) bucket = { x: px, min: v, max: v, sum: 0, w: 0 };
+      bucket.min = Math.min(bucket.min, v); bucket.max = Math.max(bucket.max, v);
+      bucket.sum += v * C.secs[i]; bucket.w += C.secs[i];
+    } else {
+      const yy = y(v).toFixed(1);
+      line += (line ? "L" : "M") + xa.toFixed(1) + "," + yy + "L" + xb.toFixed(1) + "," + yy;
+    }
+  }
+  endPath();
+  return { lines, env };
+}
+
+function panel(svg, top, h, title, i0, i1, cfg) {
+  const { L, W } = layout;
+  svg.appendChild(el("text", { x: 8, y: top + 12, class: "title" }, title));
+  if (cfg.legend) {   // on a phone: its own row, under the title
+    const ly = layout.narrow ? top + 22 : top + 4;
+    let lx = layout.narrow ? 8 : L + 8;
+    for (const [name, color] of cfg.legend) {
+      svg.appendChild(el("rect", { x: lx, y: ly, width: 14, height: 3, rx: 1.5, fill: color }));
+      svg.appendChild(el("text", { x: lx + 18, y: ly + 5 }, name));
+      lx += 26 + name.length * 5.8;
+    }
+  }
+  const y0 = top + (cfg.legend && layout.narrow ? 44 : 34), y1 = top + h;
+  let lo = cfg.lo, hi = cfg.hi;
+  // Charging (negative) would flatten the scale for consumption: with
+  // clipNeg the scale is set by the positive values and charging is clipped
+  let vmin = Infinity, vmax = -Infinity;
+  for (let i = i0; i <= i1; i++) for (const s of cfg.series) {
+    const v = s.get(i);
+    if (v == null || (cfg.clipNeg && v < 0)) continue;
+    if (v < vmin) vmin = v; if (v > vmax) vmax = v;
+  }
+  if (vmax === -Infinity) { vmin = 0; vmax = 1; }
+  if (hi == null) hi = Math.max(vmax, cfg.minHi || 1);
+  if (lo == null) lo = cfg.clipNeg ? -hi * 0.2 : Math.min(0, vmin);
+  let y, ticks;
+  if (cfg.log) {
+    const a = Math.log10(0.5), b = Math.log10(Math.max(hi, 1) * 1.2);
+    y = v => y1 - (Math.log10(Math.max(v, 0.5)) - a) / (b - a) * (y1 - y0);
+    ticks = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000].filter(v => v <= Math.max(hi, 1) * 1.2);
+  } else {
+    const nt = niceTicks(lo, hi === lo ? lo + 1 : hi, h > 100 ? 4 : 3);
+    hi = nt.top; ticks = nt.ticks;
+    if (cfg.clipNeg) lo = -hi * 0.2;
+    y = v => y1 - (Math.max(v, lo) - lo) / (hi - lo || 1) * (y1 - y0);
+    ticks = ticks.filter(v => v >= lo);
+  }
+  for (const v of ticks) {
+    const yy = y(v);
+    svg.appendChild(el("line", { x1: L, x2: L + W, y1: yy, y2: yy, stroke: v === 0 ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: L - 6, y: yy + 3.5, "text-anchor": "end" }, (cfg.fmt || String)(v)));
+  }
+  if (cfg.unit) svg.appendChild(el("text", { x: L - 6, y: top + 26, "text-anchor": "end", class: "band-label" }, cfg.unit));
+  const g = el("g", { "clip-path": "url(#plot)" });
+  if (cfg.negFill) {   // charging: area below zero
+    let d = "";
+    for (let i = i0; i <= i1; i++) {
+      const v = cfg.series[0].get(i);
+      if (v < 0) d += "M" + XT(S[i]).toFixed(1) + "," + y(0).toFixed(1) + "V" + y(v).toFixed(1) + "H" + Math.max(XT(T[i]), XT(S[i]) + 1).toFixed(1) + "V" + y(0).toFixed(1) + "Z";
+    }
+    if (d) g.appendChild(el("path", { d, fill: "var(--s3)", "fill-opacity": 0.35 }));
+    let a = null;   // name the charging stretches that are wide enough
+    for (let i = i0; i <= i1 + 1; i++) {
+      const neg = i <= i1 && cfg.series[0].get(i) < 0 && !(a != null && C.gap[i]);
+      if (neg && a == null) a = i;
+      if (!neg && a != null) {
+        const xa = Math.max(XT(S[a]), L), xb = Math.min(XT(T[i - 1]), L + W);
+        if (xb - xa > 60) g.appendChild(el("text", { x: (xa + xb) / 2, y: y(0) + 12, "text-anchor": "middle", class: "band-label" }, "charging"));
+        a = null;
+      }
+    }
+  }
+  for (const s of cfg.series) {
+    const { lines, env } = seriesPaths(s.get, i0, i1, y);
+    for (const d of env) g.appendChild(el("path", { d, fill: s.color, "fill-opacity": 0.18 }));
+    for (const d of lines) g.appendChild(el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round" }));
+  }
+  svg.appendChild(g);
+  return { y0, y1, y };
+}
+
+function render() {
+  const svg = $("svg");
+  svg.innerHTML = "";
+  if (!D) return;
+  if (!N) {
+    svg.setAttribute("height", 120);
+    svg.appendChild(el("text", { x: 20, y: 60 }, D.static ? "No records." : "No data yet: connect the deck over USB (awake) and press Pull from deck."));
+    renderTiles(0, -1);
+    return;
+  }
+  const width = $("chart").clientWidth;
+  const narrow = width < 600;
+  const L = narrow ? 92 : 112, R = 14;
+  layout = { L, W: Math.max(100, width - L - R), narrow };
+  const [i0, i1] = visible();
+  const H = { cur: 170, drain: 120, batt: 90 };
+  let top = 8;
+  const defs = el("defs", {});
+  defs.innerHTML =
+    '<clipPath id="plot"><rect x="' + L + '" y="0" width="' + layout.W + '" height="4000"/></clipPath>' +
+    '<pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+    '<line x1="0" y1="0" x2="0" y2="6" stroke="var(--hatch)" stroke-width="2"/></pattern>';
+  svg.appendChild(defs);
+  const bands = el("g", {}); svg.appendChild(bands);
+
+  const cur = panel(svg, top, H.cur, "Current", i0, i1, {
+    unit: "mA", log: opt.log, negFill: true, clipNeg: true, minHi: 10,
+    series: [{ get: i => C.ma[i], color: "var(--s1)" }],
+  });
+  top += H.cur + 14;
+  const drain = panel(svg, top, H.drain, "Battery drain", i0, i1, {
+    unit: "%/h", fmt: v => v.toFixed(v < 10 && v % 1 ? 1 : 0), negFill: true, clipNeg: true, minHi: 1,
+    legend: narrow ? [["current, 15 min", "var(--s1)"], ["gauge %, 2 h", "var(--s2)"]]
+                   : [["from current, 15 min avg", "var(--s1)"], ["from gauge %, 2 h slope", "var(--s2)"]],
+    series: [{ get: i => DRAIN15[i], color: "var(--s1)" }, { get: i => C.gauge_pct_h[i], color: "var(--s2)" }],
+  });
+  top += H.drain + 14;
+  const batt = panel(svg, top, H.batt, "Battery", i0, i1, {
+    unit: "%", lo: 0, hi: 100, series: [{ get: i => C.pct[i], color: "var(--s1)" }],
+  });
+  top += H.batt + 16;
+
+  // state lanes
+  svg.appendChild(el("text", { x: 8, y: top + 2, class: "title" }, "Switched on"));
+  top += 10;
+  const laneH = 15, laneTop = top;
+  const t0v = ut(view.u0), t1v = ut(view.u1);
+  for (const ln of lanes) {
+    svg.appendChild(el("text", { x: L - 6, y: top + 11, "text-anchor": "end", class: "lane" }, ln.name));
+    svg.appendChild(el("line", { x1: L, x2: L + layout.W, y1: top + laneH - 1, y2: top + laneH - 1, stroke: "var(--grid)" }));
+    const g = el("g", { "clip-path": "url(#plot)" });
+    let d = "", d2 = "";
+    for (const r of ln.runs) {
+      if (r.b < t0v || r.a > t1v) continue;
+      const xa = XT(r.a), xb = Math.max(XT(r.b), xa + 1);
+      if (ln.alt && r.v % 2 === 0) {   // neighbouring versions in two shades
+        d2 += "M" + xa.toFixed(1) + "," + (top + 2) + "H" + xb.toFixed(1) + "V" + (top + laneH - 3) + "H" + xa.toFixed(1) + "Z";
+        if (xb - xa > ln.label(r.v).length * 6 + 8)
+          g.appendChild(el("text", { x: ((xa + Math.min(xb, L + layout.W)) / 2).toFixed(1), y: top + 10.5, "text-anchor": "middle", style: "fill:#fff;font-size:10px" }, ln.label(r.v)));
+        continue;
+      }
+      if (ln.shade) {
+        g.appendChild(el("rect", { x: xa.toFixed(1), y: top + 2, width: (xb - xa).toFixed(1), height: laneH - 5, fill: "var(--s1)", "fill-opacity": (0.15 + 0.7 * r.v).toFixed(2) }));
+        continue;
+      }
+      d += "M" + xa.toFixed(1) + "," + (top + 2) + "H" + xb.toFixed(1) + "V" + (top + laneH - 3) + "H" + xa.toFixed(1) + "Z";
+      if (ln.label && xb - xa > ln.label(r.v).length * 6 + 8) {
+        g.appendChild(el("text", { x: ((xa + Math.min(xb, L + layout.W)) / 2).toFixed(1), y: top + 10.5, "text-anchor": "middle", style: "fill:#fff;font-size:10px" }, ln.label(r.v)));
+      }
+    }
+    if (d) g.insertBefore(el("path", { d, fill: "var(--s1)", "fill-opacity": 0.8 }), g.firstChild);
+    if (d2) g.insertBefore(el("path", { d: d2, fill: "var(--s1)", "fill-opacity": 0.5 }), g.firstChild);
+    svg.appendChild(g);
+    top += laneH;
+  }
+  top += 14;
+
+  // activity counts per pixel column
+  svg.appendChild(el("text", { x: 8, y: top + 2, class: "title" }, "Activity"));
+  top += 10;
+  const acts = [
+    ["LoRa received", i => C.rx[i]], ["LoRa sent", i => C.tx[i]],
+    ["Display refresh", i => C.refresh[i]], ["Wakes", i => C.wake_lora[i] + C.wake_btn[i] + C.wake_timer[i]],
+  ];
+  const actH = 20;
+  for (const [name, get] of acts) {
+    svg.appendChild(el("text", { x: L - 6, y: top + 14, "text-anchor": "end", class: "lane" }, name));
+    svg.appendChild(el("line", { x1: L, x2: L + layout.W, y1: top + actH - 1, y2: top + actH - 1, stroke: "var(--grid)" }));
+    const cols = new Map();
+    for (let i = i0; i <= i1; i++) {
+      const v = get(i); if (!v) continue;
+      const px = Math.floor(XT(T[i]));
+      cols.set(px, (cols.get(px) || 0) + v);
+    }
+    const mx = Math.max(1, ...cols.values());
+    let d = "";
+    for (const [px, v] of cols) d += "M" + (px + 0.5) + "," + (top + actH - 1) + "V" + (top + actH - 1 - Math.max(2, v / mx * (actH - 4))).toFixed(1);
+    const g = el("g", { "clip-path": "url(#plot)" });
+    if (d) g.appendChild(el("path", { d, stroke: "var(--ink-2)", "stroke-width": 1.5 }));
+    g.appendChild(el("text", { x: L + layout.W - 2, y: top + 9, "text-anchor": "end", class: "band-label" }, "peak " + mx));
+    svg.appendChild(g);
+    top += actH;
+  }
+  const plotBottom = top;
+  top += 4;
+
+  // time axis
+  drawAxis(svg, top, plotBottom);
+  top += 34;
+  svg.setAttribute("height", top);
+
+  // gaps, quiet stretches, clock changes over all panels
+  for (const p of P) {
+    if (p.kind === "data") continue;
+    const xa = X(p.u0), xb = X(p.u0 + p.w);
+    if (xb < L || xa > L + layout.W) continue;
+    const ca = Math.max(xa, L), cb = Math.min(xb, L + layout.W);
+    if (p.kind === "gap") {
+      bands.appendChild(el("rect", { x: ca, y: 8, width: Math.max(1, cb - ca), height: plotBottom - 8, fill: "url(#hatch)", opacity: 0.8 }));
+      label(bands, ca, cb, "no data " + dur(p.b - p.a), cur.y0);
+    } else {
+      const isExp = expanded.has(p.k) || opt.real;
+      const r = el("rect", { x: ca, y: 8, width: Math.max(1, cb - ca), height: plotBottom - 8, fill: "var(--band)", class: "qband", "data-k": p.k });
+      if (isExp) r.setAttribute("fill-opacity", 0.45);
+      bands.appendChild(r);
+      label(bands, ca, cb, (isExp ? "quiet " : "quiet ") + dur(p.b - p.a) + " · " + f1(p.q.ma) + " mA", cur.y0);
+    }
+  }
+  // clock changes; drift corrections under a minute are left out
+  let lastLabel = -1e9;
+  for (let i = i0; i <= i1; i++) {
+    const j = C.clock_jump_s[i];
+    if (Math.abs(j) < 60) continue;
+    const x = XT(T[i]);
+    bands.appendChild(el("line", { x1: x, x2: x, y1: 8, y2: plotBottom, stroke: "var(--s2)", "stroke-dasharray": "3 3" }));
+    if (x - lastLabel < 70) continue;
+    lastLabel = x;
+    bands.appendChild(el("text", { x: x + 3, y: laneTop - 2, class: "band-label" },
+      Math.abs(j) > 86400 ? "clock set" : "clock " + (j > 0 ? "+" : "−") + dur(Math.abs(j))));
+  }
+  layout.top = 8; layout.bottom = plotBottom;
+  const cross = el("line", { id: "cross", x1: -10, x2: -10, y1: 8, y2: plotBottom, stroke: "var(--ink-2)", "stroke-width": 1, opacity: 0.6 });
+  svg.appendChild(cross);
+  const sel = el("rect", { id: "sel", x: -10, y: 8, width: 0, height: plotBottom - 8, fill: "var(--s1)", "fill-opacity": 0.12, stroke: "var(--s1)" });
+  svg.appendChild(sel);
+  renderTiles(i0, i1);
+}
+
+// Only where it fits; the tooltip tells the rest
+function label(g, xa, xb, text, y) {
+  if (xb - xa > text.length * 5.6 + 6)
+    g.appendChild(el("text", { x: (xa + xb) / 2, y: y + 12, "text-anchor": "middle", class: "band-label" }, text));
+}
+
+const STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800];
+function drawAxis(svg, top, plotBottom) {
+  const { L, W } = layout;
+  svg.appendChild(el("line", { x1: L, x2: L + W, y1: top, y2: top, stroke: "var(--axis)" }));
+  let lastX = -1e9, lastDay = null;
+  for (const p of P) {
+    if (p.kind === "gap") continue;
+    const xa = X(p.u0), xb = X(p.u0 + p.w);
+    if (xb < L || xa > L + W || p.b <= p.a) continue;
+    const pxPerS = (xb - xa) / (p.b - p.a);
+    const step = STEPS.find(s => s * pxPerS >= 64);
+    if (!step) continue;
+    const offS = OFF * 3600;
+    for (let t = Math.ceil((p.a + offS) / step) * step - offS; t <= p.b; t += step) {
+      const x = XT(t);
+      if (x < L || x > L + W || x - lastX < 58) continue;
+      lastX = x;
+      svg.appendChild(el("line", { x1: x, x2: x, y1: 8, y2: plotBottom, stroke: "var(--grid)", opacity: 0.6 }));
+      svg.appendChild(el("line", { x1: x, x2: x, y1: top, y2: top + 4, stroke: "var(--axis)" }));
+      const day = dateLabel(t);
+      const dayStep = step >= 86400;
+      svg.appendChild(el("text", { x, y: top + 15, "text-anchor": "middle" }, dayStep ? day : hm(t)));
+      if (!dayStep && day !== lastDay) svg.appendChild(el("text", { x, y: top + 28, "text-anchor": "middle", style: "font-weight:600" }, day));
+      lastDay = day;
+    }
+  }
+}
+
+function renderTiles(i0, i1) {
+  let bat = 0, mas = 0, asleep = 0, cov = 0, chg = 0;
+  for (let i = i0; i <= i1; i++) {
+    cov += C.secs[i];
+    if (flag(i, "usb")) { chg += C.secs[i]; continue; }
+    bat += C.secs[i]; mas += C.ma[i] * C.secs[i]; asleep += (1 - C.awake[i]) * C.secs[i];
+  }
+  const ma = bat ? mas / bat : null, pctH = ma != null ? ma / D.capacity * 100 : null;
+  let gauge = null;
+  if (bat >= 3600) {   // gauge drop over on-battery minutes
+    let drop = 0;
+    for (let i = Math.max(i0, 1); i <= i1; i++) if (!flag(i, "usb") && !flag(i - 1, "usb") && !C.gap[i]) drop += C.pct[i - 1] - C.pct[i];
+    gauge = drop / bat * 3600;
+  }
+  const tiles = [
+    ["In view", cov ? dur(cov) : "–", "of records; " + (chg ? dur(chg) + " on USB" : "none on USB")],
+    ["Mean current on battery", ma == null ? "–" : f1(ma) + " mA", bat ? dur(bat) + " on battery" : "never on battery"],
+    ["Drain from current", pctH == null ? "–" : f2(pctH) + " %/h", "battery " + D.capacity + " mAh"],
+    ["Drain from gauge %", gauge == null ? "–" : f2(gauge) + " %/h", bat >= 3600 ? "drop of the gauge's %" : "needs 1 h on battery"],
+    ["Full battery would last", runtime(pctH), "at this mean current"],
+    ["Asleep on battery", bat ? Math.round(asleep / bat * 100) + " %" : "–", "of the time on battery"],
+  ];
+  $("tiles").innerHTML = tiles.map(([k, v, s]) => '<div class="tile"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + s + "</div></div>").join("");
+}
+
+function renderMeta() {
+  if (!N) { $("meta").textContent = D.pulls ? "No records with a valid time." : "No data yet."; }
+  else {
+    const parts = [N.toLocaleString() + " records", full(S[0]) + " – " + full(T[N - 1]), D.pulls + " pull" + (D.pulls === 1 ? "" : "s")];
+    if (D.last_pull) parts.push("last " + D.last_pull.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, "$1-$2-$3 $4:$5"));
+    if (D.unknown_count) parts.push(D.unknown_count + " with unknown time");
+    if (D.static) parts.push("exported " + D.generated);
+    $("meta").textContent = parts.join(" · ");
+  }
+}
+
+// ---------- tables ----------
+function fwName(id) {
+  if (id < 0 || !D.firmware[id]) return "not named";
+  const f = D.firmware[id];
+  return f.hash + (f.dirty ? "+" : "");
+}
+const fwTime = t => t ? full(t) : "–";
+let fwFilter = "all";
+const segsShown = () => D.segments.map((s, i) => Object.assign({ i }, s)).filter(s => fwFilter === "all" || s.fw === fwFilter);
+function byState(segs) {
+  const acc = new Map();
+  for (const s of segs) {
+    const a = acc.get(s.state) || { state: s.state, secs: 0, mas: 0, runs: 0, rx: 0, tx: 0 };
+    a.secs += s.secs; a.mas += s.ma * s.secs; a.runs++; a.rx += s.rx; a.tx += s.tx;
+    acc.set(s.state, a);
+  }
+  return [...acc.values()].map(a => {
+    const ma = a.secs ? a.mas / a.secs : 0;
+    return Object.assign(a, { ma, pct_h: ma / D.capacity * 100 });
+  }).sort((x, y) => y.secs - x.secs);
+}
+function renderFirmware() {
+  const sel = $("fwsel");
+  sel.innerHTML = '<option value="all">all firmware</option>' + D.by_firmware.map(f =>
+    '<option value="' + f.fw + '">' + esc(f.fw < 0 ? "not named (firmware before the #fw line)" : fwName(f.fw) + " · " + f.version + " · commit " + fwTime(f.git_time)) + "</option>").join("");
+  sel.value = String(fwFilter);
+  $("fwtab").innerHTML = "<thead><tr><th>Firmware</th><th>Version</th><th>Commit</th><th>Built</th><th>Logged</th><th class=n>Time</th><th class=n>Mean mA on battery</th><th class=n>%/h</th><th class=n>Asleep</th></tr></thead><tbody>" +
+    D.by_firmware.map(f => "<tr data-fw=" + f.fw + (fwFilter === f.fw ? " class=sel" : "") + "><td>" + esc(f.fw < 0 ? "not named" : fwName(f.fw)) + "</td><td>" + esc(f.version || "older, before the #fw line") +
+      "</td><td>" + fwTime(f.git_time) + "</td><td>" + fwTime(f.build_time) + "</td><td>" + full(f.t0) + " – " + full(f.t1) + "</td><td class=n>" + dur(f.secs) +
+      "</td><td class=n>" + f1(f.ma) + "</td><td class=n>" + f2(f.pct_h) + "</td><td class=n>" + (f.asleep == null ? "–" : Math.round(f.asleep * 100) + " %") + "</td></tr>").join("") + "</tbody>";
+}
+function setFw(v) { fwFilter = v === "all" ? "all" : +v; renderFirmware(); renderTables(); }
+$("fwsel").addEventListener("change", e => setFw(e.target.value));
+$("fwtab").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-fw]");
+  if (tr) setFw(fwFilter === +tr.dataset.fw ? "all" : tr.dataset.fw);
+});
+
+let segSort = { k: "t0", dir: -1 };
+function renderTables() {
+  $("bystate").innerHTML = "<thead><tr><th>State (what was on)</th><th class=n>Time</th><th class=n>Runs</th><th class=n>Mean mA</th><th class=n>%/h</th><th class=n>Full battery lasts</th><th class=n>RX / TX</th></tr></thead><tbody>" +
+    byState(segsShown()).map(s => "<tr><td class=wrap>" + esc(s.state) + "</td><td class=n>" + dur(s.secs) + "</td><td class=n>" + s.runs + "</td><td class=n>" + f1(s.ma) + "</td><td class=n>" + f2(s.pct_h) + "</td><td class=n>" + (s.state.includes("usb") ? "–" : runtime(s.pct_h)) + "</td><td class=n>" + s.rx + " / " + s.tx + "</td></tr>").join("") + "</tbody>";
+  renderSegs();
+  const unk = $("unk");
+  unk.style.display = D.unknown_count ? "" : "none";
+  unk.querySelector("summary").textContent = D.unknown_count + " records with an unknown time (clock not set, not repairable)";
+  unk.querySelector("table").innerHTML = "<thead><tr><th>Logged as</th><th class=n>%</th><th class=n>mA</th><th>Where</th></tr></thead><tbody>" +
+    D.unknown.map(u => "<tr><td>" + esc(u.local) + "</td><td class=n>" + u.pct + "</td><td class=n>" + u.ma + "</td><td>" + esc(u.where) + "</td></tr>").join("") + "</tbody>";
+  const bad = $("bad");
+  bad.style.display = D.bad_count || D.warning_count ? "" : "none";
+  bad.querySelector("summary").textContent = D.bad_count + " lines that are not valid records, " + D.warning_count + " warnings";
+  bad.querySelector("table").innerHTML = "<thead><tr><th>Where</th><th>Problem</th><th>Line</th></tr></thead><tbody>" +
+    D.bad.map(b => "<tr><td>" + esc(b.where) + "</td><td>" + esc(b.why) + "</td><td class=wrap>" + esc(b.line) + "</td></tr>").join("") +
+    D.warnings.map(w => "<tr><td>" + esc(w.where) + "</td><td>" + esc(w.why) + "</td><td></td></tr>").join("") + "</tbody>";
+}
+function renderSegs() {
+  const cols = [["t0", "Start"], ["secs", "Duration", 1], ["state", "What was on"], ["fw", "Firmware"], ["ma", "Mean mA", 1], ["pct_h", "%/h current", 1], ["gauge_pct_h", "%/h gauge", 1], ["awake", "Awake", 1], ["rx", "RX / TX", 1]];
+  const rows = segsShown();
+  rows.sort((a, b) => {
+    const x = a[segSort.k], y = b[segSort.k];
+    return (x == null ? -1e9 : x) < (y == null ? -1e9 : y) ? -segSort.dir : (x === y ? 0 : segSort.dir);
+  });
+  const shown = rows.slice(0, 500);
+  $("segs").innerHTML = "<thead><tr>" + cols.map(([k, n, num]) => "<th data-k=" + k + (num ? " class=n" : "") + ">" + n + (segSort.k === k ? (segSort.dir > 0 ? " ▲" : " ▼") : "") + "</th>").join("") + "</tr></thead><tbody>" +
+    shown.map(s => "<tr data-i=" + s.i + "><td>" + full(s.t0) + "</td><td class=n>" + dur(s.secs) + "</td><td class=wrap>" + esc(s.state) + "</td><td>" + esc(fwName(s.fw)) + "</td><td class=n>" + f1(s.ma) + "</td><td class=n>" + f2(s.pct_h) + "</td><td class=n>" + f2(s.gauge_pct_h) + "</td><td class=n>" + Math.round(s.awake * 100) + " %</td><td class=n>" + s.rx + " / " + s.tx + "</td></tr>").join("") +
+    (rows.length > 500 ? "<tr><td colspan=9>… " + (rows.length - 500) + " more (sort to see others)</td></tr>" : "") + "</tbody>";
+}
+$("segs").addEventListener("click", e => {
+  const th = e.target.closest("th");
+  if (th) { const k = th.dataset.k; segSort = { k, dir: segSort.k === k ? -segSort.dir : (k === "t0" || k === "state" ? 1 : -1) }; renderSegs(); return; }
+  const tr = e.target.closest("tr[data-i]");
+  if (!tr) return;
+  const s = D.segments[+tr.dataset.i], padS = Math.max(600, (s.t1 - s.t0) * 0.1);
+  zoomTo(tu(s.t0 - padS), tu(s.t1 + padS));
+  $("chart").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// ---------- hover, zoom, pan ----------
+function recordAt(t) {
+  let i = firstIdx(t);
+  if (i >= N) i = N - 1;
+  if (S[i] > t + 1) return { gapBefore: i };   // t is before this record's interval
+  return { i };
+}
+function tipHtml(i) {
+  const on = D.flags.filter(f => flag(i, f)).map(f => f === "usb" && C.charge[i] ? "usb (" + D.charge[C.charge[i]] + ")" : f);
+  const rows = [
+    ["Current", f1(C.ma[i]) + " mA" + (C.ma[i] < 0 ? " (charging)" : "")],
+    ["Drain", f2(C.drain_pct_h[i]) + " %/h" + (DRAIN15[i] != null ? " · 15 min " + f2(DRAIN15[i]) : "")],
+    ["Gauge slope", C.gauge_pct_h[i] == null ? "–" : f2(C.gauge_pct_h[i]) + " %/h"],
+    ["Battery", C.pct[i] + " % · " + C.mv[i] + " mV · " + C.temp_c[i] + " °C"],
+    ["Asleep", Math.round((1 - C.awake[i]) * 100) + " % of " + C.secs[i] + " s"],
+    ["Wakes", "LoRa " + C.wake_lora[i] + " · button " + C.wake_btn[i] + " · timer " + C.wake_timer[i]],
+    ["LoRa", C.rx[i] + " received · " + C.tx[i] + " sent"],
+    ["Display", C.refresh[i] + " refreshes (" + C.full_refresh[i] + " full)"],
+  ];
+  if (flag(i, "locked")) rows.push(["Sleep", D.blockers[C.blocker[i]]]);
+  rows.push(["Firmware", esc(fwName(C.fw[i]))]);
+  if (C.clock_jump_s[i]) rows.push(["Clock changed", (C.clock_jump_s[i] > 0 ? "+" : "") + C.clock_jump_s[i] + " s"]);
+  if (C.shift[i]) rows.push(["Time repaired", (C.shift[i] > 0 ? "+" : "") + dur(Math.abs(C.shift[i]))]);
+  return "<b>" + full(S[i], C.utc_offset[i]) + " – " + hm(T[i], C.utc_offset[i]) + "</b><br>" +
+    '<div class="on">' + esc(on.join(", ") || "nothing on") + "</div>" +
+    rows.map(([k, v]) => '<div class="row"><span>' + k + "</span><span>" + v + "</span></div>").join("") +
+    '<div class="row"><span>From</span><span>' + esc(C.where[i]) + "</span></div>";
+}
+const chart = $("chart"), tip = $("tip");
+let drag = null;
+function localX(e) { const r = $("svg").getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+chart.addEventListener("mousemove", e => {
+  if (!layout || !N) return;
+  const [x, y] = localX(e);
+  const cross = $("cross");
+  if (drag) {
+    tip.style.display = "none";
+    if (drag.pan) {
+      const du = (drag.x - x) / layout.W * (drag.v.u1 - drag.v.u0);
+      view = { u0: drag.v.u0 + du, u1: drag.v.u1 + du };
+      if (view.u0 < 0) { view.u1 -= view.u0; view.u0 = 0; }
+      if (view.u1 > U) { view.u0 -= view.u1 - U; view.u1 = U; }
+      render();
+    } else {
+      const sel = $("sel"), a = Math.max(layout.L, Math.min(drag.x, x)), b = Math.min(layout.L + layout.W, Math.max(drag.x, x));
+      sel.setAttribute("x", a); sel.setAttribute("width", b - a);
+    }
+    return;
+  }
+  if (x < layout.L || x > layout.L + layout.W || y > layout.bottom) { tip.style.display = "none"; cross.setAttribute("x1", -10); cross.setAttribute("x2", -10); return; }
+  cross.setAttribute("x1", x); cross.setAttribute("x2", x);
+  const u = UX(x), p = pieceAt(u), t = ut(u);
+  let html;
+  if (p && p.kind === "gap") html = "<b>No data for " + dur(p.b - p.a) + "</b><br>" + full(p.a) + " – " + full(p.b) + "<br>Deck off, reset or out of battery.";
+  else {
+    const r = recordAt(t);
+    if (r.i == null) { tip.style.display = "none"; return; }
+    html = tipHtml(r.i);
+    if (p && p.kind === "quiet") html = "<div style='color:var(--muted)'>Quiet " + dur(p.b - p.a) + (expanded.has(p.k) || opt.real ? "" : ", drawn narrow, click to expand") + "</div>" + html;
+  }
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const cw = chart.clientWidth, tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = (x + 14 + tw > cw ? Math.max(0, x - 14 - tw) : x + 14) + "px";
+  tip.style.top = Math.max(0, Math.min(y + 10, chart.clientHeight - th - 4)) + "px";
+});
+chart.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+chart.addEventListener("mousedown", e => {
+  if (!layout || !N || e.button !== 0) return;
+  const [x] = localX(e);
+  if (x < layout.L) return;
+  drag = { x, v: Object.assign({}, view), pan: e.shiftKey };
+  e.preventDefault();
+});
+window.addEventListener("mouseup", e => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  const [x] = localX(e);
+  if (d.pan) return;
+  if (Math.abs(x - d.x) < 4) {        // a click: expand / compress a quiet stretch
+    const p = pieceAt(UX(x));
+    if (p && p.kind === "quiet" && !opt.real) {
+      if (expanded.has(p.k)) expanded.delete(p.k); else expanded.add(p.k);
+      rebuildKeepingView();
+    } else render();
+    return;
+  }
+  const a = UX(Math.max(layout.L, Math.min(d.x, x))), b = UX(Math.min(layout.L + layout.W, Math.max(d.x, x)));
+  zoomTo(a, b);
+});
+chart.addEventListener("wheel", e => {
+  if (!layout || !N) return;
+  e.preventDefault();
+  const [x] = localX(e);
+  const w = view.u1 - view.u0;
+  if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    const du = (e.shiftKey ? e.deltaY || e.deltaX : e.deltaX) / layout.W * w;
+    zoomTo(view.u0 + du, view.u1 + du);
+    return;
+  }
+  const f = Math.pow(1.0015, e.deltaY), c = UX(Math.max(layout.L, Math.min(layout.L + layout.W, x)));
+  let u0 = c - (c - view.u0) * f, u1 = c + (view.u1 - c) * f;
+  if (u1 - u0 >= U) { u0 = 0; u1 = U; }
+  zoomTo(u0, u1);
+}, { passive: false });
+chart.addEventListener("dblclick", () => setRange("all"));
+// touch: one finger pans, two fingers pinch
+let touch = null;
+chart.addEventListener("touchstart", e => {
+  if (!layout || !N) return;
+  const xs = [...e.touches].map(t => localX(t)[0]);
+  touch = { xs, v: Object.assign({}, view) };
+}, { passive: true });
+chart.addEventListener("touchmove", e => {
+  if (!touch) return;
+  const xs = [...e.touches].map(t => localX(t)[0]);
+  const v = touch.v, w = v.u1 - v.u0;
+  if (xs.length === 2 && touch.xs.length === 2) {
+    e.preventDefault();
+    const d0 = Math.abs(touch.xs[1] - touch.xs[0]) || 1, d1 = Math.abs(xs[1] - xs[0]) || 1;
+    const c0 = (touch.xs[0] + touch.xs[1]) / 2, cu = v.u0 + (c0 - layout.L) / layout.W * w;
+    const nw = w * d0 / d1;
+    zoomTo(cu - (c0 - layout.L) / layout.W * nw, cu + (1 - (c0 - layout.L) / layout.W) * nw);
+  } else if (xs.length === 1 && touch.xs.length === 1) {
+    const dx = xs[0] - touch.xs[0];
+    if (Math.abs(dx) > 8) { e.preventDefault(); const du = -dx / layout.W * w; zoomTo(v.u0 + du, v.u1 + du); }
+  }
+}, { passive: false });
+chart.addEventListener("touchend", () => { touch = null; });
+
+document.querySelectorAll("#ranges button").forEach(b => b.addEventListener("click", () => setRange(b.dataset.r)));
+$("real").addEventListener("change", e => { opt.real = e.target.checked; rebuildKeepingView(); });
+$("log").addEventListener("change", e => { opt.log = e.target.checked; render(); });
+let rT = null;
+window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(render, 100); });
+
+// ---------- pulling (server mode) ----------
+async function fetchData() {
+  const r = await fetch("api/data", { cache: "no-store" });
+  load(await r.json());
+}
+function showStatus(st) {
+  const s = $("pullstatus"), btn = $("pull");
+  btn.disabled = st.running;
+  s.classList.toggle("err", !!st.error);
+  if (st.running) s.textContent = "Pulling… " + (st.log.length ? st.log[st.log.length - 1] : "");
+  else if (st.error) s.textContent = "Pull failed: " + st.error;
+  else if (st.result) s.textContent = st.result.new ? st.result.new + " new records pulled" : "Nothing new on the deck";
+}
+async function poll(seq) {
+  for (;;) {
+    const st = await (await fetch("api/status", { cache: "no-store" })).json();
+    showStatus(st);
+    if (!st.running) { if (st.result && st.result.new) await fetchData(); return; }
+    await new Promise(r => setTimeout(r, 700));
+  }
+}
+$("pull").addEventListener("click", async () => {
+  $("pull").disabled = true;
+  await fetch("api/pull", { method: "POST" });
+  poll();
+});
+
+(async () => {
+  if (EMBED) { load(EMBED); return; }
+  await fetchData();
+  const st = await (await fetch("api/status", { cache: "no-store" })).json();
+  if (st.running) poll(); else showStatus(st);
+})();
+</script>
+</body>
+</html>

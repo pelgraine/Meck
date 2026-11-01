@@ -18,10 +18,11 @@ enum Ui2Tile : uint8_t {
   UI2_TILE_READER, UI2_TILE_AUDIO, UI2_TILE_BROWSER, UI2_TILE_NOTES,
   UI2_TILE_ALARM, UI2_TILE_MAIL, UI2_TILE_GAMES, UI2_TILE_VOICE,
   UI2_TILE_DISCOVER, UI2_TILE_TRACE, UI2_TILE_LAST_HEARD, UI2_TILE_ADVERT,
+  UI2_TILE_SOS,
   UI2_TILE_NONE
 };
 
-static const uint8_t UI2_HOME_TILE_PAGES = 2;
+static const uint8_t UI2_HOME_TILE_PAGES = 3;
 static const uint8_t UI2_HOME_TILES_PER_PAGE = 8;
 
 static const Ui2Tile UI2_HOME_LAYOUT[UI2_HOME_TILE_PAGES][UI2_HOME_TILES_PER_PAGE] = {
@@ -29,6 +30,8 @@ static const Ui2Tile UI2_HOME_LAYOUT[UI2_HOME_TILE_PAGES][UI2_HOME_TILES_PER_PAG
     UI2_TILE_LAST_HEARD, UI2_TILE_DISCOVER, UI2_TILE_ALARM,  UI2_TILE_SETTINGS },
   { UI2_TILE_READER,     UI2_TILE_AUDIO,    UI2_TILE_BROWSER, UI2_TILE_NOTES,
     UI2_TILE_VOICE,      UI2_TILE_GAMES,    UI2_TILE_TRACE,   UI2_TILE_ADVERT },
+  { UI2_TILE_SOS,        UI2_TILE_NONE,     UI2_TILE_NONE,    UI2_TILE_NONE,
+    UI2_TILE_NONE,       UI2_TILE_NONE,     UI2_TILE_NONE,    UI2_TILE_NONE },
 };
 
 struct Ui2TileInfo {
@@ -59,6 +62,7 @@ static inline const Ui2TileInfo& ui2TileInfo(Ui2Tile t) {
     { UI2_IC_TRACE,    "Trace",       "Trace" },
     { UI2_IC_RADIO,    "Last heard",  "Entendus" },
     { UI2_IC_SEND,     "Send advert", "Annonce" },
+    { UI2_IC_WARN,     "SOS",         "SOS" },
     { UI2_IC_COUNT,    "",            "" },
   };
   return info[t <= UI2_TILE_NONE ? t : UI2_TILE_NONE];

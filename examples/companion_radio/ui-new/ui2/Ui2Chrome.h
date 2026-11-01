@@ -24,7 +24,9 @@ struct Ui2Status {
   bool wifiOn = false;        // WiFi radio on
   uint8_t wifiLevel = 0;      // 0 = not joined to a network, 1-3 = signal
   bool gpsOn = false;
+  bool gpsFix = false;        // the GPS has a fix (the icon gets its centre dot)
   bool alarmOn = false;
+  bool sosActive = false;     // SOS counting down or being sent
   bool audioPlaying = false;
   bool silent = false;
   bool externalAntenna = false;

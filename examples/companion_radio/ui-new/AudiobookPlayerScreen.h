@@ -1828,7 +1828,7 @@ public:
       Ui2Chrome::statusHeader(c);
       Ui2Chrome::titleBar(c, MECK_TR("Audiobooks", "Livres audio"));
       Ui2List::emptyState(c, ui2::BODY_Y, ui2::FOOTER_Y, UI2_IC_SD, MECK_TR("SD card not found", "Carte SD introuvable"),
-                          MECK_TR("Insert an SD card with an /audiobooks/ folder.", "InsÃ©rez une SD avec un dossier /audiobooks/."));
+                          MECK_TR("Insert an SD card with an /audiobooks/ folder.", "Ins\xC3\xA9rez une SD avec un dossier /audiobooks/."));
       const Ui2Key keys[] = { ui2Key("Q", MECK_TR("Back", "Retour")) };
       Ui2Chrome::footer(c, keys, 1);
       return 5000;

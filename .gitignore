@@ -19,3 +19,7 @@ venv/
 
 # UI v2 font sources (downloaded, see tools/ui2/gen_fonts.py)
 tools/ui2/fonts/*.ttf
+
+# Power logs pulled off the deck (tools/powerlog)
+powerlogs/
+tools/powerlog/__pycache__/

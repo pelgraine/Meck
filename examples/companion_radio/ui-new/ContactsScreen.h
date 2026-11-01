@@ -57,6 +57,10 @@ private:
 
   // --- Select mode state ---
   bool _selectMode;
+  // Contact options (O)
+  bool _optOpen = false;
+  int _optSel = 0, _optCount = 0, _optContactIdx = -1, _optRequest = 0;
+  uint8_t _optItems[6];
   uint8_t* _selectedBits;   // Bitfield: 1 bit per MAX_CONTACTS raw index
 
 
@@ -327,6 +331,163 @@ public:
   }
 
 
+
+  // --- Contact options (O) --------------------------------------------------
+  // Telemetry this contact may request from us (battery, location, sensors:
+  // the MeshCore per-contact permissions), sending it our position as a
+  // "[LOC]lat,lon" message, and its advertised position on the map. The
+  // toggles are applied here; send and map run in main.cpp
+  // (takeOptionsRequest).
+  enum { OPT_TEL_BASE = 1, OPT_TEL_LOC, OPT_TEL_ENV, OPT_SEND_LOC, OPT_MAP };
+
+  bool isOptionsOpen() const { return _optOpen; }
+
+  bool openOptions() {
+    int idx = getSelectedContactIdx();
+    ContactInfo ci;
+    if (idx < 0 || !the_mesh.getContactByIdx(idx, ci)) return false;
+    _optContactIdx = idx;
+    _optCount = 0;
+    _optItems[_optCount++] = OPT_TEL_BASE;
+    _optItems[_optCount++] = OPT_TEL_LOC;
+    _optItems[_optCount++] = OPT_TEL_ENV;
+    if (ci.type == ADV_TYPE_CHAT) _optItems[_optCount++] = OPT_SEND_LOC;
+#if HAS_GPS
+    if (ci.gps_lat != 0 || ci.gps_lon != 0) _optItems[_optCount++] = OPT_MAP;
+#endif
+    _optSel = 0;
+    _optRequest = 0;
+    _optOpen = true;
+    return true;
+  }
+
+  // The send / map action picked in the options, for main.cpp (0 = none)
+  int takeOptionsRequest(int& contactIdx) {
+    int r = _optRequest;
+    _optRequest = 0;
+    contactIdx = _optContactIdx;
+    return r;
+  }
+
+  static uint8_t optPerm(int item) {
+    return item == OPT_TEL_BASE ? TELEM_PERM_BASE : item == OPT_TEL_LOC ? TELEM_PERM_LOCATION : TELEM_PERM_ENVIRONMENT;
+  }
+  static const char* optLabel(int item) {
+    switch (item) {
+      case OPT_TEL_BASE: return MECK_TR("Share battery", "Partager la batterie");
+      case OPT_TEL_LOC:  return MECK_TR("Share location", "Partager la position");
+      case OPT_TEL_ENV:  return MECK_TR("Share sensors", "Partager les capteurs");
+      case OPT_SEND_LOC: return MECK_TR("Send my location", "Envoyer ma position");
+      case OPT_MAP:      return MECK_TR("Show on map", "Voir sur la carte");
+    }
+    return "";
+  }
+
+  bool handleOptionsKey(char c) {
+    if (c == 'w' || c == 'W' || c == (char)0xF2) {
+      if (_optSel > 0) _optSel--;
+      return true;
+    }
+    if (c == 's' || c == 'S' || c == (char)0xF1) {
+      if (_optSel < _optCount - 1) _optSel++;
+      return true;
+    }
+    if (c == 13 || c == KEY_ENTER) {
+      int item = _optItems[_optSel];
+      if (item <= OPT_TEL_ENV) {
+        extern bool meckContactTelemetryState(int idx, uint8_t perm, bool& everyone, bool& ignored);
+        extern void meckContactTelemetrySet(int idx, uint8_t perm, bool on);
+        bool everyone, ignored;
+        bool on = meckContactTelemetryState(_optContactIdx, optPerm(item), everyone, ignored);
+        if (!everyone) meckContactTelemetrySet(_optContactIdx, optPerm(item), !on);
+      } else {
+        _optRequest = item;
+        _optOpen = false;
+      }
+      return true;
+    }
+    if (c == 'q' || c == 'Q' || c == KEY_CANCEL || c == '\b') {
+      _optOpen = false;
+      return true;
+    }
+    return true;   // the options keep every other key
+  }
+
+#ifdef MECK_UI_V2
+  int renderOptionsV2(Ui2Canvas& c) {
+    using namespace ui2;
+    extern bool meckContactTelemetryState(int idx, uint8_t perm, bool& everyone, bool& ignored);
+    ContactInfo ci;
+    if (!the_mesh.getContactByIdx(_optContactIdx, ci)) { _optOpen = false; return 100; }
+    Ui2Chrome::titleBar(c, ci.name, MECK_TR("Options", "Options"));
+    int16_t y = BODY_Y;
+    bool anyIgnored = false;
+    for (int i = 0; i < _optCount; i++) {
+      int item = _optItems[i];
+      Ui2Row r;
+      r.title = optLabel(item);
+      if (item <= OPT_TEL_ENV) {
+        bool everyone, ignored;
+        bool on = meckContactTelemetryState(_optContactIdx, optPerm(item), everyone, ignored);
+        anyIgnored |= ignored;
+        r.icon = item == OPT_TEL_BASE ? UI2_IC_BOLT : item == OPT_TEL_LOC ? UI2_IC_PIN : UI2_IC_THERMO;
+        r.sub = everyone ? MECK_TR("Everyone (set in the app)", "Tout le monde (appli)") : MECK_TR("Telemetry", "T\xC3\xA9l\xC3\xA9m\xC3\xA9trie");
+        r.toggle = (on || everyone) ? 1 : 0;
+      } else if (item == OPT_SEND_LOC) {
+        r.icon = UI2_IC_SEND;
+        r.sub = MECK_TR("As a direct message", "En message direct");
+      } else {
+        r.icon = UI2_IC_MAP;
+        r.chevron = true;
+      }
+      r.selected = (i == _optSel);
+      Ui2List::drawRow(c, y, r);
+      y += ROW_H;
+    }
+    if (anyIgnored) {
+      c.wrap(PAD, y + 18, SCREEN_W - 2 * PAD, 16, 3,
+             MECK_TR("Its telemetry requests are ignored. Allowing any of the above ends that.",
+                     "Ses demandes sont ignor\xC3\xA9" "es. Autoriser l'une d'elles y met fin."),
+             UI2_F_SMALL);
+    }
+    const Ui2Key keys[] = { ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Select", "Choisir")),
+                            ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
+                            ui2Key("Q", MECK_TR("Back", "Retour")) };
+    Ui2Chrome::footer(c, keys, 3);
+    return 5000;
+  }
+#endif
+
+  int renderOptionsClassic(DisplayDriver& display) {
+    extern bool meckContactTelemetryState(int idx, uint8_t perm, bool& everyone, bool& ignored);
+    ContactInfo ci;
+    if (!the_mesh.getContactByIdx(_optContactIdx, ci)) { _optOpen = false; return 100; }
+    display.setTextSize(1);
+    display.setColor(DisplayDriver::GREEN);
+    display.setCursor(0, 0);
+    display.print(ci.name);
+    int lh = the_mesh.getNodePrefs()->smallLineH();
+    display.setTextSize(the_mesh.getNodePrefs()->smallTextSize());
+    int y = 14;
+    char line[48];
+    for (int i = 0; i < _optCount; i++) {
+      int item = _optItems[i];
+      if (item <= OPT_TEL_ENV) {
+        bool everyone, ignored;
+        bool on = meckContactTelemetryState(_optContactIdx, optPerm(item), everyone, ignored);
+        snprintf(line, sizeof(line), "%s %s: %s", i == _optSel ? ">" : " ", optLabel(item),
+                 (on || everyone) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+      } else {
+        snprintf(line, sizeof(line), "%s %s", i == _optSel ? ">" : " ", optLabel(item));
+      }
+      display.setCursor(0, y);
+      display.print(line);
+      y += lh;
+    }
+    display.setTextSize(1);
+    return 5000;
+  }
+
 #ifdef MECK_UI_V2
   // UI v2 (design B7): icon by node type, name, type line, age and hops on
   // the right, star for favourites, DM unread badge; check marks in select
@@ -335,6 +496,7 @@ public:
     using namespace ui2;
     Ui2Canvas c(display);
     Ui2Chrome::statusHeader(c);
+    if (_optOpen) return renderOptionsV2(c);
     char title[32], right[16];
     if (_selectMode) snprintf(title, sizeof(title), MECK_TR("%d selected", "%d s\xC3\xA9lectionn\xC3\xA9(s)"), getSelectedCount());
     else snprintf(title, sizeof(title), "Contacts");
@@ -391,10 +553,11 @@ public:
       const Ui2Key keys[] = {
         ui2KeyIcon(UI2_IC_ENTER, MECK_TR("Open", "Ouvrir")),
         ui2Key("W/S", MECK_TR("Move", "D\xC3\xA9placer"), true),
-        ui2Key("A/D", MECK_TR("Filter", "Filtre")),
+        ui2Key("A/D", MECK_TR("Filter", "Filtre"), true),
+        ui2Key("O", MECK_TR("Options", "Options")),
         ui2Key("P", MECK_TR("Path", "Chemin")),
       };
-      Ui2Chrome::footer(c, keys, 4);
+      Ui2Chrome::footer(c, keys, 5);
     }
     return 5000;
   }
@@ -417,6 +580,7 @@ public:
 #ifdef MECK_UI_V2
     return renderV2(display);
 #endif
+    if (_optOpen) return renderOptionsClassic(display);
 
     char tmp[48];
 
@@ -562,6 +726,7 @@ public:
   }
 
   bool handleInput(char c) override {
+    if (_optOpen) return handleOptionsKey(c);
     // Shift+W: page up
     if (c == 'W') {
       int pageSize = (128 - 14 - 14) / the_mesh.getNodePrefs()->smallLineH();

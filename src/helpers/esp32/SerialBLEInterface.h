@@ -30,7 +30,12 @@ class SerialBLEInterface : public BaseSerialInterface, BLESecurityCallbacks, BLE
   uint32_t _pin_code;
   char _dev_name[48];      // stored in begin(), consumed by deferred _realBegin()
   unsigned long _last_write;
+  unsigned long _last_rx;
   unsigned long adv_restart_time;
+  uint32_t _rx_frames;                // frames received from the app
+  volatile uint16_t _drops;           // links lost
+  volatile uint8_t _drop_reason;      // why the last one went (esp_gatt_conn_reason_t)
+  volatile unsigned long _link_at;    // authenticated link up, waiting for the app's first frame (0 = not waiting)
 
   struct Frame {
     uint8_t len;
@@ -66,6 +71,7 @@ protected:
   void onConnect(BLEServer* pServer, esp_ble_gatts_cb_param_t *param) override;
   void onMtuChanged(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override;
   void onDisconnect(BLEServer* pServer) override;
+  void onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) override;
 
   // BLECharacteristicCallbacks methods
   void onWrite(BLECharacteristic* pCharacteristic, esp_ble_gatts_cb_param_t* param) override;
@@ -84,6 +90,11 @@ public:
     _tx_off = 0; _rx_len = -1;
 #endif
     _last_write = 0;
+    _last_rx = 0;
+    _rx_frames = 0;
+    _drops = 0;
+    _drop_reason = 0;
+    _link_at = 0;
     last_conn_id = 0;
     memset(_remote_bda, 0, 6);
     recv_queue = xQueueCreateStatic(
@@ -106,6 +117,22 @@ public:
   bool isEnabled() const override { return _isEnabled; }
 
   bool isConnected() const override;
+
+  // Connection parameters the link last settled on (0 until the first
+  // update): interval in 1.25 ms units, latency in events
+  static uint16_t linkInterval();
+  static uint16_t linkLatency();
+
+  // millis() of the last frame sent or received
+  unsigned long lastActivity() const {
+    return (long)(_last_rx - _last_write) > 0 ? _last_rx : _last_write;
+  }
+
+  // Running totals for the power log: whether the app itself talked over a
+  // link (iOS may reconnect without waking it), and how links ended
+  uint32_t rxFrames() const { return _rx_frames; }
+  uint16_t drops() const { return _drops; }
+  uint8_t lastDropReason() const { return _drop_reason; }
 
   bool isWriteBusy() const override;
   bool hasPendingData() const override { return deviceConnected && send_queue_len > 0; }

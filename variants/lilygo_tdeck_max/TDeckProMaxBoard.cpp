@@ -242,6 +242,10 @@ void TDeckProMaxBoard::modemPwrkeyPulse() {
   xl9555_digitalWrite(XL_PIN_PWRKEY_EN, HIGH);
 }
 
+void TDeckProMaxBoard::modemPwrkeyRelease() {
+  xl9555_digitalWrite(XL_PIN_PWRKEY_EN, LOW);
+}
+
 // ---- Audio output selection ----
 
 void TDeckProMaxBoard::selectAudioES8311() {

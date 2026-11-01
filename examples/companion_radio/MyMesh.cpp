@@ -1397,9 +1397,14 @@ void MyMesh::clearCustomPath(int contactIdx) {
   MESH_DEBUG_PRINTLN("clearCustomPath: contact %s — reverted to auto-discovery", c->name);
 }
 
+// Display builds (main.cpp): true when a telemetry request must get no reply
+// (contact ignored, or the experimental request prompt is asking the user)
+__attribute__((weak)) bool meckTelemetryGate(const ContactInfo& contact) { return false; }
+
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
   if (data[0] == REQ_TYPE_GET_TELEMETRY_DATA) {
+    if (meckTelemetryGate(contact)) return 0;
     uint8_t permissions = 0;
     uint8_t cp = contact.flags >> 1; // LSB used as 'favourite' bit (so only use upper bits)
 
@@ -1793,6 +1798,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.airtime_factor = 1.0; // one half
   _prefs.rx_boosted_gain = 1;  // boosted RX gain on by default (agc_reset_interval 0 = off)
   _prefs.lock_sleep = 1;       // power saving when locked on by default
+  _prefs.sos_btn = 1;          // SOS on a 3 s hold of the top button
   _prefs.multi_acks = 1;      // redundant ACKs on by default
   strcpy(_prefs.node_name, "NONAME");
   _prefs.freq = LORA_FREQ;
@@ -4007,6 +4013,14 @@ void MyMesh::checkCLIRescueCmd() {
       extern void meckPowerCmd(const char* cmd);
       meckPowerCmd(cli_command);
 #endif
+    } else if (memcmp(cli_command, "uigeo ", 6) == 0) {
+      // Debug: what the location parser finds in a text (nothing is stored)
+      extern void meckDebugGeo(const char* text);
+      meckDebugGeo(&cli_command[6]);
+    } else if (strcmp(cli_command, "sos") == 0 || memcmp(cli_command, "sos ", 4) == 0) {
+      // Debug: SOS state, dry run, simulated hold / fix (docs/sos.md)
+      extern void meckSosCmd(const char* arg);
+      meckSosCmd(cli_command[3] ? &cli_command[4] : "");
     } else if (memcmp(cli_command, "uigo ", 5) == 0) {
       // Debug: open a screen directly, e.g. "uigo rxlog", "uigo pathed 3"
       extern void meckDebugGoto(const char* arg);
@@ -4279,6 +4293,12 @@ void MyMesh::checkCLIRescueCmd() {
 }
 
 void MyMesh::checkSerialInterface() {
+  // A link lost mid-sync must not carry the rest of the contact list into
+  // the next one: the app did not ask for it there, and its own
+  // CMD_GET_CONTACTS would get ERR_CODE_BAD_STATE while the iterator runs.
+  // An iOS background reconnect sends no CMD_APP_START to reset it.
+  if (_iter_started && !_serial->isConnected()) _iter_started = false;
+
   size_t len = _serial->checkRecvFrame(cmd_frame);
   if (len > 0) {
     handleCmdFrame(len);

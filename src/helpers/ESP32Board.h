@@ -140,6 +140,40 @@ inline uint32_t* esp32RtcTimeBackup() {
 }
 #define RTC_BACKUP_MAGIC  0xAA55CC33
 
+#ifdef MECK_CLOCK_NVS_BACKUP
+// The reset button (EN) clears RTC memory too, so a board that gets reset
+// by hand also keeps the time in NVS, every MECK_CLOCK_NVS_PERIOD seconds
+// (720 small writes a day, well within NVS wear levelling). After such a
+// reset the clock resumes from the last save: up to that period behind,
+// plus the time the device was off, instead of the May 2024 seed. The next
+// phone or GPS sync corrects it.
+#include <Preferences.h>
+#ifndef MECK_CLOCK_NVS_PERIOD
+#define MECK_CLOCK_NVS_PERIOD 120
+#endif
+inline uint32_t& esp32NvsTimeSaved() {   // last value written (or read at boot)
+  static uint32_t saved = 0;
+  return saved;
+}
+inline uint32_t esp32NvsTimeLoad() {
+  Preferences p;
+  uint32_t t = 0;
+  if (p.begin("meckclock", true)) {
+    t = p.getUInt("t", 0);
+    p.end();
+  }
+  return t;
+}
+inline void esp32NvsTimeSave(uint32_t t) {
+  Preferences p;
+  if (p.begin("meckclock", false)) {
+    p.putUInt("t", t);
+    p.end();
+  }
+  esp32NvsTimeSaved() = t;
+}
+#endif
+
 class ESP32RTCClock : public mesh::RTCClock {
 public:
   ESP32RTCClock() { }
@@ -148,17 +182,25 @@ public:
     // On power-on the value is undefined; on watchdog/brownout/SW reset it
     // may retain valid time OR garbage.  Accept times in a plausible window
     // (Nov 2023 → May 2033); otherwise restore the last time saved in RTC
-    // memory, and only without one re-seed.
+    // memory (or in NVS, whichever is later), and only without one re-seed.
     time_t _now;
     time(&_now);
+#ifdef MECK_CLOCK_NVS_BACKUP
+    uint32_t nvs = esp32NvsTimeLoad();
+    if (nvs < 1700000000 || nvs > 2000000000) nvs = 0;
+    esp32NvsTimeSaved() = nvs;
+#endif
     if (_now < 1700000000 || _now > 2000000000) {
       struct timeval tv;
       uint32_t* backup = esp32RtcTimeBackup();
+      uint32_t best = 0;
       if (backup[1] == RTC_BACKUP_MAGIC && backup[0] >= 1700000000 && backup[0] <= 2000000000) {
-        tv.tv_sec = backup[0];
-      } else {
-        tv.tv_sec = 1715770351;  // 15 May 2024, 8:50pm UTC (safe seed)
+        best = backup[0];
       }
+#ifdef MECK_CLOCK_NVS_BACKUP
+      if (nvs > best) best = nvs;
+#endif
+      tv.tv_sec = best ? best : 1715770351;  // 15 May 2024, 8:50pm UTC (safe seed)
       tv.tv_usec = 0;
       settimeofday(&tv, NULL);
     }
@@ -172,6 +214,15 @@ public:
       backup[0] = (uint32_t)now;
       backup[1] = RTC_BACKUP_MAGIC;
     }
+#ifdef MECK_CLOCK_NVS_BACKUP
+    // Periodically; a sync that moves the clock back, or forward by more
+    // than the period, is saved at the next tick
+    uint32_t saved = esp32NvsTimeSaved();
+    if (now >= 1700000000 && now <= 2000000000 &&
+        ((uint32_t)now < saved || (uint32_t)now - saved >= MECK_CLOCK_NVS_PERIOD)) {
+      esp32NvsTimeSave((uint32_t)now);
+    }
+#endif
   }
   uint32_t getCurrentTime() override {
     time_t _now;

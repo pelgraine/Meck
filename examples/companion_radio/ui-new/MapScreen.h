@@ -175,6 +175,14 @@ public:
     }
   }
 
+  // Centre the view on a point (a shared location) without touching the own
+  // position marker
+  void centerOn(double lat, double lon) {
+    _centerLat = lat;
+    _centerLon = lon;
+    _needsRedraw = true;
+  }
+
   // Update own GPS position without moving viewport (called periodically)
   void updateGPSPosition(double lat, double lon) {
     if (lat == 0.0 && lon == 0.0) return;

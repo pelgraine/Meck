@@ -19,6 +19,11 @@ extern const char* meckSleepBlockText(int code);
   #include "ui2/Ui2List.h"
   #include "ui2/Ui2TextCapture.h"
 #endif
+#if defined(LilyGo_TDeck_Pro)
+// SOS channels, kept by channel identity (main.cpp)
+extern bool meckSosChannelSelected(uint8_t ch);
+extern int meckSosChannelToggle(uint8_t ch);
+#endif
 #if defined(MECK_AUDIO_VARIANT) || defined(HAS_4G_MODEM)
 #include "NotifSounds.h"
 #endif
@@ -147,6 +152,44 @@ static inline int findAutoLockIndex(uint8_t minutes) {
   return 0;
 }
 
+#ifdef MECK_BLE_LOCK_WINDOWS
+// Phone while locked: stay connected (0) or sync every N minutes
+static const uint8_t BLE_WINDOW_OPTIONS[] = { 0, 5, 10, 15, 30, 60 };
+#define BLE_WINDOW_OPTION_COUNT 6
+
+static inline const char* bleWindowLabel(uint8_t minutes) {
+  if (minutes == 0) return MECK_TR("Stay connected", "Reste connect\xC3\xA9");
+  static char buf[20];
+  snprintf(buf, sizeof(buf), MECK_TR("Every %d min", "Toutes les %d min"), minutes);
+  return buf;
+}
+
+static inline int findBleWindowIndex(uint8_t minutes) {
+  for (int i = 0; i < BLE_WINDOW_OPTION_COUNT; i++) {
+    if (BLE_WINDOW_OPTIONS[i] == minutes) return i;
+  }
+  return 0;
+}
+#endif
+
+// GPS when locked (Experimental, MAX): minutes between fixes, 0 = stays on
+static const uint8_t GPS_LOCK_OPTIONS[] = { 0, 2, 5, 10, 15, 30, 60 };
+#define GPS_LOCK_OPTION_COUNT 7
+
+static inline const char* gpsLockLabel(uint8_t minutes) {
+  if (minutes == 0) return MECK_TR("Stays on", "Reste allum\xC3\xA9");
+  static char buf[24];
+  snprintf(buf, sizeof(buf), MECK_TR("Every %d min", "Toutes les %d min"), minutes);
+  return buf;
+}
+
+static inline int findGpsLockIndex(uint8_t minutes) {
+  for (int i = 0; i < GPS_LOCK_OPTION_COUNT; i++) {
+    if (GPS_LOCK_OPTIONS[i] == minutes) return i;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Settings row types
 // ---------------------------------------------------------------------------
@@ -173,8 +216,14 @@ enum SettingsRowType : uint8_t {
 #endif
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
   ROW_LOCK_SLEEP,     // Power saving (light sleep) while locked
+  ROW_LOCK_BLE,       // Phone while locked: stay connected / sync windows
 #endif
-  ROW_GPS_BAUD,       // GPS baud rate picker (requires reboot)
+#if defined(LilyGo_TDeck_Pro)
+  ROW_SOS_SUBMENU,    // Folder row: enters the SOS sub-screen
+  ROW_SOS_BUTTON,     // Toggle: 3 s hold of the top button starts the SOS countdown
+  ROW_SOS_CHANNEL,    // A channel the SOS goes to; param = channel index (0 = public, always)
+#endif
+  ROW_GPS_BAUD,      // GPS baud rate picker (requires reboot)
   ROW_PATH_HASH_SIZE, // Path hash size (1, 2, or 3 bytes per hop)
   ROW_DEFAULT_SCOPE,  // Device-wide default region (text editor)
   #ifdef MECK_WIFI_COMPANION
@@ -230,8 +279,12 @@ enum SettingsRowType : uint8_t {
   ROW_ALT_B_BACKLIGHT,  // Toggle: heart touch key off, Alt+B only toggles the backlight (MAX only)
 #endif
   ROW_PURGE_CONTACTS,   // "Delete all contacts": confirm, purge, restart
+  ROW_TELEM_PROMPT,     // Toggle: ask before answering a contact's first telemetry request (NVS)
   ROW_RX_BOOSTED_GAIN,  // Toggle: SX126x boosted RX gain (default on)
   ROW_AGC_RESET_INT,    // Text entry: AGC reset interval in seconds (0 = off)
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+  ROW_GPS_LOCK_INT,     // Picker: GPS when locked, stays on / a fix every N min (MAX only)
+#endif
 };
 
 // ---------------------------------------------------------------------------
@@ -272,6 +325,7 @@ enum SubScreen : uint8_t {
   SUB_EXPORT_FLAGS,   // Export checkboxes + trigger
   #endif
   SUB_EXPERIMENTAL,   // Experimental Features sub-screen
+  SUB_SOS,            // SOS: button and the channels it goes to
 };
 
 // Delete all contacts (Experimental Features) overlay phases
@@ -310,13 +364,13 @@ enum FmPhase : uint8_t {
 #define SETTINGS_LORA_ANTENNA_ROWS 0
 #endif
 #if defined(HAS_4G_MODEM) && defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS (63 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope, export
+#define SETTINGS_MAX_ROWS (64 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN, contacts, WiFi, scope, export, SOS
 #elif defined(HAS_4G_MODEM)
-#define SETTINGS_MAX_ROWS (61 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN + contacts + scope + export
+#define SETTINGS_MAX_ROWS (62 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for IMEI, Carrier, APN + contacts + scope + export + SOS
 #elif defined(MECK_WIFI_COMPANION)
-#define SETTINGS_MAX_ROWS (57 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for contacts + WiFi + scope + export
+#define SETTINGS_MAX_ROWS (58 + SETTINGS_LORA_ANTENNA_ROWS)  // Extra rows for contacts + WiFi + scope + export + SOS
 #else
-#define SETTINGS_MAX_ROWS (55 + SETTINGS_LORA_ANTENNA_ROWS)  // Contacts section + scope + export
+#define SETTINGS_MAX_ROWS (56 + SETTINGS_LORA_ANTENNA_ROWS)  // Contacts section + scope + export + SOS
 #endif
 #define SETTINGS_TEXT_BUF  33  // 32 chars + null
 #define SETTINGS_FLIP_MS   2000  // channel row too long for the line: time on its start, then its end
@@ -557,7 +611,22 @@ private:
 #endif
       addRow(ROW_RX_BOOSTED_GAIN);
       addRow(ROW_AGC_RESET_INT);
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+      addRow(ROW_GPS_LOCK_INT);
+#endif
       addRow(ROW_PURGE_CONTACTS);
+#ifdef ESP32
+      addRow(ROW_TELEM_PROMPT);
+#endif
+#if defined(LilyGo_TDeck_Pro)
+    } else if (_subScreen == SUB_SOS) {
+      // --- SOS sub-screen: the button, then every channel ---
+      addRow(ROW_SOS_BUTTON);
+      for (uint8_t i = 0; i < MAX_GROUP_CHANNELS && i < 64; i++) {
+        ChannelDetails ch;
+        if (the_mesh.getChannel(i, ch) && (i == 0 || ch.name[0] != '\0')) addRow(ROW_SOS_CHANNEL, i);
+      }
+#endif
     } else {
       // --- Top-level settings list ---
 #if defined(LilyGo_TDeck_Pro_Max)
@@ -595,6 +664,12 @@ private:
 #endif
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
       addRow(ROW_LOCK_SLEEP);
+#endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+      if (_prefs->lock_sleep) addRow(ROW_LOCK_BLE);
+#endif
+#if defined(LilyGo_TDeck_Pro)
+      addRow(ROW_SOS_SUBMENU);
 #endif
       #ifdef MECK_WIFI_COMPANION
       addRow(ROW_WIFI_SETUP);
@@ -2269,12 +2344,55 @@ public:
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone stays reachable", "T\xC3\xA9l\xC3\xA9phone joignable"));
         } else if (why != 0 /* MECK_SLEEP_OK */) {
           snprintf(hint, sizeof(hint), MECK_TR("Awake now: %s", "\xC3\x89veill\xC3\xA9 : %s"), meckSleepBlockText(why));
+    #ifdef MECK_BLE_LOCK_WINDOWS
+        } else if (_prefs->ble_lock_window) {
+          snprintf(hint, sizeof(hint), MECK_TR("Phone syncs every %d min", "Synchro t\xC3\xA9l\xC3\xA9phone toutes les %d min"),
+                   _prefs->ble_lock_window);
+    #endif
         } else {
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone connects after unlock", "T\xC3\xA9l\xC3\xA9phone apr\xC3\xA8s d\xC3\xA9verrouillage"));
         }
         display.setCursor(display.width() - display.getTextWidth(hint) - 2, y);
         display.print(hint);
   #endif
+        break;
+      }
+#endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+      case ROW_LOCK_BLE:
+        if (editing && _editMode == EDIT_PICKER) {
+          snprintf(tmp, sizeof(tmp), MECK_TR("< Phone when locked: %s >", "< T\xC3\xA9l. verrouill\xC3\xA9 : %s >"),
+                   bleWindowLabel(BLE_WINDOW_OPTIONS[_editPickerIdx]));
+        } else {
+          snprintf(tmp, sizeof(tmp), MECK_TR("Phone when locked: %s", "T\xC3\xA9l. verrouill\xC3\xA9 : %s"),
+                   bleWindowLabel(_prefs->ble_lock_window));
+        }
+        display.print(tmp);
+        break;
+#endif
+
+#if defined(LilyGo_TDeck_Pro)
+      case ROW_SOS_SUBMENU:
+        display.setColor(selected ? DisplayDriver::DARK : DisplayDriver::GREEN);
+        display.print("SOS >>");
+        break;
+
+      case ROW_SOS_BUTTON:
+        snprintf(tmp, sizeof(tmp), MECK_TR("Top button 3 s starts SOS: %s", "Bouton du haut 3 s, SOS : %s"),
+                 _prefs->sos_btn ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+        display.print(tmp);
+        break;
+
+      case ROW_SOS_CHANNEL: {
+        uint8_t ci = _rows[i].param;
+        ChannelDetails ch;
+        const char* name = (the_mesh.getChannel(ci, ch) && ch.name[0]) ? ch.name : "Public";
+        if (ci == 0)
+          snprintf(tmp, sizeof(tmp), MECK_TR("%s: always", "%s : toujours"), name);
+        else
+          snprintf(tmp, sizeof(tmp), "%s: %s", name,
+                   meckSosChannelSelected(ci) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+        display.print(tmp);
         break;
       }
 #endif
@@ -2296,11 +2414,19 @@ public:
       #endif
 
       #ifdef HAS_4G_MODEM
-      case ROW_MODEM_TOGGLE:
+      case ROW_MODEM_TOGGLE: {
+        bool battLow = modemManager.isBatteryLow();
         snprintf(tmp, sizeof(tmp), MECK_TR("4G Modem: %s", "Modem 4G : %s"),
-                 _modemEnabled ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+                 (_modemEnabled && !battLow) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
         display.print(tmp);
+        if (battLow) {
+          // Switched off for a low cell; the saved setting brings it back
+          const char* hint = MECK_TR("Battery low: charge first", "Batterie faible : chargez");
+          display.setCursor(display.width() - display.getTextWidth(hint) - 2, y);
+          display.print(hint);
+        }
         break;
+      }
 
       //case ROW_RINGTONE:
       //  snprintf(tmp, sizeof(tmp), "Incoming Call Ring: %s",
@@ -2593,9 +2719,30 @@ public:
         display.print(tmp);
         break;
 
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+      case ROW_GPS_LOCK_INT:
+        if (editing && _editMode == EDIT_PICKER) {
+          snprintf(tmp, sizeof(tmp), MECK_TR("< GPS when locked: %s >", "< GPS verrouill\xC3\xA9 : %s >"),
+                   gpsLockLabel(GPS_LOCK_OPTIONS[_editPickerIdx]));
+        } else {
+          snprintf(tmp, sizeof(tmp), MECK_TR("GPS when locked: %s", "GPS verrouill\xC3\xA9 : %s"),
+                   gpsLockLabel(_prefs->gps_lock_interval));
+        }
+        display.print(tmp);
+        break;
+#endif
+
       case ROW_PURGE_CONTACTS:
         display.print(MECK_TR("Delete all contacts", "Supprimer tous les contacts"));
         break;
+
+      case ROW_TELEM_PROMPT: {
+        extern bool meckTelPromptEnabled();
+        snprintf(tmp, sizeof(tmp), MECK_TR("Ask before sharing telemetry: %s", "Demander avant de partager : %s"),
+                 meckTelPromptEnabled() ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+        display.print(tmp);
+        break;
+      }
 
       #ifdef HAS_4G_MODEM
       case ROW_IMEI: {
@@ -3070,6 +3217,7 @@ public:
     else if (_subScreen == SUB_EXPORT_IMPORT || _subScreen == SUB_EXPORT_FLAGS) title = MECK_TR("Export / import", "Exporter / importer");
   #endif
     else if (_subScreen == SUB_EXPERIMENTAL) title = MECK_TR("Experimental", "Exp\xC3\xA9rimental");
+    else if (_subScreen == SUB_SOS) title = MECK_TR("Settings \xC2\xB7 SOS", "R\xC3\xA9glages \xC2\xB7 SOS");
 
     int start, end, page, pages;
     v2Page(_cursor, start, end, page, pages);
@@ -4304,6 +4452,16 @@ public:
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = AUTO_LOCK_OPTION_COUNT - 1;
 #endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+        } else if (type == ROW_LOCK_BLE) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = BLE_WINDOW_OPTION_COUNT - 1;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        } else if (type == ROW_GPS_LOCK_INT) {
+          _editPickerIdx--;
+          if (_editPickerIdx < 0) _editPickerIdx = GPS_LOCK_OPTION_COUNT - 1;
+#endif
         } else if (type == ROW_FONT_STYLE) {
           _editPickerIdx--;
           if (_editPickerIdx < 0) _editPickerIdx = MECK_FONT_STYLE_COUNT - 1;
@@ -4328,6 +4486,16 @@ public:
         } else if (type == ROW_AUTO_LOCK) {
           _editPickerIdx++;
           if (_editPickerIdx >= AUTO_LOCK_OPTION_COUNT) _editPickerIdx = 0;
+#endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+        } else if (type == ROW_LOCK_BLE) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= BLE_WINDOW_OPTION_COUNT) _editPickerIdx = 0;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        } else if (type == ROW_GPS_LOCK_INT) {
+          _editPickerIdx++;
+          if (_editPickerIdx >= GPS_LOCK_OPTION_COUNT) _editPickerIdx = 0;
 #endif
         } else if (type == ROW_FONT_STYLE) {
           _editPickerIdx++;
@@ -4359,6 +4527,22 @@ public:
           _editMode = EDIT_NONE;
           Serial.printf("Settings: Auto lock = %s\n",
                         autoLockLabel(_prefs->auto_lock_minutes));
+#endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+        } else if (type == ROW_LOCK_BLE) {
+          _prefs->ble_lock_window = BLE_WINDOW_OPTIONS[_editPickerIdx];
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: Phone while locked = %s\n",
+                        bleWindowLabel(_prefs->ble_lock_window));
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        } else if (type == ROW_GPS_LOCK_INT) {
+          _prefs->gps_lock_interval = GPS_LOCK_OPTIONS[_editPickerIdx];
+          the_mesh.savePrefs();
+          _editMode = EDIT_NONE;
+          Serial.printf("Settings: GPS when locked = %u min (0 = stays on)\n",
+                        (unsigned)_prefs->gps_lock_interval);
 #endif
         } else if (type == ROW_FONT_STYLE) {
           _prefs->ui_font_style = _editPickerIdx;
@@ -4627,12 +4811,51 @@ public:
           break;
 #endif
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
+        case ROW_GPS_LOCK_INT:
+          startEditPicker(findGpsLockIndex(_prefs->gps_lock_interval));
+          break;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
         case ROW_LOCK_SLEEP:
           _prefs->lock_sleep = _prefs->lock_sleep ? 0 : 1;
           the_mesh.savePrefs();
           Serial.printf("Settings: Lock power saving = %s\n",
                         _prefs->lock_sleep ? "ON" : "OFF");
+          rebuildRows();   // "Phone when locked" only shows with it on
           break;
+#endif
+#ifdef MECK_BLE_LOCK_WINDOWS
+        case ROW_LOCK_BLE:
+          startEditPicker(findBleWindowIndex(_prefs->ble_lock_window));
+          break;
+#endif
+#if defined(LilyGo_TDeck_Pro)
+        case ROW_SOS_SUBMENU:
+          _savedTopCursor = _cursor;
+          _subScreen = SUB_SOS;
+          _cursor = 0;
+          _scrollTop = 0;
+          rebuildRows();
+          Serial.println("Settings: entered SOS sub-screen");
+          break;
+        case ROW_SOS_BUTTON:
+          _prefs->sos_btn = _prefs->sos_btn ? 0 : 1;
+          the_mesh.savePrefs();
+          Serial.printf("Settings: SOS button = %s\n", _prefs->sos_btn ? "ON" : "OFF");
+          break;
+        case ROW_SOS_CHANNEL: {
+          uint8_t ci = _rows[_cursor].param;
+          if (ci == 0) break;   // the public channel always gets the SOS
+          int on = meckSosChannelToggle(ci);
+          if (on < 0) {
+            extern void meckShowAlert(const char* text, int duration_millis);
+            char msg[48];
+            snprintf(msg, sizeof(msg), MECK_TR("At most %d SOS channels", "%d canaux SOS au plus"), SOS_CHANNELS_MAX);
+            meckShowAlert(msg, 1500);
+          }
+          Serial.printf("Settings: SOS to channel %u = %s\n", ci, on > 0 ? "ON" : on == 0 ? "OFF" : "full");
+          break;
+        }
 #endif
         #ifdef MECK_WIFI_COMPANION
         case ROW_WIFI_SETUP: {
@@ -4701,6 +4924,11 @@ public:
         #endif
         #ifdef HAS_4G_MODEM
         case ROW_MODEM_TOGGLE:
+          if (modemManager.isBatteryLow()) {
+            extern void meckShowAlert(const char* text, int duration_millis);
+            meckShowAlert(MECK_TR("Battery low: charge the\ndeck to use 4G", "Batterie faible : chargez\npour utiliser la 4G"), 4000);
+            break;
+          }
           _modemEnabled = !_modemEnabled;
           ModemManager::saveEnabledConfig(_modemEnabled);
           if (_modemEnabled) {
@@ -4841,6 +5069,15 @@ public:
           char secStr[8];
           snprintf(secStr, sizeof(secStr), "%u", (unsigned)_prefs->agc_reset_interval * 4);
           startEditText(_prefs->agc_reset_interval ? secStr : "");
+          break;
+        }
+        case ROW_TELEM_PROMPT: {
+          // A contact without telemetry permission gets a prompt on its
+          // first request: Allow (battery, location) or Deny (ignore it)
+          extern bool meckTelPromptEnabled();
+          extern void meckTelPromptSet(bool on);
+          meckTelPromptSet(!meckTelPromptEnabled());
+          Serial.printf("Settings: telemetry prompt = %s\n", meckTelPromptEnabled() ? "ON" : "OFF");
           break;
         }
         case ROW_PURGE_CONTACTS:

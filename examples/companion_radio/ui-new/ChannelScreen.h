@@ -3,6 +3,7 @@
 #include <helpers/ui/UIScreen.h>
 #include <helpers/ui/DisplayDriver.h>
 #include "MeckLang.h"
+#include "MeckGeo.h"
 #include <helpers/ChannelDetails.h>
 #include <MeshCore.h>
 #include <Packet.h>
@@ -127,7 +128,7 @@ private:
   bool _menuOpen = false;
   int  _menuSel = 0;
   int  _menuMsgIdx = -1;       // _messages[] slot the menu is for
-  uint8_t _menuItems[6];
+  uint8_t _menuItems[7];
   int  _menuCount = 0;
   bool _showHeardBy = false;   // "Repeated by" view for a sent channel message
   int  _heardMsgIdx = -1;
@@ -396,7 +397,7 @@ public:
   // R selects a message (as for a reply), Enter opens this menu for it. The
   // actions that open the composer or send run in main.cpp
   // (meckRunMessageAction); the views (path, repeats) are shown here.
-  enum { MSG_ACT_REPLY = 1, MSG_ACT_COPY, MSG_ACT_PATH, MSG_ACT_HEARD, MSG_ACT_RESEND };
+  enum { MSG_ACT_REPLY = 1, MSG_ACT_COPY, MSG_ACT_PATH, MSG_ACT_HEARD, MSG_ACT_RESEND, MSG_ACT_MAP };
 
   // Sent by this device: same rule as the chat bubbles
   bool msgIsOwn(const ChannelMessage& m) {
@@ -422,6 +423,10 @@ public:
     if (!own && m->path_len != 0) _menuItems[_menuCount++] = MSG_ACT_PATH;
     if (own && !dm && (m->has_fp || m->heard > 0)) _menuItems[_menuCount++] = MSG_ACT_HEARD;
     if (own) _menuItems[_menuCount++] = MSG_ACT_RESEND;
+#if HAS_GPS
+    MeckGeoPoint g;
+    if (meckGeoFind(msgBody(m), g)) _menuItems[_menuCount++] = MSG_ACT_MAP;   // a location in the text
+#endif
     _menuSel = 0;
     _menuOpen = true;
     return true;
@@ -461,6 +466,7 @@ public:
       case MSG_ACT_PATH:   return MECK_TR("Path", "Chemin");
       case MSG_ACT_HEARD:  return MECK_TR("Repeated by", "R\xC3\xA9p\xC3\xA9t\xC3\xA9 par");
       case MSG_ACT_RESEND: return MECK_TR("Send again", "Renvoyer");
+      case MSG_ACT_MAP:    return MECK_TR("Show on map", "Voir sur la carte");
     }
     return "";
   }
@@ -980,6 +986,7 @@ public:
     const char* body;    // message text after "Sender: "
     int bodyLen;
     char sender[32];
+    char alt[64];        // shown instead of a raw location share ("[LOC]...")
   };
 
   static const int16_t V2_BUBBLE_MAXW = 196;
@@ -1006,6 +1013,16 @@ public:
     if (extractSenderName(m->text, bb.sender, sizeof(bb.sender))) {
       const char* colon = strstr(m->text, ": ");
       bb.body = colon ? colon + 2 : m->text;
+    }
+    MeckGeoPoint g;
+    if (meckGeoIsShare(bb.body, g)) {
+      // "[LOC]50.012345,14.654321" reads as a location line; the message
+      // menu opens it on the map
+      if (g.waypoint && g.label[0])
+        snprintf(bb.alt, sizeof(bb.alt), MECK_TR("Waypoint %s (%.5f, %.5f)", "Point %s (%.5f, %.5f)"), g.label, g.lat, g.lon);
+      else
+        snprintf(bb.alt, sizeof(bb.alt), MECK_TR("Location %.5f, %.5f", "Position %.5f, %.5f"), g.lat, g.lon);
+      bb.body = bb.alt;
     }
     bb.bodyLen = strlen(bb.body);
     bb.own = (m->path_len == 0 && m->snr == 0 && strcmp(bb.sender, the_mesh.getNodePrefs()->node_name) == 0)
@@ -1432,6 +1449,7 @@ public:
         case MSG_ACT_PATH:   r.icon = UI2_IC_TRACE; break;
         case MSG_ACT_HEARD:  r.icon = UI2_IC_REPEATER; break;
         case MSG_ACT_RESEND: r.icon = UI2_IC_REFRESH; break;
+        case MSG_ACT_MAP:    r.icon = UI2_IC_MAP; break;
       }
       r.title = menuLabel(_menuItems[i]);
       char sub[32] = "";
@@ -1443,7 +1461,7 @@ public:
         r.right = sub;
       }
       r.selected = (i == _menuSel);
-      r.chevron = (_menuItems[i] == MSG_ACT_PATH || _menuItems[i] == MSG_ACT_HEARD);
+      r.chevron = (_menuItems[i] == MSG_ACT_PATH || _menuItems[i] == MSG_ACT_HEARD || _menuItems[i] == MSG_ACT_MAP);
       Ui2List::drawRow(c, y, r);
       y += ROW_H;
     }

@@ -45,7 +45,30 @@ public:
     writeReg(REG_GO, 1);
   }
 
+  // Real-time playback: drive the motor at `level` (0x7F = full) until
+  // rtpStop(), for vibration of a chosen length
+  void rtpStart(uint8_t level = 0x7F) {
+    writeReg(REG_RTPIN, level);
+    writeReg(REG_MODE, MODE_RTP);
+  }
+  void rtpStop() {
+    writeReg(REG_RTPIN, 0);
+    writeReg(REG_MODE, 0x00);        // back to internal trigger
+  }
+
+  // Status register: device ID (bits 7-5), over temperature (1), over current (0)
+  uint8_t status() { return readReg(REG_STATUS); }
+  // Any register, for diagnostics
+  uint8_t reg(uint8_t r) { return readReg(r); }
+  // Whether the chip answers on the bus
+  bool present() {
+    _wire->beginTransmission(_addr);
+    return _wire->endTransmission() == 0;
+  }
+
 private:
+  static const uint8_t REG_STATUS     = 0x00;
+  static const uint8_t MODE_RTP       = 0x05;
   static const uint8_t REG_MODE       = 0x01;
   static const uint8_t REG_RTPIN      = 0x02;
   static const uint8_t REG_LIBRARY    = 0x03;

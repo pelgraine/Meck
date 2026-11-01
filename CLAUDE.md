@@ -74,6 +74,8 @@ Useful tools (debug CLI exists in `meck_max_ui2`):
 - Serial CLI: `screendump`, `key <k>`, `uigo <screen>` (`lock`, `unlock`,
   `home`, `settings`, `chat`…), `pwr*` power commands, `pwrlog [sd]`,
   `uigeo <text>` (location parser), `clock`.
+- Power log viewer: `py -3 tools/powerlog/powerlog.py` (pull, history in
+  `powerlogs/` of the main checkout, not in git; see `tools/powerlog/README.md`).
 - Open the port without DTR/RTS (they reset the ESP32-S3).
 - USB stops working after the deck has been in light sleep (locked on
   battery); only the reset button brings it back. Ask the user.

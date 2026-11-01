@@ -152,6 +152,14 @@
   #ifdef MECK_UI_V2
   void meckRunMessageAction(ChannelScreen* cs);   // chat message menu (Enter)
   #endif
+  static void meckRunContactOption(ContactsScreen* cs);   // contacts screen options (O)
+
+  // SOS / emergency mode (docs/sos.md); the code is after meckOwnPosition
+  #include "MeckSos.h"
+  #include "SosScreen.h"
+  MeckSos meckSos;
+  void meckSosLoop();
+  bool meckSosCancelInput();
 
   // SD-backed persistence state
   static bool sdCardReady = false;
@@ -944,19 +952,39 @@ static uint32_t _atoi(const char* sp) {
     return Wire.read();
   }
 
+  static bool meckChgWrite(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(I2C_ADDR_SY6970);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+  }
+
   static bool meckSetHiz(bool on) {
     int r0 = meckChgRead(0x00);
     if (r0 < 0) return false;
-    uint8_t v = on ? (r0 | 0x80) : (r0 & 0x7F);
-    Wire.beginTransmission(I2C_ADDR_SY6970);
-    Wire.write((uint8_t)0x00);
-    Wire.write(v);
-    bool ok = Wire.endTransmission() == 0;
+    // Writing EN_HIZ puts the SY6970 in host mode: 40 s later its I2C
+    // watchdog would restore the default registers and charge again. Off
+    // while HIZ is on (also through a light sleep), back to 40 s after.
+    int r7 = meckChgRead(0x07);
+    if (on && r7 >= 0) meckChgWrite(0x07, (uint8_t)(r7 & ~0x30));
+    bool ok = meckChgWrite(0x00, on ? (r0 | 0x80) : (r0 & 0x7F));
+    if (!on && r7 >= 0) meckChgWrite(0x07, (uint8_t)((r7 & ~0x30) | 0x10));
     meckHizUntil = (ok && on) ? millis() + 15UL * 60 * 1000 : 0;
     return ok;
   }
 
   void meckPowerTick() {
+    static bool bootChecked = false;
+    if (!bootChecked) {
+      // A reset during "pwrhiz 1" leaves the charger in HIZ with its
+      // watchdog off: nothing would end it and the deck would never charge
+      bootChecked = true;
+      int r0 = meckChgRead(0x00);
+      if (r0 >= 0 && (r0 & 0x80)) {
+        meckSetHiz(false);
+        Serial.println("pwr: HIZ was still on from before the reset, now off");
+      }
+    }
     if (meckHizUntil && (long)(millis() - meckHizUntil) >= 0) {
       meckSetHiz(false);
       Serial.println("pwr: HIZ timeout, USB input back on");
@@ -972,6 +1000,15 @@ static uint32_t _atoi(const char* sp) {
     extern bool meckTxLogFlush();
     if (strcmp(cmd, "pwrlog") == 0) { meckPwrLogPrint(); return; }
     if (strcmp(cmd, "pwrchg") == 0) { board.chargerDebugPrint(); return; }   // charger + gauge, read-only
+#ifdef HAS_4G_MODEM
+    if (strcmp(cmd, "pwrmodem") == 0) { modemManager.printPowerStats(); return; }   // UART sleep, read-only
+    if (strncmp(cmd, "pwrmodemmv ", 11) == 0) {
+      // Test the low-battery 4G cut-off without draining the cell
+      modemManager.setTestMilliVolts((uint16_t)atoi(cmd + 11));
+      Serial.printf("pwr: modem battery check uses %s\n", atoi(cmd + 11) ? cmd + 11 : "the gauge");
+      return;
+    }
+#endif
     if (strcmp(cmd, "pwrcal") == 0) {
       // RC slow clock: the calibration in use vs fresh measurements
       // (values are the RC period in microseconds, Q13.19 fixed point)
@@ -1136,6 +1173,15 @@ static uint32_t _atoi(const char* sp) {
       // Stop / restart the BLE companion interface (advertising + service)
       if (cmd[7] == '1') MECK_BLE_IFACE.enable(); else MECK_BLE_IFACE.disable();
       Serial.printf("pwr: BLE %s\n", cmd[7] == '1' ? "on" : "off");
+#if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
+    } else if (strcmp(cmd, "pwrlink") == 0) {
+      // Connection interval the phone accepted
+      uint16_t iv = SerialBLEInterface::linkInterval();
+      Serial.printf("pwr: BLE link %s, interval %u.%02u ms, latency %u\n",
+                    MECK_BLE_IFACE.isConnected() ? "up" : "down",
+                    (unsigned)(iv * 125 / 100), (unsigned)(iv * 125 % 100),
+                    (unsigned)SerialBLEInterface::linkLatency());
+#endif
     } else if (strncmp(cmd, "pwrxl ", 6) == 0) {
       // GPS and the 1.8 V sensor rail can be switched freely. "lora" (radio
       // power) and "touch" (touch controller held in reset) are for measuring
@@ -1889,6 +1935,7 @@ static void meckLaunchHomeTile(Ui2Tile t) {
       if (the_mesh.advert()) ui_task.showAlert(MECK_TR("Advert sent!", "Annonce envoy\xC3\xA9" "e !"), 1000);
       else ui_task.showAlert(MECK_TR("Advert failed..", "\xC3\x89" "chec de l'annonce.."), 1000);
       break;
+    case UI2_TILE_SOS: ui_task.gotoSosScreen(); break;
     default: break;
   }
 }
@@ -1903,6 +1950,7 @@ static void meckLaunchHomeTile(Ui2Tile t) {
   static void meckHynKeyEvent(uint8_t key_id, bool pressed, void* /*user_data*/) {
     Serial.printf("[key] id=%u pressed=%u\n", key_id, pressed ? 1u : 0u);  // TEMP: confirm mapping
     if (!pressed) return;
+    if (meckSosCancelInput()) return;   // SOS countdown: any pad cancels it
     switch (key_id) {
       case 0:  // heart -- toggle frontlight at the user-set brightness
         // Settings > Experimental Features "Change Backlight to Alt+B" turns
@@ -3171,7 +3219,11 @@ void setup() {
 #else
       bool modemEnabled = ModemManager::loadEnabledConfig();
 #endif
-      if (modemEnabled) {
+#ifdef MODEM_MIN_MILLIVOLTS
+      // A low cell keeps 4G off from the start (it comes on after charging)
+      modemManager.checkBattery(board.getBattMilliVolts(), true);
+#endif
+      if (modemEnabled && !modemManager.isBatteryLow()) {
         modemManager.begin();
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
       } else {
@@ -3368,11 +3420,112 @@ static void meckImportPoll() {
 // cannot sleep on this framework, so a phone could not connect anyway) and
 // restarts on unlock. Sleep is skipped entirely while one of
 // meckLockSleepBlocker()'s conditions holds.
+//
+// The GPS does not keep the device awake: the receiver keeps tracking on its
+// own, and the minute wake stays up until its next GGA has been read.
 // ============================================================================
 #include <WiFi.h>
 #include <esp_sleep.h>
 
 static bool meckBleStoppedForSleep = false;
+
+#ifdef MECK_BLE_LOCK_WINDOWS
+// Sync windows (Settings: "Phone when locked"). Instead of a connected
+// phone keeping the deck awake, the deck sleeps with Bluetooth off and
+// turns it on for a short window every few minutes and on a new message.
+// A window advertises until the app reconnects, then lasts while the app
+// talks (messages wait in the offline queue meanwhile) and ends a little
+// after the link goes quiet: Bluetooth goes off again, which drops it.
+#define MECK_BLE_WIN_ADVERT_MS  30000UL    // waiting for the app to reconnect
+#define MECK_BLE_WIN_IDLE_MS     8000UL    // link quiet this long: done
+#define MECK_BLE_WIN_MAX_MS    120000UL    // one window at most
+static bool meckBleWinOpen = false;
+static unsigned long meckBleWinStart = 0;
+static unsigned long meckBleLinkAt = 0;      // when the link last came up
+static bool meckBleWasLinked = false;
+static bool meckBleWinLinked = false;        // the app reconnected in this window
+// For the power log, reset with each logged minute: windows opened, of
+// which the app reconnected in, and time spent in closed windows
+static uint16_t meckSyncWins = 0, meckSyncLinked = 0;
+static unsigned long meckSyncMs = 0;
+static unsigned long meckSyncFrom = 0;       // open window counted from here
+
+// Sync windows apply: chosen, power saving on, and Bluetooth switched on
+// (enabled, or paused here for sleep)
+static bool meckBleWindowed() {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  return p->lock_sleep && p->ble_lock_window &&
+         (MECK_BLE_IFACE.isEnabled() || meckBleStoppedForSleep);
+}
+
+// "Stay connected" keeps the deck awake only while the link is up. Once it
+// is gone while locked (out of range, or never connected), nothing would
+// let the phone back in until unlock, so windows open there too: on a new
+// message, and on a schedule that thins out the longer the phone is away
+// (a short dropout usually comes back within a minute).
+static bool meckBleLost = false;
+static unsigned long meckBleLostAt = 0, meckBleRetryAt = 0;
+
+static bool meckBleStay() {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  return p->lock_sleep && !p->ble_lock_window &&
+         (MECK_BLE_IFACE.isEnabled() || meckBleStoppedForSleep);
+}
+
+static unsigned long meckBleRetryGap(unsigned long away) {
+  if (away < 5 * 60000UL) return 60000UL;
+  if (away < 60 * 60000UL) return 5 * 60000UL;
+  return 15 * 60000UL;
+}
+
+static void meckBleWindowStart(const char* why) {
+  if (!(meckBleWindowed() || (meckBleStay() && meckBleLost)) || !ui_task.isLocked()) return;
+  if (!meckBleWinOpen) {
+    Serial.printf("[Power] BLE sync window (%s)\n", why);
+    meckSyncWins++;
+    meckBleWinLinked = false;
+    meckSyncFrom = millis();
+  }
+  meckBleWinOpen = true;
+  meckBleWinStart = millis();
+  meckBleWasLinked = false;   // an open link gets the idle time from now
+}
+
+// Called from UITask::newMsg for a message the user is notified of
+void meckBleWindowOnMessage() { meckBleWindowStart("message"); }
+
+// Is a window open? Closes it once its time is up.
+static bool meckBleWindowActive() {
+  if (!meckBleWinOpen) return false;
+  unsigned long now = millis();
+  bool linked = MECK_BLE_IFACE.isConnected();
+  if (linked && !meckBleWasLinked) meckBleLinkAt = now;
+  if (linked && !meckBleWinLinked) { meckBleWinLinked = true; meckSyncLinked++; }
+  meckBleWasLinked = linked;
+  bool open;
+  if ((long)(now - meckBleWinStart) >= (long)MECK_BLE_WIN_MAX_MS) {
+    open = false;
+  } else if (linked) {
+    unsigned long last = MECK_BLE_IFACE.lastActivity();
+    if ((long)(meckBleLinkAt - last) > 0) last = meckBleLinkAt;
+    open = MECK_BLE_IFACE.hasPendingData() || (long)(now - last) < (long)MECK_BLE_WIN_IDLE_MS;
+  } else {
+    open = (long)(now - meckBleWinStart) < (long)MECK_BLE_WIN_ADVERT_MS;
+  }
+  if (!open) {
+    meckBleWinOpen = false;
+    meckSyncMs += now - meckSyncFrom;
+    Serial.printf("[Power] BLE sync window closed after %lu s\n", (now - meckBleWinStart) / 1000);
+  }
+  return open;
+}
+
+static void meckBleWindowEnd() {
+  if (!meckBleWinOpen) return;
+  meckBleWinOpen = false;
+  meckSyncMs += millis() - meckSyncFrom;
+}
+#endif
 static unsigned long meckAwakeUntil = 0;     // stay awake until (after a wake)
 static int meckRxPasses = -1;                // loop passes since a LoRa wake (-1: none)
 
@@ -3389,6 +3542,125 @@ static bool meckRxHandled() {
   if (ui_task.needsAwake()) return false;             // redraw / kb flash due
   meckRxPasses = -1;
   return true;
+}
+
+// What the GPS sends while the ESP32 sleeps is lost, so after a timer wake
+// with the GPS on the device stays up for the receiver's next GGA (1 Hz),
+// at most 1.5 s.
+static bool meckGpsWaiting = false;
+static unsigned long meckGpsMinUntil = 0;    // the clock redraw window, as without GPS
+static uint32_t meckGpsGgaAtWake = 0;
+
+static void meckGpsWaitStart() {
+  meckGpsGgaAtWake = gpsStream.getGgaCount();
+  meckGpsMinUntil = meckAwakeUntil;
+  meckAwakeUntil = millis() + 1500;
+  meckGpsWaiting = true;
+}
+
+// EnvironmentSensorManager copies the fix at most once a second, possibly
+// just before the last GGA came in
+static bool meckGpsTakeFix() {
+  LocationProvider* loc = sensors.getLocationProvider();
+  if (!loc->isValid()) return false;
+  sensors.node_lat = ((double)loc->getLatitude()) / 1000000.;
+  sensors.node_lon = ((double)loc->getLongitude()) / 1000000.;
+  sensors.node_altitude = ((double)loc->getAltitude()) / 1000.0;
+  return true;
+}
+
+static bool meckGpsFixRead() {
+  if ((long)(millis() - meckGpsMinUntil) < 0) return false;
+  if (gpsStream.getGgaCount() == meckGpsGgaAtWake) return false;
+  if (ui_task.needsAwake()) return false;
+  meckGpsTakeFix();
+  meckGpsWaiting = false;
+  return true;
+}
+
+// Experimental: "GPS when locked" (Settings > Experimental). With an
+// interval set, the locked device powers the GPS only for a fix every N
+// minutes and keeps GPS_EN off in between. The backup cell on V_BCKP keeps
+// the receiver's orbit data, though not its time (no RTC crystal): a start
+// takes some 10 s to get the time from the satellites instead of the 30 s
+// of a cold start. The device stays awake until the fix (three GGAs with a
+// fix, the first one can be rough) or the timeout. After a miss (no sky) the next try
+// waits twice, then four times the interval. 0 = the GPS stays on and keeps
+// tracking while the device sleeps (above). SOS has the GPS to itself while
+// it runs.
+static void meckGpsSetPower(bool on);        // with the SOS code below
+enum { MECK_GPS_DUTY_IDLE, MECK_GPS_DUTY_OFF, MECK_GPS_DUTY_ACQ };
+static uint8_t meckGpsDuty = MECK_GPS_DUTY_IDLE;   // IDLE: not cycling
+static unsigned long meckGpsDutyAt = 0;      // OFF: next start, ACQ: give up
+static unsigned long meckGpsDutyFrom = 0;    // ACQ: started at
+static uint32_t meckGpsDutyGga = 0;          // GGAs seen so far
+static uint8_t meckGpsDutyGood = 0;          // GGAs with a fix since the start
+static uint8_t meckGpsDutyMisses = 0;        // tries in a row without a fix
+static const uint32_t MECK_GPS_DUTY_TIMEOUT_MS = 60000;
+
+static void meckGpsDutyAcquire() {
+  if (!board.xl9555_digitalRead(XL_PIN_GPS_EN)) meckGpsSetPower(true);   // clears the old fix
+  meckGpsDuty = MECK_GPS_DUTY_ACQ;
+  meckGpsDutyFrom = millis();
+  meckGpsDutyAt = meckGpsDutyFrom + MECK_GPS_DUTY_TIMEOUT_MS;
+  meckGpsDutyGga = gpsStream.getGgaCount();
+  meckGpsDutyGood = 0;
+}
+
+// Every loop pass; true while the device must stay awake for a fix. A
+// Bluetooth sync window keeps the device awake only for a while, so the
+// cycle goes on through it.
+static bool meckGpsDutyStep(bool locked, int blocker) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  bool sleeps = blocker == MECK_SLEEP_OK || blocker == MECK_SLEEP_SYNC;
+  bool want = locked && sleeps && p->gps_enabled && p->gps_lock_interval && !meckSos.running();
+  if (!want) {
+    if (meckGpsDuty != MECK_GPS_DUTY_IDLE) {
+      meckGpsDuty = MECK_GPS_DUTY_IDLE;
+      // Back to the setting, unless SOS switches the GPS now
+      if (!meckSos.running() && p->gps_enabled && !board.xl9555_digitalRead(XL_PIN_GPS_EN))
+        meckGpsSetPower(true);
+    }
+    return false;
+  }
+  unsigned long now = millis();
+  if (meckGpsDuty == MECK_GPS_DUTY_IDLE) {
+    meckGpsDutyMisses = 0;
+    meckGpsDutyAcquire();                    // first fix with the GPS as it is
+    return true;
+  }
+  if (meckGpsDuty == MECK_GPS_DUTY_OFF) {
+    // Only the minute wakes get here: 10 s early is fine, so a try does not
+    // slip to the minute after
+    if ((long)(now - meckGpsDutyAt) < -10000L) return false;
+    meckGpsDutyAcquire();
+    return true;
+  }
+  uint32_t gga = gpsStream.getGgaCount();
+  if (gga != meckGpsDutyGga) {
+    meckGpsDutyGga = gga;
+    if (sensors.getLocationProvider()->isValid()) meckGpsDutyGood++;
+  }
+  bool got = meckGpsDutyGood >= 3;
+  if (!got && (long)(now - meckGpsDutyAt) < 0) return true;
+  if (got) {
+    meckGpsTakeFix();
+    meckGpsDutyMisses = 0;
+  } else if (meckGpsDutyMisses < 2) {
+    meckGpsDutyMisses++;
+  }
+  Serial.printf("[GPS] locked: %s after %lu ms, GPS off\n", got ? "fix" : "no fix",
+                (unsigned long)(now - meckGpsDutyFrom));
+  meckGpsSetPower(false);
+  meckGpsDuty = MECK_GPS_DUTY_OFF;
+  // From the start of this try, which (but for the first) was at a minute wake
+  meckGpsDutyAt = meckGpsDutyFrom + ((uint32_t)p->gps_lock_interval * 60000UL << meckGpsDutyMisses);
+  return false;
+}
+
+// For the power log: the GPS has a fix now, or (cycling) the last try got one
+static bool meckGpsDutyHadFix() {
+  return meckGpsDuty == MECK_GPS_DUTY_OFF && meckGpsDutyMisses == 0;
 }
 
 // Light sleep is timed by the RC slow clock (the MAX has no 32 kHz crystal),
@@ -3416,15 +3688,29 @@ static uint16_t meckWakeLora = 0, meckWakeBtn = 0, meckWakeTimer = 0;
 int meckLockSleepBlocker() {
   NodePrefs* p = the_mesh.getNodePrefs();
   if (!p->lock_sleep) return MECK_SLEEP_OFF;
+  // SOS: awake only while it counts down, its GPS looks for a fix or a send
+  // is due
+  if (meckSos.running() && meckSos.wantsAwake(millis())) return MECK_SLEEP_SOS;
   // Radios the user switched on come first: they still drain the battery
   // once the cable is out, so the lock warning names them even on USB.
-  if (p->gps_enabled) return MECK_SLEEP_GPS;
 #ifdef HAS_4G_MODEM
-  if (modemManager.getState() != ModemState::OFF) return MECK_SLEEP_MODEM;
+  // With UART sleep the modem only blocks while it has something to do
+  // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
+  if (modemManager.getState() != ModemState::OFF && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
   if (WiFi.getMode() != WIFI_MODE_NULL) return MECK_SLEEP_WIFI;
   if (board.isUsbPowered()) return MECK_SLEEP_USB;
+#ifdef MECK_BLE_LOCK_WINDOWS
+  if (meckBleWindowed()) {
+    // A connected phone does not count: once locked, the windows decide
+    if (ui_task.isLocked() && meckBleWindowActive()) return MECK_SLEEP_SYNC;
+  } else
+#endif
   if (serial_interface.isConnected()) return MECK_SLEEP_PHONE;
+#ifdef MECK_BLE_LOCK_WINDOWS
+  // Stay connected with the phone gone: a window letting it back in
+  if (ui_task.isLocked() && meckBleStay() && meckBleWindowActive()) return MECK_SLEEP_SYNC;
+#endif
 #if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
   if (es8311_active()) return MECK_SLEEP_AUDIO;
 #endif
@@ -3434,7 +3720,36 @@ int meckLockSleepBlocker() {
 // Called at the end of loop() instead of the plain locked-loop delay
 static void meckLockSleepStep() {
   bool locked = ui_task.isLocked();
-  bool canSleep = locked && meckLockSleepBlocker() == MECK_SLEEP_OK;
+#ifdef MECK_BLE_LOCK_WINDOWS
+  static bool wasLocked = false;
+  if (locked && !wasLocked && MECK_BLE_IFACE.isConnected()) {
+    meckBleWindowStart("lock");   // let a sync in progress finish first
+  } else if (!locked) {
+    meckBleWindowEnd();
+  }
+  wasLocked = locked;
+
+  if (locked && meckBleStay()) {
+    if (MECK_BLE_IFACE.isConnected()) {
+      if (meckBleLost) {
+        Serial.printf("[Power] Phone back after %lu s\n", (millis() - meckBleLostAt) / 1000);
+        if (meckBleWinOpen && !meckBleWinLinked) { meckBleWinLinked = true; meckSyncLinked++; }
+        meckBleWindowEnd();   // connected: the phone keeps the deck awake again
+        meckBleLost = false;
+      }
+    } else if (!meckBleLost) {
+      Serial.printf("[Power] Phone link lost (last drop reason 0x%02x)\n", MECK_BLE_IFACE.lastDropReason());
+      meckBleLost = true;
+      meckBleLostAt = millis();
+      meckBleRetryAt = meckBleLostAt + meckBleRetryGap(0);
+      meckBleWindowStart("link lost");
+    }
+  } else {
+    meckBleLost = false;
+  }
+#endif
+  int blocker = meckLockSleepBlocker();
+  bool canSleep = locked && blocker == MECK_SLEEP_OK;
 
   // BLE advertising off while sleep is possible, back on otherwise
   if (canSleep && !meckBleStoppedForSleep && MECK_BLE_IFACE.isEnabled()) {
@@ -3447,30 +3762,62 @@ static void meckLockSleepStep() {
     Serial.println("[Power] BLE advertising resumed");
   }
 
+  bool gpsDutyAwake = meckGpsDutyStep(locked, blocker);
   if (!locked) return;
-  bool inWindow = (long)(millis() - meckAwakeUntil) < 0;
-  if (inWindow && meckRxPasses >= 0 && meckRxHandled()) inWindow = false;   // packet done early
-  if (!canSleep || the_mesh.hasPendingWork() || inWindow) {
+  bool inWindow = (long)(millis() - meckAwakeUntil) < 0 || gpsDutyAwake;
+  if (inWindow && !gpsDutyAwake && meckRxPasses >= 0 && meckRxHandled()) inWindow = false;   // packet done early
+  if (inWindow && !gpsDutyAwake && meckGpsWaiting && meckGpsFixRead()) inWindow = false;     // GPS fix read
+  // The button held down: maybe the 3 s SOS hold, which is longer than the
+  // wake window
+  if (!canSleep || the_mesh.hasPendingWork() || inWindow || ui_task.isButtonPressed()) {
     delay(50);   // locked but awake: yield as before
     return;
   }
   meckRxPasses = -1;
+  meckGpsWaiting = false;
 
-  // Sleep until just after the next minute boundary, a LoRa packet or the button
+  // Sleep until just after the next minute boundary, a LoRa packet or the
+  // button, or until the SOS has something to do
   uint32_t secs = rtc_clock.getCurrentTime() % 60;
   uint64_t us = (uint64_t)(60 - secs) * 1000000ULL + 300000ULL;
+  uint32_t sosMs = meckSos.nextEventIn(millis());
+  if (sosMs != 0xFFFFFFFF && (uint64_t)sosMs * 1000ULL + 50000ULL < us) us = (uint64_t)sosMs * 1000ULL + 50000ULL;
   esp_sleep_enable_timer_wakeup(us);
   esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);
   gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+#ifdef MODEM_UART_SLEEP
+  // Got here with the modem on only if it is idle in UART sleep: RI is a
+  // second GPIO wake (calls, SMS, other URCs)
+  bool modemOn = modemManager.getState() != ModemState::OFF;
+  if (modemOn) modemManager.prepareEspSleep();
+#endif
   esp_sleep_enable_gpio_wakeup();
   Serial.flush();
   int64_t sleepStart = esp_timer_get_time();   // esp_timer keeps counting through light sleep
   esp_light_sleep_start();
   meckSleptUs += (uint64_t)(esp_timer_get_time() - sleepStart);
+  esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
+  // A GPIO wake with the button up was RI (it pulses for 60-120 ms, a
+  // click lasts longer than the wake-up)
+  bool riWake = false;
+#ifdef MODEM_UART_SLEEP
+  if (modemOn) {
+    bool gpioNotBtn = wakeCause == ESP_SLEEP_WAKEUP_GPIO && digitalRead(PIN_USER_BTN) != LOW;
+    modemManager.afterEspSleep(gpioNotBtn);
+    riWake = gpioNotBtn;
+  }
+#endif
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
 
-  switch (esp_sleep_get_wakeup_cause()) {
+  if (riWake) {
+    // The modem task reads the SMS or sees the call; the modem blocker
+    // keeps the deck awake while it does
+    meckAwakeUntil = millis() + 300;
+    return;
+  }
+
+  switch (wakeCause) {
     case ESP_SLEEP_WAKEUP_EXT1:
       meckAwakeUntil = millis() + 2000;   // at most: receive, maybe ACK / forward
       meckRxPasses = 0;                    // usually ends early (meckRxHandled)
@@ -3484,8 +3831,22 @@ static void meckLockSleepStep() {
     default:                               // timer: redraw the clock
       meckAwakeUntil = millis() + 300;
       ui_task.forceRefresh();
+#ifdef MECK_BLE_LOCK_WINDOWS
+      // Every ble_lock_window minutes of the clock (the wake lands just
+      // after the minute boundary)
+      if (meckBleWindowed() && (rtc_clock.getCurrentTime() / 60) % the_mesh.getNodePrefs()->ble_lock_window == 0)
+        meckBleWindowStart("timer");
+      // Stay connected, phone gone: the next retry, at a minute wake (10 s
+      // early is fine, so a one-minute gap does not skip every other wake)
+      if (meckBleLost && meckBleStay() && (long)(millis() - meckBleRetryAt) > -10000L) {
+        unsigned long now = millis();
+        meckBleRetryAt = now + meckBleRetryGap(now - meckBleLostAt);
+        meckBleWindowStart("retry");
+      }
+#endif
       meckMeasureSlowClock();
       meckWakeTimer++;
+      if (board.xl9555_digitalRead(XL_PIN_GPS_EN)) meckGpsWaitStart();   // the setting or SOS
       break;
   }
 }
@@ -3500,6 +3861,10 @@ static void meckLockSleepStep() {
 // /meshcore/powerlog/YYYYMMDD.csv (local date). Records not yet written are
 // lost on a reset or power-off. Debug CLI: "pwrlog" prints the records in
 // RAM, "pwrlog flush" writes them now.
+//
+// A "#fw,<git hash>,<commit time>,<build time>,<version>" line before a
+// boot's first records in each file (and before the records in RAM) says
+// which firmware wrote them (hash and times from git_version.py).
 //
 // Cost: the readings are taken while the device is awake anyway (the minute
 // wake), and one SD write an hour.
@@ -3523,13 +3888,19 @@ struct MeckPwrRec {
   uint8_t  rx, tx;     // LoRa packets received / sent
   uint8_t  refresh, full;           // display refreshes / of which full
   int16_t  rcPpm;      // last RC slow clock measurement vs the boot calibration, ppm
+  uint8_t  bleWin;     // "Phone when locked": minutes between sync windows, 0 = stay connected
+  uint8_t  syncWins, syncLinked;    // sync windows opened / of which the app reconnected in
+  uint16_t syncDs;     // time in sync windows, 0.1 s
+  uint16_t linkIv;     // BLE connection interval the phone accepted, 1.25 ms (0 = none yet)
+  uint8_t  appRx;      // frames received from the app over Bluetooth
+  uint8_t  drop;       // a Bluetooth link ended: why (esp_gatt_conn_reason_t), 0 = none
 };
 
 enum {
   MECK_PWR_F_LOCKED = 1 << 0, MECK_PWR_F_USB = 1 << 1, MECK_PWR_F_GPS = 1 << 2,
   MECK_PWR_F_MODEM = 1 << 3, MECK_PWR_F_WIFI = 1 << 4, MECK_PWR_F_PHONE = 1 << 5,
   MECK_PWR_F_BLE = 1 << 6, MECK_PWR_F_AUDIO = 1 << 7, MECK_PWR_F_LIGHT = 1 << 8,
-  MECK_PWR_F_SAVING = 1 << 9,
+  MECK_PWR_F_SAVING = 1 << 9, MECK_PWR_F_FIX = 1 << 10,
 };
 
 #define MECK_PWR_CAP   120   // two hours, in case an SD write fails
@@ -3541,6 +3912,10 @@ static uint32_t meckPwrMinute = 0, meckPwrRefEpoch = 0;
 static unsigned long meckPwrRefMs = 0, meckPwrStartMs = 0;
 static int32_t meckPwrJump = 0;
 static uint32_t meckPwrRx0 = 0, meckPwrTx0 = 0, meckPwrRef0 = 0, meckPwrFull0 = 0;
+#if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
+static uint32_t meckPwrAppRx0 = 0;
+static uint16_t meckPwrDrops0 = 0;
+#endif
 static unsigned long meckPwrLastFlushTry = 0;
 
 static void meckPwrCounters(uint32_t& rx, uint32_t& tx, uint32_t& ref, uint32_t& full) {
@@ -3572,6 +3947,13 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
   if (ui_task.isLocked()) f |= MECK_PWR_F_LOCKED;
   if (board.isUsbPowered()) f |= MECK_PWR_F_USB;
   if (p->gps_enabled) f |= MECK_PWR_F_GPS;
+  // The receiver is powered (the setting or SOS) and the last sentences gave a fix
+  if (board.xl9555_digitalRead(XL_PIN_GPS_EN)) {
+    LocationProvider* loc = sensors.getLocationProvider();
+    if (loc && loc->isValid()) f |= MECK_PWR_F_FIX;
+  } else if (meckGpsDutyHadFix()) {
+    f |= MECK_PWR_F_FIX;
+  }
 #ifdef HAS_4G_MODEM
   if (modemManager.getState() != ModemState::OFF) f |= MECK_PWR_F_MODEM;
 #endif
@@ -3597,7 +3979,27 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
     r.rcPpm = (int16_t)constrain(d, -32000LL, 32000LL);
   }
 
-  // Append; when full, drop the oldest record
+#ifdef MECK_BLE_LOCK_WINDOWS
+  r.bleWin = p->ble_lock_window;
+  r.syncWins = (uint8_t)min(meckSyncWins, (uint16_t)255);
+  r.syncLinked = (uint8_t)min(meckSyncLinked, (uint16_t)255);
+  unsigned long syncMs = meckSyncMs;
+  if (meckBleWinOpen) { syncMs += ms - meckSyncFrom; meckSyncFrom = ms; }   // still open: this minute's part
+  r.syncDs = (uint16_t)min(syncMs / 100, 65535UL);
+  meckSyncWins = meckSyncLinked = 0;
+  meckSyncMs = 0;
+#endif
+#if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
+  r.linkIv = MECK_BLE_IFACE.isConnected() ? SerialBLEInterface::linkInterval() : 0;
+  uint32_t appRx = MECK_BLE_IFACE.rxFrames();
+  r.appRx = (uint8_t)min(appRx - meckPwrAppRx0, 255U);
+  meckPwrAppRx0 = appRx;
+  uint16_t drops = MECK_BLE_IFACE.drops();
+  if (drops != meckPwrDrops0) r.drop = MECK_BLE_IFACE.lastDropReason();
+  meckPwrDrops0 = drops;
+#endif
+
+  // Append once the record is complete; when full, drop the oldest record
   int idx = (meckPwrHead + meckPwrCount) % MECK_PWR_CAP;
   meckPwrBuf[idx] = r;
   if (meckPwrCount < MECK_PWR_CAP) meckPwrCount++;
@@ -3626,22 +4028,38 @@ static void meckPwrLocalDate(uint32_t t, int8_t utc, char* date, size_t dlen, ch
 static const char MECK_PWR_HEADER[] =
   "utc,local_date,local_time,secs,asleep_s,wake_lora,wake_btn,wake_timer,"
   "pct,mv,avg_ma,temp_c,usb,charge,locked,blocker,saving,gps,modem,wifi,"
-  "phone,ble,audio,light,rx,tx,refresh,full_refresh,clock_jump_s,utc_offset,rc_ppm";
+  "phone,ble,audio,light,rx,tx,refresh,full_refresh,clock_jump_s,utc_offset,rc_ppm,fix,"
+  "ble_win,sync_win,sync_link,sync_s,link_ms,app_rx,ble_drop";
 
 static int meckPwrCsv(const MeckPwrRec& r, char* buf, size_t len, char* date, size_t dlen) {
   char hm[8];
   meckPwrLocalDate(r.t, r.utc, date, dlen, hm, sizeof(hm));
   uint16_t f = r.flags;
   return snprintf(buf, len,
-    "%lu,%s,%s,%u,%u.%u,%u,%u,%u,%u,%u,%d,%d.%d,%d,%u,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%ld,%d,%d",
+    "%lu,%s,%s,%u,%u.%u,%u,%u,%u,%u,%u,%d,%d.%d,%d,%u,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%ld,%d,%d,%d,%u,%u,%u,%u.%u,%u.%02u,%u,%u",
     (unsigned long)r.t, date, hm, r.secs, r.sleptDs / 10, r.sleptDs % 10,
     r.wLora, r.wBtn, r.wTimer, r.pct, r.mv, r.avgMa, r.tempDc / 10, abs(r.tempDc % 10),
     (f & MECK_PWR_F_USB) ? 1 : 0, r.chg, (f & MECK_PWR_F_LOCKED) ? 1 : 0, r.blocker,
     (f & MECK_PWR_F_SAVING) ? 1 : 0, (f & MECK_PWR_F_GPS) ? 1 : 0, (f & MECK_PWR_F_MODEM) ? 1 : 0,
     (f & MECK_PWR_F_WIFI) ? 1 : 0, (f & MECK_PWR_F_PHONE) ? 1 : 0, (f & MECK_PWR_F_BLE) ? 1 : 0,
     (f & MECK_PWR_F_AUDIO) ? 1 : 0, (f & MECK_PWR_F_LIGHT) ? 1 : 0,
-    r.rx, r.tx, r.refresh, r.full, (long)r.jump, r.utc, r.rcPpm);
+    r.rx, r.tx, r.refresh, r.full, (long)r.jump, r.utc, r.rcPpm, (f & MECK_PWR_F_FIX) ? 1 : 0,
+    r.bleWin, r.syncWins, r.syncLinked, r.syncDs / 10, r.syncDs % 10,
+    (unsigned)(r.linkIv * 125 / 100), (unsigned)(r.linkIv * 125 % 100), r.appRx, r.drop);
 }
+
+#ifndef MECK_GIT_HASH
+#define MECK_GIT_HASH "unknown"
+#define MECK_GIT_TIME 0UL
+#define MECK_BUILD_TIME 0UL
+#endif
+
+static void meckPwrFwLine(char* buf, size_t len) {
+  snprintf(buf, len, "#fw,%s,%lu,%lu,%s", MECK_GIT_HASH, (unsigned long)MECK_GIT_TIME,
+           (unsigned long)MECK_BUILD_TIME, FIRMWARE_VERSION);
+}
+
+static char meckPwrFwFile[12] = "";   // the last file this boot named its firmware in
 
 // Append all records in RAM to the SD card. True when the buffer was written.
 bool meckPwrLogFlush() {
@@ -3661,6 +4079,12 @@ bool meckPwrLogFlush() {
       f = SD.open(path, FILE_APPEND);
       if (!f) break;
       if (f.size() == 0) f.println(MECK_PWR_HEADER);
+      if (strcmp(date, meckPwrFwFile) != 0) {
+        char fw[96];
+        meckPwrFwLine(fw, sizeof(fw));
+        f.println(fw);
+        strcpy(meckPwrFwFile, date);
+      }
       strcpy(openDate, date);
     }
     if (f.println(line) == 0) break;
@@ -3675,6 +4099,8 @@ bool meckPwrLogFlush() {
 void meckPwrLogPrint() {
   Serial.println(MECK_PWR_HEADER);
   char line[200], date[12];
+  meckPwrFwLine(line, sizeof(line));
+  Serial.println(line);
   for (int i = 0; i < meckPwrCount; i++) {
     meckPwrCsv(meckPwrBuf[(meckPwrHead + i) % MECK_PWR_CAP], line, sizeof(line), date, sizeof(date));
     Serial.println(line);
@@ -3911,6 +4337,9 @@ void loop() {
 
 
   sensors.loop();
+#if defined(LilyGo_TDeck_Pro)
+  meckSosLoop();
+#endif
 
   // Satellite-count diagnostic (MAX): every 10s while GPS is on, print the
   // reported satellite count, fix state and NMEA rate so the multi-constellation
@@ -4510,6 +4939,8 @@ void loop() {
   // SMS: poll for incoming messages from modem
   #ifdef HAS_4G_MODEM
   {
+    modemManager.setScreenLocked(ui_task.isLocked());
+
     SMSIncoming incoming;
     while (modemManager.recvSMS(incoming)) {
       // Save to store and notify UI
@@ -4619,13 +5050,17 @@ void loop() {
     webReaderNeedsRefresh = false;
   }
   #endif
-  if (!composeMode && !notesSuppressLoop && !smsSuppressLoop && !dialerNeedsRefresh
+  // The SOS countdown and screen show over compose and the other text
+  // entry modes, which are left as they were for when the SOS screen closes
+  bool sosOnTop = meckSos.state() == MeckSos::COUNTDOWN || ui_task.isOnSosScreen();
+  if (sosOnTop || (!composeMode && !notesSuppressLoop && !smsSuppressLoop && !dialerNeedsRefresh
   #ifdef MECK_WEB_READER
       && !webReaderTextEntry
   #endif
-     ) {
+     )) {
     ui_task.loop();
   } else {
+    ui_task.sosPoll();   // the SOS hold works while typing too (its Enter is not wanted here)
     // Handle debounced screen refresh (compose, emoji picker, notes, or web reader text entry)
     if (composeNeedsRefresh
         && (millis() - lastComposeKeystroke) >= COMPOSE_TYPING_PAUSE
@@ -4792,6 +5227,13 @@ void loop() {
   {
     // Guard: skip touch when locked
     bool touchBlocked = ui_task.isLocked();
+    // SOS screen: keys and the top button only, so a stray touch never picks
+    // anything there; a touch still cancels a countdown
+    if (ui_task.isOnSosScreen()) {
+      touchBlocked = true;
+      int16_t sx, sy;
+      if (readTouch(&sx, &sy)) meckSosCancelInput();
+    }
     // Settings > Experimental Features "Delete all contacts" box open: keys
     // only, so a stray touch can't confirm it or leave Settings mid-purge
     if (ui_task.isOnSettingsScreen()) {
@@ -5119,6 +5561,9 @@ void handleKeyboardInput() {
   // non-back action (notes/contacts item delete) handle KEY_CANCEL explicitly.
   if (key == '\b' && keyboard.wasShiftConsumed()) key = KEY_CANCEL;
 
+  // SOS countdown: any key cancels it, locked or not
+  if (meckSosCancelInput()) return;
+
   // Lock warning up: Enter / Q decide, other keys are swallowed
   if (ui_task.isLockPromptActive()) {
     ui_task.lockPromptKey(key);
@@ -5128,6 +5573,28 @@ void handleKeyboardInput() {
   // Block all keyboard input while lock screen is active.
   // Still read the key above to clear the TCA8418 buffer.
   if (ui_task.isLocked()) return;
+
+  // SOS screen: it takes every key (Space confirms, Q backs out, the rest
+  // does nothing), so no shortcut can fire from under it
+  if (ui_task.isOnSosScreen()) {
+    ui_task.injectKey(key);
+    SosScreen* sos = (SosScreen*)ui_task.getSosScreen();
+    if (sos->wantsExit()) {
+      sos->clearExit();
+      ui_task.leaveSosScreen();
+      composeNeedsRefresh = true;   // compose / notes / SMS text entry under it: draw it again
+  #ifdef MECK_WEB_READER
+      if (webReaderTextEntry) webReaderNeedsRefresh = true;
+  #endif
+    }
+    return;
+  }
+
+  // Telemetry request prompt (experimental): Enter allows, Q denies
+  if (ui_task.isTelemetryPromptActive()) {
+    ui_task.telemetryPromptKey(key);
+    return;
+  }
 
   // Dismiss boot navigation hint on any keypress
   if (ui_task.isHintActive()) {
@@ -5908,6 +6375,16 @@ void handleKeyboardInput() {
   // ---------------------------------------------------------------------------
   if (ui_task.isOnContactsScreen()) {
     ContactsScreen* cs = (ContactsScreen*)ui_task.getContactsScreen();
+    // Contact options (O): telemetry permissions, send my location, map
+    if (cs && cs->isOptionsOpen()) {
+      ui_task.injectKey(key);
+      meckRunContactOption(cs);
+      return;
+    }
+    if (cs && key == 'o' && !cs->isInSelectMode()) {
+      if (cs->openOptions()) ui_task.forceRefresh();
+      return;
+    }
     if (cs && cs->isInSelectMode()) {
       switch (key) {
         case KEY_CANCEL: {
@@ -7081,6 +7558,569 @@ void sendComposedMessage() {
   }
 }
 
+// ============================================================================
+// Telemetry permissions per contact, the experimental request prompt, and
+// locations in DMs
+//
+// MeshCore answers a telemetry request from what the contact may see: one
+// rule each for battery, location and sensors (nobody / everybody / the
+// contacts whose flags allow it). Allowing a contact here sets its flags and
+// switches a rule from "nobody" to "per contact" where needed.
+// ============================================================================
+#include "ui-new/MeckGeo.h"
+#ifdef ESP32
+  #include <Preferences.h>
+#endif
+
+static ContactInfo* meckContactPtr(int idx) {
+  ContactInfo tmp;
+  if (idx < 0 || !the_mesh.getContactByIdx(idx, tmp)) return nullptr;
+  return the_mesh.lookupContactByPubKey(tmp.id.pub_key, PUB_KEY_SIZE);
+}
+
+// Rules that were "nobody" become "per contact" for the permissions given
+static void meckTelEnsureFlagsMode(uint8_t perms) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  bool changed = false;
+  if ((perms & TELEM_PERM_BASE) && p->telemetry_mode_base == TELEM_MODE_DENY) { p->telemetry_mode_base = TELEM_MODE_ALLOW_FLAGS; changed = true; }
+  if ((perms & TELEM_PERM_LOCATION) && p->telemetry_mode_loc == TELEM_MODE_DENY) { p->telemetry_mode_loc = TELEM_MODE_ALLOW_FLAGS; changed = true; }
+  if ((perms & TELEM_PERM_ENVIRONMENT) && p->telemetry_mode_env == TELEM_MODE_DENY) { p->telemetry_mode_env = TELEM_MODE_ALLOW_FLAGS; changed = true; }
+  if (changed) the_mesh.savePrefs();
+}
+
+// Contact options: is the permission on, is it on for everybody (rule
+// "all"), and are the contact's requests ignored
+bool meckContactTelemetryState(int idx, uint8_t perm, bool& everyone, bool& ignored) {
+  everyone = ignored = false;
+  ContactInfo* c = meckContactPtr(idx);
+  if (!c) return false;
+  NodePrefs* p = the_mesh.getNodePrefs();
+  uint8_t mode = perm == TELEM_PERM_BASE ? p->telemetry_mode_base
+               : perm == TELEM_PERM_LOCATION ? p->telemetry_mode_loc : p->telemetry_mode_env;
+  everyone = (mode == TELEM_MODE_ALLOW_ALL);
+  ignored = (c->flags & CONTACT_FLAG_TEL_IGNORED) != 0;
+  return mode == TELEM_MODE_ALLOW_FLAGS && (c->flags & (perm << 1));   // flag bits 1-3 = TELEM_PERM_*
+}
+
+void meckContactTelemetrySet(int idx, uint8_t perm, bool on) {
+  ContactInfo* c = meckContactPtr(idx);
+  if (!c) return;
+  if (on) {
+    c->flags |= (uint8_t)(perm << 1);
+    c->flags &= ~CONTACT_FLAG_TEL_IGNORED;   // allowing by hand ends the ignoring
+    meckTelEnsureFlagsMode(perm);
+  } else {
+    c->flags &= (uint8_t)~(perm << 1);
+  }
+  the_mesh.saveContacts();
+  Serial.printf("Contacts: %s telemetry 0x%02X %s\n", c->name, perm, on ? "allowed" : "off");
+}
+
+// Experimental: ask before answering a contact's first telemetry request.
+// Kept in NVS while it is an experiment.
+static int8_t meckTelPromptCache = -1;
+bool meckTelPromptEnabled() {
+#ifdef ESP32
+  if (meckTelPromptCache < 0) {
+    Preferences p;
+    meckTelPromptCache = 0;
+    if (p.begin("meckexp", true)) { meckTelPromptCache = p.getBool("telprompt", false) ? 1 : 0; p.end(); }
+  }
+  return meckTelPromptCache == 1;
+#else
+  return false;
+#endif
+}
+void meckTelPromptSet(bool on) {
+#ifdef ESP32
+  Preferences p;
+  if (p.begin("meckexp", false)) { p.putBool("telprompt", on); p.end(); }
+  meckTelPromptCache = on ? 1 : 0;
+#endif
+}
+
+// MyMesh::onContactRequest: true = no reply. Ignored contacts never get one;
+// with the prompt on, a contact that has no telemetry permission yet gets
+// no reply now and the user is asked.
+bool meckTelemetryGate(const ContactInfo& contact) {
+  if (contact.flags & CONTACT_FLAG_TEL_IGNORED) return true;
+  if (!meckTelPromptEnabled()) return false;
+  if (the_mesh.getNodePrefs()->telemetry_mode_base == TELEM_MODE_ALLOW_ALL) return false;
+  if (contact.flags & 0x0E) return false;   // permissions already given: the usual rules
+  Serial.printf("Telemetry: request from %s, asking\n", contact.name);
+  ui_task.requestTelemetryPrompt(contact.id.pub_key, contact.name);
+  return true;
+}
+
+void meckTelemetryPromptAnswer(const uint8_t* pubKey, const char* name, bool allow) {
+  ContactInfo* c = the_mesh.lookupContactByPubKey(pubKey, PUB_KEY_SIZE);
+  if (!c) return;
+  char msg[64];
+  if (allow) {
+    const uint8_t perms = TELEM_PERM_BASE | TELEM_PERM_LOCATION;
+    c->flags |= (uint8_t)(perms << 1);
+    c->flags &= ~CONTACT_FLAG_TEL_IGNORED;
+    meckTelEnsureFlagsMode(perms);
+    snprintf(msg, sizeof(msg), MECK_TR("%s may now request your location", "%s peut demander votre position"), name);
+  } else {
+    c->flags |= CONTACT_FLAG_TEL_IGNORED;
+    snprintf(msg, sizeof(msg), MECK_TR("Requests from %s are ignored", "Demandes de %s ignor\xC3\xA9" "es"), name);
+  }
+  the_mesh.saveContacts();
+  Serial.printf("Telemetry: %s %s\n", name, allow ? "allowed (battery, location)" : "ignored");
+  ui_task.showAlert(msg, 2000);
+}
+
+// Own position for "Send my location": a GPS fix, else the advert position
+static bool meckOwnPosition(double& lat, double& lon) {
+#if ENV_INCLUDE_GPS == 1
+  LocationProvider* lp = sensors.getLocationProvider();
+  if (the_mesh.getNodePrefs()->gps_enabled && lp && lp->isValid()) {
+    lat = lp->getLatitude() / 1000000.0;
+    lon = lp->getLongitude() / 1000000.0;
+    if (lat != 0 || lon != 0) return true;
+  }
+#endif
+  lat = sensors.node_lat;
+  lon = sensors.node_lon;
+  return lat != 0 || lon != 0;
+}
+
+// Send our position to a contact as "[LOC]lat,lon" (MeshCore-Solo's format)
+static void meckSendLocationTo(int idx) {
+  ContactInfo ci;
+  if (!the_mesh.getContactByIdx(idx, ci)) return;
+  double lat, lon;
+  if (!meckOwnPosition(lat, lon)) {
+    ui_task.showAlert(MECK_TR("No position yet (GPS or advert location)", "Pas de position (GPS ou annonce)"), 2000);
+    return;
+  }
+  char text[48];
+  meckGeoFormatShare(text, sizeof(text), lat, lon);
+  uint32_t sendRef = 0;
+  uint8_t sendTotal = 0;
+  if (the_mesh.uiSendDirectMessage((uint32_t)idx, text, &sendRef, &sendTotal)) {
+    ui_task.addSentDM(ci.name, the_mesh.getNodePrefs()->node_name, text, sendRef, sendTotal);
+    char msg[48];
+    snprintf(msg, sizeof(msg), MECK_TR("Location sent to %s", "Position envoy\xC3\xA9" "e \xC3\xA0 %s"), ci.name);
+    ui_task.showAlert(msg, 1500);
+  } else {
+    ui_task.showAlert(MECK_TR("Send failed", "\xC3\x89" "chec de l'envoi"), 1500);
+  }
+}
+
+#if defined(LilyGo_TDeck_Pro)
+// ============================================================================
+// SOS / emergency mode (docs/sos.md)
+//
+// MeckSos (ui-new/MeckSos.h) decides what happens when; this part carries it
+// out: the GPS power, the messages to the public channel and the channels
+// picked in Settings, the repeater echoes, the countdown buzz. The debug CLI
+// "sos dry 1" turns sending into a serial print and silences the buzz, for
+// testing on the device without transmitting.
+// ============================================================================
+static bool meckSosDry = false;
+static bool meckSosOwnsGps = false;    // SOS switches the GPS until it ends
+#ifdef MECK_UI_SCREENDUMP
+static bool meckSosFakeFix = false;    // debug CLI "sos fix <lat> <lon>"
+static double meckSosFakeLat = 0, meckSosFakeLon = 0;
+#endif
+
+// Our recent sends, to look up the repeaters that passed them on
+struct MeckSosSent {
+  uint8_t fp[SENT_FINGERPRINT_SIZE];
+  uint8_t msg;              // MeckSos::Msg
+  uint32_t at;
+  bool used;
+};
+static MeckSosSent meckSosSent[(SOS_CHANNELS_MAX + 1) * 2];   // two rounds to every channel
+static uint8_t meckSosSentNext = 0;
+
+int meckSosBattPct() {
+#if HAS_BQ27220
+  return ui_task.getBatteryPercent();
+#else
+  uint16_t mv = ui_task.getBattMilliVolts();
+  return mv > 0 ? constrain(((int)mv - 3000) * 100 / 1200, 0, 100) : -1;
+#endif
+}
+
+// SOS channels (Settings > SOS) are kept by the start of the channel's
+// secret: its slot changes when an earlier channel is deleted
+static int meckSosChannelEntry(uint8_t ch) {
+  ChannelDetails cd;
+  if (ch == 0 || !the_mesh.getChannel(ch, cd) || cd.name[0] == 0) return -1;
+  NodePrefs* p = the_mesh.getNodePrefs();
+  static const uint8_t none[SOS_CHANNEL_ID_LEN] = { 0 };
+  if (!memcmp(cd.channel.secret, none, SOS_CHANNEL_ID_LEN)) return -1;
+  for (int i = 0; i < SOS_CHANNELS_MAX; i++)
+    if (!memcmp(p->sos_channel_ids[i], cd.channel.secret, SOS_CHANNEL_ID_LEN)) return i;
+  return -1;
+}
+
+// Channel ch (not the public one) gets the SOS too
+bool meckSosChannelSelected(uint8_t ch) {
+  return meckSosChannelEntry(ch) >= 0;
+}
+
+// Settings: switch channel ch on or off for the SOS. 1 = now on, 0 = now
+// off, -1 = not possible (the public channel, or all SOS_CHANNELS_MAX used).
+int meckSosChannelToggle(uint8_t ch) {
+  NodePrefs* p = the_mesh.getNodePrefs();
+  int e = meckSosChannelEntry(ch);
+  if (e >= 0) {
+    memset(p->sos_channel_ids[e], 0, SOS_CHANNEL_ID_LEN);
+    the_mesh.savePrefs();
+    return 0;
+  }
+  ChannelDetails cd;
+  if (ch == 0 || !the_mesh.getChannel(ch, cd) || cd.name[0] == 0) return -1;
+  static const uint8_t none[SOS_CHANNEL_ID_LEN] = { 0 };
+  for (int i = 0; i < SOS_CHANNELS_MAX; i++) {
+    if (memcmp(p->sos_channel_ids[i], none, SOS_CHANNEL_ID_LEN)) continue;
+    memcpy(p->sos_channel_ids[i], cd.channel.secret, SOS_CHANNEL_ID_LEN);
+    the_mesh.savePrefs();
+    return 1;
+  }
+  return -1;
+}
+
+// Message received on this channel: shown on the SOS screen as a reply
+bool meckSosChannelWatched(uint8_t channel_idx) {
+  return channel_idx == 0 || meckSosChannelSelected(channel_idx);
+}
+
+// Whether the GPS has power right now, whoever switched it
+static bool meckGpsPowered() {
+#if defined(LilyGo_TDeck_Pro_Max)
+  return board.xl9555_digitalRead(XL_PIN_GPS_EN);
+#elif defined(PIN_GPS_EN)
+  return digitalRead(PIN_GPS_EN) == GPS_EN_ACTIVE;
+#else
+  return the_mesh.getNodePrefs()->gps_enabled != 0;
+#endif
+}
+
+#if defined(LilyGo_TDeck_Pro_Max)
+// Multi-constellation (GPS + GLONASS + BeiDou) and EASY ephemeris for the
+// MAX GPS. Sent again after every power-on: a module without backup power
+// starts from its defaults. The module needs a moment after power-on before
+// it takes commands.
+static unsigned long meckGpsConfigAt = 0;
+void meckGpsConfigureSoon() {
+  meckGpsConfigAt = millis() + 300;
+  if (meckGpsConfigAt == 0) meckGpsConfigAt = 1;
+}
+static void meckGpsConfigPoll() {
+  if (!meckGpsConfigAt || (long)(millis() - meckGpsConfigAt) < 0) return;
+  meckGpsConfigAt = 0;
+  if (!meckGpsPowered()) return;
+  Serial2.print("$PCAS04,7*1E\r\n");
+  Serial2.print("$PMTK869,1,1*35\r\n");
+}
+#endif
+
+// GPS power for the SOS and the locked GPS cycle; the GPS setting itself
+// is not changed
+static void meckGpsSetPower(bool on) {
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
+  if (on) {
+  #ifdef PIN_GPS_EN
+    digitalWrite(PIN_GPS_EN, GPS_EN_ACTIVE);
+  #endif
+  #if defined(LilyGo_TDeck_Pro_Max)
+    board.gpsPowerOn();
+    meckGpsConfigureSoon();
+  #endif
+    sensors.setSettingValue("gps", "1");   // also clears the fix left from before
+  } else {
+    sensors.setSettingValue("gps", "0");
+  #ifdef PIN_GPS_EN
+    digitalWrite(PIN_GPS_EN, !GPS_EN_ACTIVE);
+  #endif
+  #if defined(LilyGo_TDeck_Pro_Max)
+    board.gpsPowerOff();
+  #endif
+  }
+  Serial.printf("[GPS] power %s\n", on ? "on" : "off");
+#endif
+}
+
+// Sends text to one channel; false if it could not go out
+static bool meckSosSendTo(uint8_t ch, const char* text, MeckSos::Msg m) {
+  ChannelDetails cd;
+  if (!the_mesh.getChannel(ch, cd) || (ch != 0 && cd.name[0] == 0)) return false;
+  if (meckSosDry) {
+    Serial.printf("[SOS] dry run, not sent to %u '%s': %s\n", ch, cd.name, text);
+    return true;
+  }
+  const char* name = the_mesh.getNodePrefs()->node_name;
+  uint32_t ts = rtc_clock.getCurrentTime();
+  if (!the_mesh.sendGroupMessage(ts, cd.channel, name, text, strlen(text))) return false;
+  meckTxLog(MECK_TXLOG_CH_SEND, ch);
+  ui_task.addSentChannelMessage(ch, name, text);
+  the_mesh.queueSentChannelMessage(ch, ts, name, text);
+  MeckSosSent& s = meckSosSent[meckSosSentNext];
+  s.used = the_mesh.getLastSentFingerprint(s.fp);
+  s.msg = m;
+  s.at = millis();
+  meckSosSentNext = (meckSosSentNext + 1) % (sizeof(meckSosSent) / sizeof(meckSosSent[0]));
+  Serial.printf("[SOS] sent to %u '%s': %s\n", ch, cd.name, text);
+  return true;
+}
+
+// One message to the public channel and every SOS channel
+static void meckSosSend(MeckSos::Msg m) {
+  uint32_t now = millis();
+  char text[MAX_TEXT_LEN];
+  meckSos.buildText(m, text, sizeof(text), now, meckSosBattPct());
+  cpuPower.setBoost();   // crypto + radio TX
+  if (!meckSosSendTo(0, text, m)) {
+    Serial.println("[SOS] send failed, retrying in 10 s");
+    meckSos.onSendFailed(now);
+    return;
+  }
+  for (uint8_t ch = 1; ch < MAX_GROUP_CHANNELS; ch++) {
+    if (meckSosChannelSelected(ch)) meckSosSendTo(ch, text, m);
+  }
+  meckSos.onSent(m, now);
+  if (m == MeckSos::MSG_OK) ui_task.showAlert(MECK_TR("I'm OK sent", "Tout va bien envoy\xC3\xA9"), 2000);
+  ui_task.keepAlive();
+  ui_task.forceRefresh();
+}
+
+// Repeaters that passed our recent sends on (MyMesh tracks them for 10 min)
+static void meckSosPollEchoes() {
+  uint32_t now = millis();
+  for (auto& s : meckSosSent) {
+    if (!s.used) continue;
+    if (now - s.at > SENT_TRACK_EXPIRY_MS) { s.used = false; continue; }
+    uint8_t bph = 0, count = 0;
+    uint8_t hash[SENT_ECHO_MAX * 3];
+    int8_t snr[SENT_ECHO_MAX];
+    the_mesh.getHeardBy(s.fp, SENT_FINGERPRINT_SIZE, bph, count, hash, snr, SENT_ECHO_MAX);
+    uint8_t before = meckSos.heardCount() + meckSos.okHeardCount();
+    for (uint8_t e = 0; e < count && bph; e++) meckSos.addEcho((MeckSos::Msg)s.msg, &hash[e * bph], bph, snr[e]);
+    if (meckSos.heardCount() + meckSos.okHeardCount() != before) ui_task.forceRefresh();
+  }
+}
+
+// The top button was held 3 s
+void meckSosHold() {
+  if (!meckSos.running()) {
+    if (!the_mesh.getNodePrefs()->sos_btn) return;
+    if (!meckSos.arm(millis(), MeckSos::COUNTDOWN_HOLD_MS)) return;
+    Serial.println("[SOS] countdown started (button)");
+    for (auto& s : meckSosSent) s.used = false;
+    if (!ui_task.isLocked()) ui_task.gotoSosScreen();   // locked: the lock screen shows it
+    ui_task.keepAlive();
+    ui_task.forceRefresh();
+  } else if (meckSos.state() != MeckSos::COUNTDOWN) {
+    // Running: the menu, for I'm OK or Stop
+    if (ui_task.isLocked()) ui_task.unlockScreen();     // goes to the SOS screen
+    else ui_task.gotoSosScreen();
+  }
+}
+
+// Key, touch, pad or button press: cancels a countdown. True if it did.
+bool meckSosCancelInput() {
+  if (!meckSos.cancelCountdown()) return false;
+  Serial.println("[SOS] countdown cancelled");
+  ui_task.keepAlive();
+  ui_task.forceRefresh();
+  return true;
+}
+
+// A choice from the SOS screen menu
+void meckSosConfirm(int item) {
+  uint32_t now = millis();
+  switch (item) {
+    case SosScreen::ITEM_SOS:
+      if (meckSos.running()) meckSos.stop();
+      if (meckSos.arm(now, MeckSos::COUNTDOWN_MENU_MS)) {
+        for (auto& s : meckSosSent) s.used = false;
+        Serial.println("[SOS] countdown started (menu)");
+      }
+      break;
+    case SosScreen::ITEM_OK:
+      meckSos.requestOk(now);
+      Serial.println("[SOS] I'm OK requested");
+      break;
+    case SosScreen::ITEM_STOP:
+      meckSos.stop();
+      Serial.println("[SOS] stopped");
+      break;
+    default: break;
+  }
+  ui_task.forceRefresh();
+}
+
+void meckSosLoop() {
+  uint32_t now = millis();
+  NodePrefs* p = the_mesh.getNodePrefs();
+
+#if defined(LilyGo_TDeck_Pro_Max)
+  meckGpsConfigPoll();
+#endif
+
+  // A live fix: only while the GPS is powered (the parser keeps its last
+  // fix after a power cut; it is cleared when the GPS is switched on again)
+  bool powered = meckGpsPowered();
+  bool live = false;
+  double lat = 0, lon = 0;
+#if ENV_INCLUDE_GPS == 1
+  LocationProvider* lp = sensors.getLocationProvider();
+  if (powered && lp && lp->isValid()) {
+    lat = lp->getLatitude() / 1000000.0;
+    lon = lp->getLongitude() / 1000000.0;
+    live = true;
+  }
+#endif
+#ifdef MECK_UI_SCREENDUMP
+  if (meckSosFakeFix) { lat = meckSosFakeLat; lon = meckSosFakeLon; live = true; }
+#endif
+
+  static bool wasCounting = false;
+  uint16_t acts = meckSos.tick(now, live, lat, lon);
+  bool counting = meckSos.state() == MeckSos::COUNTDOWN;
+  if (wasCounting && !counting && !meckSosDry) ui_task.sosPulsesDone();
+  wasCounting = counting;
+
+  // GPS: SOS switches it while it runs (also over the user's GPS toggle,
+  // checked against the hardware every loop), then hands it back to the
+  // setting
+#if ENV_INCLUDE_GPS == 1 && !defined(MECK_40MHZ_TEST)
+  if (meckSos.running()) {
+    meckSosOwnsGps = true;
+    if (powered != meckSos.gpsOn()) meckGpsSetPower(meckSos.gpsOn());
+  } else if (meckSosOwnsGps) {
+    meckSosOwnsGps = false;
+    if (powered != (p->gps_enabled != 0)) meckGpsSetPower(p->gps_enabled != 0);
+  }
+#endif
+
+  if (acts & MeckSos::ACT_PULSE) {
+    if (meckSosDry) ui_task.forceRefresh();   // tests: no buzz, no flashing light
+    else ui_task.sosPulse();
+  }
+  if (acts & MeckSos::ACT_SEND_SOS) meckSosSend(MeckSos::MSG_SOS);
+  if (acts & MeckSos::ACT_SEND_OK) meckSosSend(meckSos.pendingOkMsg());
+  if (acts & MeckSos::ACT_FINISHED) {
+    Serial.println("[SOS] I'm OK was heard by a repeater: SOS ended");
+    ui_task.showAlert(MECK_TR("I'm OK was heard. SOS ended.", "OK entendu. SOS termin\xC3\xA9."), 3000);
+  }
+  if (acts & MeckSos::ACT_REDRAW) ui_task.forceRefresh();
+
+  static unsigned long nextEchoPoll = 0;
+  if (meckSos.running() && (long)(now - nextEchoPoll) >= 0) {
+    nextEchoPoll = now + 2000;
+    meckSosPollEchoes();
+  }
+}
+
+#ifdef MECK_UI_SCREENDUMP
+// Debug CLI "sos ...": state, dry run, a simulated hold or fix. Arming from
+// the CLI needs the dry run, so a test never transmits.
+void meckSosCmd(const char* arg) {
+  uint32_t now = millis();
+  char text[MAX_TEXT_LEN];
+  if (!strncmp(arg, "dry", 3)) {
+    if (arg[3] == ' ') meckSosDry = atoi(arg + 4) != 0;
+    Serial.printf("sos: dry run %s\n", meckSosDry ? "on (nothing is sent, no buzz)" : "off");
+  } else if (!strcmp(arg, "hold") || !strcmp(arg, "menu")) {
+    if (!meckSosDry) { Serial.println("sos: needs 'sos dry 1' first"); return; }
+    if (!strcmp(arg, "hold")) meckSosHold();
+    else ui_task.gotoSosScreen();
+  } else if (!strcmp(arg, "stop")) {
+    meckSos.stop();
+    ui_task.forceRefresh();
+#if defined(LilyGo_TDeck_Pro_Max)
+  } else if (!strcmp(arg, "haptic")) {
+    extern void meckHapticDiag();
+    meckHapticDiag();
+  } else if (!strcmp(arg, "pulse")) {
+    ui_task.sosPulse();        // one countdown pulse: flash + buzz
+  } else if (!strncmp(arg, "vib", 3)) {
+    extern void meckHapticTest(const char* arg);
+    meckHapticTest(arg[3] ? arg + 4 : "");
+#endif
+  } else if (!strncmp(arg, "fix", 3)) {
+    if (sscanf(arg + 3, "%lf %lf", &meckSosFakeLat, &meckSosFakeLon) == 2) {
+      meckSosFakeFix = true;
+    } else {
+      meckSosFakeFix = false;
+      meckSos.forgetFix();   // a real SOS must never send the made-up position
+    }
+    Serial.printf("sos: fake fix %s\n", meckSosFakeFix ? "on" : "off");
+  } else if (!strcmp(arg, "text")) {
+    meckSos.buildText(MeckSos::MSG_SOS, text, sizeof(text), now, meckSosBattPct());
+    Serial.printf("sos: %s\n", text);
+    meckSos.buildText(MeckSos::MSG_OK_CANCEL, text, sizeof(text), now, meckSosBattPct());
+    Serial.printf("sos: %s\n", text);
+  } else {
+    static const char* const st[] = { "idle", "countdown", "active", "cancelling" };
+    char age[12] = "-";
+    if (meckSos.hasFix()) MeckSos::formatAge(age, sizeof(age), meckSos.fixAgeMs(now));
+    uint32_t ev = meckSos.nextEventIn(now);
+    char chans[64] = "0";
+    for (uint8_t ch = 1; ch < MAX_GROUP_CHANNELS; ch++) {
+      size_t l = strlen(chans);
+      if (meckSosChannelSelected(ch) && l < sizeof(chans) - 4) snprintf(chans + l, sizeof(chans) - l, ",%u", ch);
+    }
+    Serial.printf("sos: %s countdown=%d sends=%u ok=%u heard=%u okHeard=%u next=%lus event=%lds "
+                  "gps=%d/%d fix=%s awake=%d dry=%d btn=%d channels=%s\n",
+                  st[meckSos.state()], meckSos.countdownSecs(now), meckSos.sends(), meckSos.okSends(),
+                  meckSos.heardCount(), meckSos.okHeardCount(), (unsigned long)(meckSos.nextSendIn(now) / 1000),
+                  ev == 0xFFFFFFFF ? -1L : (long)(ev / 1000), meckSos.gpsOn(), meckGpsPowered(), age,
+                  meckSos.wantsAwake(now), meckSosDry, the_mesh.getNodePrefs()->sos_btn, chans);
+    Serial.println("  sos dry 0|1 | hold | menu | stop | fix <lat> <lon> | fix | text | haptic | pulse | vib");
+  }
+}
+#endif
+#endif
+
+#if HAS_GPS
+// The map centred on a point, with a marker for it (and the contacts as usual)
+static void meckOpenMapAt(double lat, double lon, const char* label) {
+  openMapScreen();
+  MapScreen* ms = (MapScreen*)ui_task.getMapScreen();
+  if (ms) {
+    ms->addMarker(lat, lon, label, ADV_TYPE_CHAT);
+    ms->centerOn(lat, lon);
+  }
+}
+#endif
+
+#ifdef MECK_UI_SCREENDUMP
+// Debug CLI "uigeo <text>": the location found in a text, as the chat reads it
+void meckDebugGeo(const char* text) {
+  MeckGeoPoint g;
+  bool found = meckGeoFind(text, g);
+  MeckGeoPoint g2;
+  bool share = meckGeoIsShare(text, g2);
+  if (!found) { Serial.println("uigeo: no location"); return; }
+  Serial.printf("uigeo: %.6f, %.6f tagged=%d waypoint=%d label='%s' share=%d\n",
+                g.lat, g.lon, g.tagged, g.waypoint, g.label, share);
+}
+#endif
+
+// Contacts screen options: run the send / map action picked there
+static void meckRunContactOption(ContactsScreen* cs) {
+  int idx;
+  int act = cs->takeOptionsRequest(idx);
+  if (act == ContactsScreen::OPT_SEND_LOC) {
+    meckSendLocationTo(idx);
+  }
+#if HAS_GPS
+  else if (act == ContactsScreen::OPT_MAP) {
+    ContactInfo ci;
+    if (the_mesh.getContactByIdx(idx, ci) && (ci.gps_lat != 0 || ci.gps_lon != 0))
+      meckOpenMapAt(ci.gps_lat / 1000000.0, ci.gps_lon / 1000000.0, ci.name);
+  }
+#endif
+  ui_task.forceRefresh();
+}
+
 #ifdef MECK_UI_V2
 // Copy text into the compose buffer, cut at a character boundary if too long
 static void meckComposeSet(const char* text) {
@@ -7103,6 +8143,18 @@ void meckRunMessageAction(ChannelScreen* cs) {
   // Views shown by the chat screen itself
   if (act == ChannelScreen::MSG_ACT_PATH)  { cs->showPathForMenuMsg();  ui_task.forceRefresh(); return; }
   if (act == ChannelScreen::MSG_ACT_HEARD) { cs->showHeardForMenuMsg(); ui_task.forceRefresh(); return; }
+#if HAS_GPS
+  if (act == ChannelScreen::MSG_ACT_MAP) {
+    // A location in the message: on the map, named after the waypoint or the sender
+    MeckGeoPoint g;
+    char sender[32] = "";
+    ChannelScreen::extractSenderName(m->text, sender, sizeof(sender));
+    bool found = meckGeoFind(ChannelScreen::msgBody(m), g);
+    cs->exitReplySelect();
+    if (found) meckOpenMapAt(g.lat, g.lon, (g.waypoint && g.label[0]) ? g.label : sender);
+    return;
+  }
+#endif
 
   // The rest writes to the same place: the message's channel, or the contact
   // of the open DM conversation

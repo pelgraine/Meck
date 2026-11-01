@@ -74,6 +74,9 @@
 // When set, onContactPathRecv skips auto-updating this contact's out_path.
 // Bits 0-6 remain available (bit 0 = favourite, bits 1-3 = telemetry perms).
 #define CONTACT_FLAG_CUSTOM_PATH  0x80
+// Meck: telemetry requests from this contact get no reply (the request
+// prompt was answered Deny). Cleared when its telemetry is allowed by hand.
+#define CONTACT_FLAG_TEL_IGNORED  0x40
 
 /* -------------------------------------------------------------------------------------- */
 
@@ -503,7 +506,7 @@ private:
   int _rxlog_count;  // number of valid entries (<= RXLOG_SIZE)
 
     // Sent message repeat tracking
-  #define SENT_TRACK_SIZE          4
+  #define SENT_TRACK_SIZE          12      // an SOS goes to up to 9 channels at once
   #define SENT_FINGERPRINT_SIZE    12
   #define SENT_TRACK_EXPIRY_MS     600000  // keep heard-by viewable for 10 minutes
   #define SENT_ECHO_MAX            8       // distinct "heard by" repeaters stored per send

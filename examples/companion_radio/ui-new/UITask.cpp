@@ -24,6 +24,12 @@
 #if defined(LilyGo_TDeck_Pro_Max)
   #include "DRV2605Haptic.h"   // haptic motor for "Buzzer (vibrate)" channels
 #endif
+#if defined(LilyGo_TDeck_Pro)
+  #include "SosScreen.h"
+  extern void meckSosHold();            // main.cpp: the top button was held 3 s
+  extern bool meckSosCancelInput();     // main.cpp: cancels a countdown, true if one ran
+  extern bool meckSosChannelWatched(uint8_t channel_idx);
+#endif
 #if defined(MECK_AUDIO_VARIANT) || defined(LilyGo_TDeck_Pro)
   #include "HomeIcons.h"
 #endif
@@ -46,10 +52,11 @@ const char* meckSleepBlockText(int code) {
     case MECK_SLEEP_OFF:   return MECK_TR("Power saving off", "\xC3\x89" "conomie d\xC3\xA9sactiv\xC3\xA9" "e");
     case MECK_SLEEP_USB:   return MECK_TR("On USB power", "Sur alimentation USB");
     case MECK_SLEEP_PHONE: return MECK_TR("Phone connected", "T\xC3\xA9l\xC3\xA9phone connect\xC3\xA9");
-    case MECK_SLEEP_GPS:   return MECK_TR("GPS is on", "GPS activ\xC3\xA9");
     case MECK_SLEEP_MODEM: return MECK_TR("4G modem is on", "Modem 4G activ\xC3\xA9");
     case MECK_SLEEP_WIFI:  return MECK_TR("Wi-Fi is on", "Wi-Fi activ\xC3\xA9");
     case MECK_SLEEP_AUDIO: return MECK_TR("Audio in use", "Audio en cours");
+    case MECK_SLEEP_SOS:   return MECK_TR("SOS running", "SOS en cours");
+    case MECK_SLEEP_SYNC:  return MECK_TR("Phone sync", "Synchro t\xC3\xA9l\xC3\xA9phone");
     default:               return "";
   }
 }
@@ -57,19 +64,12 @@ const char* meckSleepBlockText(int code) {
 #ifdef MECK_UI_V2
 // Lock warning: what keeps the device awake and what the keys do
 static void drawLockPrompt(Ui2Canvas& c, int reason) {
-  if (reason == MECK_SLEEP_GPS) {
-    Ui2List::dialog(c, UI2_IC_GPS, MECK_TR("GPS is on", "GPS activ\xC3\xA9"),
-                    MECK_TR("It keeps the device awake and drains the battery while locked.",
-                            "Il emp\xC3\xAA" "che la mise en veille et vide la batterie."),
-                    MECK_TR("Lock", "Verrouiller"), MECK_TR("GPS off", "GPS off"));
-  } else {
-    char body[96];
-    snprintf(body, sizeof(body), "%s", reason == MECK_SLEEP_PHONE
-             ? MECK_TR("No power saving until it disconnects.", "Pas d'\xC3\xA9" "conomie tant qu'il est connect\xC3\xA9.")
-             : MECK_TR("The device stays awake while locked.", "L'appareil reste \xC3\xA9veill\xC3\xA9."));
-    Ui2List::dialog(c, UI2_IC_WARN, meckSleepBlockText(reason), body,
-                    MECK_TR("Cancel", "Annuler"), MECK_TR("Lock", "Verrouiller"));
-  }
+  char body[96];
+  snprintf(body, sizeof(body), "%s", reason == MECK_SLEEP_PHONE
+           ? MECK_TR("No power saving until it disconnects.", "Pas d'\xC3\xA9" "conomie tant qu'il est connect\xC3\xA9.")
+           : MECK_TR("The device stays awake while locked.", "L'appareil reste \xC3\xA9veill\xC3\xA9."));
+  Ui2List::dialog(c, UI2_IC_WARN, meckSleepBlockText(reason), body,
+                  MECK_TR("Cancel", "Annuler"), MECK_TR("Lock", "Verrouiller"));
 }
 #endif
 #endif
@@ -135,6 +135,66 @@ static void drawLockPrompt(Ui2Canvas& c, int reason) {
 // to suppress buzzer/vibration.  Safe because both are called sequentially
 // from the same mesh callback on the same thread.
 static bool s_lastMsgSuppressed = false;
+
+#if defined(LilyGo_TDeck_Pro_Max)
+// One strong buzz of the haptic motor, ~1 s (effect 14; effect 1, a strong
+// click, was too brief). The driver is set up on first use.
+static DRV2605Haptic s_haptic;
+static bool s_hapticReady = false;
+static bool meckHapticReady() {
+  // The vibrate alarm cuts the motor rail when it stops: switch it on again
+  // and set the driver up anew
+  if (!board.xl9555_digitalRead(XL_PIN_MOTOR_EN)) {
+    board.motorEnable();
+    delay(10);                 // let the motor rail settle before I2C
+    s_hapticReady = false;
+  }
+  if (!s_hapticReady) {
+    s_hapticReady = s_haptic.begin();
+    Serial.printf("[Haptic] begin %s\n", s_hapticReady ? "ok" : "FAILED (no ACK)");
+  }
+  return s_hapticReady;
+}
+
+static void meckHapticBuzz() {
+  if (meckHapticReady()) s_haptic.buzz(14);
+}
+
+#ifdef MECK_UI_SCREENDUMP
+// Debug CLI "sos vib e <effect>" / "sos vib rtp <ms>": compare vibrations
+void meckHapticTest(const char* arg) {
+  if (!meckHapticReady()) return;
+  int v = 0;
+  if (sscanf(arg, "e %d", &v) == 1 && v > 0 && v < 124) {
+    s_haptic.buzz((uint8_t)v);
+    delay(150);
+    Serial.printf("[Haptic] effect %d, status 0x%02X\n", v, s_haptic.status());
+  } else if (sscanf(arg, "rtp %d", &v) == 1 && v > 0 && v <= 2000) {
+    s_haptic.rtpStart(0x7F);
+    delay(v / 2);
+    uint8_t mid = s_haptic.status();
+    delay(v - v / 2);
+    s_haptic.rtpStop();
+    Serial.printf("[Haptic] rtp %d ms, status during 0x%02X after 0x%02X\n", v, mid, s_haptic.status());
+  } else {
+    Serial.println("  sos vib e <1-123> | sos vib rtp <ms>");
+  }
+}
+
+// Debug CLI "sos haptic": the motor's state, without making it buzz
+void meckHapticDiag() {
+  bool ack = s_haptic.present();
+  uint8_t r[7] = { 0, 0, 0, 0, 0, 0, 0 };
+  // status, mode, library, feedback, go, rated voltage, overdrive clamp
+  const uint8_t regs[7] = { 0x00, 0x01, 0x03, 0x1A, 0x0C, 0x16, 0x17 };
+  for (int i = 0; i < 7 && ack; i++) r[i] = s_haptic.reg(regs[i]);
+  Serial.printf("[Haptic] rail=%d ready=%d ack=%d status=0x%02X mode=0x%02X lib=%u feedback=0x%02X go=%u "
+                "rated=0x%02X odclamp=0x%02X cpu=%uMHz\n",
+                board.xl9555_digitalRead(XL_PIN_MOTOR_EN), s_hapticReady, ack, r[0], r[1], r[2], r[3], r[4],
+                r[5], r[6], (unsigned)getCpuFrequencyMhz());
+}
+#endif
+#endif
 
 #ifdef KB_BL_PIN
 // Drive the keyboard-backlight pin for the message/ring flash. On the T-Deck
@@ -737,13 +797,9 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
       bt.icon = UI2_IC_BLE;
       bt.title = "Bluetooth";
       if (!btOn) {
-        bt.sub = MECK_TR("Off", "DÃ©sactivÃ©");
+        bt.sub = MECK_TR("Off", "D\xC3\xA9sactiv\xC3\xA9");
       } else if (meckCompanionBleConnected()) {
-        bt.sub = MECK_TR("App connected", "Appli connectÃ©" "e");
-      } else if (the_mesh.getBLEPin() != 0) {
-        snprintf(buf, sizeof(buf), MECK_TR("Waiting for the app, PIN %d", "Attente de l'appli, code %d"),
-                 (int)the_mesh.getBLEPin());
-        bt.sub = buf;
+        bt.sub = MECK_TR("App connected", "Appli connect\xC3\xA9" "e");
       } else {
         bt.sub = MECK_TR("Waiting for the app", "Attente de l'appli");
       }
@@ -759,11 +815,11 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
               : ui2Status.wifiLevel >= 3 ? UI2_IC_WIFI : ui2Status.wifiLevel == 2 ? UI2_IC_WIFI2 : UI2_IC_WIFI1;
       wf.title = "WiFi";
       if (!wifiOn) {
-        wf.sub = MECK_TR("Off", "DÃ©sactivÃ©");
+        wf.sub = MECK_TR("Off", "D\xC3\xA9sactiv\xC3\xA9");
       } else if (!joined) {
-        wf.sub = MECK_TR("Not connected to a network", "Pas de rÃ©seau");
+        wf.sub = MECK_TR("Not connected to a network", "Pas de r\xC3\xA9seau");
       } else if (meckCompanionWifiConnected()) {
-        wf.sub = MECK_TR("App connected", "Appli connectÃ©" "e");
+        wf.sub = MECK_TR("App connected", "Appli connect\xC3\xA9" "e");
       } else {
         wf.sub = MECK_TR("Waiting for the app", "Attente de l'appli");
       }
@@ -772,19 +828,25 @@ void renderBatteryIndicator(DisplayDriver& display, uint16_t batteryMilliVolts, 
       Ui2List::drawRow(c, y, wf);
       y += ROW_H + 8;
 
+      // The PIN gets its own row: next to the toggle the subtitle is too
+      // narrow and cut the PIN off
+      if (btOn && !meckCompanionBleConnected() && the_mesh.getBLEPin() != 0) {
+        snprintf(val, sizeof(val), "%u", (unsigned)the_mesh.getBLEPin());
+        Ui2List::kvRow(c, y, MECK_TR("Bluetooth PIN", "Code Bluetooth"), val); y += 20;
+      }
       if (joined) {
-        Ui2List::kvRow(c, y, MECK_TR("Network", "RÃ©seau"), WiFi.SSID().c_str()); y += 20;
+        Ui2List::kvRow(c, y, MECK_TR("Network", "R\xC3\xA9seau"), WiFi.SSID().c_str()); y += 20;
         snprintf(val, sizeof(val), "%d dBm", (int)WiFi.RSSI());
         Ui2List::kvRow(c, y, MECK_TR("Signal", "Signal"), val); y += 20;
         IPAddress ip = WiFi.localIP();
         snprintf(val, sizeof(val), "%d.%d.%d.%d:%d", ip[0], ip[1], ip[2], ip[3], TCP_PORT);
         Ui2List::kvRow(c, y, MECK_TR("Address", "Adresse"), val); y += 20;
       } else if (wifiOn) {
-        Ui2List::kvRow(c, y, MECK_TR("Network", "RÃ©seau"), MECK_TR("Settings > WiFi", "RÃ©glages > WiFi")); y += 20;
+        Ui2List::kvRow(c, y, MECK_TR("Network", "R\xC3\xA9seau"), MECK_TR("Settings > WiFi", "R\xC3\xA9glages > WiFi")); y += 20;
       }
       infoDots(c);
       const bool selOn = _connRow == 0 ? btOn : wifiOn;
-      const char* act = selOn ? MECK_TR("Turn off", "DÃ©sactiver") : MECK_TR("Turn on", "Activer");
+      const char* act = selOn ? MECK_TR("Turn off", "D\xC3\xA9sactiver") : MECK_TR("Turn on", "Activer");
       const Ui2Key keys[] = { ui2KeyIcon(UI2_IC_ENTER, act), ui2Key("W/S", MECK_TR("Select", "Choisir"), true),
                               ui2Key("A/D", MECK_TR("Page", "Page"), true) };
       Ui2Chrome::footer(c, keys, 3);
@@ -2044,7 +2106,7 @@ public:
       if (meckCompanionIsWiFi()) {
         meckCompanionWifiOff();
       } else if (!meckCompanionUseWiFi(true)) {
-        _task->showAlert(MECK_TR("WiFi failed to start", "Ã" "chec du WiFi"), 1500);
+        _task->showAlert(MECK_TR("WiFi failed to start", "\xC3\x89" "chec du WiFi"), 1500);
       }
       return true;
     }
@@ -2279,6 +2341,15 @@ public:
       c.icon(lx, 262, ic, 12);
       c.text(lx + 16, 273, line, UI2_F_SMALL);
 
+  #ifdef HAS_4G_MODEM
+      // 4G switched off for a low cell: say so instead of the estimate
+      if (modemManager.isBatteryLow())
+        c.textFit(PAD, 290, SCREEN_W - 2 * PAD,
+                  usb ? MECK_TR("4G off until charged", "4G coup\xC3\xA9 jusqu'\xC3\xA0 la charge")
+                      : MECK_TR("Battery low, 4G off: charge now", "Batterie faible, 4G coup\xC3\xA9 : chargez"),
+                  UI2_F_META, true, UI2_CENTER);
+      else
+  #endif
       if (_snapEst[0]) c.textFit(PAD, 290, SCREEN_W - 2 * PAD, _snapEst, UI2_F_META, true, UI2_CENTER);
     }
 #endif
@@ -2290,6 +2361,14 @@ public:
 #endif
 
   int render(DisplayDriver& display) override {
+    // SOS running: its status instead of the clock (e-ink keeps it while asleep)
+    if (meckSos.running() && _task->getSosScreen()) {
+      SosScreen* sos = (SosScreen*)_task->getSosScreen();
+      sos->setLockedView(true);
+      int next = sos->render(display);
+      sos->setLockedView(false);
+      return next;
+    }
 #ifdef MECK_UI_V2
     return renderV2(display);
 #endif
@@ -2464,6 +2543,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 #if defined(LilyGo_TDeck_Pro)
   lock_screen = new LockScreen(this, &rtc_clock, node_prefs);
+  sos_screen = new SosScreen(&rtc_clock, node_prefs);
 #endif
   audiobook_screen = nullptr;  // Created and assigned from main.cpp if audio hardware present
 #ifdef MECK_AUDIO_VARIANT
@@ -2640,20 +2720,20 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
       }
     }
   }
+#ifdef MECK_BLE_LOCK_WINDOWS
+  // Locked with sync windows: let the app reconnect and fetch it
+  if (!suppressNotif) {
+    extern void meckBleWindowOnMessage();
+    meckBleWindowOnMessage();
+  }
+#endif
   // Set the flag for notify() which is called immediately after newMsg().
   // If a custom notification tone is assigned and notifications are active,
   // request MP3 playback and suppress the RTTTL buzzer so they don't overlap.
 #if defined(LilyGo_TDeck_Pro_Max)
   // Channel set to "Buzzer (vibrate)": pulse the motor instead of a tone.
   if (!suppressNotif && notifSounds.isVibrateForChannel(channel_idx)) {
-    static DRV2605Haptic s_haptic;
-    static bool s_hapticReady = false;
-    if (!s_hapticReady) {
-      board.motorEnable();
-      delay(10);                 // let the motor rail settle before I2C
-      s_hapticReady = s_haptic.begin();
-    }
-    if (s_hapticReady) s_haptic.buzz(14);  // 14 = Strong Buzz ~1s (effect 1 strong click was too brief)
+    meckHapticBuzz();
     s_lastMsgSuppressed = true;  // suppress the default RTTTL buzzer
   } else
 #endif
@@ -2726,7 +2806,19 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   } else {
     ((ChannelScreen *) channel_screen)->addMessage(channel_idx, path_len, from_name, text, path, snr, nullptr, suppressNotif, scope_idx);
   }
-  
+
+#if defined(LilyGo_TDeck_Pro)
+  // SOS running: a DM or a message on an SOS channel may be the answer, so
+  // the SOS screen shows it, muted channel or not. Public chatter does not
+  // push a DM or an SOS-channel message off it.
+  bool sosDM = channel_idx == 0xFF && !isRoomMsg;
+  if (meckSos.running() && (sosDM || meckSosChannelWatched(channel_idx))) {
+    meckSos.setReply(from_name, text, millis(), sosDM || channel_idx != 0);
+    keepAlive();
+    _next_refresh = 100;
+  }
+#endif
+
   // If user is currently viewing this channel on the device, or companion
   // app is connected (they'll see it there), mark as read immediately
   if ((isOnChannelScreen() && 
@@ -2852,6 +2944,13 @@ void UITask::updateUi2Status() {
   }
 #endif
   st.gpsOn = getGPSState();
+#if ENV_INCLUDE_GPS == 1
+  LocationProvider* gpsLoc = st.gpsOn ? sensors.getLocationProvider() : nullptr;
+  st.gpsFix = gpsLoc && gpsLoc->isValid();
+#endif
+#if defined(LilyGo_TDeck_Pro)
+  st.sosActive = meckSos.running();
+#endif
 #ifdef MECK_AUDIO_VARIANT
   AlarmScreen* alarms = (AlarmScreen*)alarm_screen;
   st.alarmOn = alarms && alarms->enabledCount() > 0;
@@ -3013,11 +3112,21 @@ void UITask::loop() {
 #endif
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
     c = handleLongPress(KEY_ENTER);
+#if defined(LilyGo_TDeck_Pro)
+    // The hold may go on to 3 s (SOS): its Enter waits for the release
+    if (c != 0 && _node_prefs->sos_btn) {
+      _sosDeferredEnter = true;
+      c = 0;
+    }
+#endif
   } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
     c = handleDoubleClick(KEY_PREV);
   } else if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     c = handleTripleClick(KEY_SELECT);
   }
+#if defined(LilyGo_TDeck_Pro)
+  if (sosPoll()) c = KEY_ENTER;   // a long press released before the SOS hold
+#endif
 #endif
 #if defined(PIN_USER_BTN_ANA)
   if (abs(millis() - _analogue_pin_read_millis) > 10) {
@@ -3190,6 +3299,29 @@ if (curr) curr->poll();
         drawLockPrompt(c, _lockPromptReason);
         _next_refresh = _lockPromptUntil;
 #endif
+      } else if (_telPrompt
+#if defined(LilyGo_TDeck_Pro)
+                 && !_locked
+#endif
+                ) {  // telemetry request prompt
+        char title[64];
+        snprintf(title, sizeof(title), MECK_TR("%s asks for your location", "%s demande votre position"), _telPromptName);
+#ifdef MECK_UI_V2
+        Ui2Canvas c(*_display);
+        Ui2List::dialog(c, UI2_IC_PIN, title,
+                        MECK_TR("Allow: battery and location for this contact from now on. Deny: ignore its requests.",
+                                "Autoriser : batterie et position pour ce contact. Refuser : ignorer ses demandes."),
+                        MECK_TR("Deny", "Refuser"), MECK_TR("Allow", "Autoriser"));
+#else
+        _display->setTextSize(1);
+        _display->setColor(DisplayDriver::LIGHT);
+        _display->fillRect(4, 30, _display->width() - 8, 50);
+        _display->setColor(DisplayDriver::DARK);
+        _display->drawTextCentered(_display->width() / 2, 36, title);
+        _display->drawTextCentered(_display->width() / 2, 52, MECK_TR("Enter: allow", "Entr\xC3\xA9" "e : autoriser"));
+        _display->drawTextCentered(_display->width() / 2, 64, MECK_TR("Q: deny", "Q : refuser"));
+#endif
+        _next_refresh = millis() + 5000;
       } else if (millis() < _alert_expiry) {  // render alert popup
 #ifdef MECK_UI_V2
         {
@@ -3280,6 +3412,15 @@ if (curr) curr->poll();
   }
 #endif
 
+  // SOS being sent: lock after a minute without input whatever the auto-lock
+  // setting, so the device sleeps between sends (sleep needs the lock)
+#if defined(LilyGo_TDeck_Pro)
+  if (!_locked && !_lockPromptUntil && (meckSos.state() == MeckSos::ACTIVE || meckSos.state() == MeckSos::CANCELLING)
+      && millis() - _lastInputMillis >= 60000UL) {
+    lockScreen();
+  }
+#endif
+
   // Auto-lock idle timer — runs regardless of display on/off state
 #if defined(LilyGo_TDeck_Pro)
   if (_node_prefs && _node_prefs->auto_lock_minutes > 0 && !_locked) {
@@ -3347,6 +3488,13 @@ if (curr) curr->poll();
     } else {
       _low_batt_count = 0;
     }
+  #if defined(HAS_4G_MODEM) && defined(MODEM_MIN_MILLIVOLTS)
+    // 4G goes off well before the shutdown, so the deck keeps running a
+    // while longer for LoRa
+    if (modemManager.checkBattery(milliVolts)) {
+      showAlert(MECK_TR("Battery low: 4G off.\nCharge the deck.", "Batterie faible : 4G coup\xC3\xA9.\nChargez l'appareil."), 10000);
+    }
+  #endif
     next_batt_chck = millis() + 8000;
   }
 #endif
@@ -3445,8 +3593,7 @@ void UITask::requestLock() {
   int reason = meckLockSleepBlocker();
   // Warn only about things the user may have forgotten; "power saving off"
   // is their choice, USB power and recent audio are fine.
-  if (reason == MECK_SLEEP_GPS || reason == MECK_SLEEP_PHONE ||
-      reason == MECK_SLEEP_MODEM || reason == MECK_SLEEP_WIFI) {
+  if (reason == MECK_SLEEP_PHONE || reason == MECK_SLEEP_MODEM || reason == MECK_SLEEP_WIFI) {
     _lockPromptReason = reason;
     _lockPromptUntil = millis() + 6000;   // then it locks anyway
     _next_refresh = 0;
@@ -3461,21 +3608,19 @@ void UITask::lockPromptKey(char c) {
   bool enter = (c == '\r' || c == KEY_ENTER);
   bool back = (c == 'q' || c == 'Q' || c == KEY_CANCEL);
   if (!enter && !back) return;              // other keys: keep the warning
-  int reason = _lockPromptReason;
   _lockPromptUntil = 0;
   _next_refresh = 0;
-  if (reason == MECK_SLEEP_GPS) {
-    if (enter) toggleGPS();                  // "GPS off", then lock
-    lockScreen();                            // Q: lock anyway
-  } else if (enter) {
-    lockScreen();                            // Enter: lock; Q: cancel
-  }
+  if (enter) lockScreen();                  // Enter: lock; Q: cancel
 }
 
 void UITask::unlockScreen() {
   if (!_locked) return;
   _locked = false;
-  if (_screenBeforeLock) {
+  if (meckSos.running()) {
+    ((SosScreen*)sos_screen)->resetMenu();   // SOS running: straight to its menu
+    if (_screenBeforeLock != sos_screen) _screenBeforeSos = _screenBeforeLock;
+    setCurrScreen(sos_screen);
+  } else if (_screenBeforeLock) {
     setCurrScreen(_screenBeforeLock);
   } else {
     gotoHomeScreen();
@@ -3489,6 +3634,85 @@ void UITask::unlockScreen() {
   _lastInputMillis = millis();  // Reset auto-lock idle timer
   _next_refresh = 0;
   Serial.println("[UI] Screen unlocked — exiting low-power mode");
+}
+
+// SOS (docs/sos.md): a 3 s hold arms the countdown (or opens the SOS menu
+// while one runs); a new press during the countdown cancels it. The first
+// seconds after boot stay with the CLI rescue long press. Also ends the
+// countdown vibration. Runs from loop(), and from main.cpp while loop() is
+// held off (compose mode). True when a long press (Enter) was released
+// before the hold reached 3 s.
+bool UITask::sosPoll() {
+  bool enter = false;
+#if defined(PIN_USER_BTN)
+  bool down = user_btn.isPressed();
+  unsigned long now = millis();
+  if (down && !_sosBtnDown) {
+    _sosBtnDown = true;
+    _sosBtnAt = now;
+    _sosBtnUsed = meckSosCancelInput();
+    if (_sosBtnUsed) user_btn.cancelClick();
+  } else if (!down && _sosBtnDown) {
+    _sosBtnDown = false;
+    enter = _sosDeferredEnter && !_sosBtnUsed;
+    _sosDeferredEnter = false;
+  }
+  if (down && !_sosBtnUsed && now - _sosBtnAt >= MeckSos::HOLD_MS && now - ui_started_at >= 8000) {
+    _sosBtnUsed = true;
+    _sosDeferredEnter = false;
+    meckSosHold();
+  }
+#endif
+#if defined(LilyGo_TDeck_Pro_Max)
+  if (_sosVibOffAt && (long)(millis() - _sosVibOffAt) >= 0) {
+    if (s_hapticReady) s_haptic.rtpStop();
+    _sosVibOffAt = 0;
+  }
+#endif
+  return enter;
+}
+
+void UITask::gotoSosScreen() {
+  ((SosScreen*)sos_screen)->resetMenu();
+  ((SosScreen*)sos_screen)->clearExit();
+  if (curr != sos_screen && curr != lock_screen) _screenBeforeSos = curr;
+  setCurrScreen(sos_screen);
+  keepAlive();
+  _lastInputMillis = millis();
+  _next_refresh = 0;
+}
+
+void UITask::leaveSosScreen() {
+  UIScreen* back = _screenBeforeSos;
+  _screenBeforeSos = nullptr;
+  if (back) setCurrScreen(back);
+  else gotoHomeScreen();
+  keepAlive();
+  _next_refresh = 0;
+}
+
+void UITask::sosPulse() {
+  keepAlive();
+  _next_refresh = 0;
+#ifdef KB_BL_PIN
+  kbBacklightFlashWrite(true);
+  _kb_flash_off_at = millis() + 300;
+#endif
+#if defined(LilyGo_TDeck_Pro_Max)
+  // Half a second at full drive: much easier to feel than a library effect
+  if (meckHapticReady()) {
+    s_haptic.rtpStart(0x7F);
+    _sosVibOffAt = millis() + 500;
+  }
+#endif
+}
+
+void UITask::sosPulsesDone() {
+#if defined(LilyGo_TDeck_Pro_Max)
+  if (s_hapticReady) s_haptic.rtpStop();
+  _sosVibOffAt = 0;
+  board.motorDisable();   // the next buzz switches it on again
+#endif
 }
 #endif // LilyGo_TDeck_Pro
 
@@ -3528,6 +3752,8 @@ void UITask::toggleGPS() {
         #endif
         #if defined(LilyGo_TDeck_Pro_Max)
           board.gpsPowerOn();  // MAX: GPS power is XL9555-routed, not PIN_GPS_EN
+          extern void meckGpsConfigureSoon();
+          meckGpsConfigureSoon();   // the module may have forgotten it with the power
         #endif
         notify(UIEventType::ack);
       }
@@ -3850,6 +4076,25 @@ void UITask::addSentChannelMessage(uint8_t channel_idx, const char* sender, cons
   ((ChannelScreen *) channel_screen)->addMessage(channel_idx, 0, sender, formattedMsg,
                                                   nullptr, 0, nullptr, false, 0xFF, 0, 0,
                                                   haveFp ? fp : nullptr);
+}
+
+void UITask::requestTelemetryPrompt(const uint8_t* pubKey, const char* name) {
+  if (_telPrompt) return;   // one at a time; a later request asks again
+  memcpy(_telPromptKey, pubKey, PUB_KEY_SIZE);
+  snprintf(_telPromptName, sizeof(_telPromptName), "%s", name);
+  _telPrompt = true;
+  _next_refresh = 0;
+}
+
+void UITask::telemetryPromptKey(char c) {
+  if (!_telPrompt) return;
+  bool allow = (c == '\r' || c == KEY_ENTER);
+  bool deny = (c == 'q' || c == 'Q' || c == KEY_CANCEL || c == '\b');
+  if (!allow && !deny) return;
+  extern void meckTelemetryPromptAnswer(const uint8_t* pubKey, const char* name, bool allow);
+  _telPrompt = false;
+  _next_refresh = 0;
+  meckTelemetryPromptAnswer(_telPromptKey, _telPromptName, allow);
 }
 
 void UITask::addSentDM(const char* recipientName, const char* sender, const char* text,

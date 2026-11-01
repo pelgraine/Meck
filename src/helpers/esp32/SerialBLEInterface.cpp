@@ -1,6 +1,7 @@
 #include "SerialBLEInterface.h"
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
+#include "esp_gatt_common_api.h"
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -10,6 +11,20 @@
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 #define ADVERT_RESTART_DELAY  1000   // millis
+
+// A phone can hold the link with no app behind it: iOS reconnects on behalf
+// of an app that has since been closed or has given up. The deck then stops
+// advertising, so the app cannot find it even when opened, until the link
+// drops. The app sends its first frame right after connecting, so a link
+// that stays silent this long is dropped to bring advertising back. Off
+// (0) for the watch build, whose app may stay quiet after connecting.
+#ifndef MECK_BLE_SILENT_LINK_MS
+#ifdef MECK_WATCH_EXT
+#define MECK_BLE_SILENT_LINK_MS  0UL
+#else
+#define MECK_BLE_SILENT_LINK_MS  30000UL
+#endif
+#endif
 
 // BLE transmit power for connections, advertising and scanning: +9 dBm unless
 // a build sets another esp_power_level_t level with a flag, for example
@@ -56,12 +71,44 @@ void SerialBLEInterface::begin(const char* prefix, char* name, uint32_t pin_code
   _begun = false;
 }
 
+// What the phone accepted: it may round a request or ignore it, and only
+// this event says which (the power log needs the real interval)
+static volatile uint16_t s_link_interval = 0, s_link_latency = 0;
+
+static void onGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
+  switch (event) {
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
+      if (param->update_conn_params.status == ESP_BT_STATUS_SUCCESS) {
+        s_link_interval = param->update_conn_params.conn_int;
+        s_link_latency = param->update_conn_params.latency;
+      }
+      BLE_DEBUG_PRINTLN("conn params: status %d, interval %u x 1.25ms, latency %u, timeout %u x 10ms",
+                        param->update_conn_params.status, param->update_conn_params.conn_int,
+                        param->update_conn_params.latency, param->update_conn_params.timeout);
+      break;
+    case ESP_GAP_BLE_PHY_UPDATE_COMPLETE_EVT:
+      BLE_DEBUG_PRINTLN("phy update: status %d, tx %d, rx %d", param->phy_update.status,
+                        param->phy_update.tx_phy, param->phy_update.rx_phy);
+      break;
+    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT:
+      BLE_DEBUG_PRINTLN("data length: status %d, rx %u, tx %u", param->pkt_data_lenth_cmpl.status,
+                        param->pkt_data_lenth_cmpl.params.rx_len, param->pkt_data_lenth_cmpl.params.tx_len);
+      break;
+    default:
+      break;
+  }
+}
+
+uint16_t SerialBLEInterface::linkInterval() { return s_link_interval; }
+uint16_t SerialBLEInterface::linkLatency() { return s_link_latency; }
+
 // Deferred BLE controller + GATT bring-up. Called from the first enable() so
 // the controller is not powered while BLE is disabled.
 void SerialBLEInterface::_realBegin() {
   // Create the BLE Device
   BLEDevice::init(_dev_name);
   BLEDevice::setSecurityCallbacks(this);
+  BLEDevice::setCustomGapHandler(onGapEvent);
   BLEDevice::setMTU(MAX_FRAME_SIZE);
 
   // Boost BLE TX power for improved range (MECK_BLE_TX_POWER above: +9 dBm
@@ -136,6 +183,7 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     BLE_DEBUG_PRINTLN(" - SecurityCallback - Authentication Success");
     deviceConnected = true;
     _auth_ok = true;
+    _link_at = millis() | 1;   // never 0 (= not waiting)
 
     // Take the peer address from the event itself. A peer that pairs at
     // connect time (e.g. a bonded Garmin watch) reaches this callback before
@@ -209,6 +257,13 @@ void SerialBLEInterface::onDisconnect(BLEServer* pServer) {
   if (_isEnabled) {
     adv_restart_time = millis() + ADVERT_RESTART_DELAY;
   }
+}
+
+void SerialBLEInterface::onDisconnect(BLEServer* pServer, esp_ble_gatts_cb_param_t* param) {
+  _drop_reason = (uint8_t)param->disconnect.reason;
+  _drops++;
+  _link_at = 0;
+  BLE_DEBUG_PRINTLN("onDisconnect(), reason 0x%02x", _drop_reason);
 }
 
 // -------- BLECharacteristicCallbacks methods
@@ -319,8 +374,20 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
 
 #define  BLE_WRITE_MIN_INTERVAL   7
 
+// MyMesh::checkSerialInterface() queues up to 8 contacts and then the end
+// frame in one go, and a contact it could not queue is lost: report busy
+// until that much room is free.
+#define  BLE_WRITE_BATCH_ROOM     9
+
+// The stack refuses a notification when its buffers for the link are full
+// (a contact sync outruns a 30 ms iOS link: "notify(): rc=-1"), and the
+// frame was lost. Wait while the controller has no room, but not forever,
+// in case the count is stuck.
+#define  BLE_CONGESTED_MAX_WAIT   1000
+
 bool SerialBLEInterface::isWriteBusy() const {
-  return millis() < _last_write + BLE_WRITE_MIN_INTERVAL;   // still too soon to start another write?
+  return millis() < _last_write + BLE_WRITE_MIN_INTERVAL     // still too soon to start another write?
+      || send_queue_len > FRAME_QUEUE_SIZE - BLE_WRITE_BATCH_ROOM;
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
@@ -328,6 +395,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
 
   if (send_queue_len > 0   // first, check send queue
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
+    && (esp_ble_get_cur_sendable_packets_num(last_conn_id) > 0
+        || millis() >= _last_write + BLE_CONGESTED_MAX_WAIT)
   ) {
     _last_write = millis();
 #ifdef MECK_BLE_SMALL_MTU_SPLIT
@@ -381,6 +450,9 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
 
   Frame frame;
   if (xQueueReceive(recv_queue, &frame, 0) == pdTRUE) {   // check recv queue
+    _last_rx = millis();
+    _rx_frames++;
+    _link_at = 0;
     memcpy(dest, frame.buf, frame.len);
     BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", (uint32_t) frame.len, (uint32_t) dest[0]);
     return frame.len;
@@ -415,6 +487,13 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       adv_restart_time = 0;
     }
     oldDeviceConnected = deviceConnected;
+  }
+
+  unsigned long linkAt = _link_at;
+  if (MECK_BLE_SILENT_LINK_MS && deviceConnected && linkAt && millis() - linkAt >= MECK_BLE_SILENT_LINK_MS) {
+    Serial.println("[BLE] Link up but the app is silent: dropping it to advertise again");
+    _link_at = 0;
+    pServer->disconnect(last_conn_id);
   }
 
   if (adv_restart_time && millis() >= adv_restart_time) {

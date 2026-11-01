@@ -280,6 +280,9 @@ Source: `examples/companion_radio/ui-new/SettingsScreen.h`. All builds. Some row
 | 2358 | `AGC Reset Int: %s_ s` | `Reset AGC : %s_ s` | keep %s |
 | 2360 | `AGC Reset Int: %u s` | `Reset AGC : %u s` | keep %u |
 | 2363 | `AGC Reset Int: Off` | `Reset AGC : Arrêt` |  |
+| 2679 | `GPS when locked: %s` | `GPS verrouillé : %s` | keep %s; MAX only, picker shows it between `< >` |
+| 160 | `Stays on` | `Reste allumé` | GPS when locked |
+| 162 | `Every %d min` | `Toutes les %d min` | keep %d; GPS when locked |
 | 2369 | `Delete all contacts` | `Supprimer tous les contacts` |  |
 | 2375 | `(unavailable)` | `(indisponible)` |  |
 | 2385 | `Carrier: %s (%d/5)` | `Opérateur : %s (%d/5)` | keep %s %d |

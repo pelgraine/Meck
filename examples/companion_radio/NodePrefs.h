@@ -8,6 +8,12 @@
 #define ADVERT_LOC_NONE       0
 #define ADVERT_LOC_SHARE      1
 
+// Bluetooth sync windows while locked (ble_lock_window): T-Deck MAX builds
+// with the BLE companion
+#if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST) && defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
+  #define MECK_BLE_LOCK_WINDOWS 1
+#endif
+
 // Per-channel notification preferences (stored in channel_notif[])
 #define NOTIF_ALL       0   // Notify on all messages (default)
 #define NOTIF_MENTIONS  1   // Notify only when @nodename appears in message
@@ -17,6 +23,11 @@
 // the 133-char channel message cap plus a NUL terminator.
 #define CANNED_MSG_SLOTS  10
 #define CANNED_MSG_LEN    134
+
+// SOS channels (besides the public one): how many, and how many bytes of a
+// channel's secret identify it
+#define SOS_CHANNELS_MAX    8
+#define SOS_CHANNEL_ID_LEN  8
 
 struct NodePrefs {  // persisted to file
   float airtime_factor;
@@ -127,6 +138,29 @@ struct NodePrefs {  // persisted to file
   // from the app, on an allowed repeat frequency. Stored at prefs byte 62,
   // which was spare, so older prefs files load it as 0 (off).
   uint8_t client_repeat;           // default 0
+
+  // SOS (docs/sos.md): 1 = holding the top button 3 s starts the SOS
+  // countdown. Older prefs files short-read this field and keep the
+  // default 1.
+  uint8_t sos_btn;                 // default 1
+  // Channels the SOS also goes to, besides the public channel (which always
+  // gets it). Kept by the first bytes of each channel's secret rather than
+  // its slot, because deleting a channel moves the ones after it down a
+  // slot. All-zero entries are unused. Older prefs files short-read this
+  // final field and keep the default (none).
+  uint8_t sos_channel_ids[SOS_CHANNELS_MAX][SOS_CHANNEL_ID_LEN];   // default all zero
+  // Phone when locked (with power saving on): 0 = a connected phone stays
+  // connected and keeps the device awake; otherwise the device sleeps
+  // without Bluetooth and opens a short window for the app to reconnect and
+  // sync every this many minutes and on a new message. Older prefs files
+  // short-read this final field and keep the default 0.
+  uint8_t ble_lock_window;         // default 0
+
+  // GPS when locked (Experimental Features, T-Deck MAX): minutes between
+  // fixes while the device sleeps locked, the GPS switched off in between;
+  // 0 = the GPS stays on. Older prefs files short-read this final field and
+  // keep the default 0.
+  uint8_t gps_lock_interval;       // default 0
 
   // --- Font helpers (inline, no overhead) ---
   // Returns the DisplayDriver text-size index for "small/body" text.
