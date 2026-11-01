@@ -85,7 +85,7 @@ restart while locked brings everything back as it was set.
 | Bluetooth | "Stay connected" (`ble_lock_window` 0) | sync windows every few minutes (the last interval used, 5 min at first) | on |
 | WiFi | keeps running, the deck stays awake | off on lock (companion WiFi only) | on |
 | GPS | keeps running while the deck sleeps: on (about +15 mA), or a fix every few minutes with Experimental › GPS when locked | off on lock, unless an SOS runs | on |
-| 4G | calls and SMS arrive, the deck stays awake | off on lock, unless in a call; starting again takes seconds | on |
+| 4G | calls and SMS arrive; idle, the modem sleeps and so does the deck (UART sleep, about 22 mA), a call or SMS wakes it | off on lock, unless in a call; starting again takes seconds | on |
 | Tones | as the Now switch | silent while locked | on |
 | Vibration | as the Now switch | still while locked | on |
 | Power saving | light sleep (`lock_sleep`) | never sleeps | on |
@@ -97,8 +97,8 @@ Settings › Phone when locked (M opens it).
 
 The bottom line (both views) says what a lock would do now, with the
 battery measurements of `docs/power-saving-ideas.md`: "Locked: sleeps,
-~17 mA", "Locked: sleeps, GPS on, ~32 mA", "Locked: awake for WiFi, 4G" or
-"Locked: never sleeps, ~35 mA".
+~17 mA", "Locked: sleeps, GPS on, ~32 mA", "Locked: sleeps, 4G on, ~22 mA",
+"Locked: awake for WiFi" or "Locked: never sleeps, ~35 mA".
 
 Implementation: `NodePrefs::lock_keep` (`LOCK_KEEP_*` bits, appended at the
 end of the prefs file), `meckLockPolicy()` in `main.cpp` (called from

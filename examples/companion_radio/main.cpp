@@ -4069,16 +4069,25 @@ void meckQsLockVerdict(char* buf, size_t len) {
     if (what[0]) strlcat(what, ", ", sizeof(what));
     strlcat(what, name, sizeof(what));
   };
+  const bool modemOn = (p->lock_keep & LOCK_KEEP_MODEM) && modemManager.getState() != ModemState::OFF;
+  const bool gpsOn = (p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState();
   if ((p->lock_keep & LOCK_KEEP_WIFI) && WiFi.getMode() != WIFI_MODE_NULL) add("WiFi");
-  if ((p->lock_keep & LOCK_KEEP_MODEM) && modemManager.getState() != ModemState::OFF) add("4G");
+#ifndef MODEM_UART_SLEEP
+  if (modemOn) add("4G");
+#endif
   // With sync windows a connected phone does not keep it awake
   if (serial_interface.isConnected() && !p->ble_lock_window) add(MECK_TR("app", "appli"));
   if ((p->lock_keep & LOCK_KEEP_USB) && board.isUsbPowered()) add("USB");
   if (what[0]) {
     snprintf(buf, len, "%s: %s %s", locked, MECK_TR("awake for", "\xC3\xA9veill\xC3\xA9 pour"), what);
-  } else if ((p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState() && p->gps_lock_interval) {
+  } else if (modemOn && gpsOn) {
+    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, 4G and GPS on", "veille, 4G et GPS actifs"));
+  } else if (modemOn) {
+    // UART sleep: idle, the modem lets the deck sleep; a call or SMS wakes it
+    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, 4G on, ~22 mA", "veille, 4G actif, ~22 mA"));
+  } else if (gpsOn && p->gps_lock_interval) {
     snprintf(buf, len, MECK_TR("%s: sleeps, GPS every %d min", "%s : veille, GPS %d min"), locked, (int)p->gps_lock_interval);
-  } else if ((p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState()) {
+  } else if (gpsOn) {
     snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, GPS on, ~32 mA", "veille, GPS actif, ~32 mA"));
   } else {
     snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, ~17 mA", "veille, ~17 mA"));
