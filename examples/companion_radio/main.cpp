@@ -5145,7 +5145,10 @@ void loop() {
           codecIdleSince = millis();
         } else if (millis() - codecIdleSince >= 10000) {
           es8311_standby();
-          Serial.println("Audio: ES8311 standby (idle)");
+          // The speaker amp idles on too; every audio start switches it back
+          // on through meck_audio_route_amp() / the notification tone path.
+          board.amplifierDisable();
+          Serial.println("Audio: ES8311 standby, amp off (idle)");
         }
       }
     }

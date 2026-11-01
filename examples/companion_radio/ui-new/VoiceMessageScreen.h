@@ -42,6 +42,7 @@
 #if defined(HAS_ES8311_AUDIO)
 #include "ES8311.h"
 void meck_audio_codec_init();   // target.cpp: DAC init when the codec is in standby
+void meck_audio_route_amp();    // target.cpp: AUDIO_SEL -> ES8311, speaker amp on
 #endif
 
 // Codec2 low-bitrate voice codec
@@ -651,6 +652,12 @@ private:
     }
 
     enableDAC();
+#if defined(HAS_ES8311_AUDIO)
+    // The speaker amp boots off and is only switched on by tones, books, the
+    // alarm and games (and off again after a game or a call). Voice playback
+    // never did, so a note played silent until one of those had run.
+    meck_audio_route_amp();
+#endif
 
     // If mic recording tore down I2S_NUM_0, the Audio object's internal I2S
     // state is stale — it can't reconfigure sample rate for the WAV file.
