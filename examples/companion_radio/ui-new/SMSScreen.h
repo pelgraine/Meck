@@ -2144,16 +2144,21 @@ public:
   //   3. Just press the letter key — the dialer maps it automatically
   //      using the silk-screened number labels on the keyboard:
   //        w=1 e=2 r=3 | s=4 d=5 f=6 | z=7 x=8 c=9
-  //        q=# a=* o=+ | 0=mic key (arrives as sym+'0')
+  //        q=# a=* o=+ | 0=mic key
+  // The same mapping applies to the SMS recipient number, so no field that
+  // takes only a phone number needs Sym (it is one-shot, one Sym per digit).
+
+  // Bare Mic key (KB_KEY_MIC); its silk-screen label is 0
+  static const char DIAL_KEY_MIC = 0x02;
 
   // Map a letter key to its dialer equivalent (0 = no mapping)
-  // Note: 'q' is reserved for back navigation, use sym+q or touch for '#'
   char dialerKeyMap(char c) {
     switch (c) {
       case 'w': return '1';  case 'e': return '2';  case 'r': return '3';
       case 's': return '4';  case 'd': return '5';  case 'f': return '6';
       case 'z': return '7';  case 'x': return '8';  case 'c': return '9';
-      case 'a': return '*';  case 'o': return '+';
+      case DIAL_KEY_MIC: return '0';
+      case 'q': return '#';  case 'a': return '*';  case 'o': return '+';
       default:  return 0;
     }
   }
@@ -2494,6 +2499,7 @@ public:
         return true;
 
       default:
+        if (char mapped = dialerKeyMap(c)) c = mapped;
         if (_phoneInputPos < SMS_PHONE_LEN - 1 &&
             ((c >= '0' && c <= '9') || c == '+' || c == '*' || c == '#')) {
           _phoneInputBuf[_phoneInputPos++] = c;
