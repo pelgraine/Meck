@@ -4718,6 +4718,103 @@ static void meckPwrLogTick() {
 }
 #endif
 
+// ---- Phone dialer input ----
+//
+// Typing a number at phone speed puts several digits into one e-ink refresh,
+// which blocks the loop for ~650 ms. Touch and keys are therefore also polled
+// from the panel's busy callback while it refreshes: taps are applied to the
+// number right away, keys wait in a small queue for the loop to take them in
+// order. The next refresh then shows all of them at once.
+#if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
+
+// Debounce: one key per finger-down. The touch INT is pulse-based (not
+// level), so a held finger reads as "no point" on most loop passes between
+// reports. The finger counts as lifted only after DIAL_LIFT_MS without any
+// report; timing that from the accepted tap instead re-armed mid-hold and
+// typed every tapped digit twice. Reports of a held finger come every
+// ~10-20 ms, so the window only has to be longer than that; a fast typist
+// lifts for less than 150 ms between digits.
+#define DIAL_LIFT_MS 70
+
+static void pollDialerTouch() {
+  static bool touchFingerDown = false;
+  static unsigned long lastTouchAccepted = 0;
+  static unsigned long lastTouchSeen = 0;
+  #ifdef MECK_UI_SCREENDUMP
+  static unsigned long maxGap = 0;   // longest silence inside one touch, for tuning DIAL_LIFT_MS
+  #endif
+
+  if (!smsMode) return;
+  SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
+  if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
+                 || smsScr->getSubView() == SMSScreen::APP_MENU)) {
+    int16_t tx, ty;
+    #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
+    int16_t _htx[1], _hty[1];
+    bool _have = (hyn_touch_get_point(_htx, _hty, 1) > 0);
+    if (_have) { tx = _htx[0]; ty = _hty[0]; }
+    if (_have) {
+    #else
+    if (touchInput.getPoint(tx, ty)) {
+    #endif
+      unsigned long now = millis();
+      #ifdef MECK_UI_SCREENDUMP
+      if (touchFingerDown && now - lastTouchSeen > maxGap) maxGap = now - lastTouchSeen;
+      #endif
+      lastTouchSeen = now;
+      if (!touchFingerDown && (now - lastTouchAccepted >= DIAL_LIFT_MS)) {
+        touchFingerDown = true;
+        lastTouchAccepted = now;
+        if (smsScr->handleTouch(tx, ty)) {
+          dialerNeedsRefresh = true;
+          // Don't reset the gate on touch: COMPOSE_REFRESH_INTERVAL is
+          // measured from the last completed render (set at the render
+          // site), so the first tap after a pause repaints immediately and
+          // only rapid successive taps stay throttled (no overlap).
+        }
+      }
+    } else {
+      if (touchFingerDown && (millis() - lastTouchSeen >= DIAL_LIFT_MS)) {
+        touchFingerDown = false;
+        #ifdef MECK_UI_SCREENDUMP
+        Serial.printf("[Dial] touch up, longest gap %lu ms\n", maxGap);
+        maxGap = 0;
+        #endif
+      }
+    }
+  } else {
+    touchFingerDown = false;
+  }
+}
+
+#if defined(LilyGo_TDeck_Pro)
+static char dialerKeyQ[16];
+static uint8_t dialerKeyQHead = 0, dialerKeyQCount = 0;
+
+static bool dialerKeyPop(char& k) {
+  if (!dialerKeyQCount) return false;
+  k = dialerKeyQ[dialerKeyQHead];
+  dialerKeyQHead = (dialerKeyQHead + 1) % sizeof(dialerKeyQ);
+  dialerKeyQCount--;
+  return true;
+}
+
+// Called by the e-ink driver while it waits for the panel
+static void dialerBusyPoll(const void*) {
+  pollDialerTouch();
+  if (dialerKeyQCount < sizeof(dialerKeyQ) && keyboard.isReady()) {
+    char k = keyboard.readKey();
+    if (k) {
+      // Shift state belongs to the key just read, so resolve Shift+Del here
+      if (k == '\b' && keyboard.wasShiftConsumed()) k = KEY_CANCEL;
+      dialerKeyQ[(dialerKeyQHead + dialerKeyQCount) % sizeof(dialerKeyQ)] = k;
+      dialerKeyQCount++;
+    }
+  }
+}
+#endif // LilyGo_TDeck_Pro
+#endif // HAS_TOUCHSCREEN && HAS_4G_MODEM
+
 void loop() {
   #ifdef HAS_SDCARD
   meckExportPoll();        // Settings export: runs once its popup is on screen
@@ -5508,16 +5605,24 @@ void loop() {
     // Phone dialer debounced render (separate from compose debounce)
     #ifdef HAS_4G_MODEM
     if (dialerNeedsRefresh && (millis() - lastDialerRefresh) >= COMPOSE_REFRESH_INTERVAL) {
+      // Cleared before drawing: a tap during the refresh sets it again and
+      // must get its own refresh afterwards
+      dialerNeedsRefresh = false;
       if (smsMode) {
         SMSScreen* dialScr = (SMSScreen*)ui_task.getSMSScreen();
         if (dialScr && (dialScr->getSubView() == SMSScreen::PHONE_DIALER
                         || dialScr->getSubView() == SMSScreen::APP_MENU)) {
+          #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
+          display.setBusyCallback(dialerBusyPoll, 0);
+          #endif
           display.startFrame();
           dialScr->render(display);
           display.endFrame();
+          #if defined(LilyGo_TDeck_Pro) && defined(HAS_TOUCHSCREEN)
+          display.setBusyCallback(NULL, 0);
+          #endif
         }
       }
-      dialerNeedsRefresh = false;
       lastDialerRefresh = millis();
     }
     #endif
@@ -5576,6 +5681,15 @@ void loop() {
   // Handle T-Deck Pro keyboard input
   #if defined(LilyGo_TDeck_Pro)
     handleKeyboardInput();
+    #if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
+    // Dialer: take every key that is already waiting before the next refresh,
+    // otherwise each digit of a fast burst costs its own ~650 ms refresh
+    for (int i = 0; i < 24 && smsMode; i++) {
+      SMSScreen* dk = (SMSScreen*)ui_task.getSMSScreen();
+      if (!dk || dk->getSubView() != SMSScreen::PHONE_DIALER) break;
+      handleKeyboardInput();
+    }
+    #endif
 
     // Deferred Enter processing for contacts screen long-press detection.
     // Enter is captured in handleKeyboardInput() but action is deferred so
@@ -5856,53 +5970,8 @@ void loop() {
   #endif // MECK_TOUCH_ENABLED
 
   // Poll touch input for phone dialer numpad
-  // Debounce: one key per finger-down. The touch INT is pulse-based (not
-  // level), so a held finger reads as "no point" on most loop passes between
-  // reports. The finger counts as lifted only after 150 ms without any
-  // report; timing that from the accepted tap instead re-armed mid-hold and
-  // typed every tapped digit twice.
   #if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
-  {
-    static bool touchFingerDown = false;
-    static unsigned long lastTouchAccepted = 0;
-    static unsigned long lastTouchSeen = 0;
-
-    if (smsMode) {
-      SMSScreen* smsScr = (SMSScreen*)ui_task.getSMSScreen();
-      if (smsScr && (smsScr->getSubView() == SMSScreen::PHONE_DIALER
-                     || smsScr->getSubView() == SMSScreen::APP_MENU)) {
-        int16_t tx, ty;
-        #if defined(LilyGo_TDeck_Pro_Max) || defined(MECK_PRO_HYN_TOUCH)
-        int16_t _htx[1], _hty[1];
-        bool _have = (hyn_touch_get_point(_htx, _hty, 1) > 0);
-        if (_have) { tx = _htx[0]; ty = _hty[0]; }
-        if (_have) {
-        #else
-        if (touchInput.getPoint(tx, ty)) {
-        #endif
-          unsigned long now = millis();
-          lastTouchSeen = now;
-          if (!touchFingerDown && (now - lastTouchAccepted >= 150)) {
-            touchFingerDown = true;
-            lastTouchAccepted = now;
-            if (smsScr->handleTouch(tx, ty)) {
-              dialerNeedsRefresh = true;
-              // Don't reset the gate on touch: COMPOSE_REFRESH_INTERVAL is
-              // measured from the last completed render (set at the render
-              // site), so the first tap after a pause repaints immediately and
-              // only rapid successive taps stay throttled (no overlap).
-            }
-          }
-        } else {
-          if (touchFingerDown && (millis() - lastTouchSeen >= 150)) {
-            touchFingerDown = false;
-          }
-        }
-      } else {
-        touchFingerDown = false;
-      }
-    }
-  }
+  pollDialerTouch();
   #endif
 
   // Low-power loop throttle -- yield CPU when lock screen is active.
@@ -5963,6 +6032,12 @@ void meckDebugKey(char k) { meckDebugPendingKey = k; }
 
 void handleKeyboardInput() {
   char key;
+  bool queued = false;   // read during an e-ink refresh, Shift+Del already resolved
+#if defined(HAS_TOUCHSCREEN) && defined(HAS_4G_MODEM)
+  if (dialerKeyPop(key)) {
+    queued = true;
+  } else
+#endif
 #ifdef MECK_UI_SCREENDUMP
   if (meckDebugPendingKey) {
     key = meckDebugPendingKey;
@@ -5980,7 +6055,7 @@ void handleKeyboardInput() {
   // unambiguous back code -- this leaves plain Backspace as text delete and
   // frees physical Q as an ordinary letter. Contexts that bind Shift+Del to a
   // non-back action (notes/contacts item delete) handle KEY_CANCEL explicitly.
-  if (key == '\b' && keyboard.wasShiftConsumed()) key = KEY_CANCEL;
+  if (!queued && key == '\b' && keyboard.wasShiftConsumed()) key = KEY_CANCEL;
 
   // SOS countdown: any key cancels it, locked or not
   if (meckSosCancelInput()) return;
@@ -6702,6 +6777,7 @@ void handleKeyboardInput() {
       // view transitions (Enter=call, Shift+Del=back). This avoids the 686ms e-ink
       // block per keypress while ensuring call/back screens render instantly.
       if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
+        if (key == KB_KEY_MIC_RELEASE) return;   // the Mic key is the 0 digit; its release is no input
         smsScr->handleInput(key);
         if (smsScr->getSubView() == SMSScreen::PHONE_DIALER) {
           // Still on dialer (digit/backspace) — debounced refresh
