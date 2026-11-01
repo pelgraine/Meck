@@ -465,6 +465,35 @@ USB with 4G off, the deck light-slept for 30 s and USB was gone until
 reset: the charger had just redone its input detection (charging current
 145 -> 450 mA), and one PG_STAT read of 0 was enough to let it sleep.
 
+### Measured: ESP32 light sleep with the modem on (2026-10-31, same deck)
+
+Rebased onto `modem-sleep`, no conflicts; `meck_max_ui2`,
+`meck_max_ble_wifi` and `meck_4g_ble_wifi` build. Boot as above: CSCLK
+OK, "UART sleep enabled", T-Mobile CZ CSQ 18.
+- Locked on USB, 4G on: `pwrmodem` "esp32 may sleep 1"; the lock screen
+  names only "On USB power" as the reason to stay awake.
+- Battery (locked, 4G on, `pwrhiz 1`, 23:49-00:05, GPS off, no BLE): the
+  deck light-slept 59.3 s of every 60 (99 %), one timer wake a minute,
+  no LoRa wakes, modem flag on throughout, blocker MODEM in one minute
+  only (23:58, most likely the 10 min safety poll). Gauge avgI 21-24 mA,
+  **about 22 mA**, against 112.6 mA with UART sleep alone (ESP32 awake)
+  and 144.7 mA with neither. 3729 -> 3721 mV in 15 min.
+- The counters in `pwrmodem` (light sleeps, RI wakes) could not be read:
+  USB serial died with the first light sleep, as it always does, so
+  these numbers come from the power log after an unlock and a reset.
+- When HIZ ended the deck stayed awake on USB and charged, as it should.
+  After the night the modem was still registered (CREG 0,1, CSQ 17 right
+  after the reset).
+- The boot after that reset printed "XL9555: NOT FOUND on I2C bus!" once
+  (modem and display kept working, the expander holds its outputs); the
+  next boot, after flashing, was clean. Maybe the I2C bus was stuck at
+  the reset; worth watching.
+
+About 22 mA is 6-9 mA above the expected 13 mA floor plus the modem's
+2-3 mA. Still to test with someone at the deck: an SMS and a call to the
+locked, sleeping deck (does RI wake it, does the SMS arrive, does the
+call ring and can it be answered).
+
 ### Next steps
 
 Expected with step 3: the locked deck with 4G near the sleep without it
@@ -497,4 +526,5 @@ CPU stays awake. So for now: WiFi off when not needed.
 4. Automatic light sleep with BLE modem sleep (2.3): the big one, needs the
    custom sdkconfig.
 5. 4G: UART sleep, then light sleep with RI as a wake source (both
-   implemented, not yet tried on a device; see "4G modem while locked").
+   implemented; locked with 4G on 145 -> 113 -> 22 mA on the device, SMS
+   and call wakes not yet tried; see "4G modem while locked").
