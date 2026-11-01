@@ -239,6 +239,17 @@ public:
   void prepareEspSleep();
   void afterEspSleep(bool gpioWake);
 
+  // Low cell (MODEM_MIN_MILLIVOLTS): below it the modem is switched off and
+  // begin() refuses to start it until the cell is back above
+  // MODEM_RESUME_MILLIVOLTS. The saved on/off setting is kept, so 4G comes
+  // back by itself after charging. Main loop, with each battery reading;
+  // true when the modem was just switched off for it. immediate: one
+  // reading is enough (boot, before the modem draws anything).
+  bool checkBattery(uint16_t milliVolts, bool immediate = false);
+  bool isBatteryLow() const { return _battLow; }
+  // Debug CLI "pwrmodemmv": pretend the cell is at this voltage, 0 = real
+  void setTestMilliVolts(uint16_t mv) { _testMv = mv; }
+
   static const char* stateToString(ModemState s);
 
   // Persistent enable/disable config (SD file /sms/modem.cfg)
@@ -247,6 +258,9 @@ public:
 
 private:
   volatile ModemState _state = ModemState::OFF;
+  bool _battLow = false;
+  uint8_t _battLowCount = 0;
+  uint16_t _testMv = 0;
   volatile int _csq = 99;    // 99 = unknown
   volatile bool _paused = false;  // Suppresses AT polling when true
   volatile bool _locked = false;  // Screen locked (set by main loop)

@@ -2341,6 +2341,15 @@ public:
       c.icon(lx, 262, ic, 12);
       c.text(lx + 16, 273, line, UI2_F_SMALL);
 
+  #ifdef HAS_4G_MODEM
+      // 4G switched off for a low cell: say so instead of the estimate
+      if (modemManager.isBatteryLow())
+        c.textFit(PAD, 290, SCREEN_W - 2 * PAD,
+                  usb ? MECK_TR("4G off until charged", "4G coup\xC3\xA9 jusqu'\xC3\xA0 la charge")
+                      : MECK_TR("Battery low, 4G off: charge now", "Batterie faible, 4G coup\xC3\xA9 : chargez"),
+                  UI2_F_META, true, UI2_CENTER);
+      else
+  #endif
       if (_snapEst[0]) c.textFit(PAD, 290, SCREEN_W - 2 * PAD, _snapEst, UI2_F_META, true, UI2_CENTER);
     }
 #endif
@@ -3479,6 +3488,13 @@ if (curr) curr->poll();
     } else {
       _low_batt_count = 0;
     }
+  #if defined(HAS_4G_MODEM) && defined(MODEM_MIN_MILLIVOLTS)
+    // 4G goes off well before the shutdown, so the deck keeps running a
+    // while longer for LoRa
+    if (modemManager.checkBattery(milliVolts)) {
+      showAlert(MECK_TR("Battery low: 4G off.\nCharge the deck.", "Batterie faible : 4G coup\xC3\xA9.\nChargez l'appareil."), 10000);
+    }
+  #endif
     next_batt_chck = millis() + 8000;
   }
 #endif

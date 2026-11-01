@@ -991,6 +991,12 @@ static uint32_t _atoi(const char* sp) {
     if (strcmp(cmd, "pwrchg") == 0) { board.chargerDebugPrint(); return; }   // charger + gauge, read-only
 #ifdef HAS_4G_MODEM
     if (strcmp(cmd, "pwrmodem") == 0) { modemManager.printPowerStats(); return; }   // UART sleep, read-only
+    if (strncmp(cmd, "pwrmodemmv ", 11) == 0) {
+      // Test the low-battery 4G cut-off without draining the cell
+      modemManager.setTestMilliVolts((uint16_t)atoi(cmd + 11));
+      Serial.printf("pwr: modem battery check uses %s\n", atoi(cmd + 11) ? cmd + 11 : "the gauge");
+      return;
+    }
 #endif
     if (strcmp(cmd, "pwrcal") == 0) {
       // RC slow clock: the calibration in use vs fresh measurements
@@ -3202,7 +3208,11 @@ void setup() {
 #else
       bool modemEnabled = ModemManager::loadEnabledConfig();
 #endif
-      if (modemEnabled) {
+#ifdef MODEM_MIN_MILLIVOLTS
+      // A low cell keeps 4G off from the start (it comes on after charging)
+      modemManager.checkBattery(board.getBattMilliVolts(), true);
+#endif
+      if (modemEnabled && !modemManager.isBatteryLow()) {
         modemManager.begin();
         MESH_DEBUG_PRINTLN("setup() - 4G modem manager started");
       } else {

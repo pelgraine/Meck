@@ -33,6 +33,10 @@ static char _atBuf[AT_BUF_SIZE];
 
 void ModemManager::begin() {
   MESH_DEBUG_PRINTLN("[Modem] begin()");
+  if (_battLow) {
+    Serial.println("[Modem] battery low, not starting");
+    return;
+  }
 
   _state = ModemState::OFF;
   _csq = 99;
@@ -136,6 +140,31 @@ void ModemManager::shutdown() {
   vTaskDelete(_taskHandle);
   _taskHandle = nullptr;
   _state = ModemState::OFF;
+}
+
+bool ModemManager::checkBattery(uint16_t milliVolts, bool immediate) {
+#ifdef MODEM_MIN_MILLIVOLTS
+  if (_testMv) milliVolts = _testMv;
+  if (milliVolts == 0) return false;
+  if (!_battLow) {
+    // Three readings in a row, as for the shutdown: a TX burst sags the cell
+    if (milliVolts >= MODEM_MIN_MILLIVOLTS) { _battLowCount = 0; return false; }
+    if (++_battLowCount < 3 && !immediate) return false;
+    _battLow = true;
+    Serial.printf("[Modem] battery %u mV < %u mV, 4G off until charged\n",
+                  milliVolts, (unsigned)MODEM_MIN_MILLIVOLTS);
+    if (!_taskHandle) return false;
+    shutdown();
+    return true;
+  }
+  if (milliVolts >= MODEM_RESUME_MILLIVOLTS) {
+    _battLow = false;
+    _battLowCount = 0;
+    Serial.printf("[Modem] battery %u mV, 4G allowed again\n", milliVolts);
+    if (!_taskHandle && loadEnabledConfig()) begin();
+  }
+#endif
+  return false;
 }
 
 bool ModemManager::sendSMS(const char* phone, const char* body) {
