@@ -2,28 +2,70 @@
 >
 > Everything from [pelgraine/Meck](https://github.com/pelgraine/Meck), plus
 > work for the **LilyGo T-Deck MAX** that is offered upstream but not merged
-> there yet:
+> there yet. The aim: a MAX that lasts days on a charge, stays useful
+> without a phone, and can call for help.
 >
-> - **New UI (UI v2)**: redesigned screens for the 240x320 e-ink, message
->   menu (reply with @mention, copy, path, repeated by, send again),
->   full-screen reader. Build `meck_max_ui2`; the other builds keep the
->   classic UI. Home Assistant, weather, agenda and mail are designed for
->   it but not built yet, so they are not on the home screen.
+> **A new UI** (`meck_max_ui2`; the other builds keep the classic UI)
+>
+> - Redesigned screens for the 240x320 e-ink, a message menu (reply with
+>   @mention, copy, path, repeated by, send again), a full-screen reader,
+>   and a status bar with Bluetooth, WiFi and GPS.
+> - **Quick settings** (Alt+Space, or swipe down from the status bar): one
+>   screen with tiles for Bluetooth, WiFi, GPS, 4G, tones, vibration and
+>   the lights, and a second choice of what keeps running while the deck is
+>   locked, with a one-line verdict of what the lock will cost.
+>   See [docs/ui2-quick-settings.md](docs/ui2-quick-settings.md).
+> - Home Assistant, weather, agenda and mail are designed for it but not
+>   built yet, so they are not on the home screen.
 >
 >   <img src="docs/images/ui-v2-home.png" alt="UI v2 home screen (screenshot from a T-Deck MAX)" width="270">
+>
+> **Connections**
+>
 > - **Bluetooth and WiFi at the same time** (`meck_max_ui2`,
 >   `meck_max_ble_wifi`): each connection is turned on and off on its own,
 >   one app on each, no restart to switch. In the new UI they share one
->   "Connections" home page, and WiFi shows in the status bar.
-> - **Battery life**: the switched-off GPS is no longer powered through its
->   data pin, the ES8311 codec sleeps when idle, and the device light-sleeps
->   while the screen is locked. Locked current goes from 82 mA to about
->   13 mA. Settings > "Power saving when locked".
+>   "Connections" home page.
+> - **A phone that does not eat the battery**: a connected phone keeps a
+>   locked deck awake at about 100 mA. "Phone when locked" can let the deck
+>   sleep and open a Bluetooth window every few minutes (and for each
+>   message you are notified of) for the app to sync, about 23 mA on
+>   average. Dead links are dropped so the app can find the deck again.
 > - **Direct messages**: longer wait for the ACK on long flood routes, late
 >   ACKs still mark a message delivered, the final status survives a
 >   restart.
-> - **Hardening**: OTA checks the board and the battery, safer file manager
->   and web reader downloads, no private key export over WiFi.
+>
+> **Battery life** (Settings > "Power saving when locked"; measured on a MAX)
+>
+> - Locked current goes from 82 mA to about **17 mA** with the radio
+>   listening; the light-sleep floor is about 13 mA. The switched-off GPS is
+>   no longer powered through its data pin and the ES8311 codec sleeps when
+>   idle.
+> - **GPS**: a GPS that is on no longer keeps the deck awake (about +15 mA);
+>   or, under Experimental Features > "GPS when locked", it wakes only for a
+>   fix every 2 to 60 minutes.
+> - **4G**: the modem sleeps on its UART, SMS arrive on a notification
+>   instead of polling, and the ESP32 sleeps with it, about 22 mA locked
+>   instead of 145 mA. Calls and SMS still wake the deck. On a low cell the
+>   modem is switched off, and the deck shuts down before the cell is flat.
+> - A power log (hourly on the SD card) and a viewer,
+>   `tools/powerlog/powerlog.py`, to see where the battery went.
+>
+> **On the road**
+>
+> - **SOS**: hold the top button for 3 s (works locked, screen off). Any
+>   key or touch cancels the 10 s countdown; otherwise your position goes
+>   to the public channel and the channels you picked, and is sent again
+>   (with a GPS window before each send, and sleep in between) until you
+>   cancel with "I'm OK". See [docs/sos.md](docs/sos.md).
+> - **Locations**: send your position in a DM, show a position received in
+>   a message (`[LOC]`, `[WAY]`, `geo:`, plain coordinates) on the map, and
+>   choose per contact who may read your battery, location and sensors.
+> - **Dialer**: one digit per tap on the touch pad, and digits typed
+>   without Sym.
+>
+> **Hardening**: OTA checks the board and the battery, safer file manager
+> and web reader downloads, no private key export over WiFi.
 >
 > **Download:** [Releases](https://github.com/halecivo/Meck/releases).
 > "Latest build (next)" is the newest build of `next`, replaced on every
@@ -31,9 +73,10 @@
 > `*-merged.bin` at 0x0 the first time; `*.bin` updates an existing
 > install (OTA, Launcher, or 0x10000).
 >
-> Branches: `next` is this fork's release branch, `main` mirrors
-> pelgraine/Meck, and each change also lives on its own branch for pull
-> requests upstream.
+> Branches: `next` is this fork's release branch (everything in it has been
+> tried on a device), `testing` is `next` plus work still waiting for a
+> device test, `main` mirrors pelgraine/Meck, and each change also lives on
+> its own branch for pull requests upstream.
 
 ## Meshcore + Fork = Meck
 
