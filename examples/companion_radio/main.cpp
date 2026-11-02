@@ -4230,6 +4230,11 @@ static void meckAutoSleep(bool on) {
   }
   meckAutoSleepOn = on;
   Serial.printf("[Power] Automatic light sleep %s (%d MHz)\n", on ? "on" : "off", mhz);
+  // The lock screen words the phone as a blocker or as sleeping with it by
+  // meckAutoSleepOn, which only changes here, at the end of the pass that
+  // already drew the lock screen: without this it stays wrong until the
+  // minute redraw
+  if (ui_task.isLocked()) ui_task.forceRefresh();
 }
 
 // Whether the locked deck can sleep automatically: only the phone keeps it
