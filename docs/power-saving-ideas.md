@@ -14,7 +14,7 @@ From the power log of one night on battery (10.7 h, 99 % to 85 %):
 | Locked, asleep, GPS on with a fix | 31.7 mA | 47 min by a window on battery (branch gps-lock-sleep): blocker "can sleep", asleep 59.3 s of 60, one timer wake a minute, awake time as without GPS; the GPS costs about 15 mA. Whether the position was updated is not confirmed: the log has no fix or position field |
 | Light sleep floor | about 13 mA | between wakes |
 | Locked and awake (a blocker holds it) | about 35 mA | e.g. on USB |
-| Locked with a phone connected over BLE | about 100 mA | blocker PHONE, never sleeps; 97 mA with the relaxed interval |
+| Locked with a phone connected over BLE | 23 mA | automatic light sleep with the relaxed interval (step 2.3); about 100 mA before, awake all the time |
 | Locked, phone syncs "Every 10 min" | 23.4 mA | sync windows, see 2 below |
 | Before power-fixes (locked, idle) | about 82 mA | for comparison |
 
@@ -97,11 +97,27 @@ Steps, in order of effort:
    the controller keeps the crystal on in every light sleep once Bluetooth
    has been enabled, the lock sleep without a link powers it down around
    `esp_light_sleep_start()`. The power log's `auto_sleep_s` column has the
-   time in automatic light sleep. To check on the device: the current
-   locked with the phone connected (was about 100 mA), that the link holds
-   and the app still syncs, LoRa packets and the button while it sleeps,
-   the lock sleep floor without a link (13 mA before), and that unlocking
-   brings the CPU back to normal.
+   time in automatic light sleep.
+
+   While automatic light sleep is on, the deck also asks the phone for the
+   relaxed interval of step 1 (100-150 ms, slave latency 4, 6 s timeout),
+   and for 15-20 ms again when it ends. Each connection event wakes the
+   CPU, so the interval only pays off now that the CPU sleeps between them.
+
+   Measured on battery with an iPhone, locked, modem and GPS off:
+
+   | | Current | CPU awake | Interval |
+   |---|---|---|---|
+   | Automatic light sleep (2026-11-01, 39 min) | 31 mA | 31 % | 30 ms (iOS) |
+   | With the relaxed interval (2026-11-01/02 night, 6.75 h) | 23 mA (22-27) | 13 % | 150 ms |
+
+   The night run: 100 % to 89 % (1.6 %/h, about 60 h for the whole cell),
+   three LoRa packets received while asleep, app traffic in 7 minutes. The
+   link dropped once (02:02, reason 0x08, supervision timeout) and the
+   phone was back within the minute; the drops soon after locking seen
+   with the relaxed interval on the deck that stayed awake did not happen.
+   Still to check: the lock sleep floor without a link (13 mA before) and
+   the button while it sleeps.
 4. **NimBLE instead of Bluedroid.** Less RAM (helps WiFi + BLE too) and
    better tested with modem sleep. A large change (see the WiFi + BLE
    analysis).

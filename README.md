@@ -28,9 +28,9 @@
 >   "Connections" home page.
 > - **A phone that does not eat the battery**: a connected phone used to
 >   keep a locked deck awake at about 100 mA. Now the deck stays connected
->   and sleeps between the phone's Bluetooth connection events, about
->   31 mA locked, as long as 4G and GPS are off (with either on, it stays
->   awake as before). Or "Phone when locked" lets the deck sleep fully and
+>   and sleeps between the phone's Bluetooth connection events, which it
+>   spaces out while locked: about 23 mA, as long as 4G and GPS are off
+>   (with either on, it stays awake as before). Or "Phone when locked" lets the deck sleep fully and
 >   open a Bluetooth window every few minutes (and for each message you are
 >   notified of) for the app to sync, about 23 mA on average. Dead links
 >   are dropped so the app can find the deck again.
