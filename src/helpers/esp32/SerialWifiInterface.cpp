@@ -1,7 +1,14 @@
 #include "SerialWifiInterface.h"
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 
 void SerialWifiInterface::begin(int port) {
+  if (!send_queue) {
+    // Here, not in the constructor: PSRAM may not be set up yet while the
+    // global constructors run
+    send_queue = (Frame*)heap_caps_malloc(FRAME_QUEUE_SIZE * sizeof(Frame), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!send_queue) send_queue = (Frame*)malloc(FRAME_QUEUE_SIZE * sizeof(Frame));
+  }
   // wifi setup is handled outside of this class, only starts the server
   server.begin(port);
 }
@@ -24,7 +31,7 @@ size_t SerialWifiInterface::writeFrame(const uint8_t src[], size_t len) {
     return 0;
   }
 
-  if (deviceConnected && len > 0) {
+  if (deviceConnected && len > 0 && send_queue) {
     if (send_queue_len >= FRAME_QUEUE_SIZE) {
       WIFI_DEBUG_PRINTLN("writeFrame(), send_queue is full!");
       return 0;
@@ -82,22 +89,21 @@ size_t SerialWifiInterface::checkRecvFrame(uint8_t dest[]) {
   }
 
   if (deviceConnected) {
-    // drain all pending send frames — WiFi TCP can handle the throughput
-    while (send_queue_len > 0) {
+    // drain all pending send frames — WiFi TCP can handle the throughput.
+    // In order and then all at once: shifting the queue after each frame
+    // copied all of it through PSRAM every time
+    for (int i = 0; i < send_queue_len; i++) {
       _last_write = millis();
-      int len = send_queue[0].len;
+      int len = send_queue[i].len;
 
       uint8_t pkt[3+len]; // use same header as serial interface so client can delimit frames
       pkt[0] = '>';
       pkt[1] = (len & 0xFF);  // LSB
       pkt[2] = (len >> 8);    // MSB
-      memcpy(&pkt[3], send_queue[0].buf, send_queue[0].len);
+      memcpy(&pkt[3], send_queue[i].buf, len);
       client.write(pkt, 3 + len);
-      send_queue_len--;
-      for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
-        send_queue[i] = send_queue[i + 1];
-      }
     }
+    send_queue_len = 0;
 
     // check if we are waiting for a frame header
     if(!hasReceivedFrameHeader()){
