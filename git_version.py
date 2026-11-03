@@ -36,7 +36,9 @@ print("git_version: %s, commit %s" % (ghash, gtime))
 
 
 def add_version(env, node):
-    return env.Object(node, CPPDEFINES=list(env["CPPDEFINES"]) + defines)
+    # One node, not the NodeList Object() returns: later middlewares (the
+    # pioarduino ESP-IDF builder's) call node methods on it
+    return env.Object(node, CPPDEFINES=list(env["CPPDEFINES"]) + defines)[0]
 
 
 env.AddBuildMiddleware(add_version, "*companion_radio*main.cpp")

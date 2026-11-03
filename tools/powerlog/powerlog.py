@@ -71,7 +71,7 @@ def analyse(store, capacity):
 COLUMNS = ["t", "secs", "ma", "awake", "pct", "mv", "temp_c", "drain_pct_h", "gauge_pct_h",
            "charge", "blocker", "rx", "tx", "refresh", "full_refresh", "wake_lora", "wake_btn",
            "wake_timer", "clock_jump_s", "gap", "shift", "utc_offset", "rc_ppm", "fw",
-           "ble_win", "sync_win", "sync_link", "sync_s", "link_ms", "app_rx", "ble_drop"]
+           "ble_win", "sync_win", "sync_link", "sync_s", "link_ms", "app_rx", "ble_drop", "auto_sleep_s"]
 
 
 def payload(store, capacity, static=False):

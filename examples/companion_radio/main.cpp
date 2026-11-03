@@ -924,6 +924,7 @@ static uint32_t _atoi(const char* sp) {
   #include <Preferences.h>
   #include <soc/rtc.h>                 // RC slow clock calibration ("pwrcal")
   #include <esp_private/esp_clk.h>
+  #include <soc/gpio_struct.h>         // GPIO.enable for "pwrpins" (not pulled in on IDF 5)
   // Gauge avgI at the end of the awake and the sleep phase of "pwrsleep",
   // kept in NVS: the reset button that USB recovery needs clears RTC memory
   static int meckAwakeResult = 0;
@@ -1178,7 +1179,7 @@ static uint32_t _atoi(const char* sp) {
       Serial.printf("pwr: BLE %s\n", cmd[7] == '1' ? "on" : "off");
 #if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
     } else if (strcmp(cmd, "pwrlink") == 0) {
-      // Connection interval the phone accepted
+      // Connection interval the phone accepted (relaxed while locked)
       uint16_t iv = SerialBLEInterface::linkInterval();
       Serial.printf("pwr: BLE link %s, interval %u.%02u ms, latency %u\n",
                     MECK_BLE_IFACE.isConnected() ? "up" : "down",
@@ -2812,8 +2813,40 @@ void halt() {
   while (1) ;
 }
 
+#if defined(ESP32) && ESP_IDF_VERSION_MAJOR >= 5 && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+  // Core 3.x keeps the USB serial "connected" once a host has read from it,
+  // and from then on blocks every write for up to 2 s (20 x the TX timeout)
+  // while nothing reads the port, e.g. the deck on a PC with no terminal
+  // open: the UI then takes seconds per key. Core 2.x dropped the output
+  // instead. Write without waiting, except for a few seconds after the host
+  // sent something: it is reading then, and CLI replies must not be cut.
+  #define MECK_SERIAL_PACING 1
+  static volatile uint32_t meckSerialRxAt = 0;
+  static volatile bool meckSerialWaits = false;
+
+  // Runs in the HWCDC event task, before loop() reads the command
+  static void meckSerialRx(void*, esp_event_base_t, int32_t, void*) {
+    meckSerialRxAt = millis();
+    if (!meckSerialWaits) {
+      Serial.setTxTimeoutMs(100);
+      meckSerialWaits = true;
+    }
+  }
+
+  static void meckSerialPace() {
+    if (meckSerialWaits && millis() - meckSerialRxAt >= 3000) {
+      meckSerialWaits = false;
+      Serial.setTxTimeoutMs(0);
+    }
+  }
+#endif
+
 void setup() {
   Serial.begin(115200);
+#ifdef MECK_SERIAL_PACING
+  Serial.setTxTimeoutMs(0);
+  Serial.onEvent(ARDUINO_HW_CDC_RX_EVENT, meckSerialRx);
+#endif
   delay(100);  // Give serial time to initialize
   MESH_DEBUG_PRINTLN("=== setup() - STARTING ===");
 
@@ -3571,10 +3604,11 @@ static void meckImportPoll() {
 // enough to handle the packet or the click. Measured on the battery: about
 // 35 mA locked and awake, 13 mA asleep.
 //
-// BLE advertising stops while the device may sleep (the Bluetooth controller
-// cannot sleep on this framework, so a phone could not connect anyway) and
-// restarts on unlock. Sleep is skipped entirely while one of
-// meckLockSleepBlocker()'s conditions holds.
+// BLE advertising stops while the device may sleep (a phone could not
+// connect while it sleeps anyway) and restarts on unlock. Sleep is skipped
+// entirely while one of meckLockSleepBlocker()'s conditions holds; with a
+// phone connected the pioarduino builds sleep automatically instead
+// (meckAutoSleep()).
 //
 // The GPS does not keep the device awake: the receiver keeps tracking on its
 // own, and the minute wake stays up until its next GGA has been read.
@@ -3844,7 +3878,11 @@ static uint16_t meckWakeLora = 0, meckWakeBtn = 0, meckWakeTimer = 0;
 
 // Why the device does not sleep while locked (MeckSleepBlock in UITask.h),
 // MECK_SLEEP_OK when it can. Shown on the lock screen and in the lock warning.
-int meckLockSleepBlocker() {
+// modemIdle: what would block it with the modem done with what it is doing
+static int meckLockSleepBlockerEx(bool modemIdle);
+int meckLockSleepBlocker() { return meckLockSleepBlockerEx(false); }
+
+static int meckLockSleepBlockerEx(bool modemIdle) {
   NodePrefs* p = the_mesh.getNodePrefs();
   if (!p->lock_sleep) return MECK_SLEEP_OFF;
   // SOS: awake only while it counts down, its GPS looks for a fix or a send
@@ -3864,7 +3902,7 @@ int meckLockSleepBlocker() {
 #ifdef HAS_4G_MODEM
   // With UART sleep the modem only blocks while it has something to do
   // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
-  if (modemManager.getState() != ModemState::OFF && !modemPauses && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
+  if (modemManager.getState() != ModemState::OFF && !modemPauses && !modemIdle && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
   if (WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) return MECK_SLEEP_WIFI;
   if (board.isUsbPowered() && (p->lock_keep & LOCK_KEEP_USB)) return MECK_SLEEP_USB;
@@ -3894,6 +3932,7 @@ int meckLockSleepBlocker() {
 void toggleKeyboardBacklight();
 bool keyboardBacklightIsOn();
 void meckGpsConfigureSoon();
+bool meckPhoneLetsSleep();
 
 static void meckQsModemSet(bool on) {
   // Kept like Settings > 4G Modem does, so it holds over a restart
@@ -4075,23 +4114,40 @@ void meckQsLockVerdict(char* buf, size_t len) {
 #ifndef MODEM_UART_SLEEP
   if (modemOn) add("4G");
 #endif
-  // With sync windows a connected phone does not keep it awake
-  if (serial_interface.isConnected() && !p->ble_lock_window) add(MECK_TR("app", "appli"));
+  // With sync windows a connected phone does not keep it awake, nor where
+  // the deck sleeps automatically with the link up
+  const bool phoneOn = serial_interface.isConnected() && !p->ble_lock_window;
+  const bool phoneSleeps = phoneOn && meckPhoneLetsSleep();
+  if (phoneOn && !phoneSleeps) add(MECK_TR("app", "appli"));
   if ((p->lock_keep & LOCK_KEEP_USB) && board.isUsbPowered()) add("USB");
   if (what[0]) {
     snprintf(buf, len, "%s: %s %s", locked, MECK_TR("awake for", "\xC3\xA9veill\xC3\xA9 pour"), what);
-  } else if (modemOn && gpsOn) {
-    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, 4G and GPS on", "veille, 4G et GPS actifs"));
-  } else if (modemOn) {
-    // UART sleep: idle, the modem lets the deck sleep; a call or SMS wakes it
-    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, 4G on, ~22 mA", "veille, 4G actif, ~22 mA"));
-  } else if (gpsOn && p->gps_lock_interval) {
-    snprintf(buf, len, MECK_TR("%s: sleeps, GPS every %d min", "%s : veille, GPS %d min"), locked, (int)p->gps_lock_interval);
-  } else if (gpsOn) {
-    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, GPS on, ~32 mA", "veille, GPS actif, ~32 mA"));
-  } else {
-    snprintf(buf, len, "%s: %s", locked, MECK_TR("sleeps, ~17 mA", "veille, ~17 mA"));
+    return;
   }
+  // Asleep: 17.4 mA plus what each one was measured to add on its own (with
+  // the phone 23, the GPS 31.7, 4G 22 mA; "GPS when locked" every 10 min
+  // about +3 mA). Together they are only added up, not measured.
+  int mA = 17;
+  char on[32] = "";
+  auto with = [&](const char* name) {
+    if (on[0]) strlcat(on, ", ", sizeof(on));
+    strlcat(on, name, sizeof(on));
+  };
+  if (phoneSleeps) { mA += 6; with(MECK_TR("app", "appli")); }
+  // UART sleep: idle, the modem lets the deck sleep; a call or SMS wakes it
+  if (modemOn) { mA += 5; with("4G"); }
+  if (gpsOn && p->gps_lock_interval) {
+    char gps[16];
+    snprintf(gps, sizeof(gps), "GPS %d min", (int)p->gps_lock_interval);
+    mA += 3;
+    with(gps);
+  } else if (gpsOn) {
+    mA += 15;
+    with("GPS");
+  }
+  const char* sleeps = MECK_TR("sleeps", "veille");
+  if (on[0]) snprintf(buf, len, "%s: %s, ~%d mA (%s)", locked, sleeps, mA, on);
+  else snprintf(buf, len, "%s: %s, ~%d mA", locked, sleeps, mA);
 }
 
 // Radios whose "When locked" switch is off go off on lock and come back on
@@ -4133,6 +4189,182 @@ void meckLockPolicy(bool locking) {
 }
 #endif
 
+#if defined(CONFIG_PM_ENABLE) && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE)
+// ============================================================================
+// Automatic light sleep while locked with a phone connected
+// (docs/power-saving-ideas.md, phone step 3). The lock sleep above needs the
+// phone gone; with a link the deck used to stay awake at about 100 mA. Here
+// ESP-IDF power management sleeps the CPU whenever every task waits (the
+// locked loop's delay(50) included), and the Bluetooth controller's modem
+// sleep keeps the link between connection events. Wakes: the LoRa DIO1
+// (ext1) and the button, as in the lock sleep, plus every task timer.
+//
+// What the modem and the GPS send over their UARTs while the CPU sleeps is
+// lost, so, as in the lock sleep: the modem task holds the CPU up while its
+// UART is awake (ModemManager PM lock) and RI wakes it by level
+// (meckAutoSleepModem); with the GPS on the CPU stays up once a minute for
+// the next GGA (meckAutoSleepGps). Without UART sleep (MODEM_NO_UART_SLEEP)
+// the modem keeps the deck awake as before.
+// ============================================================================
+#define MECK_AUTO_LIGHT_SLEEP 1
+#include <esp_pm.h>
+#include <esp_bt.h>
+#include <soc/soc.h>
+#include <soc/gpio_reg.h>
+
+static bool meckAutoSleepOn = false;
+static volatile uint32_t meckAutoSleptMs = 0;   // asleep in automatic light sleep
+static uint32_t meckAutoSleptUsFrac = 0;        // remainder below 1 ms
+#if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+static volatile bool meckAutoRiArmed = false;   // RI is a wake source
+static volatile bool meckAutoRiLow = false;     // a wake found RI low
+static_assert(MODEM_RI < 32, "RI is read from GPIO_IN_REG");
+#endif
+
+static esp_err_t IRAM_ATTR meckAutoSleepExit(int64_t slept_us, void*) {
+  // The idle task, interrupts off: just add up
+  uint64_t us = (uint64_t)slept_us + meckAutoSleptUsFrac;
+  meckAutoSleptMs += (uint32_t)(us / 1000);
+  meckAutoSleptUsFrac = (uint32_t)(us % 1000);
+#if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+  // An SMS pulses RI for 60-120 ms, which the loop's 50 ms passes could
+  // miss: note it here, right as it wakes the CPU
+  if (meckAutoRiArmed && !(REG_READ(GPIO_IN_REG) & BIT(MODEM_RI))) meckAutoRiLow = true;
+#endif
+  return ESP_OK;
+}
+
+static void meckAutoSleep(bool on) {
+  static bool cbRegistered = false;
+  if (on == meckAutoSleepOn) return;
+  if (!cbRegistered) {
+    esp_pm_sleep_cbs_register_config_t cbs = {};
+    cbs.exit_cb = meckAutoSleepExit;
+    cbRegistered = esp_pm_light_sleep_register_cbs(&cbs) == ESP_OK;
+  }
+  // No frequency scaling: the e-ink and radio SPI and the keyboard I2C are
+  // set up for the current APB clock, so the CPU keeps the frequency
+  // CPUPowerManager gave it (80 MHz while locked)
+  int mhz = getCpuFrequencyMhz();
+  esp_pm_config_t cfg = {};
+  cfg.max_freq_mhz = mhz;
+  cfg.min_freq_mhz = mhz;
+  cfg.light_sleep_enable = on;
+  esp_err_t err = esp_pm_configure(&cfg);
+  if (err != ESP_OK) {
+    Serial.printf("[Power] esp_pm_configure(%d MHz, sleep %d) failed: %d\n", mhz, (int)on, (int)err);
+    return;
+  }
+  if (on) {
+    esp_sleep_enable_ext1_wakeup(1ULL << P_LORA_DIO_1, ESP_EXT1_WAKEUP_ANY_HIGH);
+    gpio_wakeup_enable((gpio_num_t)PIN_USER_BTN, GPIO_INTR_LOW_LEVEL);
+    esp_sleep_enable_gpio_wakeup();
+  } else {
+    gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT1);
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+  }
+  meckAutoSleepOn = on;
+  Serial.printf("[Power] Automatic light sleep %s (%d MHz)\n", on ? "on" : "off", mhz);
+  // The lock screen words the phone as a blocker or as sleeping with it by
+  // meckAutoSleepOn, which only changes here, at the end of the pass that
+  // already drew the lock screen: without this it stays wrong until the
+  // minute redraw
+  if (ui_task.isLocked()) ui_task.forceRefresh();
+}
+
+// Whether the locked deck can sleep automatically: only the phone keeps it up
+static bool meckAutoSleepWanted(bool locked, int blocker) {
+  if (!locked) return false;
+#ifdef HAS_4G_MODEM
+  #ifdef MODEM_UART_SLEEP
+  // A modem busy for a moment (a URC, the SMS poll) holds the CPU up with its
+  // own PM lock: switching the sleep off and on for it would only redraw the
+  // lock screen
+  if (blocker == MECK_SLEEP_MODEM && meckAutoSleepOn) blocker = meckLockSleepBlockerEx(true);
+  #else
+  if (modemManager.getState() != ModemState::OFF) return false;
+  #endif
+#endif
+  return blocker == MECK_SLEEP_PHONE;
+}
+
+#if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+// Each locked pass, after meckAutoSleep(): RI as a wake source while the
+// automatic sleep is on, and what it brings passed on to the modem task.
+// Before the lock sleep's prepareEspSleep(), which sets RI up its own way.
+static void meckAutoSleepModem() {
+  bool arm = meckAutoSleepOn && modemManager.uartSleepEnabled();
+  if (arm != meckAutoRiArmed) {
+    if (!arm) meckAutoRiArmed = false;
+    modemManager.setAutoSleepWake(arm);
+    meckAutoRiArmed = arm;
+    meckAutoRiLow = false;
+  }
+  if (!arm) return;
+  bool lowAtWake = meckAutoRiLow;
+  meckAutoRiLow = false;
+  modemManager.pollAutoSleepRi(lowAtWake);
+}
+#endif
+
+// What the GPS sends while the CPU sleeps is lost, so as in the lock sleep
+// the CPU stays up for the next GGA once a minute (at most 1.5 s), and for a
+// whole "GPS when locked" try. Each locked pass.
+static void meckAutoSleepGps(bool dutyAwake) {
+  static esp_pm_lock_handle_t lock = nullptr;
+  static bool held = false;
+  static uint32_t lastMinute = 0;
+  static unsigned long waitUntil = 0;
+  bool want = false;
+  if (meckAutoSleepOn && board.xl9555_digitalRead(XL_PIN_GPS_EN)) {
+    uint32_t minute = rtc_clock.getCurrentTime() / 60;
+    if (minute != lastMinute) {
+      lastMinute = minute;
+      meckGpsWaitStart();
+      waitUntil = millis() + 1500;
+    }
+    if (meckGpsWaiting && (meckGpsFixRead() || (long)(millis() - waitUntil) >= 0)) meckGpsWaiting = false;
+    want = meckGpsWaiting || dutyAwake;
+  }
+  if (want == held) return;
+  if (!lock && esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "meck_gps", &lock) != ESP_OK) return;
+  if (want) esp_pm_lock_acquire(lock);
+  else esp_pm_lock_release(lock);
+  held = want;
+}
+#endif
+
+// Whether a connected phone will let the deck sleep (automatically) once
+// locked, whatever else keeps it up: the quick settings verdict lists USB
+// and WiFi on their own
+bool meckPhoneLetsSleep() {
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  #if defined(HAS_4G_MODEM) && !defined(MODEM_UART_SLEEP)
+    #ifdef MECK_QUICK_SETTINGS
+  const uint8_t keep = the_mesh.getNodePrefs()->lock_keep;
+    #else
+  const uint8_t keep = 0xFF;
+    #endif
+  if (modemManager.getState() != ModemState::OFF && (keep & LOCK_KEEP_MODEM)) return false;
+  #endif
+  return true;
+#else
+  return false;
+#endif
+}
+
+// Whether a connected phone still lets the locked deck sleep, so the lock
+// warning and the lock screen need not blame it. Locked: whether it does
+// now; before locking: meckPhoneLetsSleep(), with the phone the only blocker.
+bool meckPhoneSleeps() {
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  if (meckLockSleepBlocker() != MECK_SLEEP_PHONE) return false;
+  if (ui_task.isLocked()) return meckAutoSleepOn;
+#endif
+  return meckPhoneLetsSleep();
+}
+
 // Called at the end of loop() instead of the plain locked-loop delay
 static void meckLockSleepStep() {
   bool locked = ui_task.isLocked();
@@ -4166,6 +4398,22 @@ static void meckLockSleepStep() {
 #endif
   int blocker = meckLockSleepBlocker();
   bool canSleep = locked && blocker == MECK_SLEEP_OK;
+  int dutyBlocker = blocker;
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  meckAutoSleep(meckAutoSleepWanted(locked, blocker));
+  #if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+  meckAutoSleepModem();
+  #endif
+  // Sleeping with the phone, "GPS when locked" cycles as in the lock sleep
+  if (meckAutoSleepOn) dutyBlocker = MECK_SLEEP_OK;
+#endif
+
+#if defined(MECK_AUTO_LIGHT_SLEEP) && defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
+  // While the CPU sleeps between connection events, each event wakes it: a
+  // slow interval then, and the fast one back on unlock for the sync. With
+  // the deck awake anyway it saved nothing (97 mA against 100 mA).
+  MECK_BLE_IFACE.setRelaxedLink(meckAutoSleepOn);
+#endif
 
   // BLE advertising off while sleep is possible, back on otherwise
   if (canSleep && !meckBleStoppedForSleep && MECK_BLE_IFACE.isEnabled()) {
@@ -4178,7 +4426,10 @@ static void meckLockSleepStep() {
     Serial.println("[Power] BLE advertising resumed");
   }
 
-  bool gpsDutyAwake = meckGpsDutyStep(locked, blocker);
+  bool gpsDutyAwake = meckGpsDutyStep(locked, dutyBlocker);
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  meckAutoSleepGps(gpsDutyAwake);
+#endif
   if (!locked) return;
   bool inWindow = (long)(millis() - meckAwakeUntil) < 0 || gpsDutyAwake;
   if (inWindow && !gpsDutyAwake && meckRxPasses >= 0 && meckRxHandled()) inWindow = false;   // packet done early
@@ -4208,10 +4459,21 @@ static void meckLockSleepStep() {
   if (modemOn) modemManager.prepareEspSleep();
 #endif
   esp_sleep_enable_gpio_wakeup();
+#ifdef CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP
+  // The controller keeps the main crystal on in light sleep for its modem
+  // sleep timing; with no link it has nothing to time, so let the lock
+  // sleep power it down as without Bluetooth
+  bool xtalOff = esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED &&
+                 !MECK_BLE_IFACE.isConnected();
+  if (xtalOff) esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL, ESP_PD_OPTION_OFF);
+#endif
   Serial.flush();
   int64_t sleepStart = esp_timer_get_time();   // esp_timer keeps counting through light sleep
   esp_light_sleep_start();
   meckSleptUs += (uint64_t)(esp_timer_get_time() - sleepStart);
+#ifdef CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP
+  if (xtalOff) esp_sleep_pd_config(ESP_PD_DOMAIN_XTAL, ESP_PD_OPTION_ON);
+#endif
   esp_sleep_wakeup_cause_t wakeCause = esp_sleep_get_wakeup_cause();
   gpio_wakeup_disable((gpio_num_t)PIN_USER_BTN);
   // A GPIO wake with the button up was RI (it pulses for 60-120 ms, a
@@ -4310,6 +4572,7 @@ struct MeckPwrRec {
   uint16_t linkIv;     // BLE connection interval the phone accepted, 1.25 ms (0 = none yet)
   uint8_t  appRx;      // frames received from the app over Bluetooth
   uint8_t  drop;       // a Bluetooth link ended: why (esp_gatt_conn_reason_t), 0 = none
+  uint16_t autoDs;     // asleep in automatic light sleep (phone connected), 0.1 s
 };
 
 enum {
@@ -4347,6 +4610,14 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
   r.jump = meckPwrJump;
   r.secs = (uint16_t)min((ms - meckPwrStartMs + 500) / 1000, 65535UL);
   r.sleptDs = (uint16_t)min(meckSleptUs / 100000ULL, 65535ULL);
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  {
+    static uint32_t autoMs0 = 0;
+    uint32_t autoMs = meckAutoSleptMs;
+    r.autoDs = (uint16_t)min((autoMs - autoMs0) / 100, (uint32_t)65535);
+    autoMs0 = autoMs;
+  }
+#endif
   r.mv = board.getBattMilliVolts();
   r.avgMa = board.getAvgCurrent();
   r.tempDc = board.getBattTemperature();
@@ -4385,10 +4656,10 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
 
   uint32_t rx, tx, ref, full;
   meckPwrCounters(rx, tx, ref, full);
-  r.rx = (uint8_t)min(rx - meckPwrRx0, 255U);
-  r.tx = (uint8_t)min(tx - meckPwrTx0, 255U);
-  r.refresh = (uint8_t)min(ref - meckPwrRef0, 255U);
-  r.full = (uint8_t)min(full - meckPwrFull0, 255U);
+  r.rx = (uint8_t)min(rx - meckPwrRx0, (uint32_t)255);
+  r.tx = (uint8_t)min(tx - meckPwrTx0, (uint32_t)255);
+  r.refresh = (uint8_t)min(ref - meckPwrRef0, (uint32_t)255);
+  r.full = (uint8_t)min(full - meckPwrFull0, (uint32_t)255);
   meckPwrRx0 = rx; meckPwrTx0 = tx; meckPwrRef0 = ref; meckPwrFull0 = full;
   if (meckBootSlowCal) {
     int64_t d = ((int64_t)(meckLastSlowCal ? meckLastSlowCal : esp_clk_slowclk_cal_get()) - meckBootSlowCal) * 1000000LL / meckBootSlowCal;
@@ -4408,7 +4679,7 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
 #if defined(BLE_PIN_CODE) && !defined(WIFI_SSID)
   r.linkIv = MECK_BLE_IFACE.isConnected() ? SerialBLEInterface::linkInterval() : 0;
   uint32_t appRx = MECK_BLE_IFACE.rxFrames();
-  r.appRx = (uint8_t)min(appRx - meckPwrAppRx0, 255U);
+  r.appRx = (uint8_t)min(appRx - meckPwrAppRx0, (uint32_t)255);
   meckPwrAppRx0 = appRx;
   uint16_t drops = MECK_BLE_IFACE.drops();
   if (drops != meckPwrDrops0) r.drop = MECK_BLE_IFACE.lastDropReason();
@@ -4445,14 +4716,14 @@ static const char MECK_PWR_HEADER[] =
   "utc,local_date,local_time,secs,asleep_s,wake_lora,wake_btn,wake_timer,"
   "pct,mv,avg_ma,temp_c,usb,charge,locked,blocker,saving,gps,modem,wifi,"
   "phone,ble,audio,light,rx,tx,refresh,full_refresh,clock_jump_s,utc_offset,rc_ppm,fix,"
-  "ble_win,sync_win,sync_link,sync_s,link_ms,app_rx,ble_drop";
+  "ble_win,sync_win,sync_link,sync_s,link_ms,app_rx,ble_drop,auto_sleep_s";
 
 static int meckPwrCsv(const MeckPwrRec& r, char* buf, size_t len, char* date, size_t dlen) {
   char hm[8];
   meckPwrLocalDate(r.t, r.utc, date, dlen, hm, sizeof(hm));
   uint16_t f = r.flags;
   return snprintf(buf, len,
-    "%lu,%s,%s,%u,%u.%u,%u,%u,%u,%u,%u,%d,%d.%d,%d,%u,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%ld,%d,%d,%d,%u,%u,%u,%u.%u,%u.%02u,%u,%u",
+    "%lu,%s,%s,%u,%u.%u,%u,%u,%u,%u,%u,%d,%d.%d,%d,%u,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d,%u,%u,%u,%u,%ld,%d,%d,%d,%u,%u,%u,%u.%u,%u.%02u,%u,%u,%u.%u",
     (unsigned long)r.t, date, hm, r.secs, r.sleptDs / 10, r.sleptDs % 10,
     r.wLora, r.wBtn, r.wTimer, r.pct, r.mv, r.avgMa, r.tempDc / 10, abs(r.tempDc % 10),
     (f & MECK_PWR_F_USB) ? 1 : 0, r.chg, (f & MECK_PWR_F_LOCKED) ? 1 : 0, r.blocker,
@@ -4461,7 +4732,8 @@ static int meckPwrCsv(const MeckPwrRec& r, char* buf, size_t len, char* date, si
     (f & MECK_PWR_F_AUDIO) ? 1 : 0, (f & MECK_PWR_F_LIGHT) ? 1 : 0,
     r.rx, r.tx, r.refresh, r.full, (long)r.jump, r.utc, r.rcPpm, (f & MECK_PWR_F_FIX) ? 1 : 0,
     r.bleWin, r.syncWins, r.syncLinked, r.syncDs / 10, r.syncDs % 10,
-    (unsigned)(r.linkIv * 125 / 100), (unsigned)(r.linkIv * 125 % 100), r.appRx, r.drop);
+    (unsigned)(r.linkIv * 125 / 100), (unsigned)(r.linkIv * 125 % 100), r.appRx, r.drop,
+    r.autoDs / 10, r.autoDs % 10);
 }
 
 #ifndef MECK_GIT_HASH
@@ -4816,6 +5088,9 @@ static void dialerBusyPoll(const void*) {
 #endif // HAS_TOUCHSCREEN && HAS_4G_MODEM
 
 void loop() {
+  #ifdef MECK_SERIAL_PACING
+  meckSerialPace();
+  #endif
   #ifdef HAS_SDCARD
   meckExportPoll();        // Settings export: runs once its popup is on screen
   meckImportPoll();        // Settings import: same

@@ -26,11 +26,14 @@
 >   `meck_max_ble_wifi`): each connection is turned on and off on its own,
 >   one app on each, no restart to switch. In the new UI they share one
 >   "Connections" home page.
-> - **A phone that does not eat the battery**: a connected phone keeps a
->   locked deck awake at about 100 mA. "Phone when locked" can let the deck
->   sleep and open a Bluetooth window every few minutes (and for each
->   message you are notified of) for the app to sync, about 23 mA on
->   average. Dead links are dropped so the app can find the deck again.
+> - **A phone that does not eat the battery**: a connected phone used to
+>   keep a locked deck awake at about 100 mA. Now the deck stays connected
+>   and sleeps between the phone's Bluetooth connection events, which it
+>   spaces out while locked: about 23 mA, as long as 4G and GPS are off
+>   (with either on, it stays awake as before). Or "Phone when locked" lets the deck sleep fully and
+>   open a Bluetooth window every few minutes (and for each message you are
+>   notified of) for the app to sync, about 23 mA on average. Dead links
+>   are dropped so the app can find the deck again.
 > - **Direct messages**: longer wait for the ACK on long flood routes, late
 >   ACKs still mark a message delivered, the final status survives a
 >   restart.

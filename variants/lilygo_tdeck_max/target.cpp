@@ -14,7 +14,12 @@
 TDeckProMaxBoard board;
 
 #if defined(P_LORA_SCLK)
-  static SPIClass loraSpi(HSPI);
+  // The e-ink display and the radio share one SPI bus, so they share the
+  // SPIClass object. A second SPIClass on the same host makes core 3.x call
+  // spiStartBus() again, which resets the peripheral and hangs the first
+  // transfer.
+  extern SPIClass displaySpi;
+  #define loraSpi displaySpi
   RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, loraSpi);
 #else
   RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY);

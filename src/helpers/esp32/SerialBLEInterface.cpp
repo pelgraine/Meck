@@ -2,6 +2,7 @@
 #include "esp_bt.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatt_common_api.h"
+#include <esp_mac.h>
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -90,10 +91,18 @@ static void onGapEvent(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* par
       BLE_DEBUG_PRINTLN("phy update: status %d, tx %d, rx %d", param->phy_update.status,
                         param->phy_update.tx_phy, param->phy_update.rx_phy);
       break;
-    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT:
-      BLE_DEBUG_PRINTLN("data length: status %d, rx %u, tx %u", param->pkt_data_lenth_cmpl.status,
-                        param->pkt_data_lenth_cmpl.params.rx_len, param->pkt_data_lenth_cmpl.params.tx_len);
+    case ESP_GAP_BLE_SET_PKT_LENGTH_COMPLETE_EVT: {
+      // IDF 5 fixed the "lenth" misspelling of IDF 4
+#if ESP_IDF_VERSION_MAJOR >= 5
+      auto& dl = param->pkt_data_length_cmpl;
+#else
+      auto& dl = param->pkt_data_lenth_cmpl;
+#endif
+      BLE_DEBUG_PRINTLN("data length: status %d, rx %u, tx %u", dl.status,
+                        dl.params.rx_len, dl.params.tx_len);
+      (void)dl;
       break;
+    }
     default:
       break;
   }
@@ -118,7 +127,16 @@ void SerialBLEInterface::_realBegin() {
   esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, MECK_BLE_TX_POWER);
 
   BLESecurity  sec;
+#if ESP_IDF_VERSION_MAJOR >= 5
+  // Core 3.x dropped setStaticPIN(); this is what it did on core 2.x (its
+  // SC-only auth mode is replaced right below anyway)
+  sec.setPassKey(true, _pin_code);
+  sec.setCapability(ESP_IO_CAP_OUT);
+  sec.setKeySize();
+  sec.setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+#else
   sec.setStaticPIN(_pin_code);
+#endif
 #ifdef MECK_BLE_JUST_WORKS
   // Garmin Connect IQ has no way to enter a PIN, so a watch can only reach an
   // encrypted-but-unverified ("just works") link. Drop the MITM requirement so
@@ -191,32 +209,15 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     // three requests below fail with "Invalid connection remote_bda".
     memcpy(_remote_bda, cmpl.bd_addr, 6);
 
-    // Request fast connection interval (15ms) for faster contact sync.
-    // Phone may negotiate higher, but most modern phones accept 15ms.
-    // Units are 1.25ms, so 12 = 15ms, 16 = 20ms.
-    esp_ble_conn_update_params_t conn_params;
-    memcpy(conn_params.bda, _remote_bda, 6);
-#ifdef MECK_BLE_SLOW_INTERVAL
-    // Watch link: a message every few minutes does not need a 15 ms interval,
-    // and a fast interval keeps the watch radio (and this stack) busy all day.
-    conn_params.min_int = 80;   // 100ms  (80 x 1.25ms)
-    conn_params.max_int = 160;  // 200ms  (160 x 1.25ms)
-    conn_params.latency = 2;    // peer may skip 2 intervals when idle
-    conn_params.timeout = 600;  // 6 seconds supervision timeout
-    esp_ble_gap_update_conn_params(&conn_params);
-    BLE_DEBUG_PRINTLN(" - Requested relaxed connection interval (100-200ms)");
-#else
-    conn_params.min_int = 12;   // 15ms   (12 × 1.25ms)
-    conn_params.max_int = 16;   // 20ms   (16 × 1.25ms)
-    conn_params.latency = 0;    // no skipped intervals
-    conn_params.timeout = 400;  // 4 seconds supervision timeout
-    esp_ble_gap_update_conn_params(&conn_params);
-    BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
-#endif
+    requestConnParams();
 
     // Request 2M PHY for doubled air data rate (BLE 5.0, supported on ESP32-S3)
-    // Note: ESP-IDF misspells "preferred" as "prefered" in their API
+    // ESP-IDF 4 misspelled "preferred" as "prefered"; IDF 5 fixed the name
+#if ESP_IDF_VERSION_MAJOR >= 5
+    esp_ble_gap_set_preferred_phy(_remote_bda,
+#else
     esp_ble_gap_set_prefered_phy(_remote_bda,
+#endif
                                   0,   // all_phys: no preference flags, use tx/rx masks
                                   ESP_BLE_GAP_PHY_2M_PREF_MASK,
                                   ESP_BLE_GAP_PHY_2M_PREF_MASK,
@@ -231,6 +232,47 @@ void SerialBLEInterface::onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) {
     pServer->disconnect(pServer->getConnId());
     adv_restart_time = millis() + ADVERT_RESTART_DELAY;
   }
+}
+
+// Fast interval (15-20 ms) for a quick contact sync while the user is at the
+// deck; relaxed (100-150 ms, the deck may skip 4 events when it has nothing
+// to send) while locked, where a message every few minutes is all the link
+// carries. The relaxed values stay inside Apple's limits (interval max x
+// (latency + 1) <= 2 s, max >= min + 15 ms, timeout <= 6 s).
+// Units: interval 1.25 ms, timeout 10 ms.
+void SerialBLEInterface::requestConnParams() {
+  esp_ble_conn_update_params_t conn_params;
+  memcpy(conn_params.bda, _remote_bda, 6);
+#ifdef MECK_BLE_SLOW_INTERVAL
+  // Watch link: a message every few minutes does not need a 15 ms interval,
+  // and a fast interval keeps the watch radio (and this stack) busy all day.
+  conn_params.min_int = 80;   // 100ms
+  conn_params.max_int = 160;  // 200ms
+  conn_params.latency = 2;    // peer may skip 2 intervals when idle
+  conn_params.timeout = 600;  // 6 seconds supervision timeout
+  BLE_DEBUG_PRINTLN(" - Requested relaxed connection interval (100-200ms)");
+#else
+  if (_relaxed) {
+    conn_params.min_int = 80;   // 100ms
+    conn_params.max_int = 120;  // 150ms
+    conn_params.latency = 4;
+    conn_params.timeout = 600;  // 6 seconds
+    BLE_DEBUG_PRINTLN(" - Requested relaxed connection interval (100-150ms, latency 4)");
+  } else {
+    conn_params.min_int = 12;   // 15ms
+    conn_params.max_int = 16;   // 20ms
+    conn_params.latency = 0;
+    conn_params.timeout = 400;  // 4 seconds
+    BLE_DEBUG_PRINTLN(" - Requested fast connection interval (15-20ms)");
+  }
+#endif
+  esp_ble_gap_update_conn_params(&conn_params);
+}
+
+void SerialBLEInterface::setRelaxedLink(bool relaxed) {
+  if (_relaxed == relaxed) return;
+  _relaxed = relaxed;
+  if (_isEnabled && deviceConnected && _auth_ok) requestConnParams();
 }
 
 // -------- BLEServerCallbacks methods

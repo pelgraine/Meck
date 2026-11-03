@@ -24,13 +24,14 @@ class SerialWifiInterface : public BaseSerialInterface {
 
   FrameHeader received_frame_header;
 
+  // The send queue is 16 KB that internal RAM, which the WiFi driver needs,
+  // cannot spare: begin() puts it in PSRAM when there is some. Frames from
+  // the app are read straight into the caller's buffer, so no receive queue.
   #define FRAME_QUEUE_SIZE  64
-  int recv_queue_len;
-  Frame recv_queue[FRAME_QUEUE_SIZE];
   int send_queue_len;
-  Frame send_queue[FRAME_QUEUE_SIZE];
+  Frame* send_queue;
 
-  void clearBuffers() { recv_queue_len = 0; send_queue_len = 0; }
+  void clearBuffers() { send_queue_len = 0; }
 
 protected:
 
@@ -39,7 +40,8 @@ public:
     deviceConnected = false;
     _isEnabled = false;
     _last_write = 0;
-    send_queue_len = recv_queue_len = 0;
+    send_queue_len = 0;
+    send_queue = NULL;
     received_frame_header.type = 0;
     received_frame_header.length = 0;
   }

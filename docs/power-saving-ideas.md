@@ -14,7 +14,8 @@ From the power log of one night on battery (10.7 h, 99 % to 85 %):
 | Locked, asleep, GPS on with a fix | 31.7 mA | 47 min by a window on battery (branch gps-lock-sleep): blocker "can sleep", asleep 59.3 s of 60, one timer wake a minute, awake time as without GPS; the GPS costs about 15 mA. Whether the position was updated is not confirmed: the log has no fix or position field |
 | Light sleep floor | about 13 mA | between wakes |
 | Locked and awake (a blocker holds it) | about 35 mA | e.g. on USB |
-| Locked with a phone connected over BLE | about 100 mA | blocker PHONE, never sleeps; 97 mA with the relaxed interval |
+| Locked with a phone connected over BLE | 23 mA | automatic light sleep with the relaxed interval (step 2.3); about 100 mA before, awake all the time |
+| Locked with a phone, the GPS and 4G on | about 46 mA | automatic light sleep with both (2026-11-03, 6 min): asleep 51 s of 60 |
 | Locked, phone syncs "Every 10 min" | 23.4 mA | sync windows, see 2 below |
 | Before power-fixes (locked, idle) | about 82 mA | for comparison |
 
@@ -68,6 +69,65 @@ Steps, in order of effort:
    a custom sdkconfig, i.e. an ESP-IDF build of the Arduino core or
    pioarduino with `custom_sdkconfig`. Expected: the deck with a phone
    connected near the sleep floor, maybe 20-25 mA. High effort.
+
+   First part done on branch `pioarduino-s3`: the MAX envs build on
+   pioarduino (Arduino core 3.3, ESP-IDF 5.5) with `custom_sdkconfig`. Core
+   3.x ships the S3 libraries with NimBLE, so the sdkconfig switches back to
+   Bluedroid with the 4.2 and 5.0 features of core 2.x; the T-Deck Pro envs
+   stay on core 2.x. `pioarduino_fixes.py` works around problems of the
+   two-pass build. On Windows, build from PowerShell (idf_tools.py refuses
+   MSys) with a short `PLATFORMIO_CACHE_DIR` (the core libraries hit the
+   260-character path limit while unpacking). On core 3.x the radio must
+   share the display's SPIClass: a second SPIClass on the same host resets
+   the bus and the first radio transfer hangs. Tried on the device: boot,
+   display, radio init, UI, modem registration. Not yet: BLE pairing and
+   existing bonds, WiFi with BLE, audio and voice messages (legacy I2S
+   driver on IDF 5), receiving packets, the modem's `AT+CLVL` and ringtone
+   upload errors (not compared with core 2.x).
+
+   Second part on branch `ble-modem-sleep`: `custom_sdkconfig` turns on power
+   management, tickless idle and the controller's modem sleep with the main
+   crystal as its low-power clock (kept powered in light sleep). When the
+   locked deck is kept awake only by a connected phone (blocker PHONE),
+   `meckAutoSleep()` enables automatic light
+   sleep at the current CPU frequency (80 MHz, no frequency scaling: the SPI
+   and I2C set-ups assume the APB clock). The CPU then sleeps whenever every
+   task waits, and wakes on the LoRa DIO1 (ext1), the button and task timers.
+   UART data that comes in while the CPU sleeps is lost, so the modem and
+   the GPS are handled as in the lock sleep (2026-11-03; with the phone, the
+   GPS and 4G on: about 46 mA, asleep 51 s of 60, a 6 min sample on battery;
+   the quick settings estimate says 43 mA):
+   the modem task holds a PM lock (no light sleep) while the modem's UART
+   is awake, RI wakes the CPU by level (its edge ISR is off meanwhile, the
+   main loop passes RI on; the PM exit callback notes a low RI so an SMS
+   pulse is not missed), and with the GPS on the CPU stays up once a minute
+   until the next GGA, or through a whole "GPS when locked" try. A modem
+   busy for a moment does not switch the automatic sleep off. Before that
+   change the deck stayed awake with either of them on. Because
+   the controller keeps the crystal on in every light sleep once Bluetooth
+   has been enabled, the lock sleep without a link powers it down around
+   `esp_light_sleep_start()`. The power log's `auto_sleep_s` column has the
+   time in automatic light sleep.
+
+   While automatic light sleep is on, the deck also asks the phone for the
+   relaxed interval of step 1 (100-150 ms, slave latency 4, 6 s timeout),
+   and for 15-20 ms again when it ends. Each connection event wakes the
+   CPU, so the interval only pays off now that the CPU sleeps between them.
+
+   Measured on battery with an iPhone, locked, modem and GPS off:
+
+   | | Current | CPU awake | Interval |
+   |---|---|---|---|
+   | Automatic light sleep (2026-11-01, 39 min) | 31 mA | 31 % | 30 ms (iOS) |
+   | With the relaxed interval (2026-11-01/02 night, 6.75 h) | 23 mA (22-27) | 13 % | 150 ms |
+
+   The night run: 100 % to 89 % (1.6 %/h, about 60 h for the whole cell),
+   three LoRa packets received while asleep, app traffic in 7 minutes. The
+   link dropped once (02:02, reason 0x08, supervision timeout) and the
+   phone was back within the minute; the drops soon after locking seen
+   with the relaxed interval on the deck that stayed awake did not happen.
+   Still to check: the lock sleep floor without a link (13 mA before) and
+   the button while it sleeps.
 4. **NimBLE instead of Bluedroid.** Less RAM (helps WiFi + BLE too) and
    better tested with modem sleep. A large change (see the WiFi + BLE
    analysis).

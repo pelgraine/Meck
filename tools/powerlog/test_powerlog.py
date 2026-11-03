@@ -16,7 +16,7 @@ T0 = 1793000000   # 2026-10-26 07:33:20 UTC
 
 def make_line(t, secs=60, slept_ds=550, mv=3900, avg_ma=-14, temp_dc=215, pct=80, chg=0,
               blocker=0, utc=1, wl=1, wb=0, wt=1, rx=0, tx=0, refresh=1, full=0, rc_ppm=12,
-              jump=0, flags=None, fix=0, sync=(0, 0, 0, "0.0", "0.00"), app=(0, 0), columns=None):
+              jump=0, flags=None, fix=0, sync=(0, 0, 0, "0.0", "0.00"), app=(0, 0), auto="0.0", columns=None):
     """A record printed exactly like meckPwrCsv() in examples/companion_radio/main.cpp."""
     f = {"locked": 1, "saving": 1}
     f.update(flags or {})
@@ -24,11 +24,11 @@ def make_line(t, secs=60, slept_ds=550, mv=3900, avg_ma=-14, temp_dc=215, pct=80
     tdeg = int(temp_dc / 10)                  # C division truncates toward zero
     tfrac = abs(int(math.fmod(temp_dc, 10)))
     line = ("%d,%s,%s,%d,%d.%d,%d,%d,%d,%d,%d,%d,%d.%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-            "%d,%d,%d,%s,%s,%d,%d"
+            "%d,%d,%d,%s,%s,%d,%d,%s"
             % ((t, date, hm, secs, slept_ds // 10, slept_ds % 10, wl, wb, wt, pct, mv, avg_ma, tdeg, tfrac,
                f.get("usb", 0), chg, f.get("locked", 0), blocker, f.get("saving", 0), f.get("gps", 0),
                f.get("modem", 0), f.get("wifi", 0), f.get("phone", 0), f.get("ble", 0), f.get("audio", 0),
-               f.get("light", 0), rx, tx, refresh, full, jump, utc, rc_ppm, fix) + tuple(sync) + tuple(app)))
+               f.get("light", 0), rx, tx, refresh, full, jump, utc, rc_ppm, fix) + tuple(sync) + tuple(app) + (auto,)))
     return line if columns is None else ",".join(line.split(",")[:columns])
 
 
@@ -38,7 +38,7 @@ def series(t0, n, **kw):
 
 class ParseTest(unittest.TestCase):
     def test_header_matches_firmware(self):
-        self.assertEqual(len(fmt.FIELDS), 39)
+        self.assertEqual(len(fmt.FIELDS), 40)
         self.assertEqual(fmt.classify(fmt.HEADER), "header")
 
     def test_record(self):
@@ -61,19 +61,19 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(fmt.classify(line.replace(",80,", ",8x,", 1)), "bad")
 
     def test_first_format_without_rc_ppm(self):
-        line = make_line(T0, columns=len(fmt.FIELDS) - 2 - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS))
+        line = make_line(T0, columns=len(fmt.FIELDS) - 2 - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS) - 1)
         self.assertEqual(fmt.classify(fmt.HEADER_V1), "header")
         rec, warn = fmt.parse_line(line)
         self.assertEqual((rec["rc_ppm"], rec["fix"], rec["pct"], warn), (0, 0, 80, []))
 
     def test_second_format_without_fix(self):
-        line = make_line(T0, columns=len(fmt.FIELDS) - 1 - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS))
+        line = make_line(T0, columns=len(fmt.FIELDS) - 1 - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS) - 1)
         self.assertEqual(fmt.classify(fmt.HEADER_V2), "header")
         rec, warn = fmt.parse_line(line)
         self.assertEqual((rec["rc_ppm"], rec["fix"], warn), (12, 0, []))
 
     def test_format_without_sync_columns(self):
-        line = make_line(T0, fix=1, columns=len(fmt.FIELDS) - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS))
+        line = make_line(T0, fix=1, columns=len(fmt.FIELDS) - len(fmt.SYNC_FIELDS) - len(fmt.APP_FIELDS) - 1)
         self.assertEqual(fmt.classify(fmt.HEADER_V3), "header")
         rec, warn = fmt.parse_line(line)
         self.assertEqual((rec["fix"], rec["ble_win"], rec["sync_s"], warn), (1, 0, 0.0, []))
@@ -85,10 +85,20 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(fmt.BLOCKERS[rec["blocker"]], "phone sync")
 
     def test_format_without_app_columns(self):
-        line = make_line(T0, sync=(10, 1, 1, "12.4", "18.75"), columns=len(fmt.FIELDS) - len(fmt.APP_FIELDS))
+        line = make_line(T0, sync=(10, 1, 1, "12.4", "18.75"), columns=len(fmt.FIELDS) - len(fmt.APP_FIELDS) - 1)
         self.assertEqual(fmt.classify(fmt.HEADER_V4), "header")
         rec, warn = fmt.parse_line(line)
         self.assertEqual((rec["link_ms"], rec["app_rx"], rec["ble_drop"], warn), (18.75, 0, 0, []))
+
+    def test_format_without_auto_sleep(self):
+        line = make_line(T0, app=(14, 0x13), columns=len(fmt.FIELDS) - 1)
+        self.assertEqual(fmt.classify(fmt.HEADER_V5), "header")
+        rec, warn = fmt.parse_line(line)
+        self.assertEqual((rec["ble_drop"], rec["auto_sleep_s"], warn), (19, 0.0, []))
+
+    def test_auto_sleep_column(self):
+        rec, warn = fmt.parse_line(make_line(T0, blocker=3, slept_ds=0, auto="51.7", flags={"phone": 1}))
+        self.assertEqual((rec["auto_sleep_s"], warn), (51.7, []))
 
     def test_app_columns(self):
         rec, warn = fmt.parse_line(make_line(T0, app=(14, 0x13)))
