@@ -203,6 +203,66 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(len(fmt.quiet_stretches(tl)), 1)
 
 
+class ScenarioTest(unittest.TestCase):
+    FW = [{"id": 0, "hash": "bbbb", "git_time": 2000, "build_time": 2100},
+          {"id": 1, "hash": "aaaa", "git_time": 1000, "build_time": 1100},   # older commit
+          {"id": 2, "hash": "cccc", "git_time": 3000, "build_time": 3100}]
+
+    def timeline(self, parts):
+        """parts: (minutes, avg current, firmware id, flags) in time order, a gap between them."""
+        recs, t = [], T0
+        for n, ma, fw, flags in parts:
+            for i in range(n):
+                r, _ = fmt.parse_line(make_line(t + 60 * i, avg_ma=-ma, flags=flags))
+                r["fw"] = fw
+                recs.append(r)
+            t += 60 * n + 3600
+        tl, _ = fmt.build_timeline(recs, now=t + 86400)
+        return fmt.segments(tl)
+
+    def test_settle_skips_the_first_minutes(self):
+        segs = self.timeline([(12, 20, 0, None)])
+        self.assertEqual(segs[0]["secs"], 720)
+        self.assertEqual(segs[0]["settled_secs"], 720 - fmt.SETTLE_S)
+
+    def test_latest_and_previous_skip_unsettled_and_missing(self):
+        locked = None
+        gps = {"gps": 1}
+        segs = self.timeline([
+            (60, 20, 1, locked), (60, 120, 1, gps),   # aaaa: both states
+            (60, 15, 0, locked),                      # bbbb: no GPS
+            (5, 40, 2, locked), (20, 100, 2, gps),    # cccc: locked too short, GPS short
+        ])
+        sc = {s["state"]: s for s in fmt.scenarios(segs, self.FW)}
+        lk = sc["locked, saving"]
+        self.assertEqual([p["fw"] for p in lk["per"]], [1, 0, 2])           # by commit time
+        self.assertEqual([p["quality"] for p in lk["per"]], ["settled", "settled", "unsettled"])
+        self.assertEqual((lk["latest"], lk["prev"], lk["newest_unsettled"]), (0, 1, 2))
+        self.assertEqual((lk["delta_ma"], lk["verdict"]), (-5.0, "better"))
+        g = sc["locked, saving, gps"]
+        self.assertEqual((g["latest"], g["prev"]), (2, 1))                  # bbbb never had GPS
+        self.assertEqual(g["per"][-1]["quality"], "short")
+        self.assertEqual((g["delta_ma"], g["verdict"]), (-20.0, "better"))
+
+    def test_small_change_is_same(self):
+        segs = self.timeline([(60, 20, 1, None), (60, 21, 0, None)])
+        s = fmt.scenarios(segs, self.FW)[0]
+        self.assertEqual((s["delta_ma"], s["verdict"]), (1.0, "same"))
+
+    def test_usb_gets_no_verdict(self):
+        segs = self.timeline([(60, 0, 1, {"usb": 1}), (60, 30, 0, {"usb": 1})])
+        s = fmt.scenarios(segs, self.FW)[0]
+        self.assertTrue(s["usb"])
+        self.assertEqual((s["delta_ma"], s["verdict"]), (30.0, None))
+
+    def test_sync_window_setting_is_part_of_the_state(self):
+        r, _ = fmt.parse_line(make_line(T0, flags={"ble": 1}))
+        r["ble_win"] = 5
+        self.assertEqual(fmt.state_label(r), "locked, saving, ble, sync every 5 min")
+        r["locked"] = 0
+        self.assertEqual(fmt.state_label(r), "saving, ble")
+
+
 class StoreTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
@@ -259,7 +319,19 @@ class StoreTest(unittest.TestCase):
         tl, _ = fmt.build_timeline(recs, now=T0 + 86400)
         fws = fmt.by_firmware(tl, info["firmware"])
         self.assertEqual(sorted(f["fw"] for f in fws), [-1, 0])
-        self.assertEqual(fws[0]["hash"], None)        # newest first: the unnamed boot
+        self.assertEqual([f["hash"] for f in fws], ["9d4bb1d9", None])   # by commit, unnamed oldest
+
+    def test_builds_of_one_commit_are_one_firmware(self):
+        a1 = "#fw,9d4bb1d9,1793293985,1793295000,Meck v1.15.1"
+        a2 = "#fw,9d4bb1d9,1793293985,1793299000,Meck v1.15.1"
+        a_dirty = "#fw,9d4bb1d9+,1793293985,1793299500,Meck v1.15.1"
+        self.store.save_pull({"20261026.csv": [a1] + series(T0, 3) + [a2] + series(T0 + 3600, 3)
+                              + [a_dirty] + series(T0 + 7200, 3)})
+        recs, info = self.store.load()
+        self.assertEqual([(f["hash"], f["dirty"], f["builds"]) for f in info["firmware"]],
+                         [("9d4bb1d9", False, 2), ("9d4bb1d9", True, 1)])
+        self.assertEqual(info["firmware"][0]["build_time"], 1793295000)
+        self.assertEqual([r["fw"] for r in recs], [0] * 6 + [1] * 3)
 
     def test_bad_lines_kept_once(self):
         cut = make_line(T0)[:40]

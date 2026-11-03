@@ -9,21 +9,21 @@
   color-scheme: light;
   --page: #f9f9f7; --surface: #fcfcfb; --band: #f0efec; --ink: #0b0b0b; --ink-2: #52514e;
   --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --hatch: #c3c2b7; --bad: #d03b3b;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --hatch: #c3c2b7; --bad: #d03b3b; --good: #006300;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --page: #0d0d0d; --surface: #1a1a19; --band: #262624; --ink: #f0efec; --ink-2: #c3c2b7;
     --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46; --good: #0ca30c;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --page: #0d0d0d; --surface: #1a1a19; --band: #262624; --ink: #f0efec; --ink-2: #c3c2b7;
   --muted: #898781; --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --hatch: #4a4a46; --good: #0ca30c;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--ink);
@@ -75,9 +75,21 @@ th { color: var(--ink-2); font-weight: 600; cursor: pointer; background: var(--b
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 td.wrap { white-space: normal; }
 tbody tr:hover { background: var(--band); }
-#segs tbody tr, #fwtab tbody tr { cursor: pointer; }
+#segs tbody tr, #fwtab tbody tr, #scen tr.sc { cursor: pointer; }
+#scen td { vertical-align: middle; }
+#scen tr.det td { background: var(--band); font-size: 12px; padding: 3px 8px; }
+#scen tr.det td:first-child { padding-left: 24px; }
+#scen tr.grp td { background: var(--page); color: var(--ink-2); font-weight: 600; padding-top: 12px; white-space: normal; }
+#scen .sub { color: var(--muted); font-size: 11px; display: block; }
+#scen .q-short { color: var(--ink-2); }
+#scen .q-unsettled { color: var(--muted); }
+.v-better { color: var(--good); font-weight: 600; }
+.v-worse { color: var(--bad); font-weight: 600; }
+.v-same { color: var(--ink-2); }
+.spark { display: block; }
 #fwtab tr.sel td { background: var(--band); font-weight: 600; }
-select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; max-width: 100%; min-width: 0; }
+.toolbar label:has(select) { max-width: 100%; min-width: 0; }
 .scroll { overflow-x: auto; max-height: 460px; overflow-y: auto; border-radius: 8px; }
 details { margin-top: 16px; }
 summary { cursor: pointer; color: var(--ink-2); }
@@ -117,10 +129,12 @@ Times are the deck's local time.</p>
 
 <h2>Firmware versions <span style="font-weight:400;color:var(--muted)">(click a row to show only its runs below)</span></h2>
 <div class="scroll"><table id="fwtab"></table></div>
-<div class="toolbar"><label>Tables below for <select id="fwsel"></select></label></div>
-<h2>Time per state</h2>
-<div class="scroll"><table id="bystate"></table></div>
+<h2>Consumption by scenario and firmware <span style="font-weight:400;color:var(--muted)">(click a row for every firmware)</span></h2>
+<p class="hint" id="scenhint"></p>
+<div class="toolbar"><label><input type="checkbox" id="brief"> <span id="brieflabel">Show scenarios measured only briefly</span></label></div>
+<div class="scroll" style="max-height:none"><table id="scen"></table></div>
 <h2>Runs <span style="font-weight:400;color:var(--muted)">(click a row to zoom to it)</span></h2>
+<div class="toolbar"><label>Runs of <select id="fwsel"></select></label></div>
 <div class="scroll"><table id="segs"></table></div>
 <details id="unk"><summary></summary><div class="scroll"><table></table></div></details>
 <details id="bad"><summary></summary><div class="scroll"><table></table></div></details>
@@ -342,7 +356,8 @@ function seriesPaths(get, i0, i1, y) {
   let line = "", top = [], bot = [], bucket = null;
   const flushB = () => {
     if (!bucket) return;
-    const m = bucket.sum / bucket.w, x = bucket.x + 0.5;
+    // a pixel of only 0 s records (the one written on unlock) has no weight
+    const m = bucket.w ? bucket.sum / bucket.w : (bucket.min + bucket.max) / 2, x = bucket.x + 0.5;
     line += (line ? "L" : "M") + x.toFixed(1) + "," + y(m).toFixed(1);
     top.push(x.toFixed(1) + "," + y(bucket.max).toFixed(1));
     bot.push(x.toFixed(1) + "," + y(bucket.min).toFixed(1));
@@ -672,18 +687,6 @@ function fwName(id) {
 const fwTime = t => t ? full(t) : "–";
 let fwFilter = "all";
 const segsShown = () => D.segments.map((s, i) => Object.assign({ i }, s)).filter(s => fwFilter === "all" || s.fw === fwFilter);
-function byState(segs) {
-  const acc = new Map();
-  for (const s of segs) {
-    const a = acc.get(s.state) || { state: s.state, secs: 0, mas: 0, runs: 0, rx: 0, tx: 0 };
-    a.secs += s.secs; a.mas += s.ma * s.secs; a.runs++; a.rx += s.rx; a.tx += s.tx;
-    acc.set(s.state, a);
-  }
-  return [...acc.values()].map(a => {
-    const ma = a.secs ? a.mas / a.secs : 0;
-    return Object.assign(a, { ma, pct_h: ma / D.capacity * 100 });
-  }).sort((x, y) => y.secs - x.secs);
-}
 function renderFirmware() {
   const sel = $("fwsel");
   sel.innerHTML = '<option value="all">all firmware</option>' + D.by_firmware.map(f =>
@@ -694,17 +697,116 @@ function renderFirmware() {
       "</td><td>" + fwTime(f.git_time) + "</td><td>" + fwTime(f.build_time) + "</td><td>" + full(f.t0) + " – " + full(f.t1) + "</td><td class=n>" + dur(f.secs) +
       "</td><td class=n>" + f1(f.ma) + "</td><td class=n>" + f2(f.pct_h) + "</td><td class=n>" + (f.asleep == null ? "–" : Math.round(f.asleep * 100) + " %") + "</td></tr>").join("") + "</tbody>";
 }
-function setFw(v) { fwFilter = v === "all" ? "all" : +v; renderFirmware(); renderTables(); }
+function setFw(v) { fwFilter = v === "all" ? "all" : +v; renderFirmware(); renderSegs(); }
 $("fwsel").addEventListener("change", e => setFw(e.target.value));
 $("fwtab").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-fw]");
   if (tr) setFw(fwFilter === +tr.dataset.fw ? "all" : tr.dataset.fw);
 });
 
+// ---------- scenarios by firmware ----------
+const QUALITY = { settled: "settled", short: "short, may be off", unsettled: "too short to use" };
+const fwShort = id => id == null ? "–" : id < 0 ? "older (not named)" : fwName(id);
+const fwDate = id => {
+  const f = D.firmware[id];
+  return id >= 0 && f && f.git_time ? dateLabel(f.git_time) : "";
+};
+const scenOpen = new Set();
+function perOf(sc, fw) { return sc.per.find(p => p.fw === fw); }
+function verdictHtml(sc) {
+  if (sc.delta_ma == null) return '<span class="v-same">no earlier firmware to compare</span>';
+  const rel = sc.delta_rel == null ? "" : " (" + (sc.delta_rel > 0 ? "+" : "−") + Math.abs(Math.round(sc.delta_rel * 100)) + " %)";
+  const d = (sc.delta_ma > 0 ? "+" : sc.delta_ma < 0 ? "−" : "±") + Math.abs(sc.delta_ma).toFixed(1) + " mA" + rel;
+  const word = sc.verdict === "better" ? '<span class="v-better">▼ better</span> '
+             : sc.verdict === "worse" ? '<span class="v-worse">▲ worse</span> '
+             : sc.verdict === "same" ? '<span class="v-same">≈ same</span> ' : "";
+  const pp = perOf(sc, sc.prev);
+  return word + d + '<span class="sub">vs ' + esc(fwShort(sc.prev)) + " " + fwDate(sc.prev) + " · " + f1(pp.ma) + " mA" +
+    (pp.quality === "short" ? ", measured only " + dur(pp.settled_secs) : "") + "</span>";
+}
+// mean current per firmware, oldest left; filled = settled, hollow = short,
+// grey = too short (left out of the line and the scale)
+function sparkline(sc) {
+  const W = 150, H = 36, P = 5;
+  const pts = sc.per.filter(p => p.ma != null);
+  if (!pts.length) return "";
+  const use = pts.filter(p => p.quality !== "unsettled");
+  const vals = (use.length ? use : pts).map(p => p.ma);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < Math.max(1, hi * 0.1)) { const c = (hi + lo) / 2, h = Math.max(0.5, hi * 0.05); lo = c - h; hi = c + h; }
+  const n = pts.length;
+  const x = k => n === 1 ? W / 2 : P + k * (W - 2 * P) / (n - 1);
+  const y = v => H - P - (Math.min(hi, Math.max(lo, v)) - lo) / (hi - lo) * (H - 2 * P);
+  let line = "", dots = "";
+  pts.forEach((p, k) => {
+    const cx = x(k).toFixed(1), cy = y(p.ma).toFixed(1);
+    const tip = fwShort(p.fw) + " " + fwDate(p.fw) + ": " + f1(p.ma) + " mA, " + dur(p.settled_secs) + " settled (" + QUALITY[p.quality] + ")";
+    if (p.quality !== "unsettled") line += (line ? "L" : "M") + cx + "," + cy;
+    const last = p.fw === sc.latest;
+    const r = last ? 4 : 3;
+    const fill = p.quality === "settled" ? "var(--s1)" : "var(--surface)";
+    const stroke = p.quality === "unsettled" ? "var(--muted)" : "var(--s1)";
+    dots += '<circle cx="' + cx + '" cy="' + cy + '" r="' + (p.quality === "unsettled" ? 2.5 : r) + '" fill="' + (p.quality === "unsettled" ? "none" : fill) +
+      '" stroke="' + stroke + '" stroke-width="' + (last ? 2 : 1.5) + '"><title>' + esc(tip) + "</title></circle>";
+  });
+  const range = use.length > 1 ? f1(Math.min(...use.map(p => p.ma))) + " – " + f1(Math.max(...use.map(p => p.ma))) + " mA, "
+                               : "";
+  return '<svg class="spark" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '">' +
+    (line ? '<path d="' + line + '" fill="none" stroke="var(--s1)" stroke-width="1.5" stroke-opacity="0.7"/>' : "") + dots + "</svg>" +
+    '<span class="sub">' + range + n + " firmware" + (n === 1 ? "" : "s") + "</span>";
+}
+function scenRow(sc, k) {
+  const lt = sc.latest == null ? null : perOf(sc, sc.latest);
+  const newer = sc.newest_unsettled != null && sc.newest_unsettled !== sc.latest ? perOf(sc, sc.newest_unsettled) : null;
+  const latestCell = lt
+    ? esc(fwShort(sc.latest)) + '<span class="sub">' + fwDate(sc.latest) + (lt.quality === "short" ? " · short, may be off" : "") +
+      (newer ? " · newer " + esc(fwShort(newer.fw)) + " only " + dur(newer.settled_secs) : "") + "</span>"
+    : '<span class="q-unsettled">none long enough</span>';
+  let html = '<tr class="sc" data-k="' + k + '"><td class=wrap>' + (scenOpen.has(k) ? "▾ " : "▸ ") + esc(sc.state) + "</td><td class=n>" + dur(sc.secs) +
+    "</td><td>" + latestCell + "</td><td class=n>" + (lt ? f1(lt.ma) : "–") + "</td><td class=n>" + (lt ? f2(lt.pct_h) : "–") +
+    "</td><td class=n>" + (lt && !sc.usb ? runtime(lt.pct_h) : "–") + "</td><td>" + (lt ? verdictHtml(sc) : "") + "</td><td>" + sparkline(sc) + "</td></tr>";
+  if (scenOpen.has(k)) {
+    for (const p of sc.per.slice().reverse()) {
+      html += '<tr class="det"><td>' + esc(fwShort(p.fw)) + (p.fw === sc.latest ? " · latest" : p.fw === sc.prev ? " · previous" : "") +
+        "</td><td class=n>" + dur(p.secs) + "</td><td>" + fwDate(p.fw) + " · " + p.runs + " run" + (p.runs === 1 ? "" : "s") +
+        "</td><td class=n>" + f1(p.ma) + "</td><td class=n>" + f2(p.pct_h) + "</td><td class=n>" + (sc.usb ? "–" : runtime(p.pct_h)) +
+        '</td><td class="q-' + p.quality + '">' + dur(p.settled_secs) + " settled · " + QUALITY[p.quality] + "</td><td></td></tr>";
+    }
+  }
+  return html;
+}
+function renderScenarios() {
+  const L = D.limits;
+  $("scenhint").textContent = "Mean current of each combination of what was on, per firmware (ordered by commit time). " +
+    "The first " + dur(L.settle) + " of every run are left out while the gauge's average catches up. Values from less than " +
+    dur(L.short) + " are too short to use, less than " + dur(L.settled) + " are marked short. “Latest” is the newest firmware with a usable value, " +
+    "compared with the next older one that has one; changes within the measuring noise (10 %, 15 % for short values) count as the same.";
+  const usable = sc => sc.latest != null;
+  const brief = $("brief").checked;
+  const main = D.scenarios.filter(sc => !sc.usb && usable(sc));
+  const rest = D.scenarios.filter(sc => !sc.usb && !usable(sc));
+  const usb = D.scenarios.filter(sc => sc.usb && usable(sc));
+  $("brieflabel").textContent = "Show " + rest.length + " scenarios measured only briefly";
+  const idx = sc => D.scenarios.indexOf(sc);
+  const grp = t => '<tr class="grp"><td colspan=8>' + t + "</td></tr>";
+  let body = main.map(sc => scenRow(sc, idx(sc))).join("");
+  if (brief && rest.length) body += grp("Measured only briefly (no value long enough on any firmware)") + rest.map(sc => scenRow(sc, idx(sc))).join("");
+  if (usb.length) body += grp("On USB: the gauge sees the battery current (charging or 0), not what the deck draws") + usb.map(sc => scenRow(sc, idx(sc))).join("");
+  $("scen").innerHTML = "<thead><tr><th>Scenario (what was on)</th><th class=n>Time, all firmware</th><th>Latest firmware</th><th class=n>Mean mA</th><th class=n>%/h</th>" +
+    "<th class=n>Full battery lasts</th><th>Change vs previous firmware</th><th>By firmware, oldest → newest</th></tr></thead><tbody>" + body + "</tbody>";
+}
+$("scen").addEventListener("click", e => {
+  const tr = e.target.closest("tr.sc");
+  if (!tr) return;
+  const k = +tr.dataset.k;
+  if (scenOpen.has(k)) scenOpen.delete(k); else scenOpen.add(k);
+  renderScenarios();
+});
+$("brief").addEventListener("change", renderScenarios);
+
 let segSort = { k: "t0", dir: -1 };
 function renderTables() {
-  $("bystate").innerHTML = "<thead><tr><th>State (what was on)</th><th class=n>Time</th><th class=n>Runs</th><th class=n>Mean mA</th><th class=n>%/h</th><th class=n>Full battery lasts</th><th class=n>RX / TX</th></tr></thead><tbody>" +
-    byState(segsShown()).map(s => "<tr><td class=wrap>" + esc(s.state) + "</td><td class=n>" + dur(s.secs) + "</td><td class=n>" + s.runs + "</td><td class=n>" + f1(s.ma) + "</td><td class=n>" + f2(s.pct_h) + "</td><td class=n>" + (s.state.includes("usb") ? "–" : runtime(s.pct_h)) + "</td><td class=n>" + s.rx + " / " + s.tx + "</td></tr>").join("") + "</tbody>";
+  renderScenarios();
   renderSegs();
   const unk = $("unk");
   unk.style.display = D.unknown_count ? "" : "none";

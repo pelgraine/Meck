@@ -65,6 +65,7 @@ def analyse(store, capacity):
         "timeline": timeline, "unknown": unknown, "info": info, "segments": segs,
         "by_state": fmt.by_state(segs, capacity), "quiet": fmt.quiet_stretches(timeline),
         "by_firmware": fmt.by_firmware(timeline, info["firmware"], capacity),
+        "scenarios": fmt.scenarios(segs, info["firmware"], capacity),
     }
 
 
@@ -87,7 +88,9 @@ def payload(store, capacity, static=False):
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
         "flags": fmt.FLAGS, "blockers": fmt.BLOCKERS, "charge": fmt.CHARGE,
         "firmware": a["info"]["firmware"], "by_firmware": a["by_firmware"],
-        "cols": cols, "segments": a["segments"], "by_state": a["by_state"], "quiet": a["quiet"],
+        "fw_order": fmt.firmware_order(a["info"]["firmware"]), "scenarios": a["scenarios"],
+        "limits": {"settle": fmt.SETTLE_S, "short": fmt.SHORT_S, "settled": fmt.SETTLED_S},
+        "cols": cols, "segments": a["segments"], "quiet": a["quiet"],
         "pulls": len(pulls), "last_pull": pulls[-1] if pulls else None,
         "last_pull_t0": min(last) if last else None,
         "duplicates": a["info"]["duplicates"],
@@ -128,9 +131,15 @@ def cmd_check(store, args):
             name = "%s%s %s, commit %s" % (fw["hash"], "+" if fw["dirty"] else "", fw["version"],
                                            fmt_time(fw["git_time"], off)) if fw["fw"] >= 0 else "not named (older firmware)"
             print("  %-60s %12s  %s" % (name[:60], fmt_dur(fw["secs"]), "%.1f mA" % fw["ma"] if fw["ma"] is not None else "-"))
-        print("by state (time, mean current, drain):")
-        for s in a["by_state"][:15]:
-            print("  %-48s %12s  %6.1f mA  %5.2f %%/h" % (s["state"][:48], fmt_dur(s["secs"]), s["ma"], s["pct_h"]))
+        fwname = {f["id"]: f["hash"] + ("+" if f["dirty"] else "") for f in info["firmware"]}
+        fwname[-1] = "older"
+        print("scenarios on battery (latest firmware with a usable value, change vs the previous one):")
+        for s in [s for s in a["scenarios"] if not s["usb"] and s["latest"] is not None][:15]:
+            lt = next(p for p in s["per"] if p["fw"] == s["latest"])
+            change = ("%+.1f mA vs %s, %s" % (s["delta_ma"], fwname[s["prev"]], s["verdict"])
+                      if s["delta_ma"] is not None else "nothing to compare")
+            print("  %-44s %-10s %6.1f mA %-9s %s" % (s["state"][:44], fwname[s["latest"]], lt["ma"],
+                                                     "" if lt["quality"] == "settled" else "(short)", change))
     for u in a["unknown"][:10]:
         print("unknown time: %s (%s)" % (u["where"], u["local_date"] + " " + u["local_time"]))
     print("lines that are not valid records: %d" % len(info["bad"]))

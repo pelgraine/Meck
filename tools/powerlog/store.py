@@ -58,7 +58,9 @@ class Store:
         Each record gets "fw": its index in info["firmware"], from the last
         "#fw" line before it in its file, or -1. A record that does not follow
         the one before it (a new boot) without a "#fw" line in between was
-        written by firmware that did not name itself.
+        written by firmware that did not name itself. Builds of one commit
+        (same hash, both clean or both with "+") count as one firmware; its
+        build_time is the first build's and "builds" counts them.
         """
         recs, bad, warnings = [], [], []
         firmware, fw_ids = [], {}
@@ -73,11 +75,14 @@ class Store:
                     kind = classify(s)
                     if kind == "fw":
                         info = parse_fw(s)
-                        key = (info["hash"], info["dirty"], info["build_time"])
+                        key = (info["hash"], info["dirty"])
                         if key not in fw_ids:
                             fw_ids[key] = len(firmware)
-                            firmware.append(dict(info, id=len(firmware)))
+                            firmware.append(dict(info, id=len(firmware), build_times=set()))
                         fw, prev = fw_ids[key], None
+                        entry = firmware[fw]
+                        entry["build_times"].add(info["build_time"])
+                        entry["build_time"] = min(entry["build_times"])
                         continue
                     if kind in ("header", "noise"):
                         continue
@@ -101,6 +106,8 @@ class Store:
                     for w in warn:
                         warnings.append({"where": where, "why": w})
                     recs.append(rec)
+        for entry in firmware:
+            entry["builds"] = len(entry.pop("build_times"))
         return recs, {"duplicates": dupes, "bad": bad, "warnings": warnings, "firmware": firmware}
 
     def anchors(self):

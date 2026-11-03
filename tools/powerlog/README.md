@@ -54,7 +54,8 @@ opens the deck through its USB interface path instead.
   locked deck awake, GPS, modem, WiFi, phone, Bluetooth, audio, backlight), and per-minute counts
   of LoRa packets, display refreshes and wakes.
 - Tiles for the visible range: mean current on battery, %/h, how long a full battery would last.
-- Tables: time and mean current per combination of what was on, and every run of one state.
+- Tables: firmware versions, consumption per scenario and firmware (below), and every run of
+  one state (filter by firmware).
 
 ## Firmware versions
 
@@ -63,8 +64,26 @@ opens the deck through its USB interface path instead.
 writes `#fw,<hash>,<commit utc>,<build utc>,<version>` once per boot in each daily file, before
 that boot's first records, and `pwrlog` prints it before the RAM records. The viewer gives every
 record the firmware of the last `#fw` line before it; a new boot without one is older firmware
-("not named"). It shows a Firmware lane, a table of versions (commit and build date, time logged,
-mean current on battery), and the state and run tables can be limited to one version.
+("not named"). Builds of one commit count as one firmware. It shows a Firmware lane, a table of
+versions (commit and build date, time logged, mean current on battery), and the run table can be
+limited to one version.
+
+## Consumption by scenario and firmware
+
+A scenario is one combination of what was on (locked, GPS, phone, modem, the "Phone when locked"
+sync interval, ...). For each scenario and firmware the viewer shows the mean current, oldest
+firmware to newest by commit time, as a small chart, and the newest value against the previous one.
+
+- The gauge's average current lags a state change by about a minute, so the first 2 minutes of
+  every run are left out (`SETTLE_S` in `pwrlog_format.py`).
+- On the deck's own logs a mean over 10 minutes was within 12 % of the long-run mean in 9 cases of
+  10, over 30 minutes within 10 %. So under 10 settled minutes a value is "too short to use" (grey,
+  never compared), under 30 minutes "short" (hollow point), from 30 minutes "settled".
+- "Latest" is the newest firmware with a usable value for that scenario, compared with the next
+  older firmware that has one, because not every scenario happens on every firmware. A change
+  within 10 % (15 % when a value is short, at least 1 mA) counts as the same.
+- On USB the gauge sees the battery current (charging, or 0 when full), not what the deck draws;
+  those scenarios are listed apart and get no verdict.
 
 ## Log format
 
