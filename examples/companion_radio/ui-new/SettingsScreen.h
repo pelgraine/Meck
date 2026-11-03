@@ -14,7 +14,7 @@
 extern int meckLockSleepBlocker();
 extern const char* meckSleepBlockText(int code);
 extern bool meckBlockerSleeps();
-extern const char* meckAutoSleepText(int code);
+extern void meckSleepStatusText(char* buf, size_t len);
 #endif
 #ifdef MECK_UI_V2
   #include "ui2/Ui2Chrome.h"
@@ -2353,7 +2353,7 @@ public:
         if (!_prefs->lock_sleep) {
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone stays reachable", "T\xC3\xA9l\xC3\xA9phone joignable"));
         } else if (meckBlockerSleeps()) {
-          snprintf(hint, sizeof(hint), "%s", meckAutoSleepText(why));
+          meckSleepStatusText(hint, sizeof(hint));
         } else if (why != 0 /* MECK_SLEEP_OK */) {
           snprintf(hint, sizeof(hint), MECK_TR("Awake now: %s", "\xC3\x89veill\xC3\xA9 : %s"), meckSleepBlockText(why));
     #ifdef MECK_BLE_LOCK_WINDOWS

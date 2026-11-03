@@ -4416,6 +4416,38 @@ bool meckBlockerSleeps() {
 #endif
 }
 
+// What stays on while the locked deck sleeps ("app, Wi-Fi, 4G, GPS", empty
+// with nothing), so the lock screen does not name only the one that chose
+// the automatic sleep. Before locking, without what the "When locked"
+// switches will pause.
+void meckSleepKeepsText(char* buf, size_t len) {
+  buf[0] = 0;
+  auto add = [&](const char* name) {
+    if (buf[0]) strlcat(buf, ", ", len);
+    strlcat(buf, name, len);
+  };
+#ifdef MECK_QUICK_SETTINGS
+  const NodePrefs* p = the_mesh.getNodePrefs();
+  const bool unlocked = !ui_task.isLocked();
+  const bool wifiPauses = unlocked && !(p->lock_keep & LOCK_KEEP_WIFI) && meckCompanionIsWiFi();
+  const bool modemPauses = unlocked && !(p->lock_keep & LOCK_KEEP_MODEM);
+  // Locked, the GPS setting stays on while the lock has it paused
+  const bool gpsPauses = unlocked ? !(p->lock_keep & LOCK_KEEP_GPS) : meckPausedGps;
+#else
+  const bool wifiPauses = false, modemPauses = false, gpsPauses = false;
+#endif
+  bool phone = serial_interface.isConnected();
+#ifdef MECK_BLE_LOCK_WINDOWS
+  if (meckBleWindowed()) phone = false;   // the sync windows decide
+#endif
+  if (phone) add(MECK_TR("app", "appli"));
+  if (WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) add("Wi-Fi");
+#ifdef HAS_4G_MODEM
+  if (modemManager.getState() != ModemState::OFF && !modemPauses) add("4G");
+#endif
+  if (ui_task.getGPSState() && !gpsPauses) add("GPS");
+}
+
 // Called at the end of loop() instead of the plain locked-loop delay
 static void meckLockSleepStep() {
   bool locked = ui_task.isLocked();

@@ -637,8 +637,10 @@ them. While the deck sleeps, WiFi power save goes from Arduino's
 unlock. App frames over WiFi wait at the access point until the next
 beacon the deck listens to.
 
-The lock screen and the lock warning treat WiFi as they treat a phone the
-deck sleeps with ("Power saving with Wi-Fi").
+The lock warning treats WiFi as it treats a phone the deck sleeps with.
+The lock screen, whenever the deck sleeps, lists what stays on rather than
+the one that chose the automatic sleep: "Power saving · app, Wi-Fi, 4G,
+GPS" (`meckSleepKeepsText()`).
 
 ### Measured (2026-11-03, on battery)
 
