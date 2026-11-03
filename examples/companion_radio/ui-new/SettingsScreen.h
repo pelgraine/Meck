@@ -11,7 +11,7 @@
 
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
 // Power saving when locked (main.cpp / UITask.cpp); codes are MeckSleepBlock
-extern int meckLockSleepBlocker();
+extern int meckSleepBlockerShown();
 extern const char* meckSleepBlockText(int code);
 extern bool meckBlockerSleeps();
 extern void meckSleepStatusText(char* buf, size_t len);
@@ -2349,7 +2349,7 @@ public:
         // Sub-line: what keeps the device awake right now, or how the phone
         // behaves (BLE pauses while asleep and reconnects after unlock).
         char hint[48];
-        int why = meckLockSleepBlocker();
+        int why = meckSleepBlockerShown();
         if (!_prefs->lock_sleep) {
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone stays reachable", "T\xC3\xA9l\xC3\xA9phone joignable"));
         } else if (meckBlockerSleeps()) {

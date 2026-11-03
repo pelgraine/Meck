@@ -4403,12 +4403,22 @@ bool meckAutoSleepPossible() {
 #endif
 }
 
+// The blocker to tell the user about. With UART sleep the modem is not named:
+// idle it lets the deck sleep, and the moments it works cost next to nothing.
+int meckSleepBlockerShown() {
+#if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+  return meckLockSleepBlockerEx(true);
+#else
+  return meckLockSleepBlocker();
+#endif
+}
+
 // Whether the blocker, a connected phone or WiFi on, still lets the locked
 // deck sleep, so the lock warning and the lock screen need not blame it.
 // Locked: whether it does now; before locking: meckAutoSleepPossible().
 bool meckBlockerSleeps() {
 #ifdef MECK_AUTO_LIGHT_SLEEP
-  if (!meckAutoSleepCopes(meckLockSleepBlocker())) return false;
+  if (!meckAutoSleepCopes(meckSleepBlockerShown())) return false;
   if (ui_task.isLocked()) return meckAutoSleepOn;
   return meckAutoSleepPossible();
 #else

@@ -49,7 +49,7 @@
 
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
 // Power saving when locked: the reason the device stays awake (main.cpp)
-extern int meckLockSleepBlocker();
+extern int meckSleepBlockerShown();
 extern bool meckBlockerSleeps();
 extern void meckSleepKeepsText(char* buf, size_t len);
 
@@ -2343,7 +2343,7 @@ public:
     // the device awake, then the gauge's battery estimate (time to empty at
     // the average draw)
     {
-      int reason = meckLockSleepBlocker();
+      int reason = meckSleepBlockerShown();
       bool sleeps = reason == MECK_SLEEP_OK || meckBlockerSleeps();
       char line[64];
       if (sleeps)
@@ -3621,7 +3621,7 @@ void UITask::lockScreen() {
 void UITask::requestLock() {
 #if defined(LilyGo_TDeck_Pro_Max) && defined(MECK_UI_V2) && !defined(MECK_40MHZ_TEST)
   if (_locked || _lockPromptUntil) return;
-  int reason = meckLockSleepBlocker();
+  int reason = meckSleepBlockerShown();
   // Warn only about things the user may have forgotten; "power saving off"
   // is their choice, USB power and recent audio are fine, and so is a phone
   // or WiFi the device can sleep with.
