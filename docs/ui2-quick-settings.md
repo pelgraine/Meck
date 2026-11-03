@@ -97,8 +97,11 @@ Settings › Phone when locked (M opens it).
 
 The bottom line (both views) says what a lock would do now, with the
 battery measurements of `docs/power-saving-ideas.md`: "Locked: sleeps,
-~17 mA", "Locked: sleeps, GPS on, ~32 mA", "Locked: sleeps, 4G on, ~22 mA",
-"Locked: awake for WiFi" or "Locked: never sleeps, ~35 mA".
+~17 mA", "Locked: sleeps, ~23 mA (app)", "Locked: sleeps, ~38 mA (app,
+GPS)", "Locked: awake for WiFi" or "Locked: never sleeps, ~35 mA". Asleep,
+the estimate is 17 mA plus what each one was measured to add on its own:
+a connected phone 6 mA (automatic light sleep), the GPS 15 mA ("GPS when
+locked" about 3 mA), 4G 5 mA; combinations are only added up.
 
 Implementation: `NodePrefs::lock_keep` (`LOCK_KEEP_*` bits, appended at the
 end of the prefs file), `meckLockPolicy()` in `main.cpp` (called from

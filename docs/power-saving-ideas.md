@@ -87,13 +87,20 @@ Steps, in order of effort:
    Second part on branch `ble-modem-sleep`: `custom_sdkconfig` turns on power
    management, tickless idle and the controller's modem sleep with the main
    crystal as its low-power clock (kept powered in light sleep). When the
-   locked deck is kept awake only by a connected phone (blocker PHONE) and
-   the modem and the GPS are off, `meckAutoSleep()` enables automatic light
+   locked deck is kept awake only by a connected phone (blocker PHONE),
+   `meckAutoSleep()` enables automatic light
    sleep at the current CPU frequency (80 MHz, no frequency scaling: the SPI
    and I2C set-ups assume the APB clock). The CPU then sleeps whenever every
    task waits, and wakes on the LoRa DIO1 (ext1), the button and task timers.
-   With the modem or the GPS on it stays awake as before: their UART data
-   would be lost and the modem's RI edge interrupt cannot wake it. Because
+   UART data that comes in while the CPU sleeps is lost, so the modem and
+   the GPS are handled as in the lock sleep (2026-11-03, not yet measured):
+   the modem task holds a PM lock (no light sleep) while the modem's UART
+   is awake, RI wakes the CPU by level (its edge ISR is off meanwhile, the
+   main loop passes RI on; the PM exit callback notes a low RI so an SMS
+   pulse is not missed), and with the GPS on the CPU stays up once a minute
+   until the next GGA, or through a whole "GPS when locked" try. A modem
+   busy for a moment does not switch the automatic sleep off. Before that
+   change the deck stayed awake with either of them on. Because
    the controller keeps the crystal on in every light sleep once Bluetooth
    has been enabled, the lock sleep without a link powers it down around
    `esp_light_sleep_start()`. The power log's `auto_sleep_s` column has the

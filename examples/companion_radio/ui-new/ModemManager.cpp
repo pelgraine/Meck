@@ -6,6 +6,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <driver/gpio.h>
+#include <esp_pm.h>
 
 #if defined(LilyGo_TDeck_Pro_Max)
   #include <TDeckProMaxBoard.h>   // MAX: XL9555-routed modem power/PWRKEY
@@ -95,6 +96,10 @@ void ModemManager::shutdown() {
   // wakes it for CPOF
   _sleepEnabled = false;
   detachInterrupt(digitalPinToInterrupt(MODEM_RI));
+  if (_autoWake) {
+    gpio_wakeup_disable((gpio_num_t)MODEM_RI);
+    _autoWake = false;
+  }
 #endif
 
   // Stop any playing notification tone
@@ -129,6 +134,7 @@ void ModemManager::shutdown() {
   board.modemPowerOff();             // XL9555 6609_EN LOW
   // DTR may have been left high for UART sleep: never hold a logic 1
   // towards the switched-off modem
+  gpio_hold_dis((gpio_num_t)MODEM_DTR);
   digitalWrite(MODEM_DTR, LOW);
   pinMode(MODEM_RI, INPUT);
   _uartAsleep = false;
@@ -140,6 +146,7 @@ void ModemManager::shutdown() {
   vTaskDelete(_taskHandle);
   _taskHandle = nullptr;
   _state = ModemState::OFF;
+  holdCpuAwake(false);
 }
 
 bool ModemManager::checkBattery(uint16_t milliVolts, bool immediate) {
@@ -1002,6 +1009,8 @@ void ModemManager::taskLoop() {
   MESH_DEBUG_PRINTLN("[Modem] task started on core %d", xPortGetCoreID());
 
 restart:
+  holdCpuAwake(true);   // the UART is awake until sleepUartIfIdle()
+
   // ---- Phase 1: Power on ----
   _state = ModemState::POWERING_ON;
   if (!modemPowerOn()) {
@@ -1558,6 +1567,8 @@ bool ModemManager::wakeUart() {
 #ifdef MODEM_UART_SLEEP
   if (!_uartAsleep) return false;
   _uartAsleep = false;   // first: canEspSleep() on the other core reads it
+  holdCpuAwake(true);    // before the modem answers
+  gpio_hold_dis((gpio_num_t)MODEM_DTR);
   digitalWrite(MODEM_DTR, LOW);
   _asleepMs += millis() - _sleepStart;
   _dtrWakes++;
@@ -1577,8 +1588,22 @@ void ModemManager::sleepUartIfIdle() {
   if (digitalRead(MODEM_RI) == LOW) return;   // a call is ringing in
   if (millis() - _lastActivity < MODEM_IDLE_BEFORE_SLEEP_MS) return;
   digitalWrite(MODEM_DTR, HIGH);
+  // As prepareEspSleep() does for the lock sleep; wakeUart() lets go
+  if (_autoWake) gpio_hold_en((gpio_num_t)MODEM_DTR);
   _uartAsleep = true;
   _sleepStart = millis();
+  holdCpuAwake(false);
+#endif
+}
+
+void ModemManager::holdCpuAwake(bool on) {
+#if defined(MODEM_UART_SLEEP) && defined(CONFIG_PM_ENABLE)
+  if (on == _pmHeld) return;
+  if (!_pmLock && esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "modem",
+                                     (esp_pm_lock_handle_t*)&_pmLock) != ESP_OK) return;
+  if (on) esp_pm_lock_acquire((esp_pm_lock_handle_t)_pmLock);
+  else esp_pm_lock_release((esp_pm_lock_handle_t)_pmLock);
+  _pmHeld = on;
 #endif
 }
 
@@ -1640,6 +1665,46 @@ void ModemManager::afterEspSleep(bool gpioWake) {
     _riFlag = true;
     if (_taskHandle) xTaskNotifyGive(_taskHandle);
   }
+#endif
+}
+
+void ModemManager::setAutoSleepWake(bool on) {
+#ifdef MODEM_UART_SLEEP
+  if (on == _autoWake) return;
+  if (on) {
+    // As in prepareEspSleep(): the level wake changes the pin's interrupt
+    // type, so the edge ISR stays off while it is set
+    gpio_intr_disable((gpio_num_t)MODEM_RI);
+    gpio_wakeup_enable((gpio_num_t)MODEM_RI, GPIO_INTR_LOW_LEVEL);
+    _riWasLow = digitalRead(MODEM_RI) == LOW;
+    _autoWake = true;
+  } else {
+    _autoWake = false;
+    gpio_wakeup_disable((gpio_num_t)MODEM_RI);
+    if (_sleepEnabled) {   // not after shutdown(): the ISR is gone
+      gpio_set_intr_type((gpio_num_t)MODEM_RI, GPIO_INTR_NEGEDGE);
+      gpio_intr_enable((gpio_num_t)MODEM_RI);
+      if (digitalRead(MODEM_RI) == LOW && !_riWasLow) {
+        _riFlag = true;
+        if (_taskHandle) xTaskNotifyGive(_taskHandle);
+      }
+    }
+  }
+#endif
+}
+
+void ModemManager::pollAutoSleepRi(bool lowAtWake) {
+#ifdef MODEM_UART_SLEEP
+  if (!_autoWake) return;
+  // What riIsr() does, for each fall: the task wakes the UART and looks for
+  // an SMS whose +CMTI was lost with the CPU asleep
+  bool low = digitalRead(MODEM_RI) == LOW;
+  if ((low && !_riWasLow) || lowAtWake) {
+    _espRiWakes++;
+    _riFlag = true;
+    if (_taskHandle) xTaskNotifyGive(_taskHandle);
+  }
+  _riWasLow = low;
 #endif
 }
 
