@@ -15,6 +15,7 @@ From the power log of one night on battery (10.7 h, 99 % to 85 %):
 | Light sleep floor | about 13 mA | between wakes |
 | Locked and awake (a blocker holds it) | about 35 mA | e.g. on USB |
 | Locked with a phone connected over BLE | 23 mA | automatic light sleep with the relaxed interval (step 2.3); about 100 mA before, awake all the time |
+| Locked with a phone, the GPS and 4G on | about 46 mA | automatic light sleep with both (2026-11-03, 6 min): asleep 51 s of 60 |
 | Locked, phone syncs "Every 10 min" | 23.4 mA | sync windows, see 2 below |
 | Before power-fixes (locked, idle) | about 82 mA | for comparison |
 
@@ -93,7 +94,9 @@ Steps, in order of effort:
    and I2C set-ups assume the APB clock). The CPU then sleeps whenever every
    task waits, and wakes on the LoRa DIO1 (ext1), the button and task timers.
    UART data that comes in while the CPU sleeps is lost, so the modem and
-   the GPS are handled as in the lock sleep (2026-11-03, not yet measured):
+   the GPS are handled as in the lock sleep (2026-11-03; with the phone, the
+   GPS and 4G on: about 46 mA, asleep 51 s of 60, a 6 min sample on battery;
+   the quick settings estimate says 43 mA):
    the modem task holds a PM lock (no light sleep) while the modem's UART
    is awake, RI wakes the CPU by level (its edge ISR is off meanwhile, the
    main loop passes RI on; the PM exit callback notes a low RI so an SMS
