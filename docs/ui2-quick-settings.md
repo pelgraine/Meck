@@ -83,7 +83,7 @@ restart while locked brings everything back as it was set.
 | Tile | On (keeps) | Off (pauses) | Default |
 |---|---|---|---|
 | Bluetooth | "Stay connected" (`ble_lock_window` 0) | sync windows every few minutes (the last interval used, 5 min at first) | on |
-| WiFi | keeps running, the deck stays awake | off on lock (companion WiFi only) | on |
+| WiFi | stays joined while the deck sleeps automatically (about +8 mA); WiFi setup's access point keeps it awake | off on lock (companion WiFi only) | on |
 | GPS | keeps running while the deck sleeps: on (about +15 mA), or a fix every few minutes with Experimental › GPS when locked | off on lock, unless an SOS runs | on |
 | 4G | calls and SMS arrive; idle, the modem sleeps and so does the deck (UART sleep, about 22 mA), a call or SMS wakes it | off on lock, unless in a call; starting again takes seconds | on |
 | Tones | as the Now switch | silent while locked | on |
@@ -97,11 +97,13 @@ Settings › Phone when locked (M opens it).
 
 The bottom line (both views) says what a lock would do now, with the
 battery measurements of `docs/power-saving-ideas.md`: "Locked: sleeps,
-~17 mA", "Locked: sleeps, ~23 mA (app)", "Locked: sleeps, ~38 mA (app,
-GPS)", "Locked: awake for WiFi" or "Locked: never sleeps, ~35 mA". Asleep,
-the estimate is 17 mA plus what each one was measured to add on its own:
-a connected phone 6 mA (automatic light sleep), the GPS 15 mA ("GPS when
-locked" about 3 mA), 4G 5 mA; combinations are only added up.
+~17 mA", "Locked: sleeps, ~23 mA (app)", "Locked: sleeps, ~31 mA (app,
+WiFi)", "Locked: sleeps, ~38 mA (app, GPS)", "Locked: awake for USB" or
+"Locked: never sleeps, ~35 mA". Asleep, the estimate is 17 mA plus what
+each one was measured to add on its own: a phone connected over Bluetooth
+6 mA (automatic light sleep; an app on WiFi adds nothing to WiFi's share),
+WiFi 8 mA, the GPS 15 mA ("GPS when locked" about 3 mA), 4G 5 mA;
+combinations are only added up.
 
 Implementation: `NodePrefs::lock_keep` (`LOCK_KEEP_*` bits, appended at the
 end of the prefs file), `meckLockPolicy()` in `main.cpp` (called from

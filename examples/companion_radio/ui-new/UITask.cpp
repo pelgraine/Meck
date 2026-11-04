@@ -49,12 +49,17 @@
 
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
 // Power saving when locked: the reason the device stays awake (main.cpp)
-extern int meckLockSleepBlocker();
-extern bool meckPhoneSleeps();
+extern int meckSleepBlockerShown();
+extern bool meckBlockerSleeps();
+extern void meckSleepKeepsText(char* buf, size_t len);
 
-// A connected phone that does not keep the device awake (automatic sleep)
-const char* meckPhoneSleepText() {
-  return MECK_TR("Power saving with phone", "\xC3\x89" "conomie avec t\xC3\xA9l\xC3\xA9phone");
+// The device sleeps while locked: "Power saving", with what stays on
+// ("Power saving · app, Wi-Fi, GPS")
+void meckSleepStatusText(char* buf, size_t len) {
+  char keeps[32];
+  meckSleepKeepsText(keeps, sizeof(keeps));
+  if (keeps[0]) snprintf(buf, len, "%s \xC2\xB7 %s", MECK_TR("Power saving", "\xC3\x89" "conomie"), keeps);
+  else snprintf(buf, len, "%s", MECK_TR("Power saving", "\xC3\x89" "conomie d'\xC3\xA9nergie"));
 }
 
 const char* meckSleepBlockText(int code) {
@@ -2334,25 +2339,27 @@ public:
 #endif
 
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
-    // Power saving: either "Power saving" or what keeps the device awake,
-    // then the gauge's battery estimate (time to empty at the average draw)
+    // Power saving: either "Power saving" with what stays on or what keeps
+    // the device awake, then the gauge's battery estimate (time to empty at
+    // the average draw)
     {
-      int reason = meckLockSleepBlocker();
-      bool phoneSleeps = reason == MECK_SLEEP_PHONE && meckPhoneSleeps();
-      const char* status = reason == MECK_SLEEP_OK ? MECK_TR("Power saving", "\xC3\x89" "conomie d'\xC3\xA9nergie")
-                         : phoneSleeps ? meckPhoneSleepText()
-                                       : meckSleepBlockText(reason);
-      char line[48];
-      if (reason == MECK_SLEEP_OK || reason == MECK_SLEEP_OFF || reason == MECK_SLEEP_USB || phoneSleeps)
-        snprintf(line, sizeof(line), "%s", status);
+      int reason = meckSleepBlockerShown();
+      bool sleeps = reason == MECK_SLEEP_OK || meckBlockerSleeps();
+      char line[64];
+      if (sleeps)
+        meckSleepStatusText(line, sizeof(line));
+      else if (reason == MECK_SLEEP_OFF || reason == MECK_SLEEP_USB)
+        snprintf(line, sizeof(line), "%s", meckSleepBlockText(reason));
       else
-        snprintf(line, sizeof(line), MECK_TR("Awake: %s", "\xC3\x89veill\xC3\xA9 : %s"), status);
-      Ui2Icon ic = reason == MECK_SLEEP_OK || phoneSleeps ? UI2_IC_MOON
+        snprintf(line, sizeof(line), MECK_TR("Awake: %s", "\xC3\x89veill\xC3\xA9 : %s"), meckSleepBlockText(reason));
+      Ui2Icon ic = sleeps ? UI2_IC_MOON
                  : reason == MECK_SLEEP_USB ? UI2_IC_BOLT : UI2_IC_WARN;
+      const int16_t maxW = SCREEN_W - 2 * PAD - 16;
       int16_t tw = Ui2Canvas::textWidth(line, UI2_F_SMALL);
+      if (tw > maxW) tw = maxW;
       int16_t lx = (SCREEN_W - tw - 16) / 2;
       c.icon(lx, 262, ic, 12);
-      c.text(lx + 16, 273, line, UI2_F_SMALL);
+      c.textFit(lx + 16, 273, maxW, line, UI2_F_SMALL);
 
   #ifdef HAS_4G_MODEM
       // 4G switched off for a low cell: say so instead of the estimate
@@ -3614,11 +3621,11 @@ void UITask::lockScreen() {
 void UITask::requestLock() {
 #if defined(LilyGo_TDeck_Pro_Max) && defined(MECK_UI_V2) && !defined(MECK_40MHZ_TEST)
   if (_locked || _lockPromptUntil) return;
-  int reason = meckLockSleepBlocker();
+  int reason = meckSleepBlockerShown();
   // Warn only about things the user may have forgotten; "power saving off"
   // is their choice, USB power and recent audio are fine, and so is a phone
-  // the device can sleep with.
-  if ((reason == MECK_SLEEP_PHONE && !meckPhoneSleeps()) || reason == MECK_SLEEP_MODEM || reason == MECK_SLEEP_WIFI) {
+  // or WiFi the device can sleep with.
+  if (((reason == MECK_SLEEP_PHONE || reason == MECK_SLEEP_WIFI) && !meckBlockerSleeps()) || reason == MECK_SLEEP_MODEM) {
     _lockPromptReason = reason;
     _lockPromptUntil = millis() + 6000;   // then it locks anyway
     _next_refresh = 0;

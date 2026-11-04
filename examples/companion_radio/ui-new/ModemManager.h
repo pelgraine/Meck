@@ -66,6 +66,7 @@
   #define MODEM_UART_SLEEP 1
 #endif
 #define MODEM_IDLE_BEFORE_SLEEP_MS 2000    // late URCs (RING + CLIP, +CMTI) come in pairs
+#define MODEM_SLEEP_RETRY_MS (5UL * 60 * 1000)   // AT+CSCLK=1 again after a refusal
 #define MODEM_DTR_WAKE_MS          50      // DTR low until the modem UART listens
 
 // Notification tone auto-stop timeout (ms) -- stop playback after this

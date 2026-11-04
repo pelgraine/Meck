@@ -624,6 +624,36 @@ power save (`WiFi.setSleep(true)`, modem sleep with DTIM) is the default in
 Arduino and already in use, but without automatic light sleep (see 2.3) the
 CPU stays awake. So for now: WiFi off when not needed.
 
+### Implemented (branch `claude/wifi-power-consumption-4da36c`, on `ble-modem-sleep`)
+
+The automatic light sleep of 2.3 now also runs while locked with WiFi on,
+when WiFi is the only thing that keeps the deck awake, or WiFi and a
+connected phone. Not with USB power set to keep it awake, the modem or the
+GPS on, audio, or WiFi setup's access point. The station stays joined:
+WiFi modem sleep wakes the radio for beacons, and the CPU sleeps between
+them. While the deck sleeps, WiFi power save goes from Arduino's
+`WIFI_PS_MIN_MODEM` (every DTIM beacon) to `WIFI_PS_MAX_MODEM` (every
+`listen_interval` beacons, 3 by default, about 300 ms), and back on
+unlock. App frames over WiFi wait at the access point until the next
+beacon the deck listens to.
+
+The lock warning treats WiFi as it treats a phone the deck sleeps with.
+The lock screen, whenever the deck sleeps, lists what stays on rather than
+the one that chose the automatic sleep: "Power saving · app, Wi-Fi, 4G,
+GPS" (`meckSleepKeepsText()`).
+
+### Measured (2026-11-03, on battery)
+
+Locked 110 min with WiFi joined, Bluetooth, GPS and 4G off: **25.0 mA**
+mean, asleep about 54 s of every minute (blocker 6, WiFi). Once every 15
+minutes one minute sleeps only about 36 s (27-28 mA), cause unknown (DHCP or
+ARP?), worth about 0.2 mA on average. No power log has WiFi on and locked on
+battery without it, so the "about 100 mA" above is still an estimate.
+
+Not verified: LoRa reception in automatic light sleep. The log counted no
+packets during the test, but none in the three hours before it either, with
+the deck awake, so it says nothing. The same holds for the phone case.
+
 ## Suggested order
 
 1. Shorter wake after a packet (1): small, safe.

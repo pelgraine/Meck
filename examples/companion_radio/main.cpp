@@ -3878,11 +3878,13 @@ static uint16_t meckWakeLora = 0, meckWakeBtn = 0, meckWakeTimer = 0;
 
 // Why the device does not sleep while locked (MeckSleepBlock in UITask.h),
 // MECK_SLEEP_OK when it can. Shown on the lock screen and in the lock warning.
-// modemIdle: what would block it with the modem done with what it is doing
-static int meckLockSleepBlockerEx(bool modemIdle);
+// modemIdle: what would block it with the modem done with what it is doing;
+// withWifi false: what would if WiFi were off (automatic light sleep copes
+// with WiFi, but not with everything after it)
+static int meckLockSleepBlockerEx(bool modemIdle, bool withWifi = true);
 int meckLockSleepBlocker() { return meckLockSleepBlockerEx(false); }
 
-static int meckLockSleepBlockerEx(bool modemIdle) {
+static int meckLockSleepBlockerEx(bool modemIdle, bool withWifi) {
   NodePrefs* p = the_mesh.getNodePrefs();
   if (!p->lock_sleep) return MECK_SLEEP_OFF;
   // SOS: awake only while it counts down, its GPS looks for a fix or a send
@@ -3904,7 +3906,7 @@ static int meckLockSleepBlockerEx(bool modemIdle) {
   // (a call, a tone, an SMS, an AT command); idle, RI wakes the ESP32
   if (modemManager.getState() != ModemState::OFF && !modemPauses && !modemIdle && !modemManager.canEspSleep()) return MECK_SLEEP_MODEM;
 #endif
-  if (WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) return MECK_SLEEP_WIFI;
+  if (withWifi && WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) return MECK_SLEEP_WIFI;
   if (board.isUsbPowered() && (p->lock_keep & LOCK_KEEP_USB)) return MECK_SLEEP_USB;
 #ifdef MECK_BLE_LOCK_WINDOWS
   if (meckBleWindowed()) {
@@ -3932,7 +3934,7 @@ static int meckLockSleepBlockerEx(bool modemIdle) {
 void toggleKeyboardBacklight();
 bool keyboardBacklightIsOn();
 void meckGpsConfigureSoon();
-bool meckPhoneLetsSleep();
+bool meckAutoSleepPossible();
 
 static void meckQsModemSet(bool on) {
   // Kept like Settings > 4G Modem does, so it holds over a restart
@@ -4110,14 +4112,18 @@ void meckQsLockVerdict(char* buf, size_t len) {
   };
   const bool modemOn = (p->lock_keep & LOCK_KEEP_MODEM) && modemManager.getState() != ModemState::OFF;
   const bool gpsOn = (p->lock_keep & LOCK_KEEP_GPS) && ui_task.getGPSState();
-  if ((p->lock_keep & LOCK_KEEP_WIFI) && WiFi.getMode() != WIFI_MODE_NULL) add("WiFi");
+  // Joined to a network, WiFi lets the deck sleep automatically; WiFi
+  // setup's access point keeps it awake
+  const bool wifiOn = (p->lock_keep & LOCK_KEEP_WIFI) && WiFi.getMode() != WIFI_MODE_NULL;
+  const bool wifiSleeps = wifiOn && WiFi.getMode() == WIFI_MODE_STA && meckAutoSleepPossible();
+  if (wifiOn && !wifiSleeps) add("WiFi");
 #ifndef MODEM_UART_SLEEP
   if (modemOn) add("4G");
 #endif
   // With sync windows a connected phone does not keep it awake, nor where
   // the deck sleeps automatically with the link up
   const bool phoneOn = serial_interface.isConnected() && !p->ble_lock_window;
-  const bool phoneSleeps = phoneOn && meckPhoneLetsSleep();
+  const bool phoneSleeps = phoneOn && meckAutoSleepPossible();
   if (phoneOn && !phoneSleeps) add(MECK_TR("app", "appli"));
   if ((p->lock_keep & LOCK_KEEP_USB) && board.isUsbPowered()) add("USB");
   if (what[0]) {
@@ -4125,15 +4131,21 @@ void meckQsLockVerdict(char* buf, size_t len) {
     return;
   }
   // Asleep: 17.4 mA plus what each one was measured to add on its own (with
-  // the phone 23, the GPS 31.7, 4G 22 mA; "GPS when locked" every 10 min
-  // about +3 mA). Together they are only added up, not measured.
+  // the phone 23, WiFi 25, the GPS 31.7, 4G 22 mA; "GPS when locked" every
+  // 10 min about +3 mA). Together they are only added up, not measured.
   int mA = 17;
   char on[32] = "";
   auto with = [&](const char* name) {
     if (on[0]) strlcat(on, ", ", sizeof(on));
     strlcat(on, name, sizeof(on));
   };
-  if (phoneSleeps) { mA += 6; with(MECK_TR("app", "appli")); }
+  // The phone's 6 mA are the Bluetooth connection events; an app on WiFi
+  // only adds to what WiFi costs anyway
+  if (phoneSleeps) {
+    if (meckCompanionBleConnected()) mA += 6;
+    with(MECK_TR("app", "appli"));
+  }
+  if (wifiSleeps) { mA += 8; with("WiFi"); }
   // UART sleep: idle, the modem lets the deck sleep; a call or SMS wakes it
   if (modemOn) { mA += 5; with("4G"); }
   if (gpsOn && p->gps_lock_interval) {
@@ -4191,13 +4203,15 @@ void meckLockPolicy(bool locking) {
 
 #if defined(CONFIG_PM_ENABLE) && defined(CONFIG_FREERTOS_USE_TICKLESS_IDLE)
 // ============================================================================
-// Automatic light sleep while locked with a phone connected
-// (docs/power-saving-ideas.md, phone step 3). The lock sleep above needs the
-// phone gone; with a link the deck used to stay awake at about 100 mA. Here
-// ESP-IDF power management sleeps the CPU whenever every task waits (the
-// locked loop's delay(50) included), and the Bluetooth controller's modem
-// sleep keeps the link between connection events. Wakes: the LoRa DIO1
-// (ext1) and the button, as in the lock sleep, plus every task timer.
+// Automatic light sleep while locked with a phone connected or WiFi on
+// (docs/power-saving-ideas.md, phone step 3 and "WiFi while locked"). The
+// lock sleep above needs the phone gone and WiFi off; with either the deck
+// used to stay awake at about 100 mA. Here ESP-IDF power management sleeps
+// the CPU whenever every task waits (the locked loop's delay(50) included);
+// the Bluetooth controller's modem sleep keeps the link between connection
+// events, and WiFi modem sleep keeps the station joined between the beacons
+// it listens to. Wakes: the LoRa DIO1 (ext1) and the button, as in the lock
+// sleep, plus every task timer.
 //
 // What the modem and the GPS send over their UARTs while the CPU sleeps is
 // lost, so, as in the lock sleep: the modem task holds the CPU up while its
@@ -4209,6 +4223,7 @@ void meckLockPolicy(bool locking) {
 #define MECK_AUTO_LIGHT_SLEEP 1
 #include <esp_pm.h>
 #include <esp_bt.h>
+#include <esp_wifi.h>
 #include <soc/soc.h>
 #include <soc/gpio_reg.h>
 
@@ -4232,6 +4247,26 @@ static esp_err_t IRAM_ATTR meckAutoSleepExit(int64_t slept_us, void*) {
   if (meckAutoRiArmed && !(REG_READ(GPIO_IN_REG) & BIT(MODEM_RI))) meckAutoRiLow = true;
 #endif
   return ESP_OK;
+}
+
+// Arduino's modem sleep wakes the station for every DTIM beacon. While the
+// deck sleeps it listens every listen_interval beacons instead (3 when not
+// set, about 300 ms), so the CPU wakes less often; app frames wait at the
+// access point until then. Unlocked, the setting it had comes back.
+static bool meckWifiPsMax = false;
+static wifi_ps_type_t meckWifiPsBefore = WIFI_PS_MIN_MODEM;
+
+static void meckWifiPowerSave(bool max) {
+  if (max == meckWifiPsMax) return;
+  bool sta = (WiFi.getMode() & WIFI_MODE_STA) != 0;
+  if (max) {
+    if (!sta || esp_wifi_get_ps(&meckWifiPsBefore) != ESP_OK) return;
+    if (esp_wifi_set_ps(WIFI_PS_MAX_MODEM) != ESP_OK) return;
+  } else if (sta) {
+    esp_wifi_set_ps(meckWifiPsBefore);   // a WiFi started since has Arduino's setting anyway
+  }
+  meckWifiPsMax = max;
+  Serial.printf("[Power] WiFi power save %s\n", max ? "max" : "back");
 }
 
 static void meckAutoSleep(bool on) {
@@ -4266,6 +4301,7 @@ static void meckAutoSleep(bool on) {
   }
   meckAutoSleepOn = on;
   Serial.printf("[Power] Automatic light sleep %s (%d MHz)\n", on ? "on" : "off", mhz);
+  meckWifiPowerSave(on);
   // The lock screen words the phone as a blocker or as sleeping with it by
   // meckAutoSleepOn, which only changes here, at the end of the pass that
   // already drew the lock screen: without this it stays wrong until the
@@ -4273,7 +4309,20 @@ static void meckAutoSleep(bool on) {
   if (ui_task.isLocked()) ui_task.forceRefresh();
 }
 
-// Whether the locked deck can sleep automatically: only the phone keeps it up
+// Whether a blocker lets the deck sleep automatically: a phone, or WiFi
+// with at most a phone behind it. Not WiFi setup's access point: it has to
+// send beacons and answer the browser.
+static bool meckAutoSleepCopes(int blocker) {
+  if (blocker == MECK_SLEEP_WIFI) {
+    if (WiFi.getMode() != WIFI_MODE_STA) return false;
+    blocker = meckLockSleepBlockerEx(true, false);   // the modem came before WiFi
+    if (blocker == MECK_SLEEP_OK) return true;
+  }
+  return blocker == MECK_SLEEP_PHONE;
+}
+
+// Whether the locked deck can sleep automatically: only the phone or WiFi
+// keeps it up
 static bool meckAutoSleepWanted(bool locked, int blocker) {
   if (!locked) return false;
 #ifdef HAS_4G_MODEM
@@ -4286,7 +4335,7 @@ static bool meckAutoSleepWanted(bool locked, int blocker) {
   if (modemManager.getState() != ModemState::OFF) return false;
   #endif
 #endif
-  return blocker == MECK_SLEEP_PHONE;
+  return meckAutoSleepCopes(blocker);
 }
 
 #if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
@@ -4335,10 +4384,10 @@ static void meckAutoSleepGps(bool dutyAwake) {
 }
 #endif
 
-// Whether a connected phone will let the deck sleep (automatically) once
-// locked, whatever else keeps it up: the quick settings verdict lists USB
-// and WiFi on their own
-bool meckPhoneLetsSleep() {
+// Whether a connected phone or WiFi on will let the deck sleep
+// (automatically) once locked, whatever else keeps it up: the quick settings
+// verdict lists USB and WiFi setup's access point on their own
+bool meckAutoSleepPossible() {
 #ifdef MECK_AUTO_LIGHT_SLEEP
   #if defined(HAS_4G_MODEM) && !defined(MODEM_UART_SLEEP)
     #ifdef MECK_QUICK_SETTINGS
@@ -4354,15 +4403,59 @@ bool meckPhoneLetsSleep() {
 #endif
 }
 
-// Whether a connected phone still lets the locked deck sleep, so the lock
-// warning and the lock screen need not blame it. Locked: whether it does
-// now; before locking: meckPhoneLetsSleep(), with the phone the only blocker.
-bool meckPhoneSleeps() {
-#ifdef MECK_AUTO_LIGHT_SLEEP
-  if (meckLockSleepBlocker() != MECK_SLEEP_PHONE) return false;
-  if (ui_task.isLocked()) return meckAutoSleepOn;
+// The blocker to tell the user about. With UART sleep the modem is not named:
+// idle it lets the deck sleep, and the moments it works cost next to nothing.
+int meckSleepBlockerShown() {
+#if defined(HAS_4G_MODEM) && defined(MODEM_UART_SLEEP)
+  return meckLockSleepBlockerEx(true);
+#else
+  return meckLockSleepBlocker();
 #endif
-  return meckPhoneLetsSleep();
+}
+
+// Whether the blocker, a connected phone or WiFi on, still lets the locked
+// deck sleep, so the lock warning and the lock screen need not blame it.
+// Locked: whether it does now; before locking: meckAutoSleepPossible().
+bool meckBlockerSleeps() {
+#ifdef MECK_AUTO_LIGHT_SLEEP
+  if (!meckAutoSleepCopes(meckSleepBlockerShown())) return false;
+  if (ui_task.isLocked()) return meckAutoSleepOn;
+  return meckAutoSleepPossible();
+#else
+  return false;
+#endif
+}
+
+// What stays on while the locked deck sleeps ("app, Wi-Fi, 4G, GPS", empty
+// with nothing), so the lock screen does not name only the one that chose
+// the automatic sleep. Before locking, without what the "When locked"
+// switches will pause.
+void meckSleepKeepsText(char* buf, size_t len) {
+  buf[0] = 0;
+  auto add = [&](const char* name) {
+    if (buf[0]) strlcat(buf, ", ", len);
+    strlcat(buf, name, len);
+  };
+#ifdef MECK_QUICK_SETTINGS
+  const NodePrefs* p = the_mesh.getNodePrefs();
+  const bool unlocked = !ui_task.isLocked();
+  const bool wifiPauses = unlocked && !(p->lock_keep & LOCK_KEEP_WIFI) && meckCompanionIsWiFi();
+  const bool modemPauses = unlocked && !(p->lock_keep & LOCK_KEEP_MODEM);
+  // Locked, the GPS setting stays on while the lock has it paused
+  const bool gpsPauses = unlocked ? !(p->lock_keep & LOCK_KEEP_GPS) : meckPausedGps;
+#else
+  const bool wifiPauses = false, modemPauses = false, gpsPauses = false;
+#endif
+  bool phone = serial_interface.isConnected();
+#ifdef MECK_BLE_LOCK_WINDOWS
+  if (meckBleWindowed()) phone = false;   // the sync windows decide
+#endif
+  if (phone) add(MECK_TR("app", "appli"));
+  if (WiFi.getMode() != WIFI_MODE_NULL && !wifiPauses) add("Wi-Fi");
+#ifdef HAS_4G_MODEM
+  if (modemManager.getState() != ModemState::OFF && !modemPauses) add("4G");
+#endif
+  if (ui_task.getGPSState() && !gpsPauses) add("GPS");
 }
 
 // Called at the end of loop() instead of the plain locked-loop delay
@@ -4572,7 +4665,7 @@ struct MeckPwrRec {
   uint16_t linkIv;     // BLE connection interval the phone accepted, 1.25 ms (0 = none yet)
   uint8_t  appRx;      // frames received from the app over Bluetooth
   uint8_t  drop;       // a Bluetooth link ended: why (esp_gatt_conn_reason_t), 0 = none
-  uint16_t autoDs;     // asleep in automatic light sleep (phone connected), 0.1 s
+  uint16_t autoDs;     // asleep in automatic light sleep (phone connected or WiFi on), 0.1 s
 };
 
 enum {

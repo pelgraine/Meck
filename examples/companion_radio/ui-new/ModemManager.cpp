@@ -1235,6 +1235,11 @@ restart:
   bool wasLocked = _locked;
   bool csqDue = false;
   _smsPending = true;   // SMS that came in before READY
+#ifdef MODEM_UART_SLEEP
+  // Not from _sleepEnabled itself: shutdown() clears that to stop the sleep
+  bool sleepRefused = !_sleepEnabled;
+  unsigned long lastSleepTry = millis();
+#endif
 
   while (true) {
     // ================================================================
@@ -1398,6 +1403,13 @@ restart:
     }
 
 #ifdef MODEM_UART_SLEEP
+    // Refused, the modem would keep the deck awake until it restarts
+    if (sleepRefused && !_paused && !isCallActive() && millis() - lastSleepTry > MODEM_SLEEP_RETRY_MS) {
+      lastSleepTry = millis();
+      _sleepEnabled = sendAT("AT+CSCLK=1", "OK", 2000);
+      sleepRefused = !_sleepEnabled;
+      Serial.printf("[Modem] UART sleep %s\n", _sleepEnabled ? "enabled" : "NOT accepted");
+    }
     sleepUartIfIdle();
 #endif
 

@@ -11,10 +11,10 @@
 
 #if defined(LilyGo_TDeck_Pro_Max) && !defined(MECK_40MHZ_TEST)
 // Power saving when locked (main.cpp / UITask.cpp); codes are MeckSleepBlock
-extern int meckLockSleepBlocker();
+extern int meckSleepBlockerShown();
 extern const char* meckSleepBlockText(int code);
-extern bool meckPhoneSleeps();
-extern const char* meckPhoneSleepText();
+extern bool meckBlockerSleeps();
+extern void meckSleepStatusText(char* buf, size_t len);
 #endif
 #ifdef MECK_UI_V2
   #include "ui2/Ui2Chrome.h"
@@ -2349,11 +2349,11 @@ public:
         // Sub-line: what keeps the device awake right now, or how the phone
         // behaves (BLE pauses while asleep and reconnects after unlock).
         char hint[48];
-        int why = meckLockSleepBlocker();
+        int why = meckSleepBlockerShown();
         if (!_prefs->lock_sleep) {
           snprintf(hint, sizeof(hint), "%s", MECK_TR("Phone stays reachable", "T\xC3\xA9l\xC3\xA9phone joignable"));
-        } else if (why == 3 /* MECK_SLEEP_PHONE */ && meckPhoneSleeps()) {
-          snprintf(hint, sizeof(hint), "%s", meckPhoneSleepText());
+        } else if (meckBlockerSleeps()) {
+          meckSleepStatusText(hint, sizeof(hint));
         } else if (why != 0 /* MECK_SLEEP_OK */) {
           snprintf(hint, sizeof(hint), MECK_TR("Awake now: %s", "\xC3\x89veill\xC3\xA9 : %s"), meckSleepBlockText(why));
     #ifdef MECK_BLE_LOCK_WINDOWS
