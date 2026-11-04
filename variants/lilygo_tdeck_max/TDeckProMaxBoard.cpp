@@ -459,11 +459,127 @@ static bool bq27220_writeControl(uint16_t subcmd) {
 }
 #endif
 
+#if HAS_BQ27220
+// ---- BQ27220 data memory access ----
+
+// Read a data memory word (big-endian there). Needs the gauge unsealed.
+static uint16_t bq27220_readDM16(uint16_t addr) {
+  Wire.beginTransmission(BQ27220_I2C_ADDR);
+  Wire.write(0x3E);
+  Wire.write(addr & 0xFF);
+  Wire.write((addr >> 8) & 0xFF);
+  Wire.endTransmission();
+  delay(10);
+  uint8_t msb = bq27220_read8(0x40);
+  uint8_t lsb = bq27220_read8(0x41);
+  return (msb << 8) | lsb;
+}
+
+// Write a data memory word with a differential checksum. Needs CONFIG UPDATE.
+static void bq27220_writeDM16(uint16_t addr, uint16_t newVal) {
+  uint16_t oldVal = bq27220_readDM16(addr);
+  uint8_t oldChk = bq27220_read8(0x60);
+  uint8_t dLen   = bq27220_read8(0x61);
+  if (oldVal == newVal) return;
+
+  uint8_t newMSB = (newVal >> 8) & 0xFF;
+  uint8_t newLSB = newVal & 0xFF;
+  uint8_t temp = (255 - oldChk - (oldVal >> 8) - (oldVal & 0xFF));
+  uint8_t newChk = 255 - ((temp + newMSB + newLSB) & 0xFF);
+
+  Serial.printf("BQ27220:   [0x%04X] %d -> %d\n", addr, oldVal, newVal);
+
+  Wire.beginTransmission(BQ27220_I2C_ADDR);
+  Wire.write(0x3E);
+  Wire.write(addr & 0xFF);
+  Wire.write((addr >> 8) & 0xFF);
+  Wire.write(newMSB);
+  Wire.write(newLSB);
+  Wire.endTransmission();
+  delay(5);
+
+  Wire.beginTransmission(BQ27220_I2C_ADDR);
+  Wire.write(0x60);
+  Wire.write(newChk);
+  Wire.write(dLen);
+  Wire.endTransmission();
+  delay(10);
+}
+
+// ---- BQ27220 end-of-discharge configuration ----
+// The default profile has the gauge compute its end-of-discharge thresholds.
+// When the voltage is under EDV2 for a second at more than C/32 it drops
+// RemainingCapacity straight to Battery Low % (7 %), and a learned FCC follows.
+// This cell still has about 45 % at 3.62 V, yet the percent fell to 7 there
+// with the modem working or starting, while the same cell passed 3.45 V without
+// that at a steady 130 mA. So the percent comes from the coulomb counter alone:
+// fixed thresholds well below the firmware's own shutdown (AUTO_SHUTDOWN_MILLIVOLTS).
+//
+// Data memory is RAM, kept while the cell is connected, so this writes once and
+// after that only reads. Exiting with a re-init makes the gauge estimate the
+// charge from voltage again, so it must not run on an ordinary boot.
+#define BQ27220_DM_GAUGING_CFG  0x929B
+#define BQ27220_DM_STORED_FCC   0x929D
+#define BQ27220_DM_QMAX         0x9106
+#define BQ27220_DM_FIXED_EDV0   0x92B4
+#define BQ27220_DM_FIXED_EDV1   0x92B7
+#define BQ27220_DM_FIXED_EDV2   0x92BA
+#define BQ27220_CFG_EDV_CMP     0x0008
+#define BQ27220_CFG_FCC_LIMIT   0x0100
+#define BQ27220_FIXED_EDV0_MV   3000
+#define BQ27220_FIXED_EDV1_MV   3100
+#define BQ27220_FIXED_EDV2_MV   3200
+
+static void bq27220_configureEndOfDischarge(uint16_t capacity_mAh) {
+  bq27220_writeControl(0x0414); delay(2);   // unseal
+  bq27220_writeControl(0x3672); delay(2);
+
+  uint16_t cfg  = bq27220_readDM16(BQ27220_DM_GAUGING_CFG);
+  uint16_t edv0 = bq27220_readDM16(BQ27220_DM_FIXED_EDV0);
+  uint16_t edv1 = bq27220_readDM16(BQ27220_DM_FIXED_EDV1);
+  uint16_t edv2 = bq27220_readDM16(BQ27220_DM_FIXED_EDV2);
+  uint16_t wantCfg = (cfg & ~BQ27220_CFG_EDV_CMP) | BQ27220_CFG_FCC_LIMIT;
+  Serial.printf("BQ27220: Gauging config 0x%04X, fixed EDV %d/%d/%d mV, FCC %d mAh, status 0x%04X\n",
+                cfg, edv0, edv1, edv2, bq27220_read16(BQ27220_REG_FULL_CAP), bq27220_read16(BQ27220_REG_OP_STATUS));
+
+  if (cfg != wantCfg || edv0 != BQ27220_FIXED_EDV0_MV || edv1 != BQ27220_FIXED_EDV1_MV || edv2 != BQ27220_FIXED_EDV2_MV) {
+    bq27220_writeControl(0xFFFF); delay(2);   // full access
+    bq27220_writeControl(0xFFFF); delay(2);
+    bq27220_writeControl(0x0090);             // enter CONFIG UPDATE
+    bool ready = false;
+    for (int i = 0; i < 100 && !ready; i++) {
+      delay(20);
+      ready = bq27220_read16(BQ27220_REG_OP_STATUS) & 0x0400;
+    }
+    if (ready) {
+      bq27220_writeDM16(BQ27220_DM_GAUGING_CFG, wantCfg);
+      bq27220_writeDM16(BQ27220_DM_FIXED_EDV0, BQ27220_FIXED_EDV0_MV);
+      bq27220_writeDM16(BQ27220_DM_FIXED_EDV1, BQ27220_FIXED_EDV1_MV);
+      bq27220_writeDM16(BQ27220_DM_FIXED_EDV2, BQ27220_FIXED_EDV2_MV);
+      // Undo what the old thresholds taught the gauge
+      bq27220_writeDM16(BQ27220_DM_STORED_FCC, capacity_mAh);
+      bq27220_writeDM16(BQ27220_DM_QMAX, capacity_mAh);
+      bq27220_writeControl(0x0091);           // EXIT_CFG_UPDATE_REINIT
+      delay(2000);                            // reads return garbage before this
+      Serial.printf("BQ27220: End-of-discharge config written, %d%%, FCC %d mAh\n",
+                    bq27220_read16(BQ27220_REG_SOC), bq27220_read16(BQ27220_REG_FULL_CAP));
+    } else {
+      Serial.println("BQ27220: Failed to enter CFG_UPDATE for end-of-discharge config");
+      bq27220_writeControl(0x0092);           // EXIT_CFG_UPDATE
+    }
+  }
+
+  bq27220_writeControl(0x0030);               // SEAL
+  delay(5);
+}
+#endif
+
 // ---- BQ27220 Design Capacity configuration ----
-// The BQ27220 ships with a 3000 mAh default. The T-Deck Pro uses a 2000 mAh
-// cell. This function checks on boot and writes the correct value via the
-// MAC Data Memory interface if needed. The value persists in battery-backed
-// RAM, so this typically only writes once (or after a full battery disconnect).
+// The BQ27220 ships with a 3000 mAh default. This function checks on boot and
+// writes the correct value via the MAC Data Memory interface if needed. The
+// value persists in battery-backed RAM, so this only writes after a full battery
+// disconnect. It must not RESET the gauge otherwise: that re-estimates the
+// charge from a voltage that load or charging current has moved.
 //
 // Procedure follows TI TRM SLUUBD4A Section 6.1:
 //   1. Unseal  ->  2. Full Access  ->  3. Enter CFG_UPDATE
@@ -471,172 +587,13 @@ static bool bq27220_writeControl(uint16_t subcmd) {
 
 bool TDeckProMaxBoard::configureFuelGauge(uint16_t designCapacity_mAh) {
 #if HAS_BQ27220
+  bq27220_configureEndOfDischarge(designCapacity_mAh);
+
   // Read current design capacity from standard command register
   uint16_t currentDC = bq27220_read16(BQ27220_REG_DESIGN_CAP);
   Serial.printf("BQ27220: Design Capacity = %d mAh (target %d)\n", currentDC, designCapacity_mAh);
 
   if (currentDC == designCapacity_mAh) {
-    // Design Capacity correct, but check if Full Charge Capacity is sane.
-    uint16_t fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
-    Serial.printf("BQ27220: Design Capacity already correct, FCC=%d mAh\n", fcc);
-    // Check if FCC is outside an acceptable band around design capacity.
-    // Catches both: FCC too high (stale factory 3000mAh) and FCC too low
-    // (gauge learned on a smaller battery, e.g. 1400mAh on a 2500mAh pack).
-    uint16_t fccLo = (designCapacity_mAh > 100) ? designCapacity_mAh - 100 : 0;
-    uint16_t fccHi = designCapacity_mAh + 100;
-    if (fcc < fccLo || fcc > fccHi) {
-      // FCC is >=150% of design — stale from factory defaults (typically 3000 mAh).
-      uint16_t designEnergy = (uint16_t)((uint32_t)designCapacity_mAh * 37 / 10);
-      Serial.printf("BQ27220: FCC %d outside target band [%d..%d], checking Design Energy (target %d mWh)\n",
-                    fcc, fccLo, fccHi, designEnergy);
-
-      // Unseal to read data memory and issue RESET
-      bq27220_writeControl(0x0414); delay(2);
-      bq27220_writeControl(0x3672); delay(2);
-      // Full Access
-      bq27220_writeControl(0xFFFF); delay(2);
-      bq27220_writeControl(0xFFFF); delay(2);
-
-      // Read current Design Energy from data memory to check if it needs writing
-      // Enter CFG_UPDATE to access data memory
-      bq27220_writeControl(0x0090);
-      bool ready = false;
-      for (int i = 0; i < 50; i++) {
-        delay(20);
-        uint16_t opSt = bq27220_read16(BQ27220_REG_OP_STATUS);
-        if (opSt & 0x0400) { ready = true; break; }
-      }
-      if (ready) {
-        // Read Design Energy at data memory address 0x92A1
-        Wire.beginTransmission(BQ27220_I2C_ADDR);
-        Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
-        Wire.endTransmission();
-        delay(10);
-        uint8_t oldMSB = bq27220_read8(0x40);
-        uint8_t oldLSB = bq27220_read8(0x41);
-        uint16_t currentDE = (oldMSB << 8) | oldLSB;
-
-        if (currentDE != designEnergy) {
-          // Design Energy actually needs updating — write it
-          uint8_t oldChk = bq27220_read8(0x60);
-          uint8_t dLen   = bq27220_read8(0x61);
-          uint8_t newMSB = (designEnergy >> 8) & 0xFF;
-          uint8_t newLSB = designEnergy & 0xFF;
-          uint8_t temp = (255 - oldChk - oldMSB - oldLSB);
-          uint8_t newChk = 255 - ((temp + newMSB + newLSB) & 0xFF);
-
-          Serial.printf("BQ27220: DE old=%d new=%d mWh, writing\n", currentDE, designEnergy);
-
-          Wire.beginTransmission(BQ27220_I2C_ADDR);
-          Wire.write(0x3E); Wire.write(0xA1); Wire.write(0x92);
-          Wire.write(newMSB); Wire.write(newLSB);
-          Wire.endTransmission();
-          delay(5);
-          Wire.beginTransmission(BQ27220_I2C_ADDR);
-          Wire.write(0x60); Wire.write(newChk); Wire.write(dLen);
-          Wire.endTransmission();
-          delay(10);
-
-          // Exit with reinit since we actually changed data
-          bq27220_writeControl(0x0091);  // EXIT_CFG_UPDATE_REINIT
-          delay(200);
-          Serial.println("BQ27220: Design Energy written, exited CFG_UPDATE");
-        } else {
-          // DC=2000, DE=7400, Update Status=0x00, but FCC is stuck at 3000.
-          // Diagnostic scan found the culprits:
-          //   0x9106 = Qmax Cell 0 (IT Cfg class) — the raw capacity the
-          //            gauge uses for FCC calculation. Factory default 3000.
-          //   0x929D = Stored FCC reference (Gas Gauging class, 2 bytes
-          //            before Design Capacity). Also stuck at 3000.
-          //
-          // Fix: overwrite both with designCapacity_mAh (2000).
-          Serial.printf("BQ27220: DE correct (%d mWh) — fixing Qmax + stored FCC\n", currentDE);
-
-          // --- Helper lambda for MAC data memory 2-byte write ---
-          // Reads old value + checksum, computes differential checksum, writes new value.
-          auto writeDM16 = [](uint16_t addr, uint16_t newVal) -> bool {
-            // Select address
-            Wire.beginTransmission(BQ27220_I2C_ADDR);
-            Wire.write(0x3E);
-            Wire.write(addr & 0xFF);
-            Wire.write((addr >> 8) & 0xFF);
-            Wire.endTransmission();
-            delay(10);
-
-            uint8_t oldMSB = bq27220_read8(0x40);
-            uint8_t oldLSB = bq27220_read8(0x41);
-            uint8_t oldChk = bq27220_read8(0x60);
-            uint8_t dLen   = bq27220_read8(0x61);
-            uint16_t oldVal = (oldMSB << 8) | oldLSB;
-
-            if (oldVal == newVal) {
-              Serial.printf("BQ27220:   [0x%04X] already %d, skip\n", addr, newVal);
-              return true;  // already correct
-            }
-
-            uint8_t newMSB = (newVal >> 8) & 0xFF;
-            uint8_t newLSB = newVal & 0xFF;
-            uint8_t temp = (255 - oldChk - oldMSB - oldLSB);
-            uint8_t newChk = 255 - ((temp + newMSB + newLSB) & 0xFF);
-
-            Serial.printf("BQ27220:   [0x%04X] %d -> %d\n", addr, oldVal, newVal);
-
-            // Write new value
-            Wire.beginTransmission(BQ27220_I2C_ADDR);
-            Wire.write(0x3E);
-            Wire.write(addr & 0xFF);
-            Wire.write((addr >> 8) & 0xFF);
-            Wire.write(newMSB);
-            Wire.write(newLSB);
-            Wire.endTransmission();
-            delay(5);
-
-            // Write checksum
-            Wire.beginTransmission(BQ27220_I2C_ADDR);
-            Wire.write(0x60);
-            Wire.write(newChk);
-            Wire.write(dLen);
-            Wire.endTransmission();
-            delay(10);
-            return true;
-          };
-
-          // Overwrite Qmax Cell 0 (IT Cfg) — this is what FCC is derived from
-          writeDM16(0x9106, designCapacity_mAh);
-
-          // Overwrite stored FCC reference (Gas Gauging, 2 bytes before DC)
-          writeDM16(0x929D, designCapacity_mAh);
-
-          // Exit with reinit to apply the new values
-          bq27220_writeControl(0x0091);  // EXIT_CFG_UPDATE_REINIT
-          delay(200);
-          Serial.println("BQ27220: Qmax + stored FCC updated, exited CFG_UPDATE");
-        }
-      } else {
-        Serial.println("BQ27220: Failed to enter CFG_UPDATE for DE check");
-      }
-
-      // Seal first, then issue RESET.
-      // RESET forces the gauge to fully reinitialize its Impedance Track
-      // algorithm and recalculate FCC from the current DC/DE values.
-      // This is the actual fix when DC and DE are correct but FCC is stuck.
-      bq27220_writeControl(0x0030);  // SEAL
-      delay(5);
-      Serial.println("BQ27220: Issuing RESET to force FCC recalculation...");
-      bq27220_writeControl(0x0041);  // RESET
-      delay(2000);  // Full reset needs generous settle time
-
-      fcc = bq27220_read16(BQ27220_REG_FULL_CAP);
-      Serial.printf("BQ27220: FCC after RESET: %d mAh (target <= %d)\n", fcc, designCapacity_mAh);
-
-      if (fcc > designCapacity_mAh) {
-        // RESET didn't fix FCC — the gauge IT algorithm is stubbornly
-        // retaining its learned value. This typically resolves after one
-        // full charge/discharge cycle. Software clamp in
-        // getFullChargeCapacity() ensures correct display regardless.
-        Serial.printf("BQ27220: FCC still stale at %d — software clamp active\n", fcc);
-      }
-    }
     return true;
   }
 
@@ -942,9 +899,9 @@ void TDeckProMaxBoard::chargerDebugPrint() {
 
   #if HAS_BQ27220
     int16_t t = getBattTemperature();
-    Serial.printf("GAUGE: V=%umV I=%dmA avgI=%dmA remain=%umAh full=%umAh design=%umAh soc=%u%% T=%d.%dC\n",
+    Serial.printf("GAUGE: V=%umV I=%dmA avgI=%dmA remain=%umAh full=%umAh design=%umAh soc=%u%% T=%d.%dC op=0x%04X\n",
                   getBattMilliVolts(), (int16_t)bq27220_read16(BQ27220_REG_CURRENT), getAvgCurrent(),
                   getRemainingCapacity(), bq27220_read16(BQ27220_REG_FULL_CAP), getDesignCapacity(),
-                  bq27220_read16(BQ27220_REG_SOC), t / 10, abs(t % 10));
+                  bq27220_read16(BQ27220_REG_SOC), t / 10, abs(t % 10), bq27220_read16(BQ27220_REG_OP_STATUS));
   #endif
 }
