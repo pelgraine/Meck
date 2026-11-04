@@ -204,6 +204,7 @@ private:
   // Shadow registers for XL9555 output ports (avoid I2C read-modify-write)
   uint8_t _xlPort0 = XL9555_BOOT_PORT0;
   uint8_t _xlPort1 = XL9555_BOOT_PORT1;
+  uint32_t _gpsBaud = GPS_BAUDRATE;   // what gpsPowerOn() begins Serial2 at
   bool    _xlReady = false;
   bool    _backlightOn = false;  // tracks frontlight on/off for isBacklightOn()
 

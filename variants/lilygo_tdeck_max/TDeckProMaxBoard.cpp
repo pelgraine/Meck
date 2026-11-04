@@ -315,16 +315,20 @@ void TDeckProMaxBoard::keyboardReset() {
 void TDeckProMaxBoard::gpsPowerOn() {
   xl9555_digitalWrite(XL_PIN_GPS_EN, HIGH);
   delay(100);
-  // Route the UART back to the pins released by gpsPowerOff()
-  Serial2.setPins(GPS_RX_PIN, GPS_TX_PIN);
+  // Back on the pins released by gpsPowerOff()
+  if (Serial2.baudRate() == 0) Serial2.begin(_gpsBaud, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 }
 
 void TDeckProMaxBoard::gpsPowerOff() {
   xl9555_digitalWrite(XL_PIN_GPS_EN, LOW);
+  if (Serial2.baudRate()) _gpsBaud = Serial2.baudRate();
   // Release the UART pins. The TX line idles high, and an output held high
   // into the unpowered GPS back-powers it through its input protection:
   // about 21 mA measured on the battery with the GPS "off". RX loses its
-  // pull-up for the same reason.
+  // pull-up for the same reason. On core 3.x taking a pin away from the UART
+  // stops it for good, and setPins() does not bring it back, so end it here
+  // and begin it again in gpsPowerOn().
+  Serial2.end();
   pinMode(GPS_TX_PIN, INPUT);
   pinMode(GPS_RX_PIN, INPUT);
 }
