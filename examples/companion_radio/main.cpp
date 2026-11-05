@@ -1204,7 +1204,7 @@ static uint32_t _atoi(const char* sp) {
     int r0 = meckChgRead(0x00), r0b = meckChgRead(0x0B);
     Serial.printf("pwr: V=%umV avgI=%dmA soc=%u%% | hiz=%d vbus=%d | cpu=%uMHz locked=%d ble=%d | "
                   "lora=%d gps=%d 1v8=%d modem=%d motor=%d amp=%d bl=%d | last test awake=%d sleep=%d\n",
-                  board.getBattMilliVolts(), board.getAvgCurrent(), board.getBatteryPercent(),
+                  board.getBattMilliVolts(), board.getAvgCurrent(), board.getGaugeSoc(),
                   r0 >= 0 ? (r0 >> 7) & 1 : -1, r0b >= 0 ? (r0b >> 2) & 1 : -1,
                   (unsigned)getCpuFrequencyMhz(), ui_task.isLocked(), serial_interface.isConnected(),
                   board.xl9555_digitalRead(XL_PIN_LORA_EN), board.xl9555_digitalRead(XL_PIN_GPS_EN),
@@ -4714,7 +4714,7 @@ static void meckPwrRecord(uint32_t now, unsigned long ms) {
   r.mv = board.getBattMilliVolts();
   r.avgMa = board.getAvgCurrent();
   r.tempDc = board.getBattTemperature();
-  r.pct = board.getBatteryPercent();
+  r.pct = board.getGaugeSoc();   // comparable with older logs and with mAh
   r.chg = board.getChargeState();
   r.blocker = (uint8_t)meckLockSleepBlocker();
   NodePrefs* p = the_mesh.getNodePrefs();
