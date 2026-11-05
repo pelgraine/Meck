@@ -1,8 +1,9 @@
 name: Build T-Deck MAX Firmwares
 
 # Builds the T-Deck MAX firmwares of this fork.
-# - every push to `next` and every pull request into it: the firmwares are
-#   kept as workflow artifacts for 30 days (Actions tab > run > Artifacts)
+# - every push to `next` and every pull request into `next` or `testing`: the
+#   firmwares are kept as workflow artifacts for 30 days (Actions tab > run >
+#   Artifacts)
 # - every push to `next`: the pre-release "Latest build (next)" (tag
 #   `next-latest`) is replaced with the new firmwares
 # - a tag `max-v*` (e.g. max-v1.15.1): also a draft GitHub release with the
@@ -22,6 +23,7 @@ on:
   pull_request:
     branches:
       - next
+      - testing
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
