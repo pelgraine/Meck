@@ -3628,9 +3628,9 @@ static constexpr int MENU_Y = 40;
 static constexpr int MENU_HINT_Y1 = 290;
 static constexpr int MENU_HINT_Y2 = 302;
 
-// Full refresh (the black/white flash) every 5 minutes while the aquarium stays
+// Full refresh (the black/white flash) every minute while the aquarium stays
 // on screen, to clear the residue partial refreshes leave behind.
-static constexpr unsigned long AQUARIUM_FULL_REFRESH_MS = 300000UL;   // 5 minutes
+static constexpr unsigned long AQUARIUM_FULL_REFRESH_MS = 60000UL;   // 1 minute
 static unsigned long s_lastAquariumMs = 0;
 static unsigned long s_lastAquariumFullMs = 0;
 
@@ -3697,7 +3697,7 @@ int loRaFishRenderAquarium(GxEPDDisplay& d) {
   if (!frame.ensure()) return 1000;
 
   // A gap of more than 5 s since the last aquarium picture is a new visit to
-  // the page: start the 5 minutes from now.
+  // the page: start the minute from now.
   const unsigned long now = millis();
   if (s_lastAquariumMs == 0 || now - s_lastAquariumMs > 5000UL) {
     s_lastAquariumFullMs = now;
