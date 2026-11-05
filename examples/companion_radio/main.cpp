@@ -4101,8 +4101,16 @@ void meckQsSwitch(QsItem item) {
 void meckQsLockVerdict(char* buf, size_t len) {
   NodePrefs* p = the_mesh.getNodePrefs();
   const char* locked = MECK_TR("Locked", "Verrouill\xC3\xA9");
+  // How long what the gauge says is left lasts at that draw, ", 44h"; only
+  // arithmetic on the estimate, nothing is timed. Empty if the gauge cannot say.
+  char hours[12] = "";
+  auto runtime = [&](int mA) {
+    uint16_t left = board.getRemainingCapacity();
+    if (left) snprintf(hours, sizeof(hours), ", %dh", left / mA);
+  };
   if (!p->lock_sleep) {
-    snprintf(buf, len, "%s: %s", locked, MECK_TR("never sleeps, ~35 mA", "jamais en veille, ~35 mA"));
+    runtime(35);
+    snprintf(buf, len, "%s: %s%s", locked, MECK_TR("never sleeps, ~35 mA", "jamais en veille, ~35 mA"), hours);
     return;
   }
   char what[48] = "";
@@ -4157,9 +4165,10 @@ void meckQsLockVerdict(char* buf, size_t len) {
     mA += 15;
     with("GPS");
   }
-  const char* sleeps = MECK_TR("sleeps", "veille");
-  if (on[0]) snprintf(buf, len, "%s: %s, ~%d mA (%s)", locked, sleeps, mA, on);
-  else snprintf(buf, len, "%s: %s, ~%d mA", locked, sleeps, mA);
+  runtime(mA);
+  // The list needs the room "sleeps" takes: the current says as much
+  if (on[0]) snprintf(buf, len, "%s: ~%d mA%s (%s)", locked, mA, hours, on);
+  else snprintf(buf, len, "%s: %s, ~%d mA%s", locked, MECK_TR("sleeps", "veille"), mA, hours);
 }
 
 // Radios whose "When locked" switch is off go off on lock and come back on

@@ -36,7 +36,7 @@ struct QsTileState {
 
 void meckQsState(QsItem item, QsTileState& st);
 void meckQsSwitch(QsItem item);
-// What locking does with the current settings ("Locked: sleeps · ~17 mA")
+// What locking does with the current settings ("Locked: sleeps, ~17 mA, 82h")
 void meckQsLockVerdict(char* buf, size_t len);
 
 class QuickSettingsScreen : public UIScreen {

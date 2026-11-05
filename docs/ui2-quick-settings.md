@@ -97,10 +97,11 @@ Settings › Phone when locked (M opens it).
 
 The bottom line (both views) says what a lock would do now, with the
 battery measurements of `docs/power-saving-ideas.md`: "Locked: sleeps,
-~17 mA", "Locked: sleeps, ~23 mA (app)", "Locked: sleeps, ~31 mA (app,
-WiFi)", "Locked: sleeps, ~38 mA (app, GPS)", "Locked: awake for USB" or
-"Locked: never sleeps, ~35 mA". Asleep, the estimate is 17 mA plus what
-each one was measured to add on its own: a phone connected over Bluetooth
+~17 mA, 82h", "Locked: ~23 mA, 60h (app)", "Locked: ~31 mA, 45h (app,
+WiFi)", "Locked: ~38 mA, 36h (app, GPS)", "Locked: awake for USB" or
+"Locked: never sleeps, ~35 mA, 40h". The hours are the gauge's remaining
+capacity divided by that current, not a timed run. Asleep, the estimate is
+17 mA plus what each one was measured to add on its own: a phone connected over Bluetooth
 6 mA (automatic light sleep; an app on WiFi adds nothing to WiFi's share),
 WiFi 8 mA, the GPS 15 mA ("GPS when locked" about 3 mA), 4G 5 mA;
 combinations are only added up.
