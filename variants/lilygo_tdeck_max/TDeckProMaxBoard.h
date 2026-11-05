@@ -126,7 +126,10 @@ public:
   // Identical hardware to the Pro; these read the same registers.
   // -------------------------------------------------------------------------
   uint16_t getBattMilliVolts() override;
+  // Percent of the charge usable before the low-voltage shutdown (for people);
+  // getGaugeSoc() is the gauge's own percent of the charge in the cell.
   uint8_t  getBatteryPercent();
+  uint8_t  getGaugeSoc();
   int16_t  getAvgCurrent();
   int16_t  getAvgPower();
   uint16_t getTimeToEmpty();

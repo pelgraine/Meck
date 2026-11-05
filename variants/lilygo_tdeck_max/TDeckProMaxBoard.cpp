@@ -404,7 +404,21 @@ uint16_t TDeckProMaxBoard::getBattMilliVolts() {
   #endif
 }
 
+// The deck shuts down at AUTO_SHUTDOWN_MILLIVOLTS with charge still in the cell,
+// so the gauge's percent never reaches 0. How much is left depends on the load:
+// 9 % at 3419 mV at 170 mA was measured; estimated 8 % at 3.4 V there and 3-4 %
+// on a locked deck. 5 % lands near 0 at low load, and a loaded deck stops at a
+// few percent rather than sitting on 0 for hours.
+#define BATTERY_RESERVE_PCT 5
+
 uint8_t TDeckProMaxBoard::getBatteryPercent() {
+  uint8_t soc = getGaugeSoc();
+  if (soc <= BATTERY_RESERVE_PCT) return 0;
+  const uint16_t usable = 100 - BATTERY_RESERVE_PCT;
+  return (uint8_t)(((soc - BATTERY_RESERVE_PCT) * 100 + usable / 2) / usable);
+}
+
+uint8_t TDeckProMaxBoard::getGaugeSoc() {
   #if HAS_BQ27220
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(BQ27220_REG_SOC);
@@ -788,7 +802,15 @@ int16_t TDeckProMaxBoard::getAvgPower() {
 
 uint16_t TDeckProMaxBoard::getTimeToEmpty() {
   #if HAS_BQ27220
-    return bq27220_read16(BQ27220_REG_TIME_TO_EMPTY);
+    uint16_t tte = bq27220_read16(BQ27220_REG_TIME_TO_EMPTY);
+    if (tte == 0 || tte == 0xFFFF) return tte;
+    // The gauge counts the charge the deck shuts down before using; at a low
+    // current that reserve alone would read as hours.
+    uint16_t remain = bq27220_read16(BQ27220_REG_REMAIN_CAP);
+    if (remain == 0) return tte;
+    uint16_t reserve = (uint32_t)getFullChargeCapacity() * BATTERY_RESERVE_PCT / 100;
+    if (remain <= reserve) return 0;
+    return (uint16_t)((uint32_t)tte * (remain - reserve) / remain);
   #else
     return 0xFFFF;
   #endif
