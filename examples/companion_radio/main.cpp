@@ -4101,11 +4101,12 @@ void meckQsSwitch(QsItem item) {
 void meckQsLockVerdict(char* buf, size_t len) {
   NodePrefs* p = the_mesh.getNodePrefs();
   const char* locked = MECK_TR("Locked", "Verrouill\xC3\xA9");
-  // How long what the gauge says is left lasts at that draw, ", 44h"; only
-  // arithmetic on the estimate, nothing is timed. Empty if the gauge cannot say.
+  // How long the charge left before the shutdown lasts at that draw, ", 44h";
+  // only arithmetic on the estimate, nothing is timed. Empty with none left, or
+  // if the gauge cannot say.
   char hours[12] = "";
   auto runtime = [&](int mA) {
-    uint16_t left = board.getRemainingCapacity();
+    uint16_t left = board.getUsableCapacity();
     if (left) snprintf(hours, sizeof(hours), ", %dh", left / mA);
   };
   if (!p->lock_sleep) {
