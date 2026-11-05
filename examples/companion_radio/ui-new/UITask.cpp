@@ -1438,8 +1438,8 @@ public:
       return true;
     }
 #ifdef MECK_LORAFISH
-    // Aquarium: Enter or a long press cleans the tank (or, on a colour
-    // display only, opens the new fish colour setup).
+    // Aquarium: Enter or a long press answers a notice or the egg search,
+    // opens a new pet's setup, or cleans the tank.
     if (c == KEY_ENTER && _page == HomePage::AQUARIUM) {
       if (loRaFishAquariumHold()) _task->gotoLoRaFishScreen();
       return true;
@@ -2151,6 +2151,9 @@ void UITask::setCurrScreen(UIScreen* c) {
   hardware-agnostic pre-shutdown activity should be done here
 */
 void UITask::shutdown(bool restart){
+#ifdef MECK_LORAFISH
+  loRaFishFlush();
+#endif
 
   #ifdef PIN_BUZZER
   /* note: we have a choice here -

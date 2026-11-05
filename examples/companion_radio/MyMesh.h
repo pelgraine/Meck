@@ -7,6 +7,10 @@
 #ifdef MECK_LORAFISH
 // LoRaGotchi DX fish (ui-new/LoRaFish.cpp): DX visit state and radio samples,
 // as in LoRaGotchi DX's MyMesh.h.
+#include <stddef.h>
+#include "LoRaFishGuestReturn.h"
+#include "LoRaFishVisit.h"
+#include "LoRaFishSpecies.h"
 extern float lorafish_last_rssi;
 extern float lorafish_last_snr;
 extern unsigned long lorafish_last_rf_ms;
@@ -16,17 +20,23 @@ struct LoRaGotchiDXHomeState {
   bool pending=false, committing=false, away=false, returned=false;
   uint32_t txid=0, fishid=0, destinationIndex=0;
   char destinationName[32]="";
+  uint8_t destinationKey[32]={}; bool destinationKnown=false;
+  bool completedVisit=false;  // Consumed once by the care loop, even on a very short visit.
+  bool communityVisit=false;
 };
 
 // Independent visitor slot. A node can have its own fish away while hosting one guest.
 struct LoRaGotchiDXGuestState {
   bool reserved=false, present=false;
+  uint8_t ownerKey[32]={}; bool ownerKnown=false;
   uint32_t txid=0, fishid=0;
+  uint16_t species=LoRaFishSpecies::TropicalFish;
   uint8_t stage=2;
   uint8_t color=0;
   uint8_t scalesColor=0;
   uint8_t eyesColor=0;
   uint16_t monoPixelTint=0xFFFF;
+  uint8_t monoPanel=0; // 0 Blue, 1 White, 2 Yellow/Blue; supplied by P1 extension.
   bool colorCapable=false;
   char guestName[24]="DX Fish";
   char homeName[32]="";
@@ -34,12 +44,19 @@ struct LoRaGotchiDXGuestState {
 
 extern LoRaGotchiDXHomeState loragotchiDXHome;
 extern LoRaGotchiDXGuestState loragotchiDXGuest;
+extern LoRaFishGuestReturn loragotchiDXGuestReturn;
+extern LoRaFishVisit loragotchiDXVisit;
+extern LoRaFishReservation loragotchiDXReservation;
 extern bool loragotchiDXLocalColorCapable;
 extern bool loragotchiDXLocalHasColorGenes;
 extern uint8_t loragotchiDXLocalColorIndex;
 extern uint8_t loragotchiDXLocalScalesColorIndex;
 extern uint8_t loragotchiDXLocalEyesColorIndex;
+extern uint8_t loragotchiDXLocalMonoPanel;
+extern uint16_t loragotchiDXLocalSpecies;
+extern uint16_t loragotchiDXLocalMonoPixelTint;
 extern bool loragotchiDXReturnedFromMonochrome;
+bool loragotchiEggMessage(const uint8_t* key, const char* text, char* reply, size_t size);
 void loragotchiDXLoad();
 void loragotchiDXSave();
 #endif
@@ -198,6 +215,23 @@ public:
   void loop();
   void handleCmdFrame(size_t len);
   bool advert();
+#ifdef MECK_LORAFISH
+  // LoRaGotchi fish: visits, returns and the fish menu's advert (ui-new/LoRaFish.cpp).
+  int sendLoRaFishCommit(const ContactInfo& destination);
+  void trackLoRaFishRequest(const char* request, uint32_t timeout);
+  bool recallLoRaFish();
+  void serviceLoRaFishVisit();
+  void expireLoRaFishReservation();
+  bool loRaFishQueueReady() const;
+  bool loRaFishTxPending() const;
+  uint32_t loRaFishRandom();
+  bool acknowledgeLoRaFishArrival(uint32_t hash);
+  void serviceLoRaFishArrival();
+  bool returnLoRaFishGuest();
+  bool acknowledgeLoRaFishGuestReturn(uint32_t hash);
+  void serviceLoRaFishGuestReturn();
+  bool loRaFishAdvert(bool flood);
+#endif
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);

@@ -23,6 +23,7 @@ void loRaFishLoop(bool aquariumOnScreen);
 void loRaFishOnMessage();        // a text message arrived
 void loRaFishOnContactAdvert();  // an advert from a contact was heard
 void loRaFishOnAck();            // UI ack event (for example, advert sent)
+void loRaFishFlush();            // save everything before a shutdown or restart
 
 // Draw onto the panel (physical pixels); return milliseconds until the next
 // frame. The aquarium is drawn under Meck's home header.
@@ -30,7 +31,7 @@ int  loRaFishRenderAquarium(GxEPDDisplay& d);
 int  loRaFishRenderMenu(GxEPDDisplay& d);
 
 // Long press / Enter on the aquarium page. Returns true when the fish screen
-// should open (to choose a new fish's colours; colour displays only).
+// should open (to set up a new pet).
 bool loRaFishAquariumHold();
 
 // Fish screen (opened from the Games menu).
