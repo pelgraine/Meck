@@ -2361,16 +2361,17 @@ public:
       c.icon(lx, 262, ic, 12);
       c.textFit(lx + 16, 273, maxW, line, UI2_F_SMALL);
 
+      char est[sizeof(_snapEst) + 16];
+      snprintf(est, sizeof(est), "%s", _snapEst);
   #ifdef HAS_4G_MODEM
-      // 4G switched off for a low cell: say so instead of the estimate
-      if (modemManager.isBatteryLow())
-        c.textFit(PAD, 290, SCREEN_W - 2 * PAD,
-                  usb ? MECK_TR("4G off until charged", "4G coup\xC3\xA9 jusqu'\xC3\xA0 la charge")
-                      : MECK_TR("Battery low, 4G off: charge now", "Batterie faible, 4G coup\xC3\xA9 : chargez"),
-                  UI2_F_META, true, UI2_CENTER);
-      else
+      // A low cell stops 4G about half way down, with many hours left for LoRa:
+      // the estimate stays, and only someone who has 4G on needs to hear of it
+      if (modemManager.isBatteryLow() && ModemManager::enabledInSettings()) {
+        if (est[0]) strlcat(est, " \xC2\xB7 ", sizeof(est));
+        strlcat(est, MECK_TR("4G off", "4G coup\xC3\xA9"), sizeof(est));
+      }
   #endif
-      if (_snapEst[0]) c.textFit(PAD, 290, SCREEN_W - 2 * PAD, _snapEst, UI2_F_META, true, UI2_CENTER);
+      if (est[0]) c.textFit(PAD, 290, SCREEN_W - 2 * PAD, est, UI2_F_META, true, UI2_CENTER);
     }
 #endif
     // Next redraw at the next minute boundary, not on a fixed period: a

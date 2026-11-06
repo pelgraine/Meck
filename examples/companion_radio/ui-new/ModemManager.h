@@ -265,8 +265,12 @@ public:
   // Persistent enable/disable config (SD file /sms/modem.cfg)
   static bool loadEnabledConfig();
   static void saveEnabledConfig(bool enabled);
+  // The same setting without touching the SD card, for the lock screen: what
+  // the last load or save saw; false until the first one
+  static bool enabledInSettings() { return _enabledInSettings; }
 
 private:
+  static bool _enabledInSettings;
   volatile ModemState _state = ModemState::OFF;
   bool _battLow = false;
   uint8_t _battLowCount = 0;

@@ -573,13 +573,16 @@ itself under load, and the 2.8 V shutdown was never reached.
   8 s apart, one wake apart while asleep) the modem is shut down, and
   `begin()` refuses to start it until the cell is above
   `MODEM_RESUME_MILLIVOLTS` (3800). Then it starts again by itself if 4G
-  is on in settings; the saved setting is never changed. The deck runs
-  on for LoRa. A low cell at boot keeps the modem off from the start.
-- **What the user sees.** An alert "Battery low: 4G off. Charge the
-  deck."; on the lock screen "Battery low, 4G off: charge now" (on USB
-  "4G off until charged") instead of the time estimate; in settings 4G
-  shows OFF with "Battery low: charge first", and turning it on is
-  refused with an alert.
+  is on in settings; the low cell never changes the saved setting. The
+  deck runs on for LoRa. A low cell at boot keeps the modem off from the
+  start.
+- **What the user sees.** With 4G on in settings, an alert "Battery low:
+  4G off. Charge the deck." and "· 4G off" after the time estimate on the
+  lock screen ("About 40 h left · 4G off"). 3650 mV is about half full, so
+  the estimate stays; with 4G off in settings the lock screen says nothing
+  about it. Settings and the quick settings tile keep switching the saved
+  setting: off stays off after charging, and on waits for it ("Starts after
+  charging", "After charging").
 - **Shutdown at 3400 mV** instead of 2800, and PWRKEY is released before
   `AT+CPOF` (the power-on pulse left it held down, which with the
   auto power-on wiring can switch the A7682E back on).
@@ -589,8 +592,8 @@ itself under load, and the 2.8 V shutdown was never reached.
 Tried on the deck (2026-11-01, on USB, `pwrmodemmv`): at 3600 mV the
 modem went off 21 s later (`AT+CPOF` OK, state OFF, XL9555 modem=0,
 DTR low), the alert showed over the lock screen, the lock screen read
-"4G off until charged", the settings row and the refusal as above. At
-3800 mV it came back by itself: READY 16 s later, "UART sleep enabled"
+"4G off until charged" and settings refused the switch (both since
+changed, see above). At 3800 mV it came back by itself: READY 16 s later, "UART sleep enabled"
 after 38 s, settings 4G ON. Not tried: the lock screen text on battery
 (a locked deck on battery sleeps and USB goes), a low cell at boot, the
 3400 mV shutdown.

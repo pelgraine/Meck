@@ -2427,13 +2427,12 @@ public:
 
       #ifdef HAS_4G_MODEM
       case ROW_MODEM_TOGGLE: {
-        bool battLow = modemManager.isBatteryLow();
         snprintf(tmp, sizeof(tmp), MECK_TR("4G Modem: %s", "Modem 4G : %s"),
-                 (_modemEnabled && !battLow) ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
+                 _modemEnabled ? MECK_TR("ON", "OUI") : MECK_TR("OFF", "NON"));
         display.print(tmp);
-        if (battLow) {
-          // Switched off for a low cell; the saved setting brings it back
-          const char* hint = MECK_TR("Battery low: charge first", "Batterie faible : chargez");
+        if (_modemEnabled && modemManager.isBatteryLow()) {
+          // Held off for a low cell; the saved setting brings it back
+          const char* hint = MECK_TR("Starts after charging", "D\xC3\xA9marre apr\xC3\xA8s la charge");
           display.setCursor(display.width() - display.getTextWidth(hint) - 2, y);
           display.print(hint);
         }
@@ -4978,11 +4977,8 @@ public:
         #endif
         #ifdef HAS_4G_MODEM
         case ROW_MODEM_TOGGLE:
-          if (modemManager.isBatteryLow()) {
-            extern void meckShowAlert(const char* text, int duration_millis);
-            meckShowAlert(MECK_TR("Battery low: charge the\ndeck to use 4G", "Batterie faible : chargez\npour utiliser la 4G"), 4000);
-            break;
-          }
+          // A low cell does not lock the setting: begin() holds the modem off
+          // until charged, and off then stays off after charging
           _modemEnabled = !_modemEnabled;
           ModemManager::saveEnabledConfig(_modemEnabled);
           if (_modemEnabled) {

@@ -3981,6 +3981,13 @@ void meckQsState(QsItem item, QsTileState& st) {
       break;
     }
     case QS_MODEM: {
+      // A low cell holds the modem off: the switch is the setting, and the line
+      // says it has to wait
+      if (modemManager.isBatteryLow()) {
+        st.on = ModemManager::enabledInSettings();
+        line(st.on ? MECK_TR("After charging", "Apr\xC3\xA8s la charge") : off);
+        break;
+      }
       ModemState ms = modemManager.getState();
       st.on = ms != ModemState::OFF;
       switch (ms) {
@@ -4069,7 +4076,11 @@ void meckQsSwitch(QsItem item) {
     case QS_BLE:      if (meckCompanionIsBLE()) meckCompanionBleOff(); else meckCompanionUseBLE(); break;
     case QS_WIFI:     if (meckCompanionIsWiFi()) meckCompanionWifiOff(); else meckCompanionUseWiFi(true); break;
     case QS_GPS:      ui_task.setGPS(!ui_task.getGPSState(), false); break;
-    case QS_MODEM:    meckQsModemSet(modemManager.getState() == ModemState::OFF); break;
+    case QS_MODEM:
+      // With a low cell the modem is off either way; only the setting tells
+      meckQsModemSet(modemManager.isBatteryLow() ? !ModemManager::enabledInSettings()
+                                                 : modemManager.getState() == ModemState::OFF);
+      break;
     case QS_TONES:    ui_task.setTonesOn(p->buzzer_quiet); break;
     case QS_VIBRATE:  p->notif_vibrate = !p->notif_vibrate; the_mesh.savePrefs(); break;
     case QS_LIGHT:    meckFrontlightToggle(); break;

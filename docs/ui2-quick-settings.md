@@ -57,7 +57,7 @@ starting); the screen then redraws every second instead of every 5 s.
 | Bluetooth | companion Bluetooth on / off | Off · PIN 123456 · App connected | — |
 | WiFi | companion WiFi on (joins the saved network) / off | Off · Joining… · SSID · App connected · No network | Settings › WiFi |
 | GPS | GPS on / off, saved, no toast | Off · Searching… · Fix, 8 sat. | Map |
-| 4G | modem on / off, saved as Settings › 4G Modem does | Off · Starting… · Searching… · Operator 3/5 · Error · Call | Settings › 4G Modem |
+| 4G | modem on / off, saved as Settings › 4G Modem does | Off · Starting… · Searching… · Operator 3/5 · Error · Call · After charging (on, but the cell is too low for now) | Settings › 4G Modem |
 | Tones | `buzzer_quiet` | On · Off | Settings › Channels (per-channel sounds) |
 | Vibration | `notif_vibrate` | On · Off | Settings › Channels |
 | Light | frontlight at Backlight Brightness / off (as the heart pad) | 60 % · Off | Settings › Backlight Brightness |
