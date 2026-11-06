@@ -138,7 +138,10 @@ public:
   bool     isUsbPowered();
   // SY6970 charge state: 0 not charging, 1 pre-charge, 2 fast charge, 3 done
   uint8_t  getChargeState();
+  // getRemainingCapacity() is all the charge in the cell; getUsableCapacity()
+  // the part before the low-voltage shutdown, what getBatteryPercent() counts.
   uint16_t getRemainingCapacity();
+  uint16_t getUsableCapacity();
   uint16_t getFullChargeCapacity();
   uint16_t getDesignCapacity();
   int16_t  getBattTemperature();

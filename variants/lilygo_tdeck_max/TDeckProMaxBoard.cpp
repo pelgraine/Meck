@@ -808,9 +808,7 @@ uint16_t TDeckProMaxBoard::getTimeToEmpty() {
     // current that reserve alone would read as hours.
     uint16_t remain = bq27220_read16(BQ27220_REG_REMAIN_CAP);
     if (remain == 0) return tte;
-    uint16_t reserve = (uint32_t)getFullChargeCapacity() * BATTERY_RESERVE_PCT / 100;
-    if (remain <= reserve) return 0;
-    return (uint16_t)((uint32_t)tte * (remain - reserve) / remain);
+    return (uint16_t)((uint32_t)tte * getUsableCapacity() / remain);
   #else
     return 0xFFFF;
   #endif
@@ -822,6 +820,12 @@ uint16_t TDeckProMaxBoard::getRemainingCapacity() {
   #else
     return 0;
   #endif
+}
+
+uint16_t TDeckProMaxBoard::getUsableCapacity() {
+  uint16_t remain = getRemainingCapacity();
+  uint16_t reserve = (uint32_t)getFullChargeCapacity() * BATTERY_RESERVE_PCT / 100;
+  return remain > reserve ? remain - reserve : 0;
 }
 
 uint16_t TDeckProMaxBoard::getFullChargeCapacity() {
