@@ -28,7 +28,8 @@ locked, Bluetooth + WiFi at the same time, and more.
 
 ## Building
 
-- PlatformIO: `pio run -e <env>`; upload with `-t upload --upload-port COM3`.
+- PlatformIO: `pio run -e <env>`; upload with `-t upload --upload-port COM3`
+  (check the port first, see "The device").
 - Main envs: `meck_max_ui2` (new UI, BLE + WiFi, debug CLI), `meck_max_ble_wifi`
   (classic UI), `meck_max_standalone`; T-Deck Pro: `meck_audio_ble_wifi`,
   `meck_4g_ble_wifi`. Build the ones your change touches before committing.
@@ -37,7 +38,7 @@ locked, Bluetooth + WiFi at the same time, and more.
   set `MSYS_NO_PATHCONV=1` when passing device paths like `/tiles`, or Git
   Bash rewrites them into Windows paths.
 
-## The device (one T-Deck MAX on COM3)
+## The device (one T-Deck MAX, usually COM3)
 
 Before touching it — flashing, serial commands, screenshots — take the lock:
 
@@ -49,6 +50,20 @@ A PreToolUse hook (`.claude/settings.json`) also takes it automatically for
 device commands and blocks them while another session holds it. If it is
 busy, wait or ask the user; never `release --force` someone else's lock
 unless the user says that session is gone.
+
+Check the port before sending anything: Windows can give one COM name to two
+USB devices, and opening it may then reach the other one. This finds the deck
+by its USB identity and prints the COM name, or its interface path if the name
+is shared. Use the result wherever the examples here say COM3:
+
+    py -3 -c "import sys; sys.path.insert(0,'tools/powerlog'); import device; print(device.find_port()[0])"
+
+`pio -t upload` refuses an interface path, so flash with esptool from the
+PlatformIO packages (`tool-esptoolpy`): `--chip esp32s3 --port <path> --before
+usb_reset write_flash -z --flash_mode keep --flash_freq keep --flash_size keep`,
+then `0x0` bootloader, `0x8000` partitions, `0xe000` boot_app0 (in
+`framework-arduinoespressif32/tools/partitions`) and `0x10000` firmware, the
+rest from `.pio/build/<env>/`.
 
 Rules on the device (the user's own deck, with their contacts and channels):
 

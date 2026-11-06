@@ -319,19 +319,24 @@ const char* ModemManager::stateToString(ModemState s) {
 // Persistent modem enable/disable config
 // ---------------------------------------------------------------------------
 
+bool ModemManager::_enabledInSettings = false;
+
 bool ModemManager::loadEnabledConfig() {
   File f = SD.open(MODEM_CONFIG_FILE, FILE_READ);
   if (!f) {
     // No config file = enabled by default
+    _enabledInSettings = true;
     return true;
   }
   char c = '1';
   if (f.available()) c = f.read();
   f.close();
-  return (c != '0');
+  _enabledInSettings = (c != '0');
+  return _enabledInSettings;
 }
 
 void ModemManager::saveEnabledConfig(bool enabled) {
+  _enabledInSettings = enabled;
   // Ensure /sms directory exists
   if (!SD.exists("/sms")) SD.mkdir("/sms");
   File f = SD.open(MODEM_CONFIG_FILE, FILE_WRITE);
