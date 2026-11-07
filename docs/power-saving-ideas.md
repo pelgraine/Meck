@@ -324,6 +324,81 @@ partial e-ink refresh plus the wake costs some energy every minute.
 Optional setting: redraw the clock every 5 minutes, or show only the date
 and battery. Small saving (well under 1 mA).
 
+## 5b. Fewer and cheaper display refreshes (tried, set aside)
+
+From the power logs (607 minutes locked, on battery, mostly asleep): 1.25
+refreshes a minute, of which 1 is the clock. At equal LoRa traffic a minute
+with more refreshes keeps the deck awake about 0.8 s longer, about +0.5 mA in
+those minutes and about 0.1 mA over all of them. That figure is an upper
+bound, since those minutes also handle the messages.
+
+Tried in November 2026 and set aside: the saving is within the noise of the
+power log, and the display is a small part of the locked draw.
+
+### What was tried
+
+Everything is kept in the tag `lock-msg-with-clock`:
+
+- **Messages redraw with the clock.** A message on the locked deck waits for
+  the clock's next redraw (at most a minute); tones and vibration do not.
+  Settings > "Messages when locked": *With clock* or *At once*.
+- **The toast in the clock minute after the message (UI v2).** It covers the
+  status lines for that minute and, with a message every minute, stays up.
+  The classic UI shows only the unread count (its toast box would cover the
+  clock).
+- **No toast with the app connected.** The message is marked read, so the frame
+  does not change and the panel is not touched.
+- **Lock redraws by the clock's minute.** They used to follow a 60 s timer from
+  the lock, which brought a waiting toast up mid-minute.
+- **USB power redraws the lock screen at once.** No charger line wakes the
+  deck, so plugging in while it sleeps shows at its next wake.
+- **The ESP32 sleeps while the panel draws (MAX).** A GxEPD2 busy callback
+  light-sleeps until BUSY changes, a LoRa packet or the button (200 ms at
+  most), only when the deck may sleep anyway and the modem is off.
+  `pwreinksleep 0|1` on the debug CLI switches it until reset. This part alone
+  is on branch `claude/display-consumption-optimization-1e00a7` for more tests,
+  not for merging.
+
+The panel takes 0.42 s for a partial refresh and 1.1 s for a full one.
+
+### Measured (2026-11-06/07, on battery, locked, nothing else on)
+
+All of the above was on. Values come from a straight line over LoRa wakes per
+minute.
+
+| Stretch | Minutes | Awake at 6 LoRa wakes a minute | Current at 6 wakes | Refreshes a minute |
+|---|---|---|---|---|
+| 23:09-23:25, `pwreinksleep 0` | 17 | 1.68 s | 18.5 mA | 1.24 |
+| 23:29-08:47, after a reset, sleep on | 559 | 1.24 s | 19.4 mA | 1.04 |
+| Earlier firmware, four days | 85-213 | 1.61-2.19 s | 14.5-23.8 mA | 1.02-1.34 |
+
+- **Stable through the night.** 9.3 h with no reset or gap, packets counted
+  throughout (5.6 a minute). The battery fell 76 % to 64 % in 8.8 h, about
+  19 mA, which agrees with the gauge's average. Messages arrived: the unread
+  count was higher at the end of each run.
+- **Awake time fits the sleep.** With it on, the deck is awake 0.44 s a minute
+  less than with it off, close to the 0.46 s a refresh spends on the panel.
+  The off stretch is short and had more refreshes, so part of that may come
+  from those.
+- **The current does not show any saving.** Expected: about 0.25 mA from the
+  sleep and about 0.1 mA from fewer refreshes, some 2 % of the draw. The
+  spread between runs is far larger, and the sleep-on stretch even read
+  0.9 mA higher (17 minutes against a night, at another temperature).
+- **A LoRa wake costs far more than its awake time.** The fit gives about
+  0.6 mA per wake a minute (about 35 mAs per wake), while 0.07 s awake explains
+  only about 3 mAs. At 6 wakes that is 3.5 mA, much more than the display.
+  Not explained yet; the gauge's averaging may inflate the slope. Worth more
+  than the display.
+- **Not seen:** the toast with a real message, the USB redraw, the app
+  connected.
+
+### The deck's clock (seen on the way)
+
+Over 3 min on USB it moved by under 1 s against the computer, yet it was
+5.8 min behind after three resets. A reset resumes from the time saved every
+2 min: 100 s were lost at one, about 91 s at another. The rest is at most
+about 12 s/h over the night.
+
 ## 6. GPS when locked: a fix every few minutes (experimental)
 
 With the GPS on, the locked device sleeps and the receiver keeps tracking
