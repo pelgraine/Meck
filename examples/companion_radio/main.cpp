@@ -4346,6 +4346,11 @@ static bool meckAutoSleepCopes(int blocker) {
 // keeps it up
 static bool meckAutoSleepWanted(bool locked, int blocker) {
   if (!locked) return false;
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+  // A message tone or the alarm: I2S and the decoder stop while the CPU
+  // sleeps, and a phone or WiFi blocker comes before the audio one
+  if (es8311_active()) return false;
+#endif
 #ifdef HAS_4G_MODEM
   #ifdef MODEM_UART_SLEEP
   // A modem busy for a moment (a URC, the SMS poll) holds the CPU up with its
@@ -4551,6 +4556,11 @@ static void meckLockSleepStep() {
   // The button held down: maybe the 3 s SOS hold, which is longer than the
   // wake window
   if (!canSleep || the_mesh.hasPendingWork() || inWindow || ui_task.isButtonPressed()) {
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+    // Sound playing (a message tone, the alarm, an audiobook): the decoder
+    // runs once per pass and needs a pass about every 20 ms, or it stutters
+    if (es8311_active()) { delay(1); return; }
+#endif
     delay(50);   // locked but awake: yield as before
     return;
   }
@@ -5440,6 +5450,9 @@ void loop() {
     // Service audio decode while notification tone is playing
     if (notifTonePlaying && audio) {
       audio->loop();
+      // The tones are 48 kHz stereo MP3s: at the idle clock the decoder falls
+      // behind and the sound crackles (alarm, audiobook and voice boost too)
+      cpuPower.setBoost();
 
       // Fade-out: ramp volume down near the end of the file.
       // Window scales with duration -- 15% of estimated length, capped at 400ms.
@@ -5489,6 +5502,7 @@ void loop() {
     // Check for new play request
     if (notifSounds.hasPendingPlay()) {
       const char* file = notifSounds.getPendingFile();
+      cpuPower.setBoost();   // the start-up silence fill decodes too
 
       // Don't interrupt alarm or active audiobook
       AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
@@ -5600,7 +5614,7 @@ void loop() {
         // that far into decoding when we start timing.
         notifDurationMs = (estimatedMs > 140) ? (estimatedMs - 140) : estimatedMs;
 
-        Serial.printf("NotifTone: Playing '%s'\n", file);
+        Serial.printf("NotifTone: Playing '%s' at %u MHz\n", file, (unsigned)cpuPower.getFrequencyMHz());
       } else if (audioBusy) {
         Serial.println("NotifTone: Skipped -- audio busy");
       }
@@ -8945,6 +8959,12 @@ void meckSosCmd(const char* arg) {
     meckHapticDiag();
   } else if (!strcmp(arg, "pulse")) {
     ui_task.sosPulse();        // one countdown pulse: flash + buzz
+  } else if (!strncmp(arg, "tone", 4)) {
+    // A message tone the way an incoming message plays it, locked or not
+    char path[48];
+    snprintf(path, sizeof(path), "/alarms/%s", arg[4] == ' ' ? arg + 5 : "Bell-01.mp3");
+    notifSounds.requestPlay(path);
+    Serial.printf("sos: tone %s\n", path);
   } else if (!strncmp(arg, "vib", 3)) {
     extern void meckHapticTest(const char* arg);
     meckHapticTest(arg[3] ? arg + 4 : "");

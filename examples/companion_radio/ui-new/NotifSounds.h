@@ -75,10 +75,11 @@ public:
 
   // --- Config accessors ---
 
+  // The tone's file name, without the vibrate marker. "" = no tone.
   const char* getSoundForChannel(uint8_t channel_idx) const {
-    int slot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : (int)channel_idx;
-    if (slot < 0 || slot >= NOTIF_SOUND_SLOTS) return "";
-    return _sounds[slot];
+    const char* s = rawSlot(channel_idx);
+    if (isMarked(s)) s++;
+    return s;
   }
 
   bool hasSoundForChannel(uint8_t channel_idx) const {
@@ -86,34 +87,68 @@ public:
     return s && s[0] != '\0';
   }
 
+  // Set the tone; the channel's vibrate setting stays as it was.
+  // (A file name of 31 characters loses its last one when vibrate is on: the
+  // marker takes a byte of the slot.)
   void setSoundForChannel(uint8_t channel_idx, const char* filename) {
-    int slot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : (int)channel_idx;
-    if (slot < 0 || slot >= NOTIF_SOUND_SLOTS) return;
+    char* slot = slotFor(channel_idx);
+    if (!slot) return;
+    const bool vib = isMarked(slot);
+    size_t n = 0;
+    if (vib) slot[n++] = NOTIF_VIBRATE_MARKER[0];
     if (filename) {
-      strncpy(_sounds[slot], filename, NOTIF_SOUND_NAME_MAX - 1);
-      _sounds[slot][NOTIF_SOUND_NAME_MAX - 1] = '\0';
+      strncpy(slot + n, filename, NOTIF_SOUND_NAME_MAX - 1 - n);
+      slot[NOTIF_SOUND_NAME_MAX - 1] = '\0';
     } else {
-      _sounds[slot][0] = '\0';
+      slot[n] = '\0';
     }
     saveConfig();
-    Serial.printf("NotifSounds: Channel %d -> '%s'\n", (int)channel_idx,
-                  _sounds[slot][0] ? _sounds[slot] : "(default)");
+    Serial.printf("NotifSounds: Channel %d -> '%s'%s\n", (int)channel_idx,
+                  getSoundForChannel(channel_idx)[0] ? getSoundForChannel(channel_idx) : "(default)",
+                  vib ? " + vibrate" : "");
   }
 
+  // Back to silent: no tone and no vibration.
   void clearSoundForChannel(uint8_t channel_idx) {
-    setSoundForChannel(channel_idx, nullptr);
+    char* slot = slotFor(channel_idx);
+    if (!slot) return;
+    slot[0] = '\0';
+    saveConfig();
+    Serial.printf("NotifSounds: Channel %d -> (default)\n", (int)channel_idx);
   }
 
   // --- Vibrate (haptic) selection ---
-  // "Buzzer (vibrate)" is stored as a reserved marker in the channel's name
-  // slot, so it persists through the existing config save/load unchanged.
+  // Vibrate is a reserved marker byte at the start of the channel's name slot,
+  // so it persists through the existing config save/load unchanged. The marker
+  // alone is "Buzzer (vibrate)"; with a file name after it, it is that tone
+  // plus vibration.
   bool isVibrateForChannel(uint8_t channel_idx) const {
-    const char* s = getSoundForChannel(channel_idx);
-    return s && (uint8_t)s[0] == (uint8_t)NOTIF_VIBRATE_MARKER[0];
+    return isMarked(rawSlot(channel_idx));
   }
 
+  // Vibrate only: drops the tone.
   void setVibrateForChannel(uint8_t channel_idx) {
-    setSoundForChannel(channel_idx, NOTIF_VIBRATE_MARKER);
+    char* slot = slotFor(channel_idx);
+    if (!slot) return;
+    slot[0] = NOTIF_VIBRATE_MARKER[0];
+    slot[1] = '\0';
+    saveConfig();
+    Serial.printf("NotifSounds: Channel %d -> vibrate\n", (int)channel_idx);
+  }
+
+  // Turn vibration on or off and keep the tone.
+  void setVibrateEnabled(uint8_t channel_idx, bool on) {
+    char* slot = slotFor(channel_idx);
+    if (!slot || isMarked(slot) == on) return;
+    char tone[NOTIF_SOUND_NAME_MAX];
+    strncpy(tone, getSoundForChannel(channel_idx), sizeof(tone) - 1);
+    tone[sizeof(tone) - 1] = '\0';
+    slot[0] = '\0';
+    if (on) slot[0] = NOTIF_VIBRATE_MARKER[0];
+    strncpy(slot + (on ? 1 : 0), tone, NOTIF_SOUND_NAME_MAX - 1 - (on ? 1 : 0));
+    slot[NOTIF_SOUND_NAME_MAX - 1] = '\0';
+    saveConfig();
+    Serial.printf("NotifSounds: Channel %d vibrate %s\n", (int)channel_idx, on ? "on" : "off");
   }
 
   // --- Sound file scanning ---
@@ -121,7 +156,9 @@ public:
   void scanSoundFiles() {
     _soundFiles.clear();
 
-#ifdef HAS_4G_MODEM
+// The MAX has both: its tones are MP3s on the SD card, played through the
+// ES8311 like playback does (the modem's embedded WAVs would not be found).
+#if defined(HAS_4G_MODEM) && !defined(MECK_AUDIO_VARIANT)
     // 4G variant: available tones are embedded in firmware
     for (int i = 0; i < MODEM_BUNDLED_TONE_COUNT; i++) {
       _soundFiles.push_back(String(modemBundledTones[i].filename));
@@ -195,6 +232,21 @@ public:
 
 private:
   char _sounds[NOTIF_SOUND_SLOTS][NOTIF_SOUND_NAME_MAX];
+
+  // DMs (0xFF) share the last slot.
+  char* slotFor(uint8_t channel_idx) {
+    int slot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : (int)channel_idx;
+    if (slot < 0 || slot >= NOTIF_SOUND_SLOTS) return nullptr;
+    return _sounds[slot];
+  }
+  const char* rawSlot(uint8_t channel_idx) const {
+    int slot = (channel_idx == 0xFF) ? MAX_GROUP_CHANNELS : (int)channel_idx;
+    if (slot < 0 || slot >= NOTIF_SOUND_SLOTS) return "";
+    return _sounds[slot];
+  }
+  static bool isMarked(const char* s) {
+    return s && (uint8_t)s[0] == (uint8_t)NOTIF_VIBRATE_MARKER[0];
+  }
   std::vector<String> _soundFiles;
 
 #ifdef MECK_AUDIO_VARIANT
@@ -237,6 +289,27 @@ private:
     }
 
     f.close();
+#if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
+    // The MAX picker used to list the modem's embedded WAVs, which playback
+    // never finds in /alarms: point those tones at the SD card's MP3 of the
+    // same name, so they work without being picked again.
+    bool migrated = false;
+    for (int i = 0; i < slotsToRead; i++) {
+      char* name = _sounds[i];
+      if (isMarked(name)) name++;
+      size_t len = strlen(name);
+      if (len < 5 || strcasecmp(name + len - 4, ".wav") != 0) continue;
+      char path[NOTIF_SOUND_NAME_MAX + sizeof(ALARMS_FOLDER) + 1];
+      snprintf(path, sizeof(path), "%s/%.*s.mp3", ALARMS_FOLDER, (int)(len - 4), name);
+      if (!SD.exists(path)) continue;
+      strcpy(name + len - 4, ".mp3");
+      migrated = true;
+    }
+    if (migrated) {
+      Serial.println("NotifSounds: Modem WAV tones moved to the SD card's MP3s");
+      saveConfig();
+    }
+#endif
     digitalWrite(SDCARD_CS, HIGH);
     Serial.printf("NotifSounds: Loaded %d slots from config\n", slotsToRead);
   }
