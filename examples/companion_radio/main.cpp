@@ -5440,6 +5440,9 @@ void loop() {
     // Service audio decode while notification tone is playing
     if (notifTonePlaying && audio) {
       audio->loop();
+      // The tones are 48 kHz stereo MP3s: at the idle clock the decoder falls
+      // behind and the sound crackles (alarm, audiobook and voice boost too)
+      cpuPower.setBoost();
 
       // Fade-out: ramp volume down near the end of the file.
       // Window scales with duration -- 15% of estimated length, capped at 400ms.
@@ -5489,6 +5492,7 @@ void loop() {
     // Check for new play request
     if (notifSounds.hasPendingPlay()) {
       const char* file = notifSounds.getPendingFile();
+      cpuPower.setBoost();   // the start-up silence fill decodes too
 
       // Don't interrupt alarm or active audiobook
       AlarmScreen* alarmScr = (AlarmScreen*)ui_task.getAlarmScreen();
@@ -5600,7 +5604,7 @@ void loop() {
         // that far into decoding when we start timing.
         notifDurationMs = (estimatedMs > 140) ? (estimatedMs - 140) : estimatedMs;
 
-        Serial.printf("NotifTone: Playing '%s'\n", file);
+        Serial.printf("NotifTone: Playing '%s' at %u MHz\n", file, (unsigned)cpuPower.getFrequencyMHz());
       } else if (audioBusy) {
         Serial.println("NotifTone: Skipped -- audio busy");
       }
