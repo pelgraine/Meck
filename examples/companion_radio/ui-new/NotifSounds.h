@@ -289,6 +289,27 @@ private:
     }
 
     f.close();
+#if defined(HAS_4G_MODEM) && defined(MECK_AUDIO_VARIANT)
+    // The MAX picker used to list the modem's embedded WAVs, which playback
+    // never finds in /alarms: point those tones at the SD card's MP3 of the
+    // same name, so they work without being picked again.
+    bool migrated = false;
+    for (int i = 0; i < slotsToRead; i++) {
+      char* name = _sounds[i];
+      if (isMarked(name)) name++;
+      size_t len = strlen(name);
+      if (len < 5 || strcasecmp(name + len - 4, ".wav") != 0) continue;
+      char path[NOTIF_SOUND_NAME_MAX + sizeof(ALARMS_FOLDER) + 1];
+      snprintf(path, sizeof(path), "%s/%.*s.mp3", ALARMS_FOLDER, (int)(len - 4), name);
+      if (!SD.exists(path)) continue;
+      strcpy(name + len - 4, ".mp3");
+      migrated = true;
+    }
+    if (migrated) {
+      Serial.println("NotifSounds: Modem WAV tones moved to the SD card's MP3s");
+      saveConfig();
+    }
+#endif
     digitalWrite(SDCARD_CS, HIGH);
     Serial.printf("NotifSounds: Loaded %d slots from config\n", slotsToRead);
   }
