@@ -4346,6 +4346,11 @@ static bool meckAutoSleepCopes(int blocker) {
 // keeps it up
 static bool meckAutoSleepWanted(bool locked, int blocker) {
   if (!locked) return false;
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+  // A message tone or the alarm: I2S and the decoder stop while the CPU
+  // sleeps, and a phone or WiFi blocker comes before the audio one
+  if (es8311_active()) return false;
+#endif
 #ifdef HAS_4G_MODEM
   #ifdef MODEM_UART_SLEEP
   // A modem busy for a moment (a URC, the SMS poll) holds the CPU up with its
