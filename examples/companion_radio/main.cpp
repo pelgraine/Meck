@@ -4556,6 +4556,11 @@ static void meckLockSleepStep() {
   // The button held down: maybe the 3 s SOS hold, which is longer than the
   // wake window
   if (!canSleep || the_mesh.hasPendingWork() || inWindow || ui_task.isButtonPressed()) {
+#if defined(MECK_AUDIO_VARIANT) && defined(HAS_ES8311_AUDIO)
+    // Sound playing (a message tone, the alarm, an audiobook): the decoder
+    // runs once per pass and needs a pass about every 20 ms, or it stutters
+    if (es8311_active()) { delay(1); return; }
+#endif
     delay(50);   // locked but awake: yield as before
     return;
   }
@@ -8954,6 +8959,12 @@ void meckSosCmd(const char* arg) {
     meckHapticDiag();
   } else if (!strcmp(arg, "pulse")) {
     ui_task.sosPulse();        // one countdown pulse: flash + buzz
+  } else if (!strncmp(arg, "tone", 4)) {
+    // A message tone the way an incoming message plays it, locked or not
+    char path[48];
+    snprintf(path, sizeof(path), "/alarms/%s", arg[4] == ' ' ? arg + 5 : "Bell-01.mp3");
+    notifSounds.requestPlay(path);
+    Serial.printf("sos: tone %s\n", path);
   } else if (!strncmp(arg, "vib", 3)) {
     extern void meckHapticTest(const char* arg);
     meckHapticTest(arg[3] ? arg + 4 : "");
